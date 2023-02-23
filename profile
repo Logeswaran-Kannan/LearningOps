@@ -1,6 +1,7 @@
 %python
 
 from pyspark.sql.functions import col, count, mean, stddev, sum, when
+from pyspark.sql.types import StructField, StructType, StringType, IntegerType, DoubleType
 
 # Define a widget to pass in the database name as a parameter
 db_name = dbutils.widgets.get("db_name")
@@ -27,9 +28,21 @@ for column in df.columns:
         column_profile = (db_name, table_name, column, distinct_count, None, None, null_percentage, data_density, num_rows)
     column_profiles.append(column_profile)
 
-# Create a DataFrame from the profiling results
-columns = ["db_name", "table_name", "column_name", "distinct_count", "column_mean", "column_stddev", "null_percentage", "data_density", "num_rows"]
-profile_df = spark.createDataFrame(column_profiles, columns)
+# Define the schema for the profiling results
+schema = StructType([
+    StructField("db_name", StringType(), True),
+    StructField("table_name", StringType(), True),
+    StructField("column_name", StringType(), True),
+    StructField("distinct_count", IntegerType(), True),
+    StructField("column_mean", DoubleType(), True),
+    StructField("column_stddev", DoubleType(), True),
+    StructField("null_percentage", DoubleType(), True),
+    StructField("data_density", DoubleType(), True),
+    StructField("num_rows", IntegerType(), True)
+])
+
+# Create a DataFrame from the profiling results with the defined schema
+profile_df = spark.createDataFrame(column_profiles, schema)
 
 # Write the profiling results to a temporary table
 temp_table_name = f"temp_{db_name}_{table_name}_profile"
