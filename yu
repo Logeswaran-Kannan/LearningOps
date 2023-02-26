@@ -1,0 +1,34 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- script: echo 'Running tests...'
+  displayName: 'Run tests'
+
+- task: PublishTestResults@2
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: '**/TEST-*.xml'
+    mergeTestResults: true
+    testRunTitle: 'My Test Run'
+
+- script: |
+    # Install Python requests module
+    sudo apt-get update
+    sudo apt-get -y install python3-pip
+    sudo pip3 install requests
+    # Get test results summary
+    test_run_id=$(jq -r '.id' $(System.DefaultWorkingDirectory)/$(System.TeamProject)/TestResults/*.trx.json)
+    test_run_url=$(jq -r '.webAccessUrl' $(System.DefaultWorkingDirectory)/$(System.TeamProject)/TestResults/*.trx.json)
+    test_run_failed=$(jq -r '.summary.failed' $(System.DefaultWorkingDirectory)/$(System.TeamProject)/TestResults/*.trx.json)
+    test_run_passed=$(jq -r '.summary.passed' $(System.DefaultWorkingDirectory)/$(System.TeamProject)/TestResults/*.trx.json)
+    test_run_total=$(jq -r '.summary.total' $(System.DefaultWorkingDirectory)/$(System.TeamProject)/TestResults/*.trx.json)
+    # Send notification to Teams
+    teams_webhook_url='<insert your webhook URL here>'
+    teams_payload="{\"@type\":\"MessageCard\",\"@context\":\"http://schema.org/extensions\",\"themeColor\":\"0076D7\",\"summary\":\"Test Run Summary\",\"sections\":[{\"activityTitle\":\"Test Run ID: $test_run_id\",\"activitySubtitle\":\"$test_run_url\",\"facts\":[{\"name\":\"Total Tests\",\"value\":\"$test_run_total\"},{\"name\":\"Passed Tests\",\"value\":\"$test_run_passed\"},{\"name\":\"Failed Tests\",\"value\":\"$test_run_failed\"}]}]}"
+    teams_response=$(curl -X POST -H 'Content-Type: application/json' -d "$teams_payload" "$teams_webhook_url")
+    echo "$teams_response"
+  displayName: 'Send Teams notification'
