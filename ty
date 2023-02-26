@@ -1,0 +1,60 @@
+trigger:
+  - master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.8'
+      addToPath: true
+
+  - script: |
+      pip install requests
+    displayName: 'Install requests library'
+
+  - script: |
+      import os
+      import json
+      import requests
+
+      # Set the Teams webhook URL as a pipeline variable
+      teams_webhook_url = os.environ['TEAMS_WEBHOOK_URL']
+
+      # Get the test run ID from pipeline variables
+      test_run_id = os.environ['TEST_RUN_ID']
+
+      # Use the Azure DevOps REST API to get the summary of the test run ID
+      api_url = f"{os.environ['SYSTEM_TEAMFOUNDATIONSERVERURI']}/{os.environ['SYSTEM_TEAMPROJECT']}/_apis/test/runs/{test_run_id}?api-version=6.1-preview.3"
+      headers = {'Authorization': f'Bearer {os.environ['SYSTEM_ACCESSTOKEN']}'}
+      response = requests.get(api_url, headers=headers)
+      summary = response.json()['summary']
+
+      # Prepare the message to be sent to Teams
+      message = {
+          "@type": "MessageCard",
+          "@context": "https://schema.org/extensions",
+          "summary": summary,
+          "title": f"Test Run {test_run_id} Summary",
+          "sections": [
+              {
+                  "activityTitle": "Test Summary",
+                  "facts": [
+                      {
+                          "name": "Test Run ID",
+                          "value": test_run_id
+                      },
+                      {
+                          "name": "Summary",
+                          "value": summary
+                      }
+                  ]
+              }
+          ]
+      }
+
+      # Send the message to Teams using the webhook
+      response = requests.post(teams_webhook_url, json=message)
+
+    displayName: 'Send Test Run Summary to Teams'
