@@ -1,0 +1,16 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- script: |
+    echo "Running tests..."
+    # add your test commands here
+  displayName: 'Run Tests'
+
+- script: |
+    echo "Sending notification to Teams..."
+    curl -H "Content-Type: application/json" -d '{"text":"Pipeline finished! Test summary: [insert test summary here]"}' [insert your Teams webhook URL here]
+  displayName: 'Send Teams Notification'
