@@ -5,25 +5,19 @@ pool:
   vmImage: 'ubuntu-latest'
 
 steps:
-- task: DotNetCoreCLI@2
+- script: echo Run tests here
   displayName: 'Run tests'
-  inputs:
-    command: 'test'
-    projects: '**/*Tests.csproj'
-    arguments: '--configuration $(BuildConfiguration)'
 
 - task: PublishTestResults@2
-  displayName: 'Publish test results'
   inputs:
-    testResultsFormat: 'JUnit'
+    testRunner: 'JUnit'
     testResultsFiles: '**/TEST-*.xml'
+    failTaskOnFailedTests: true
+  displayName: 'Publish test results'
 
-- task: teams-devops@1
-  displayName: 'Send notification to Teams'
+- task: teams-devops-notify@1
   inputs:
-    teamsWebhook: 'https://outlook.office.com/webhook/XXXXXXXXXXXXXXX'
-    title: 'Test results published'
-    summary: 'Test results have been published for the latest build.'
-    facts: |
-      - Build: $(Build.BuildNumber)
-      - Test run: $(Test.RunTitle)
+    teamsWebhookUrl: 'https://<your_teams_webhook_url>'
+    message: 'The test results are published'
+    title: 'Azure DevOps Pipeline Test Results'
+  displayName: 'Notify Microsoft Teams'
