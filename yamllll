@@ -1,0 +1,29 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: DotNetCoreCLI@2
+  displayName: 'Run tests'
+  inputs:
+    command: 'test'
+    projects: '**/*Tests.csproj'
+    arguments: '--configuration $(BuildConfiguration)'
+
+- task: PublishTestResults@2
+  displayName: 'Publish test results'
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: '**/TEST-*.xml'
+
+- task: teams-devops@1
+  displayName: 'Send notification to Teams'
+  inputs:
+    teamsWebhook: 'https://outlook.office.com/webhook/XXXXXXXXXXXXXXX'
+    title: 'Test results published'
+    summary: 'Test results have been published for the latest build.'
+    facts: |
+      - Build: $(Build.BuildNumber)
+      - Test run: $(Test.RunTitle)
