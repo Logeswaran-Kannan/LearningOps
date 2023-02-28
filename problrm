@@ -1,42 +1,50 @@
-from pyspark.sql.functions import col
-from pyspark.sql.utils import AnalysisException
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
 
-# set the name of the database to be profiled
-database_name = "my_database"
+# Define the name of the database
+database_name = "your_database_name"
 
-# get a list of table names in the database
-tables = [t.name for t in spark.catalog.listTables(database_name)]
+# Get a list of all tables in the database
+tables = spark.sql(f"SHOW TABLES IN {database_name}").select("tableName").collect()
 
-# create an empty list to store the profiling results for each table
-results = []
-
-# loop through each table and perform data profiling on its columns
-for table_name in tables:
-    try:
-        # create a DataFrame of the table
-        df = spark.table(f"{database_name}.{table_name}")
-
-        # get a list of the column names in the DataFrame
-        columns = df.columns
-
-        # loop through each column and perform detailed data profiling
-        for column_name in columns:
-            # get the data type of the column
-            data_type = str(df.schema[column_name].dataType)
-
-            # perform the data profiling using Databricks' built-in functions
-            column_profile = df.select(col(column_name)).summary()
-
-            # add the profiling results to the list
-            results.append((table_name, column_name, data_type, column_profile))
-            
-    except AnalysisException:
-        # ignore tables that can't be accessed due to insufficient permissions
-        continue
-
-# save the profiling results to a file
-with open("data_profiling_results.txt", "w") as f:
-    for table_name, column_name, data_type, column_profile in results:
-        f.write(f"Table: {table_name}, Column: {column_name}, Data Type: {data_type}\n")
-        f.write(column_profile.toPandas().to_string(index=False))
-        f.write("\n\n")
+# Loop through each table and perform data profiling on each column
+for table in tables:
+  table_name = table[0]
+  df = spark.table(f"{database_name}.{table_name}")
+  
+  # Create a new dataframe to hold the profiling results
+  profiling_results = spark.createDataFrame([], StructType([
+    StructField("table_name", StringType(), True),
+    StructField("column_name", StringType(), True),
+    StructField("data_type", StringType(), True),
+    StructField("distinct_count", IntegerType(), True),
+    StructField("null_count", IntegerType(), True),
+    StructField("avg_value_length", DoubleType(), True),
+    StructField("min_value", StringType(), True),
+    StructField("max_value", StringType(), True),
+    StructField("most_common_values", StringType(), True)
+  ]))
+  
+  # Loop through each column in the dataframe and perform data profiling
+  for column in df.columns:
+    data_type = str(df.schema[column].dataType)
+    distinct_count = df.select(column).distinct().count()
+    null_count = df.filter(col(column).isNull()).count()
+    avg_value_length = df.select(avg(length(column))).collect()[0][0]
+    min_value = df.select(min(column)).collect()[0][0]
+    max_value = df.select(max(column)).collect()[0][0]
+    
+    # Determine the most common values in the column
+    value_counts = df.groupBy(column).count().orderBy(desc("count")).limit(10)
+    most_common_values = ""
+    for row in value_counts.collect():
+      most_common_values += f"{row[column]}: {row['count']}\n"
+    
+    # Add the profiling results for this column to the dataframe
+    profiling_results = profiling_results.union(
+      spark.createDataFrame([(table_name, column, data_type, distinct_count, null_count, avg_value_length, min_value, max_value, most_common_values)],
+                            profiling_results.schema)
+    )
+  
+  # Display the profiling results for this table
+  display(profiling_results)
