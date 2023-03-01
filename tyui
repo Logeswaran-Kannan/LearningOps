@@ -1,0 +1,27 @@
+# Import necessary libraries
+from pyspark.sql.functions import count, isnan, when, col
+from pyspark.sql.types import StringType
+
+# Set database name and excluded table filter
+database_name = "your_database_name"
+excluded_table_filter = "'%_%'"
+
+# Get list of tables in database
+tables = spark.sql(f"SHOW TABLES IN {database_name}").filter(f"tableName NOT LIKE {excluded_table_filter}").select("tableName").rdd.flatMap(lambda x: x).collect()
+
+# Define function to perform detailed data profiling for each table
+def profile_table(table_name):
+  # Get DataFrame for current table
+  df = spark.sql(f"SELECT * FROM {table_name}")
+
+  # Calculate null percentage for each column
+  null_percents = [df.select(count(when(col(c).isNull(), c))/count("*")).first()[0] for c in df.columns]
+
+  # Calculate data density for each column
+  data_densities = [df.select(count(when(col(c) != "", c))/count("*")).first()[0] for c in df.columns]
+
+  # Calculate valid values for each column
+  valid_values = [df.select(col(c)).distinct().rdd.map(lambda x: x[0]).collect() for c in df.columns]
+
+  # Create DataFrame for column-level profiling
+  columns_df = spark.createDataFrame([(table_name, c, null_percents[i], data_densities[i], str(valid_values[i])) for i, c
