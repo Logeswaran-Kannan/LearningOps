@@ -1,67 +1,14 @@
-from pyspark.sql.functions import count, when, col
-from pyspark.sql.types import DoubleType
-import re
+import yaml
+import os
 
-# function to get the null percentage for each column
-def get_null_percentage(df):
-    total_count = df.count()
-    null_count = df.select([count(when(col(c).isNull(), c)).alias(c) for c in df.columns]).collect()[0]
-    null_percentage = [null_count[c] / total_count * 100 for c in df.columns]
-    return null_percentage
+folder_path = "/path/to/folder"
 
-# function to get the data density for each column
-def get_data_density(df):
-    total_count = df.count()
-    density = [total_count / df.select(c).distinct().count() for c in df.columns]
-    return density
+data = {}
+for file_name in os.listdir(folder_path):
+    if file_name.endswith(".yaml"):
+        file_path = os.path.join(folder_path, file_name)
+        with open(file_path, "r") as file:
+            yaml_data = yaml.safe_load(file)
+            data.update(yaml_data)
 
-# function to get the valid values for each column
-def get_valid_values(df):
-    valid_values = {}
-    for c in df.columns:
-        valid_values[c] = [r[c] for r in df.select(c).distinct().collect() if r[c] is not None]
-    return valid_values
-
-# get database name and excluded table name pattern from user input
-db_name = input("Enter database name: ")
-exclude_pattern = input("Enter pattern to exclude table names (use regex syntax): ")
-
-# get list of table names in the database, excluding those that match the exclude pattern
-table_names = [t.name for t in spark.catalog.listTables(db_name) if not re.search(exclude_pattern, t.name)]
-
-# loop through each table and perform data profiling
-for table_name in table_names:
-    # get table metadata and column names
-    table_metadata = spark.table(f"{db_name}.{table_name}")
-    column_names = table_metadata.schema.names
-    
-    # perform data profiling at table level
-    null_percentage = get_null_percentage(table_metadata)
-    data_density = get_data_density(table_metadata)
-    
-    # create a new DataFrame to store the column-level profiling results
-    column_profile = spark.createDataFrame([], ["column_name", "null_percentage", "data_density", "valid_values"])
-    
-    # loop through each column and perform data profiling
-    for c in column_names:
-        # get column metadata and convert to a DataFrame
-        column_metadata = spark.createDataFrame([{"column_name": c, "data_type": str(table_metadata.schema[c].dataType)}])
-        
-        # perform data profiling at column level
-        null_pct = get_null_percentage(table_metadata.select(c))
-        density = get_data_density(table_metadata.select(c))
-        valid_values = get_valid_values(table_metadata.select(c))
-        
-        # add the column-level profiling results to the DataFrame
-        column_profile = column_profile.union(spark.createDataFrame([(c, null_pct[0], density[0], valid_values[c])], ["column_name", "null_percentage", "data_density", "valid_values"]))
-    
-    # create a temporary table to store the results
-    temp_table_name = f"{table_name}_profile"
-    column_profile.createOrReplaceTempView(temp_table_name)
-    
-    # display the results
-    print(f"Table: {table_name}")
-    print(f"Null Percentage: {null_percentage}")
-    print(f"Data Density: {data_density}")
-    print("Column-Level Profiling:")
-    spark.sql(f"SELECT * FROM {temp_table_name}").show(truncate=False)
+print(data)
