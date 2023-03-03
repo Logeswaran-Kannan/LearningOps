@@ -1,14 +1,27 @@
 import os
-import tkinter as tk
-from tkinter import filedialog
+import yaml
+import pandas as pd
 
-# Create a popup window to select the folder
-root = tk.Tk()
-root.withdraw()
-folder_path = filedialog.askdirectory()
+# Prompt user for parent folder path
+parent_folder_path = input("Enter parent folder path: ")
 
-# Get the names of all the folders in the selected directory
-folders = [f for f in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, f))]
+# Initialize empty list to store data
+data = []
 
-# Print the folder names
-print(folders)
+# Loop through all subdirectories in parent folder
+for root, dirs, files in os.walk(parent_folder_path):
+    for file in files:
+        # Check if file is a YAML file
+        if file.endswith(".yaml"):
+            # Read data from YAML file
+            file_path = os.path.join(root, file)
+            with open(file_path, "r") as f:
+                yaml_data = yaml.safe_load(f)
+                data.append(yaml_data)
+
+# Convert data to Pandas DataFrame
+df = pd.DataFrame(data)
+
+# Output data to Excel file
+output_path = os.path.join(parent_folder_path, "output.xlsx")
+df.to_excel(output_path, index=False)
