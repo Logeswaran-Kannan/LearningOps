@@ -1,0 +1,46 @@
+from pyspark.sql.functions import count, countDistinct, when, col, round
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType
+
+# Define function to perform data profiling at column level
+def column_profile(df, col_name):
+    null_percent = round((df.filter(col(col_name).isNull()).count() / df.count()) * 100, 2)
+    data_density = round((df.filter(col(col_name).isNotNull()).count() / df.count()) * 100, 2)
+    valid_values = df.select(col_name).distinct().count()
+    return (null_percent, data_density, valid_values)
+
+# Define function to perform data profiling at table level
+def table_profile(table_name):
+    df = spark.table(table_name)
+    columns = df.columns
+    num_rows = df.count()
+    schema = df.schema
+    column_profiles = []
+    for col_name in columns:
+        column_profiles.append(column_profile(df, col_name))
+    return (table_name, num_rows, schema, column_profiles)
+
+# Get input database name
+database_name = input("Enter the database name: ")
+
+# Define filter to exclude certain tables
+filter_expr = "~(tableName LIKE '%_%')"
+
+# Get list of table names in the database
+table_names = [table.name for table in spark.catalog.listTables(database_name) if eval(filter_expr)]
+
+# Perform data profiling for each table
+table_profiles = []
+for table_name in table_names:
+    table_profiles.append(table_profile(table_name))
+
+# Create schema for temporary table to store output
+schema = StructType([
+    StructField("table_name", StringType(), True),
+    StructField("num_rows", DoubleType(), True),
+    StructField("schema", StringType(), True),
+    StructField("column_profiles", StringType(), True)
+])
+
+# Create DataFrame with data profiling output and store as temporary table
+output_df = spark.createDataFrame(table_profiles, schema)
+output_df.createOrReplaceTempView("data_profiling_output")
