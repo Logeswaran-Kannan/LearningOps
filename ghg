@@ -1,14 +1,26 @@
 import yaml
+import pandas as pd
 import os
 
-folder_path = "/path/to/folder"
+# Define the folder path containing the YAML files
+folder_path = 'path/to/folder'
 
-data = {}
-for file_name in os.listdir(folder_path):
-    if file_name.endswith(".yaml"):
-        file_path = os.path.join(folder_path, file_name)
-        with open(file_path, "r") as file:
+# Initialize an empty list to store the data
+data = []
+
+# Loop through each YAML file in the folder
+for filename in os.listdir(folder_path):
+    if filename.endswith('.yaml'):
+        # Open the YAML file
+        with open(os.path.join(folder_path, filename), 'r') as file:
+            # Load the YAML data
             yaml_data = yaml.safe_load(file)
-            data.update(yaml_data)
+            # Append the YAML data to the list
+            data.append(yaml_data)
 
-print(data)
+# Convert the list of dictionaries to a Pandas DataFrame
+df = pd.DataFrame(data)
+
+# Write the DataFrame to an Excel file
+output_path = 'output.xlsx'
+df.to_excel(output_path, index=False)
