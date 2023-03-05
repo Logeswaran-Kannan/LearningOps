@@ -1,27 +1,70 @@
-import os
-import yaml
-import pandas as pd
+from pyspark.sql.functions import col, count, countDistinct, collect_set, when
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
-# Prompt user for parent folder path
-parent_folder_path = input("Enter parent folder path: ")
+def profile_database(database_name: str, exclude_prefix: str, output_table: str, output_schema: StructType):
+  # Get a list of tables in the database and filter out those starting with the exclude prefix
+  tables = [table.name for table in spark.catalog.listTables(database_name) if not table.name.startswith(exclude_prefix)]
 
-# Initialize empty list to store data
-data = []
+  # Initialize an empty DataFrame for storing the profiling results
+  results_df = spark.createDataFrame([], output_schema)
 
-# Loop through all subdirectories in parent folder
-for root, dirs, files in os.walk(parent_folder_path):
-    for file in files:
-        # Check if file is a YAML file
-        if file.endswith(".yaml"):
-            # Read data from YAML file
-            file_path = os.path.join(root, file)
-            with open(file_path, "r") as f:
-                yaml_data = yaml.safe_load(f)
-                data.append(yaml_data)
+  # Loop through each table and calculate the profiling metrics for each column
+  for table_name in tables:
+    # Get the table schema
+    table_schema = spark.table(f"{database_name}.{table_name}").schema
 
-# Convert data to Pandas DataFrame
-df = pd.DataFrame(data)
+    # Loop through each column and calculate the profiling metrics
+    for col_field in table_schema.fields:
+      col_name = col_field.name
+      col_type = str(col_field.dataType)
 
-# Output data to Excel file
-output_path = os.path.join(parent_folder_path, "output.xlsx")
-df.to_excel(output_path, index=False)
+      # Calculate the profiling metrics for the column
+      metrics = [
+        count("*").alias("count"),
+        count(col(col_name)).alias("non_null_count"),
+        (count(col_name) - countDistinct(col_name)).alias("null_count"),
+        (count(col_name) - count(col(col_name).isNull())).alias("not_null_count"),
+        countDistinct(col_name).alias("distinct_count"),
+        (countDistinct(col_name).cast("double") / count(col_name)).alias("distinct_pct"),
+        (count(col_name).cast("double") / count("*")).alias("density"),
+        (countDistinct(col_name).cast("double") / count(col_name)).alias("uniqueness")
+      ]
+      top_values = (
+        spark.table(f"{database_name}.{table_name}")
+          .select(col(col_name))
+          .filter(col(col_name).isNotNull())
+          .groupBy(col(col_name))
+          .agg(count("*").alias("count"))
+          .orderBy(col("count").desc())
+          .limit(10)
+          .agg(collect_set(col(col_name)).cast("string"))
+          .collect()[0][0] or None
+      )
+
+      # Create a row for the column profiling results and append it to the results DataFrame
+      col_row = (col_name, col_type) + tuple(spark.table(f"{database_name}.{table_name}").agg(*metrics).collect()[0][2:]) + (top_values,)
+      results_df = results_df.union(spark.createDataFrame([col_row], output_schema))
+
+  # Save the profiling results to the output temporary table
+  results_df.write.mode("overwrite").saveAsTable(output_table)
+
+# Define the input parameters
+database_name = "your_database_name"
+exclude_prefix = "_"
+output_table = "temp_output_table"
+output_schema = StructType([
+  StructField("column_name", StringType(), True),
+  StructField("data_type", StringType(), True),
+  StructField("count", DoubleType(), True),
+  StructField("non_null_count", DoubleType(), True),
+  StructField("null_count", DoubleType(), True),
+  StructField("not_null_count", DoubleType(), True),
+  StructField("distinct_count", DoubleType(), True),
+  StructField("distinct_pct", DoubleType(), True),
+  StructField("density", DoubleType(), True),
+  StructField("uniqueness", DoubleType(), True),
+  StructField("top_values", StringType(), True)
+])
+
+# Call the profiling function
+profile_database
