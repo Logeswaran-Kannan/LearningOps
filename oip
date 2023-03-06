@@ -1,43 +1,42 @@
-# Import necessary libraries
-from pyspark.sql.functions import isnan, when, count, col
+from pyspark.sql.functions import col, count, isnan, when
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
 
-# Define input database
-db_name = "input_database_name"
-
-# Define list of tables to exclude
-exclude_tables = ["_table1", "_table2"]
-
-# Get list of tables in input database
-table_list = spark.catalog.listTables(db_name)
-
-# Loop through tables and perform data profiling
-for table in table_list:
-  # Check if table should be excluded
-  if any(ex in table.name for ex in exclude_tables):
-    continue
+def data_profile(database_name):
+  # Get all table names in the database
+  table_names = spark.catalog.listTables(database_name)
   
-  # Get table schema
-  table_schema = spark.table(f"{db_name}.{table.name}").schema
+  # Filter out table names that start with '__'
+  table_names = [table.name for table in table_names if not table.name.startswith('__')]
   
-  # Create empty dictionary to store results
-  profiling_results = {"Table": table.name}
+  # Iterate over all tables and columns
+  column_profiles = []
+  for table_name in table_names:
+    table = spark.table(f"{database_name}.{table_name}")
+    for column_name in table.columns:
+      # Calculate null percentage
+      null_count = table.select(count(when(isnan(col(column_name)) | col(column_name).isNull(), column_name))).collect()[0][0]
+      total_count = table.count()
+      null_percentage = null_count / total_count
+      
+      # Calculate data density
+      data_density = 1 - null_percentage
+      
+      # Get all unique values in the column
+      unique_values = [str(row[column_name]) for row in table.select(column_name).distinct().collect()]
+      
+      # Store the column profile in a list
+      column_profile = (table_name, column_name, null_percentage, data_density, unique_values)
+      column_profiles.append(column_profile)
   
-  # Perform table-level data profiling
-  table_count = spark.table(f"{db_name}.{table.name}").count()
-  null_count = spark.table(f"{db_name}.{table.name}").select([count(when(isnan(c) | col(c).isNull(), c)).alias(c) for c in table_schema.fieldNames()]).collect()[0]
-  data_density = [(table_count - null_count[i])/table_count for i in range(len(null_count))]
+  # Define the schema for the temporary table
+  schema = StructType([
+    StructField("table_name", StringType(), True),
+    StructField("column_name", StringType(), True),
+    StructField("null_percentage", DoubleType(), True),
+    StructField("data_density", DoubleType(), True),
+    StructField("unique_values", StringType(), True)
+  ])
   
-  profiling_results["Table Count"] = table_count
-  profiling_results["Null Percentage"] = [null_count[i]/table_count for i in range(len(null_count))]
-  profiling_results["Data Density"] = data_density
-  
-  # Perform column-level data profiling
-  for column in table_schema.fieldNames():
-    column_values = spark.table(f"{db_name}.{table.name}").select(column).distinct().collect()
-    valid_values = [row[column] for row in column_values if row[column] is not None]
-    profiling_results[f"{column} Valid Values"] = valid_values
-    profiling_results[f"{column} Value Counts"] = [spark.table(f"{db_name}.{table.name}").filter(col(column) == value).count() for value in valid_values]
-  
-  # Convert dictionary to DataFrame and store in temporary table
-  profiling_results_df = spark.createDataFrame([profiling_results])
-  profiling_results_df.createOrReplaceTempView(f"{table.name}_profiling_results")
+  # Create a DataFrame from the column profiles and store it in a temporary table
+  column_profiles_df = spark.createDataFrame(column_profiles, schema=schema)
+  column_profiles_df.createOrReplaceTempView("column_profiles")
