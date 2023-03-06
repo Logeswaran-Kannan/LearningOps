@@ -40,3 +40,18 @@ def data_profile(database_name):
   # Create a DataFrame from the column profiles and store it in a temporary table
   column_profiles_df = spark.createDataFrame(column_profiles, schema=schema)
   column_profiles_df.createOrReplaceTempView("column_profiles")
+  
+  
+  
+  
+  
+  
+  # Call the data_profile function with the name of your database
+data_profile("my_database")
+
+# Query the column_profiles table to get the null percentage for a specific column
+spark.sql("SELECT column_name, null_percentage FROM column_profiles WHERE table_name = 'my_table' AND column_name = 'my_column'")
+
+# Query the column_profiles table to get the unique values for a specific column
+spark.sql("SELECT column_name, unique_values FROM column_profiles WHERE table_name = 'my_table' AND column_name = 'my_column'")
+
