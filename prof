@@ -1,0 +1,45 @@
+CREATE OR REPLACE TEMPORARY VIEW profile_results AS
+SELECT table_name, NULL AS col_name, NULL AS data_type,
+       COUNT(*) AS count,
+       COUNT(*) - COUNT(*) * COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name) AS not_null_count,
+       COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name) / COUNT(*) AS null_pct,
+       NULL AS valid_values,
+       (COUNT(*) - COUNT(DISTINCT col)) / COUNT(*) AS data_density,
+       COUNT(DISTINCT col) / COUNT(*) AS unique_pct
+FROM (
+  SELECT table_name, col
+  FROM (
+    SELECT t.table_name, c.column_name
+    FROM information_schema.tables t
+    JOIN information_schema.columns c ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+    WHERE t.table_schema = 'your_database_name'
+      AND NOT t.table_name LIKE '_%'
+      AND c.column_name NOT LIKE '%_id'
+  ) x
+  LATERAL VIEW explode_outer(array(*)) cols AS col
+  LATERAL VIEW explode_outer(array(*)) cols2 AS col2
+) y
+GROUP BY table_name
+UNION ALL
+SELECT table_name, col_name, data_type,
+       COUNT(*) AS count,
+       COUNT(*) - COUNT(*) * COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name, col_name) AS not_null_count,
+       COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name, col_name) / COUNT(*) AS null_pct,
+       COLLECT_LIST(col) AS valid_values,
+       NULL AS data_density,
+       COUNT(DISTINCT col) / COUNT(*) AS unique_pct
+FROM (
+  SELECT table_name, col_name, col, data_type
+  FROM (
+    SELECT t.table_name, c.column_name AS col_name, CAST(NULL AS STRING) AS col, CAST(c.data_type AS STRING) AS data_type
+    FROM information_schema.tables t
+    JOIN information_schema.columns c ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+    WHERE t.table_schema = 'your_database_name'
+      AND NOT t.table_name LIKE '_%'
+      AND c.column_name NOT LIKE '%_id'
+  ) x
+  LATERAL VIEW explode_outer(array(*)) cols AS col
+  LATERAL VIEW explode_outer(array(*)) cols2 AS col2
+) y
+GROUP BY table_name, col_name, data_type
+HAVING unique_pct < 0.5
