@@ -1,38 +1,21 @@
 import tkinter as tk
 from tkinter import filedialog
 import pandas as pd
+import os
 
-# Open a file dialog box to select the input folder
+# Create a dialog box to select a directory
 root = tk.Tk()
 root.withdraw()
-input_folder_path = filedialog.askdirectory()
+directory = filedialog.askdirectory(title="Select directory with CSV files")
 
-# Get a list of all CSV files in the input folder
-csv_files = [file for file in os.listdir(input_folder_path) if file.endswith('.csv')]
+# Get a list of all CSV files in the selected directory
+csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
 
-# Open another file dialog box to select the output Excel file
-output_file_path = filedialog.asksaveasfilename(defaultextension='.xlsx')
-
-# Initialize an empty list to store the data from all CSV files
-all_data = []
-
-# Loop over each CSV file in the input folder
+# Loop through each CSV file and read its contents
 for csv_file in csv_files:
-    # Read the CSV file into a pandas DataFrame
-    data = pd.read_csv(os.path.join(input_folder_path, csv_file))
-    
-    # Get the input file names mentioned in the input_file_column column
-    input_files = data[input_file_column].unique()
-    
-    # Loop over each input file name and extract the relevant rows from the DataFrame
-    for input_file in input_files:
-        input_data = data[data[input_file_column] == input_file]
-        
-        # Append the input data to the list of all data
-        all_data.append(input_data)
-        
-# Concatenate all data into a single DataFrame
-output_data = pd.concat(all_data)
-
-# Save the output DataFrame to the output Excel file
-output_data.to_excel(output_file_path, index=False)
+    # Construct the full file path
+    file_path = os.path.join(directory, csv_file)
+    # Read the CSV file into a Pandas DataFrame
+    df = pd.read_csv(file_path)
+    # Do whatever you need to do with the data in df
+    print(df.head())
