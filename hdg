@@ -1,34 +1,24 @@
-import pandas as pd
 import tkinter as tk
 from tkinter import filedialog
+import pandas as pd
 
-# Create Tkinter root window (hidden)
+# Initialize root Tkinter window
 root = tk.Tk()
 root.withdraw()
 
-# Ask user to select input CSV files
-input_files = filedialog.askopenfilenames(
-    title="Select input CSV files",
-    filetypes=[("CSV Files", "*.csv")]
-)
+# Open file dialog to select multiple CSV files
+csv_files = filedialog.askopenfilenames(filetypes=[("CSV Files", "*.csv")])
 
-# Read input CSV files into Pandas DataFrame
-df_list = []
-for file in input_files:
-    df = pd.read_csv(file)
-    df_list.append(df)
+# Loop through each CSV file and read data
+for csv_file in csv_files:
+    # Get file name without extension
+    file_name = csv_file.split("/")[-1].split(".")[0]
+    # Read CSV data into DataFrame
+    df = pd.read_csv(csv_file)
+    # Create output file name with input file name
+    output_file = f"{file_name}_output.xlsx"
+    # Write DataFrame data to Excel file
+    df.to_excel(output_file, index=False)
 
-# Concatenate DataFrames into single DataFrame
-concat_df = pd.concat(df_list)
-
-# Ask user to specify output Excel filename
-output_file = filedialog.asksaveasfilename(
-    title="Save output Excel file",
-    defaultextension=".xlsx",
-    filetypes=[("Excel Files", "*.xlsx")]
-)
-
-# Write concatenated DataFrame to Excel file with specified filename
-concat_df.to_excel(output_file, index=False)
-
-print("Output written to", output_file)
+# Print confirmation message
+print("Output files created successfully!")
