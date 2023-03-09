@@ -1,32 +1,33 @@
 import os
-import csv
+import tkinter as tk
+from tkinter import filedialog
 import pandas as pd
-from tkinter import Tk
-from tkinter.filedialog import askdirectory, asksaveasfilename
 
-# Ask the user to select a directory containing CSV files
-root = Tk()
+# Create a Tkinter dialog box to select the directory containing the CSV files
+root = tk.Tk()
 root.withdraw()
-directory = askdirectory(title="Select directory containing CSV files")
+directory = filedialog.askdirectory()
 
-# Get a list of all CSV files in the selected directory
-csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
+# Loop through all the CSV files in the directory
+all_data = []
+for filename in os.listdir(directory):
+    if filename.endswith('.csv'):
+        # Read the CSV file into a Pandas DataFrame
+        filepath = os.path.join(directory, filename)
+        data = pd.read_csv(filepath)
+        
+        # Add a column to the DataFrame with the filename
+        data['filename'] = filename
+        
+        # Append the DataFrame to the list of all data
+        all_data.append(data)
 
-# Create an empty list to hold the data from all CSV files
-data = []
+# Concatenate all the data into a single DataFrame
+combined_data = pd.concat(all_data)
 
-# Loop through each CSV file and add its data to the data list
-for file in csv_files:
-    with open(os.path.join(directory, file), 'r') as f:
-        reader = csv.reader(f)
-        file_data = [row for row in reader]
-        data += file_data
+# Write the combined data to an Excel file
+writer = pd.ExcelWriter('combined_data.xlsx', engine='xlsxwriter')
+combined_data.to_excel(writer, index=False)
+writer.save()
 
-# Convert the data to a pandas DataFrame
-df = pd.DataFrame(data)
-
-# Ask the user to select a filename and location for the output Excel file
-output_file = asksaveasfilename(title="Save as", defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
-
-# Write the DataFrame to the output Excel file
-df.to_excel(output_file, index=False)
+print('Data successfully written to combined_data.xlsx')
