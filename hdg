@@ -1,21 +1,32 @@
-import tkinter as tk
-from tkinter import filedialog
-import pandas as pd
 import os
+import csv
+import pandas as pd
+from tkinter import Tk
+from tkinter.filedialog import askdirectory, asksaveasfilename
 
-# Create a dialog box to select a directory
-root = tk.Tk()
+# Ask the user to select a directory containing CSV files
+root = Tk()
 root.withdraw()
-directory = filedialog.askdirectory(title="Select directory with CSV files")
+directory = askdirectory(title="Select directory containing CSV files")
 
 # Get a list of all CSV files in the selected directory
 csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
 
-# Loop through each CSV file and read its contents
-for csv_file in csv_files:
-    # Construct the full file path
-    file_path = os.path.join(directory, csv_file)
-    # Read the CSV file into a Pandas DataFrame
-    df = pd.read_csv(file_path)
-    # Do whatever you need to do with the data in df
-    print(df.head())
+# Create an empty list to hold the data from all CSV files
+data = []
+
+# Loop through each CSV file and add its data to the data list
+for file in csv_files:
+    with open(os.path.join(directory, file), 'r') as f:
+        reader = csv.reader(f)
+        file_data = [row for row in reader]
+        data += file_data
+
+# Convert the data to a pandas DataFrame
+df = pd.DataFrame(data)
+
+# Ask the user to select a filename and location for the output Excel file
+output_file = asksaveasfilename(title="Save as", defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
+
+# Write the DataFrame to the output Excel file
+df.to_excel(output_file, index=False)
