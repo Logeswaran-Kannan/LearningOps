@@ -1,0 +1,28 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.9'
+  displayName: 'Use Python 3.9'
+
+- task: Bash@3
+  inputs:
+    targetType: 'inline'
+    script: |
+      # Get the last run ID
+      RUN_ID=$(az pipelines runs list --pipeline-id $(System.DefinitionId) --status Completed --query '[0].id' --output tsv)
+
+      # Get the test run summary
+      TEST_SUMMARY=$(az pipelines runs show --id $RUN_ID --query 'resources.summary.testsSummary' --output json)
+
+      # Extract the graph URL
+      GRAPH_URL=$(echo $TEST_SUMMARY | jq -r '.graphUrl')
+
+      # Post message to MS Teams
+      curl -H "Content-Type: application/json" -d "{\"text\": \"Last run test summary graph: $GRAPH_URL\"}" YOUR_WEBHOOK_URL_HERE
+  displayName: 'Get test summary and post message to MS Teams'
