@@ -1,0 +1,37 @@
+- task: PublishTestResults@2
+  inputs:
+    testRunner: JUnit
+    testResultsFiles: '**/test-results.xml' # change this to match the path where your test results are stored
+    mergeTestResults: true
+    testRunTitle: 'Test Run Results'
+  condition: always() # this ensures that the task runs even if previous tasks fail
+- task: HttpPost@1
+  displayName: 'Publish Test Results to Microsoft Teams'
+  inputs:
+    url: 'https://outlook.office.com/webhook/your-webhook-url-here' # replace with your actual webhook URL
+    body: |
+      {
+          "@type": "MessageCard",
+          "@context": "http://schema.org/extensions",
+          "themeColor": "0076D7",
+          "summary": "Test Run Results",
+          "sections": [
+              {
+                  "activityTitle": "Test Run Results",
+                  "activitySubtitle": "$(Build.BuildNumber)",
+                  "activityImage": "https://your-company-logo-url-here.png",
+                  "facts": [
+                      {
+                          "name": "Test Run Name:",
+                          "value": "$(Build.DefinitionName)"
+                      },
+                      {
+                          "name": "Test Results:",
+                          "value": "$(Common.TestResultsDirectory)/TestResults.xml"
+                      }
+                  ],
+                  "markdown": true
+              }
+          ]
+      }
+  condition: succeededOrFailed() # this ensures that the task runs even if previous tasks fail
