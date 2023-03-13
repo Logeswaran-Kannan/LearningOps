@@ -1,0 +1,48 @@
+- task: PublishTestResults@2
+  displayName: 'Publish Test Results'
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: '**/TEST-*.xml'
+    mergeTestResults: true
+    testRunTitle: 'Databricks Test Run'
+    failTaskOnFailedTests: true
+  condition: always()
+
+- task: HttpPost@1
+  displayName: 'Publish Test Results to MS Teams'
+  inputs:
+    url: '<your MS Teams webhook URL>'
+    contentType: 'application/json'
+    body: |
+      {
+          "@type": "MessageCard",
+          "@context": "http://schema.org/extensions",
+          "themeColor": "0072C6",
+          "summary": "Databricks Test Results",
+          "sections": [
+              {
+                  "activityTitle": "Databricks Test Results",
+                  "activitySubtitle": "$(Build.DefinitionName)",
+                  "activityImage": "https://i.imgur.com/vyJ7VfY.png",
+                  "facts": [
+                      {
+                          "name": "Total Tests",
+                          "value": "$(TestRun.TotalTests)"
+                      },
+                      {
+                          "name": "Passed Tests",
+                          "value": "$(TestRun.PassedTests)"
+                      },
+                      {
+                          "name": "Failed Tests",
+                          "value": "$(TestRun.FailedTests)"
+                      },
+                      {
+                          "name": "Duration",
+                          "value": "$(TestRun.Duration)"
+                      }
+                  ],
+                  "text": "![Test Results Chart](https://<your Databricks workspace URL>/#workspace/dashboards/<your dashboard ID>/widgets/<your widget ID>/render)"
+              }
+          ]
+      }
