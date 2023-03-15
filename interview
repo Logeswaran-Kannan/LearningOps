@@ -41,5 +41,19 @@ Troubleshooting and Performance Tuning: In this segment, the interviewer can ask
 
 Overall, these technical interview segmentation topics can help assess the candidate's technical skills and experience in AWS data warehousing, which is critical for success in the role.
 
+----------------------------------------
+
+
+Sure, here is an example table of technical interview segmentation topics for an AWS data tester role:
+
+Technical Interview Segments	Description
+AWS Services	Questions to assess the candidate's understanding and experience with AWS services, such as S3, Redshift, Lambda, Glue, etc.
+Data Warehousing Concepts	Questions to assess the candidate's understanding of data warehousing concepts, such as data modeling, ETL processes, data integration, and data quality.
+Data Testing Strategies	Questions to assess the candidate's knowledge of data testing strategies, including unit testing, integration testing, regression testing, and performance testing.
+SQL	Questions to assess the candidate's proficiency in SQL and database querying.
+Scripting Languages	Questions to assess the candidate's knowledge of scripting languages, such as Python or Bash, which are commonly used in AWS data testing.
+Test Automation	Questions to assess the candidate's experience with test automation tools, such as AWS CodePipeline, AWS CodeBuild, or AWS CodeDeploy.
+Troubleshooting	Questions to assess the candidate's ability to troubleshoot data quality issues, identify root causes, and recommend solutions.
+Security and Compliance	Questions to assess the candidate's knowledge of AWS security and compliance practices and their experience implementing security controls and data privacy regulations.
 
 
