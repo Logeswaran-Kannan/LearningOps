@@ -1,24 +1,13 @@
-I wanted to take a moment to appreciate all of you who have given demos on the test case of null check using the Pytest assert function in the system test framework. Your efforts and contributions are greatly appreciated, and I encourage you to continue sharing your knowledge and expertise with the rest of the team.
+Automated testing using Azure DevOps is a highly efficient and effective way of ensuring software quality. As a Test Lead, I can provide you with a detailed explanation of the entire process.
 
-For those of you who have not yet given a demo, I urge you to do so as soon as possible. Your participation in these sessions is critical to ensuring that we all have a comprehensive understanding of the testing process, and we can all learn from each other's experiences and perspectives.
+The first step in the process is to pull the latest code from the DevOps repository into the Visual Studio IDE. This can be done using the Azure Repos extension in Visual Studio. Once the code is downloaded, the test case can be designed using the Pytest assert function. Pytest is a popular testing framework for Python and provides a simple and easy-to-use interface for writing test cases.
 
-In my absence, I would like these sessions to continue, and I am confident that we can achieve 100 percent transition completion with your dedication and hard work.
+Once the test case is designed, it can be pushed back to the repository using the same Azure Repos extension. The test case can be stored in a separate folder in the repository, dedicated to automated test cases.
 
-Thank you all for your contributions and let's continue to work together to deliver high-quality software.
+The next step is to use a build pipeline to deploy the workflow in the Databricks test environment. Databricks is a cloud-based data analytics platform that allows for efficient data processing and testing. The build pipeline can be configured to trigger automatically when changes are made to the repository.
 
-Best regards,
-[Your Name]
+Once the build pipeline is triggered, the test case notebook is executed in the Databricks test environment, and the result is captured in XML format. The XML result can be sent back to the DevOps test run using the Azure Test Plans extension. The Test Plans extension provides a seamless integration between Azure DevOps and testing tools.
 
-----------------------------
+Finally, the test lead can be notified of the test results using Outlook and Microsoft Teams. This can be configured in the notification settings of the Azure DevOps project.
 
-Dear Team,
-
-I wanted to take a moment to appreciate those team members who gave a fantastic demo on the null check test case using pytest assert function in our system test framework. Your dedication and hard work have contributed significantly to the success of our testing efforts.
-
-I would also like to encourage those team members who have not yet given a demo to do so as soon as possible. It is essential that everyone participates and shares their knowledge so that we can all improve and learn from each other.
-
-As I will be away for a few days, I would like to request that the demo sessions continue as planned. Our goal is to achieve a 100 percent transition completion before the end of the month, and I am confident that with our team's efforts, we can achieve this goal.
-
-If anyone would like to volunteer to run the demo sessions in my absence, please let me know. Your support and commitment to the team are greatly appreciated.
-
-Thank you all for your hard work and dedication.
+In conclusion, automated testing using Azure DevOps is a powerful tool for ensuring software quality. It provides a seamless integration between code repositories, testing frameworks, and cloud-based testing environments, making the testing process efficient and effective.
