@@ -45,3 +45,43 @@ print(sample_unique_to_df1)
 print("Sample records unique to second dataframe:")
 print(sample_unique_to_df2)
 
+---------------------------------------------------------
+
+#sample 3
+
+import pandas as pd
+
+# create sample dataframes
+df1 = pd.DataFrame({
+    'id': [1, 2, 3, 4, 5],
+    'name': ['Alice', 'Bob', 'Charlie', 'Dave', 'Eve'],
+    'age': [25, 30, 35, 40, 45]
+})
+
+df2 = pd.DataFrame({
+    'id': [2, 4, 6],
+    'name': ['Bob', 'Dave', 'Frank'],
+    'height': [170, 180, 190]
+})
+
+# merge dataframes using common column
+merged_df = pd.merge(df1, df2, on='id', how='outer', suffixes=('_df1', '_df2'))
+
+# find mismatch count
+mismatch_count = len(merged_df[(merged_df['name_df1'] != merged_df['name_df2']) | 
+                               (merged_df['age'] != merged_df['height'])])
+
+# find match count
+match_count = len(merged_df) - mismatch_count
+
+# find 5 sample records unique to first dataframe
+unique_to_df1 = df1[~df1['id'].isin(df2['id'])].sample(5)
+
+# find 5 sample records unique to second dataframe
+unique_to_df2 = df2[~df2['id'].isin(df1['id'])].sample(5)
+
+# print results
+print(f'Mismatch count: {mismatch_count}')
+print(f'Match count: {match_count}')
+print(f'5 sample records unique to first dataframe:\n{unique_to_df1}')
+print(f'5 sample records unique to second dataframe:\n{unique_to_df2}')
