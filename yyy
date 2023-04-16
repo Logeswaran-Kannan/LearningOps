@@ -16,3 +16,32 @@ print(f'Number of records only in df1: {len(df1_only)}')
 print(df1_only.head())
 print(f'Number of records only in df2: {len(df2_only)}')
 print(df2_only.head())
+
+----------------------------
+
+import pandas as pd
+
+# sample dataframes
+df1 = pd.DataFrame({'A': [1, 2, 3, 4, 5], 'B': [10, 20, 30, 40, 50], 'C': [100, 200, 300, 400, 500]})
+df2 = pd.DataFrame({'A': [1, 2, 3, 4, 6], 'B': [10, 20, 30, 40, 60], 'C': [100, 200, 300, 400, 600]})
+
+# compare dataframes and find mismatch and match count
+mismatch_count = (df1 != df2).sum().sum()
+match_count = (df1 == df2).sum().sum()
+
+# find records unique to first dataframe
+unique_to_df1 = df1[~df1.isin(df2)].dropna()
+sample_unique_to_df1 = unique_to_df1.sample(n=5)
+
+# find records unique to second dataframe
+unique_to_df2 = df2[~df2.isin(df1)].dropna()
+sample_unique_to_df2 = unique_to_df2.sample(n=5)
+
+# display results
+print(f"Number of mismatched values: {mismatch_count}")
+print(f"Number of matched values: {match_count}")
+print("Sample records unique to first dataframe:")
+print(sample_unique_to_df1)
+print("Sample records unique to second dataframe:")
+print(sample_unique_to_df2)
+
