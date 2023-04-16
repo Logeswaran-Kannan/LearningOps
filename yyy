@@ -1,16 +1,18 @@
-trigger:
-- main
+import pandas as pd
 
-pool:
-  vmImage: 'ubuntu-latest'
+# Create the two DataFrames to compare
+df1 = pd.DataFrame({'A': [1, 2, 3, 4, 5], 'B': ['a', 'b', 'c', 'd', 'e']})
+df2 = pd.DataFrame({'A': [1, 2, 4, 6, 7], 'B': ['a', 'b', 'd', 'f', 'g']})
 
-steps:
-- script: |
-    echo "Running tests..."
-    # add your test commands here
-  displayName: 'Run Tests'
+# Merge the two DataFrames using an outer join
+merged_df = pd.merge(df1, df2, on='A', how='outer', suffixes=('_left', '_right'))
 
-- script: |
-    echo "Sending notification to Teams..."
-    curl -H "Content-Type: application/json" -d '{"text":"Pipeline finished! Test summary: [insert test summary here]"}' [insert your Teams webhook URL here]
-  displayName: 'Send Teams Notification'
+# Filter the merged DataFrame to create two new DataFrames
+df1_only = merged_df[merged_df['B_right'].isna()].iloc[:, :2]
+df2_only = merged_df[merged_df['B_left'].isna()].iloc[:, 2:]
+
+# Count the number of records in each new DataFrame and print the first five samples
+print(f'Number of records only in df1: {len(df1_only)}')
+print(df1_only.head())
+print(f'Number of records only in df2: {len(df2_only)}')
+print(df2_only.head())
