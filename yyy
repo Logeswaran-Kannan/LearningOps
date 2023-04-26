@@ -1,9 +1,7 @@
-I hope this email finds you well. With Ramadan approaching, I wanted to take a moment to extend my best wishes to you and your family in advance of this holy month.
+We have agreed to accept the risk of skipping table-level regression validation at Clev 4 until Mart, and as a result, we will only be conducting high-level regression testing on Reports. Any defects on the below list will be deferred and assigned to me. Bogdan, please only consider defects assigned to you. Also, please inform us when Clev 4 is ready for testing as we are aware that some changes are underway. For now, we will focus on revalidating defects in the silver layer during testing.
 
-As you may have informed me earlier, you will be taking time off for Ramadan leave. In your absence, I would like to ensure that the work you have been handling continues smoothly without any delays. Therefore, I would like to request that you kindly pass over any pending tasks or projects to [Colleague's Name] before you leave for the break.
 
-Also, I would like to request that you grant me access to any relevant documents or scripts that are necessary for me to carry out your tasks or to answer any questions that may arise during your absence. This will help us ensure that there are no delays in any of the projects that you are currently handling.
 
-Please let me know if you have any concerns or if there is anything else that we need to address before your departure. We will ensure that everything is taken care of and that you can enjoy your break with peace of mind.
 
-Once again, I wish you and your loved ones a blessed and peaceful Ramadan.
+
+
