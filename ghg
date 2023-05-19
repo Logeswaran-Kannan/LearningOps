@@ -1,13 +1,28 @@
-I hope this email finds you all well. I wanted to inform you that based on a request from the ERMAL and Development teams, we have decided to prepone the meeting series. The new schedule is as follows:
+import os
+import tkinter as tk
+from tkinter import filedialog
+import pandas as pd
 
-Previous Schedule:
+# Open dialogue window to select input folder
+root = tk.Tk()
+root.withdraw()
+input_folder = filedialog.askdirectory(title="Select Input Folder")
 
-Meeting Date: [Old Meeting Date]
-Meeting Time: [Old Meeting Time]
-Updated Schedule:
+# Open dialogue window to select output folder
+output_folder = filedialog.askdirectory(title="Select Output Folder")
 
-Meeting Date: [New Meeting Date]
-Meeting Time: [New Meeting Time]
-Please make a note of this change in your calendars and ensure your availability for the updated meeting series. We understand that schedule changes may require adjustments, so please let me know if any changes are necessary from your end.
+# Get a list of Parquet files in the input folder
+parquet_files = [file for file in os.listdir(input_folder) if file.endswith(".parquet")]
 
-If you have any questions or concerns regarding this update, please don't hesitate to reach out. Thank you for your understanding and cooperation.
+# Iterate over the Parquet files
+for file in parquet_files:
+    # Read Parquet file into a Pandas DataFrame
+    parquet_path = os.path.join(input_folder, file)
+    df = pd.read_parquet(parquet_path)
+    
+    # Convert DataFrame to CSV
+    csv_filename = os.path.splitext(file)[0] + ".csv"
+    csv_path = os.path.join(output_folder, csv_filename)
+    df.to_csv(csv_path, index=False)
+
+print("Conversion completed successfully.")
