@@ -4,3 +4,31 @@ Expertise Level and Code Walkthrough: The second question pertains to the curren
 
 
 eam Expertise Level: Currently, the team has limited exposure to specific code areas where they can make small modifications. However, they are not yet in a position to provide a walkthrough of the entire codebase integrated with Applitools. This limitation may impact their ability to fully explore and understand the capabilities and potential of Applitools during the demo session.
+
+
+
+import tkinter as tk
+from tkinter import filedialog
+from PyPDF2 import PdfMerger
+
+# Open dialogue window to select PDF files
+root = tk.Tk()
+root.withdraw()
+file_paths = filedialog.askopenfilenames(title="Select PDF Files", filetypes=[("PDF Files", "*.pdf")])
+
+# Create a PDF merger object
+pdf_merger = PdfMerger()
+
+# Merge the selected PDF files
+for file_path in file_paths:
+    with open(file_path, 'rb') as file:
+        pdf_merger.append(file)
+
+# Open dialogue window to select output file name and location
+output_file = filedialog.asksaveasfilename(title="Save Merged PDF", defaultextension=".pdf", filetypes=[("PDF Files", "*.pdf")])
+
+# Save the merged PDF to the selected output file
+with open(output_file, 'wb') as output:
+    pdf_merger.write(output)
+
+print("PDF files merged successfully.")
