@@ -1,28 +1,18 @@
-import os
-import tkinter as tk
-from tkinter import filedialog
-import pandas as pd
+Subject: Confluence Page for DevOps Testing Practice - Feedback and Collaboration
 
-# Open dialogue window to select input folder
-root = tk.Tk()
-root.withdraw()
-input_folder = filedialog.askdirectory(title="Select Input Folder")
+Dear [Team Members],
 
-# Open dialogue window to select output folder
-output_folder = filedialog.askdirectory(title="Select Output Folder")
+I hope this email finds you well. I wanted to bring your attention to a Confluence page I've created that contains detailed information about our DevOps testing practice. You can access the page through the following link: [Insert Confluence page link].
 
-# Get a list of Parquet files in the input folder
-parquet_files = [file for file in os.listdir(input_folder) if file.endswith(".parquet")]
+Currently, the page is under review by Sujatha. Once her review is complete, I plan to merge the page with the DEVOPS build page to create a comprehensive resource for our team.
 
-# Iterate over the Parquet files
-for file in parquet_files:
-    # Read Parquet file into a Pandas DataFrame
-    parquet_path = os.path.join(input_folder, file)
-    df = pd.read_parquet(parquet_path)
-    
-    # Convert DataFrame to CSV
-    csv_filename = os.path.splitext(file)[0] + ".csv"
-    csv_path = os.path.join(output_folder, csv_filename)
-    df.to_csv(csv_path, index=False)
+I encourage each of you to contribute and add any up-to-date information related to DevOps testing practice that you've gathered from your projects. This will help us maintain a centralized page that can serve as a reference for our team members and a valuable resource for new joiners.
 
-print("Conversion completed successfully.")
+Additionally, I would appreciate it if you could review the page from your end and provide any feedback or suggestions for improvement. Please feel free to make changes directly on the Confluence page or share your thoughts with me.
+
+Furthermore, I encourage everyone to add any pain points they have encountered in our testing practice. By discussing these challenges, we can collectively find ways to overcome them and enhance our processes.
+
+Thank you in advance for your contributions and feedback. Let's work together to create a valuable and collaborative resource for our DevOps testing practice.
+
+If you have any questions or need further clarification, please don't hesitate to reach out to me.
+
