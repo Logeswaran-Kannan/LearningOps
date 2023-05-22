@@ -1,18 +1,6 @@
-Subject: Confluence Page for DevOps Testing Practice - Feedback and Collaboration
+Open Issues Details: One of the questions raised is related to the open issues. Kesava is the primary person who can provide more information about these issues. As per the previous recommendation from Applitool, they suggested trying to recreate the comparison issues using Selenium code. However, since this issue doesn't occur frequently, the team has not yet attempted this approach. In the upcoming meeting, we will highlight this issue and discuss the potential solution.
 
-Dear [Team Members],
+Expertise Level and Code Walkthrough: The second question pertains to the current expertise level of the team. It's important to note that the team has exposure to only a few code areas where they can make small modifications. Conducting a comprehensive code walkthrough with Applitool might not be feasible at this stage. We will communicate this limitation during the demo session and focus on utilizing the team's expertise to explore the areas they are familiar with.
 
-I hope this email finds you well. I wanted to bring your attention to a Confluence page I've created that contains detailed information about our DevOps testing practice. You can access the page through the following link: [Insert Confluence page link].
 
-Currently, the page is under review by Sujatha. Once her review is complete, I plan to merge the page with the DEVOPS build page to create a comprehensive resource for our team.
-
-I encourage each of you to contribute and add any up-to-date information related to DevOps testing practice that you've gathered from your projects. This will help us maintain a centralized page that can serve as a reference for our team members and a valuable resource for new joiners.
-
-Additionally, I would appreciate it if you could review the page from your end and provide any feedback or suggestions for improvement. Please feel free to make changes directly on the Confluence page or share your thoughts with me.
-
-Furthermore, I encourage everyone to add any pain points they have encountered in our testing practice. By discussing these challenges, we can collectively find ways to overcome them and enhance our processes.
-
-Thank you in advance for your contributions and feedback. Let's work together to create a valuable and collaborative resource for our DevOps testing practice.
-
-If you have any questions or need further clarification, please don't hesitate to reach out to me.
-
+eam Expertise Level: Currently, the team has limited exposure to specific code areas where they can make small modifications. However, they are not yet in a position to provide a walkthrough of the entire codebase integrated with Applitools. This limitation may impact their ability to fully explore and understand the capabilities and potential of Applitools during the demo session.
