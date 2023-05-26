@@ -1,37 +1,13 @@
-Hope you're doing well! Just wanted to touch base regarding the User Acceptance Testing (UAT) of the B2A report. We're in the midst of the testing phase, and I wanted to ask if you've come across any observations or feedback so far.
+Thank you for providing your valuable feedback. I would like to shed some light on the areas we expect to be covered during the User Acceptance Testing (UAT) for the CDL TS01 release.
 
-It would be super helpful if you could share any insights or concerns you've noticed during the testing. This way, we can start addressing or clarifying them as soon as possible. The sooner we tackle any issues, the smoother the process will be.
+As discussed in the UAT kickoff session, the scope of this TS01 release is limited to the insurance NB sales detail tabs from a reporting perspective. Other areas remain untouched. Therefore, I kindly request you to focus the UAT coverage only on those specific areas.
 
-Oh, and a quick update: I've granted Daniel access to view the report. Having him on board will allow for better collaboration and analysis of the data.
+To provide clarity on the changes made as part of the TS01 release, I have listed them below:
 
-Thanks a bunch for your help and quick response. If you have any questions or need more information, feel free to reach out. We really value your input and look forward to working together to iron out any kinks.
+Additional Filter for Differentiation: We have added an additional filter to differentiate AA-TIARA and AA-CDL sales in the new business tabs. You will find a filter named 'Source system' that performs this task specifically for Motor NB sales. For the date range starting from January 1, 2023, you will notice strata core data flowing in, while TIARA data will be visible before that. Please note that the test users we have provided are meant to check if these filters are functioning as expected, but they may not replicate the exact behavior of the production scenario.
 
-Take care!
+Inscope KPIs for TS01 Release: I have provided a screenshot highlighting the list of KPIs in green color that are within the scope of the TS01 release and where CDL data flows in. However, please be aware that these CDL test data is sourced from the CDL test environment and cannot be directly compared with production data, as the CDL data is not live yet. Please note that CDL Quotes and Calls related KPIs are out of scope for TS01, so those KPIs will not render any data.
 
-[Your Name]
+Comparing Data for Other Tabs: If you still wish to compare data for other tabs specific to TIARA, you can do so for the data range prior to January 1, 2023. However, please be aware that no changes have been made to those tabs in the TS01 release.
 
-
-
-
-
-
---------------------------------------------------
-
-
-Hope you're doing well! Just wanted to touch base regarding the User Acceptance Testing (UAT) of the B2A report. I wanted to check if you have come across any observations or feedback during the testing phase so far.
-
-It would be awesome if you could share any insights or concerns you've discovered. This way, we can start addressing and clarifying them as soon as possible. Our goal is to ensure everything runs smoothly and efficiently.
-
-By the way, I wanted to let you know that Daniel now has access to view the report. Having him on board will help us analyze the data and collaborate more effectively.
-
-Looking forward to hearing your thoughts. Feel free to reach out if you have any questions or need further information. Your feedback is highly appreciated!
-
-Cheers,
-
-[Your Name]
-
-
-
-
-
-
+Please feel free to reach out if you require any additional information. I am happy to assist you further.
