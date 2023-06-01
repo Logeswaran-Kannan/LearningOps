@@ -1,13 +1,7 @@
-Thank you for providing your valuable feedback. I would like to shed some light on the areas we expect to be covered during the User Acceptance Testing (UAT) for the CDL TS01 release.
+I wanted to inform you that both Keasava and Akshay are currently on leave today. They are the ones who have the necessary licenses and have configured all the setups. I was wondering if there is any way we can proceed with the debug session even without their support?
 
-As discussed in the UAT kickoff session, the scope of this TS01 release is limited to the insurance NB sales detail tabs from a reporting perspective. Other areas remain untouched. Therefore, I kindly request you to focus the UAT coverage only on those specific areas.
+Additionally, I am uncertain about their specific role in this debug session. Akshay mentioned that the comparison issue is now occurring less frequently. Are they expected to write Selenium code for this? If so, they have already mentioned that they lack expertise in that area. As I mentioned before, our team is capable of maintaining the code and accommodating small changes. However, if there are any changes to the codebase, that would require involvement from a cross-functional team.
 
-To provide clarity on the changes made as part of the TS01 release, I have listed them below:
+Moreover, the team is currently spending a significant amount of time on maintenance activities due to the frequent changes in the report URLs and other visual aspects. We are also facing the challenge of integrating new reports, which diverts the team's focus from tool maintenance. As a result, we have decided to shift our regression scope to Mart tables, where all the reports are connected under DevOps automation. We are currently discussing and finalizing this approach.
 
-Additional Filter for Differentiation: We have added an additional filter to differentiate AA-TIARA and AA-CDL sales in the new business tabs. You will find a filter named 'Source system' that performs this task specifically for Motor NB sales. For the date range starting from January 1, 2023, you will notice strata core data flowing in, while TIARA data will be visible before that. Please note that the test users we have provided are meant to check if these filters are functioning as expected, but they may not replicate the exact behavior of the production scenario.
-
-Inscope KPIs for TS01 Release: I have provided a screenshot highlighting the list of KPIs in green color that are within the scope of the TS01 release and where CDL data flows in. However, please be aware that these CDL test data is sourced from the CDL test environment and cannot be directly compared with production data, as the CDL data is not live yet. Please note that CDL Quotes and Calls related KPIs are out of scope for TS01, so those KPIs will not render any data.
-
-Comparing Data for Other Tabs: If you still wish to compare data for other tabs specific to TIARA, you can do so for the data range prior to January 1, 2023. However, please be aware that no changes have been made to those tabs in the TS01 release.
-
-Please feel free to reach out if you require any additional information. I am happy to assist you further.
+Please let me know your thoughts on these matters.
