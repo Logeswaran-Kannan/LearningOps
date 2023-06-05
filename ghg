@@ -1,7 +1,14 @@
-I wanted to inform you that both Keasava and Akshay are currently on leave today. They are the ones who have the necessary licenses and have configured all the setups. I was wondering if there is any way we can proceed with the debug session even without their support?
+I have compiled a list of KPIs in B2A that are derived from the fact motor sales table in the B2A report dataset. It's important to note that this list only includes attributes that are within the scope of the respective releases. If you require the full list of attributes, I suggest reaching out to Vinod or Guy as they are the appropriate individuals to provide that information.
 
-Additionally, I am uncertain about their specific role in this debug session. Akshay mentioned that the comparison issue is now occurring less frequently. Are they expected to write Selenium code for this? If so, they have already mentioned that they lack expertise in that area. As I mentioned before, our team is capable of maintaining the code and accommodating small changes. However, if there are any changes to the codebase, that would require involvement from a cross-functional team.
+During my discussion with Sujatha, it became clear that Vinod will be performing a similar activity for TS02. According to Sujatha's conversation with Waiman, attribute prioritization based on release scope KPIs cannot be performed because the tables used for release-specific purposes may also be used for other reports. However, if you are gathering this list for local prioritization purposes, it is acceptable. From a build and testing perspective, there is no prioritization of attributes based on release scope, at least based on my understanding.
 
-Moreover, the team is currently spending a significant amount of time on maintenance activities due to the frequent changes in the report URLs and other visual aspects. We are also facing the challenge of integrating new reports, which diverts the team's focus from tool maintenance. As a result, we have decided to shift our regression scope to Mart tables, where all the reports are connected under DevOps automation. We are currently discussing and finalizing this approach.
+Let me know if you have any further questions or if there's anything else I can assist you with.
 
-Please let me know your thoughts on these matters.
+Best regards,
+[Your Name]
+
+
+
+
+
+
