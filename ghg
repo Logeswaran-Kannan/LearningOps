@@ -1,12 +1,3 @@
-Following our discussion during the morning defect triage, I'm summarizing the null issue under the following categories:
-
-Table A and B: Both tables are not receiving any data from the source CDL itself. Vinod is currently investigating this matter with the source CDL team, and we are tracking it under defect ID 0001.
-
-Out of the 14 tables, 13 tables have null values populating one or more of their key grain columns. This creates difficulties during testing as it leads to duplicate entries. Approximately 14% of the columns have either 100% null values or only zeros, as updated by Jeelani in the attached sheet.
-
-Let's continue to monitor these issues closely and work towards resolving them. If you have any additional insights or suggestions, please share them with the team.
---------------------------------------------------
-
 Hello team,
 
 Following our discussion during the morning defect triage, I am summarizing the null issue into the following categories:
