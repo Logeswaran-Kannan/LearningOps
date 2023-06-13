@@ -1,9 +1,7 @@
-Hey team,
+Following our discussion during the morning defect triage, I'm summarizing the null issue under the following categories:
 
-Hope you're all doing well! As we have successfully released our TS01 into the live environment, it's time to shift our focus towards TS02. Based on our discussions on the scope and timeline of TS02 over the past week, I kindly request everyone, including the business and architecture teams, to review the updated TS02 Test Plan.
+Table A and B: Both tables are not receiving any data from the source CDL itself. Vinod is currently investigating this matter with the source CDL team, and we are tracking it under defect ID 0001.
 
-Could you please provide your valuable comments on the SharePoint document by 16th June? This will help us ensure alignment with our new hub structure and proceed smoothly with the testing phase.
+Out of the 14 tables, 13 tables have null values populating one or more of their key grain columns. This creates difficulties during testing as it leads to duplicate entries. Approximately 14% of the columns have either 100% null values or only zeros, as updated by Jeelani in the attached sheet.
 
-Thanks in advance for your cooperation!
-
-Cheers,
+Let's continue to monitor these issues closely and work towards resolving them. If you have any additional insights or suggestions, please share them with the team.
