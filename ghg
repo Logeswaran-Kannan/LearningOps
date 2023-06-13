@@ -1,11 +1,7 @@
-Hello team,
+Subject: Meeting Invite: 2023 Automation Goal Discussion
 
-Following our discussion during the morning defect triage, I am summarizing the null issue into the following categories:
+Hi team,
 
-Table A and B: Both tables are not receiving any data from the source CDL itself. Vinod is currently investigating this with the source CDL team, and we are tracking it under defect ID DCD-43558.
+Hope you're all doing well! As we have crossed the halfway mark of the year, it's an opportune time to gather and discuss our automation goals for 2023. We need to brainstorm ideas, explore opportunities, and convert them into tangible savings through automation.
 
-Key Grain Columns: Out of the 14 tables, 13 tables have null values in one or more of their key grain columns. This creates difficulties in testing and validating the tables as it leads to duplicates. Approximately 14% of the columns have either 100% null or only zero values, as updated by Jeelani in the attached sheet. We are tracking this issue under DCD-43612.
-
-Please review the details mentioned above, and let me know if any additional information or action is required from your end.
-
-Thank you for your attention to this matter.
+I invite you all to a meeting where we can share our thoughts, suggestions, and collectively work towards identifying workable solutions. Your input and expertise are crucial in achieving our automation objectives.
