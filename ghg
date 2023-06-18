@@ -1,11 +1,25 @@
-Development and Adaptation of New Testing Framework: The successful development and adaptation of a new testing framework in our DevOps environment was a significant achievement. Despite facing challenges related to the platform, we were able to establish an effective testing framework that streamlined our processes and improved efficiency.
+During the testing phase, we encountered several concerns and challenges that impacted our testing efforts. Here is a retrospective summary of the key issues:
 
-Increased Defect Identification: Our team performed exceptionally well in identifying a higher number of defects. This demonstrates our thoroughness and attention to detail during the testing phase, resulting in a higher quality product. It is a testament to our dedication and commitment to delivering a robust solution.
+High Level of Design Change and Unstable Documentation:
 
-Successful Release to Live Environment: Despite encountering multiple design-based challenges, we managed to achieve a successful release to the live environment. This highlights our resilience and ability to overcome obstacles, ensuring that our efforts resulted in a smooth transition from development to production.
+The project experienced frequent design changes, resulting in an unstable set of related documents.
+This led to a significant effort in adapting and updating our test designs to align with the evolving requirements.
+Platform Issues in Test Environment:
 
-Effective Defect Triage and Arrest Process: Our defect triage and arrest process proved to be efficient and effective. By promptly analyzing and prioritizing identified defects, we were able to take appropriate actions to address them in a timely manner. This streamlined process contributed to a smoother overall testing and development lifecycle.
+We faced challenges related to access and resource quota in the Databricks test environment.
+Limited access rights and insufficient resources hindered our testing activities and caused delays.
+Timeline Delays:
 
-Identification of Business Scenario-Based Issues: Our testing efforts also revealed valuable insights into business scenario-based issues. This indicates our ability to align our testing approach with real-world scenarios and identify potential risks or gaps in the system's functionality. By addressing these issues, we contribute to the overall improvement of the product.
+The project timeline was revised multiple times due to delays in the build, design, and platform setup.
+These delays significantly compressed our testing timeline, causing pressure to complete testing within a limited timeframe.
+Incomplete Business Requirement Document and Impact Analysis:
 
-Overall, as a test team, we have demonstrated resilience, adaptability, and a commitment to delivering high-quality results. These achievements should be acknowledged and celebrated as they reflect our dedication to continuous improvement and our ability to overcome challenges. Let's build upon these successes and continue to strive for excellence in our future testing endeavors.
+The business requirement document provided was incomplete and lacked clarity.
+The impact analysis performed by the data analyst and designer was inadequate, resulting in unclear reporting requirements and potential compatibility issues between the legacy and current systems.
+Inadequate Test Data Readiness Analysis:
+
+The analysis of test data readiness was not fully conducted, leading to unexpected source data issues during testing.
+Insufficient preparation and validation of test data impacted the reliability and accuracy of our testing results.
+To mitigate these challenges in future testing phases, it is recommended to address the stability of design and related documentation early in the project, establish clear communication channels with the platform team to resolve environment issues promptly, and prioritize thorough business requirement documentation and impact analysis. Additionally, a comprehensive test data readiness analysis should be performed to ensure sufficient and reliable test data availability.
+
+By addressing these areas, we can enhance the efficiency and effectiveness of our testing processes and minimize disruptions caused by unforeseen challenges.
