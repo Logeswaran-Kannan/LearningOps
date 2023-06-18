@@ -1,25 +1,23 @@
-During the testing phase, we encountered several concerns and challenges that impacted our testing efforts. Here is a retrospective summary of the key issues:
+Question 1: Can we request the design (LLD) to be kept static before starting the testing phase?
 
-High Level of Design Change and Unstable Documentation:
+Answer: Since this is an Agile-based project, it is expected that the LLD (Low-Level Design) may be updated during the build and testing phases. However, if there are frequent changes to the design and requirements during the testing phase, it should be escalated to the head of design and architect for further consideration and resolution.
 
-The project experienced frequent design changes, resulting in an unstable set of related documents.
-This led to a significant effort in adapting and updating our test designs to align with the evolving requirements.
-Platform Issues in Test Environment:
+Question 2: We have challenges in coordination within the team, such as seat booking, security issues, network issues, and meeting schedules.
 
-We faced challenges related to access and resource quota in the Databricks test environment.
-Limited access rights and insufficient resources hindered our testing activities and caused delays.
-Timeline Delays:
+Answer: Understandably, there may be challenges as the team starts working from the office. To address these issues:
 
-The project timeline was revised multiple times due to delays in the build, design, and platform setup.
-These delays significantly compressed our testing timeline, causing pressure to complete testing within a limited timeframe.
-Incomplete Business Requirement Document and Impact Analysis:
+Seat booking, security, and network issues can be reported to Amber, who can assist in rectifying them.
+For meeting schedules, it is important to attend defect triage and project standup meetings on alternate days, as they are mandatory for offshore team members until defects contain all necessary details to be covered from onshore.
+It has been suggested to replace the morning connect of 15 minutes with an end-of-day (EOD) status call to track status and discuss any blockers. The timing for the EOD status call can be adjusted for the current release.
+The duration of the EOD status call should be kept concise and focused on collecting status rather than turning into an analysis call. It would be more effective to perform analysis during offshore hours.
+Question 3: Is there a shifting option available?
 
-The business requirement document provided was incomplete and lacked clarity.
-The impact analysis performed by the data analyst and designer was inadequate, resulting in unclear reporting requirements and potential compatibility issues between the legacy and current systems.
-Inadequate Test Data Readiness Analysis:
+Answer: No, there is no official shifting option available. Although some team members may have connected during onshore hours in the past based on flexible hours, it is advisable to discuss the possibility with Amber or Sujatha. However, it is expected that team members follow the organization's policy and be available during the committed time.
 
-The analysis of test data readiness was not fully conducted, leading to unexpected source data issues during testing.
-Insufficient preparation and validation of test data impacted the reliability and accuracy of our testing results.
-To mitigate these challenges in future testing phases, it is recommended to address the stability of design and related documentation early in the project, establish clear communication channels with the platform team to resolve environment issues promptly, and prioritize thorough business requirement documentation and impact analysis. Additionally, a comprehensive test data readiness analysis should be performed to ensure sufficient and reliable test data availability.
+Question 4: Can we get a treat from onshore, as other projects have?
 
-By addressing these areas, we can enhance the efficiency and effectiveness of our testing processes and minimize disruptions caused by unforeseen challenges.
+Answer: The test manager will discuss this with others and provide an update on the possibility of receiving a treat from onshore. It would be beneficial to foster a positive team dynamic and acknowledge the efforts of the offshore team members.
+
+
+
+
