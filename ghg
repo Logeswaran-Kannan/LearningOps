@@ -1,32 +1,15 @@
-Question 1: Can we request the design (LLD) to be kept static before starting the testing phase?
+Dear Team,
 
-Answer: Since this is an Agile-based project, it is expected that the LLD (Low-Level Design) may be updated during the build and testing phases. However, if there are frequent changes to the design and requirements during the testing phase, it should be escalated to the head of design and architect for further consideration and resolution.
+I hope you all had a productive day yesterday. Here's an update on today's tasks:
 
-Question 2: We have challenges in coordination within the team, such as seat booking, security issues, network issues, and meeting schedules.
+Produce Simple TSR for Event Hub Replacement: Please use our AA template to create a Simple Technical Specification Review (TSR) document for the Event Hub Replacement. Additionally, follow up on the issue related to history not being fetched properly in SI Bronze. Please coordinate with the development team and also check CORE for any relevant updates.
 
-Answer: Understandably, there may be challenges as the team starts working from the office. To address these issues:
+Update Defects Post Revalidation: As discussed, please update the defects identified during revalidation. Ensure that all necessary information is included and accurately documented.
 
-Seat booking, security, and network issues can be reported to Amber, who can assist in rectifying them.
-For meeting schedules, it is important to attend defect triage and project standup meetings on alternate days, as they are mandatory for offshore team members until defects contain all necessary details to be covered from onshore.
-It has been suggested to replace the morning connect of 15 minutes with an end-of-day (EOD) status call to track status and discuss any blockers. The timing for the EOD status call can be adjusted for the current release.
-The duration of the EOD status call should be kept concise and focused on collecting status rather than turning into an analysis call. It would be more effective to perform analysis during offshore hours.
-Question 3: Is there a shifting option available?
+Verify and Enable Scheduling: Please verify and enable scheduling as per the requirements. Additionally, ensure that we receive data for all the columns. Perform data profiling to ensure the accuracy and completeness of the received data.
 
-Answer: No, there is no official shifting option available. Although some team members may have connected during onshore hours in the past based on flexible hours, it is advisable to discuss the possibility with Amber or Sujatha. However, it is expected that team members follow the organization's policy and be available during the committed time.
+Start Reference Table Validation: Begin the validation process for reference tables. Pay attention to data integrity, consistency, and accuracy.
 
-Question 4: Can we get a treat from onshore, as other projects have?
+Work on Test Design for Gold Layer: Start working on the test design for the Gold Layer. Ensure that the design covers all the necessary test scenarios and aligns with the project requirements.
 
-Answer: The test manager will discuss this with others and provide an update on the possibility of receiving a treat from onshore. It would be beneficial to foster a positive team dynamic and acknowledge the efforts of the offshore team members.
-
-
-Answer: I will discuss this with others and provide an update on whether it is feasible to implement such a practice.
----------------------------------------------------------------------------------------------------------------------
-
-
-Retrospective Discussion - Next Action Items:
-
-Documentation: The team is requested to provide the Test Case Design Document for the current silver layer, along with SQL queries, for Sujatha's review. This document will help ensure the quality and accuracy of the test cases. Please prioritize completing this task and submit it to Sujatha for her feedback and approval.
-
-Work on Improvement Areas: It is crucial for the team to address the identified improvement areas discussed during the retrospective. Each team member should take ownership of their respective improvement areas and actively work towards implementing the necessary changes. Regular communication and collaboration within the team will be essential to drive these improvements effectively.
-
-Please note that these action items are important for enhancing the overall testing process and ensuring the success of the project. It is expected that the team diligently works on these tasks and seeks any support or clarification required to accomplish them.
+Plan Knowledge Transfer (KT) for Suttapa: Please plan for a Knowledge Transfer session for Suttapa. Coordinate with her to schedule the session at a mutually convenient time.
