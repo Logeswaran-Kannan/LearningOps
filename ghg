@@ -1,15 +1,39 @@
-Dear Team,
+Test Summary Report: Replace Old Event Hub with New Event Hub
 
-I hope you all had a productive day yesterday. Here's an update on today's tasks:
+Introduction:
+This test summary report outlines the testing performed to resolve the current production environment issue of creating a performance bottleneck in ingesting data (DCD-43436) by replacing the old Event Hub with a new Event Hub with partition enabled in the test environment. The objective was to validate the functionality and performance of the new Event Hub in receiving streaming data from the source system. The testing included deleting the old Event Hub and cleaning the existing checkpoints in the Databricks workflow before enabling them again.
 
-Produce Simple TSR for Event Hub Replacement: Please use our AA template to create a Simple Technical Specification Review (TSR) document for the Event Hub Replacement. Additionally, follow up on the issue related to history not being fetched properly in SI Bronze. Please coordinate with the development team and also check CORE for any relevant updates.
+Test Details:
 
-Update Defects Post Revalidation: As discussed, please update the defects identified during revalidation. Ensure that all necessary information is included and accurately documented.
+Issue: Performance bottleneck in data ingestion (DCD-43436).
+Testing Objective: Validate the replacement of the old Event Hub with a new Event Hub for improved data ingestion performance.
+Test Environment: Test environment with partition enabled.
+Testing Methodology: Functional testing, data consistency checks, and performance testing.
+Test Results:
 
-Verify and Enable Scheduling: Please verify and enable scheduling as per the requirements. Additionally, ensure that we receive data for all the columns. Perform data profiling to ensure the accuracy and completeness of the received data.
+Message Received Count Verification:
 
-Start Reference Table Validation: Begin the validation process for reference tables. Pay attention to data integrity, consistency, and accuracy.
+Verified the message received count between the Azure portal and the workflow read for both CORE and SI.
+The count matched, indicating successful data reception from the new Event Hub.
+Differentiating Old and New Event Hub:
 
-Work on Test Design for Gold Layer: Start working on the test design for the Gold Layer. Ensure that the design covers all the necessary test scenarios and aligns with the project requirements.
+During validation, it was observed that it was difficult to differentiate between the state of the old and new Event Hubs as they had the same namespace.
+Additional steps or naming conventions may be required to distinguish between the old and new Event Hubs effectively.
+Checkpoint Deletion and Data Read:
 
-Plan Knowledge Transfer (KT) for Suttapa: Please plan for a Knowledge Transfer session for Suttapa. Coordinate with her to schedule the session at a mutually convenient time.
+In the test environment, checkpoints were deleted from the wrong path, resulting in a failure to read all the data coming into the new Event Hub initially.
+However, subsequent verification through other workflows successfully retrieved all the data.
+Recommendations:
+
+Clear differentiation: To avoid confusion, ensure there is a clear differentiation between the old and new Event Hubs, possibly by incorporating additional steps or naming conventions.
+
+Checkpoint Management: Verify and rectify the issue related to checkpoint deletion from the wrong path to ensure uninterrupted data reading from the new Event Hub.
+
+Source System Assumption: It is assumed that the source system will not send already processed data after the change to the new Event Hub. This assumption should be validated and communicated to the source system team.
+
+Risk Assessment: As this is a platform-oriented change, the risk is perceived to be low. However, ongoing monitoring and validation of the data ingestion process are recommended to ensure smooth operations.
+
+Conclusion:
+The testing performed to replace the old Event Hub with a new Event Hub in the test environment for resolving the performance bottleneck issue showed positive results. The message received count matched, indicating successful data ingestion. Recommendations have been provided to address the issues encountered during testing. Ongoing monitoring and validation of the data ingestion process are recommended to ensure continued performance improvements.
+
+Note: This test summary report is based on the provided information and assumptions. It is important to conduct further testing and validation in the production environment before implementing the changes.
