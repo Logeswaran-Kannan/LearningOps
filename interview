@@ -1,13 +1,63 @@
-Subject: Return of Old Laptop
+import os
+from datetime import datetime, timedelta
+from IPython.display import display, HTML
+from pyspark.sql.functions import col
 
-Dear IT Department,
+# Define the DBFS root path
+dbfs_root_path = "/dbfs/your_root_path/"
 
-I hope this email finds you well. I am writing to inform you that I have returned my old laptop to the IT department on the evening of March 14th, 2023.
+# Get a list of all DBFS paths
+dbfs_paths = dbutils.fs.ls(dbfs_root_path)
 
-As per our discussion, I am sending this email for record purposes to confirm the return of the laptop. Please let me know if any further action is required on my part.
+# Define the function to get metadata details for a file
+def get_file_metadata(file_path):
+    file_info = dbutils.fs.head(file_path, maxBytes=0)
+    file_size = file_info.size
+    creation_date = datetime.fromtimestamp(file_info.modificationTime / 1000).strftime("%Y-%m-%d")
+    last_update_date = datetime.fromtimestamp(file_info.modificationTime / 1000).strftime("%Y-%m-%d")
+    delete_ready = "Yes" if datetime.now() - timedelta(days=365 * 2) > datetime.fromtimestamp(file_info.modificationTime / 1000) else "No"
+    
+    return {
+        "name": os.path.basename(file_path),
+        "size": file_size,
+        "path": file_path,
+        "creation_date": creation_date,
+        "last_update_date": last_update_date,
+        "delete_ready": delete_ready
+    }
 
-Thank you for your assistance in this matter, and please let me know if you require any further information or clarification.
+# Create a dictionary to store file metadata details
+file_metadata = {}
 
-Best regards,
+# Populate the file metadata dictionary
+for path in dbfs_paths:
+    if path.isFile():
+        file_path = path.path
+        file_metadata[file_path] = get_file_metadata(file_path)
 
-[Your Name]
+# Define the function to handle the dropdown selection event
+def on_dropdown_change(change):
+    file_path = change["new"]
+    metadata = file_metadata[file_path]
+    
+    # Display metadata details
+    display(HTML(f"<h3>Metadata Details:</h3><br>"
+                 f"<b>Name:</b> {metadata['name']}<br>"
+                 f"<b>Size:</b> {metadata['size']} bytes<br>"
+                 f"<b>Path:</b> {metadata['path']}<br>"
+                 f"<b>Creation Date:</b> {metadata['creation_date']}<br>"
+                 f"<b>Last Update Date:</b> {metadata['last_update_date']}<br>"
+                 f"<b>Delete Ready:</b> {metadata['delete_ready']}"))
+
+# Create the dropdown widget
+dropdown_widget = widgets.Dropdown(
+    options=file_metadata.keys(),
+    description='DBFS Path:',
+    layout=widgets.Layout(width='500px')
+)
+
+# Register the event handler for dropdown selection
+dropdown_widget.observe(on_dropdown_change, names='value')
+
+# Display the dropdown widget
+display(dropdown_widget)
