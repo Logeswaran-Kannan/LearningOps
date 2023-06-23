@@ -1,47 +1,16 @@
-import datetime
-from pyspark.dbutils import DBUtils
-import ipywidgets as widgets
-from IPython.display import display
+As we are approaching the 30th July release for TS02, it is essential to have a clear understanding of the original versus revised scope for the project. Additionally, we need the following documents to prioritize our testing activities and ensure alignment across the team:
 
-# Function to retrieve metadata details of files
-def get_file_metadata(file_path):
-    dbutils = DBUtils()
-    file_info = dbutils.fs.head(file_path, 1)
-    file_size = file_info[0].size
-    file_creation_date = datetime.datetime.fromtimestamp(file_info[0].modificationTime / 1000.0)
-    current_date = datetime.datetime.now()
-    last_update_date = datetime.datetime.fromtimestamp(file_info[0].modificationTime / 1000.0)
-    delete_ready = "Yes" if (current_date - file_creation_date).days >= 365 * 2 else "No"
-    return {
-        'Name': file_info[0].name,
-        'Size': file_size,
-        'Path': file_path,
-        'Creation Date': file_creation_date,
-        'Last Update Date': last_update_date,
-        'Delete Ready': delete_ready
-    }
+Original versus Revised Scope: We kindly request the team to provide a document that outlines the changes in scope from the initial plan. This will help us understand any modifications or adjustments made to the project objectives.
 
-# Function to handle dropdown widget change event
-def dropdown_changed(change):
-    file_path = change['new']
-    metadata = get_file_metadata(file_path)
-    print("File Metadata:")
-    for key, value in metadata.items():
-        print(f"{key}: {value}")
-    print()
+End-to-End High-Level Design (HLD): It would be greatly beneficial to receive an updated version of the E2E HLD. This will allow us to review the design changes and identify any potential impacts on our testing approach.
 
-# Retrieve DBFS file paths
-dbfs_paths = dbutils.fs.ls("dbfs:/")  # Replace with the desired DBFS path
+Requirements Traceability Matrix (RTM): We require an updated RTM that reflects the revised scope. This will help us track the coverage of requirements and ensure that our testing efforts align with the intended functionality.
 
-# Create dropdown widget
-dropdown = widgets.Dropdown(
-    options=[(file_info.path, file_info.path) for file_info in dbfs_paths],
-    description='DBFS Path:',
-    layout={'width': '500px'}
-)
+During recent meetings, there were discussions regarding the inclusion of the GOLD layer and the possibility of moving certain tables to TS03. It is crucial to understand the impact of these changes from a reporting perspective. We kindly request an impact analysis to be performed, specifically focusing on the B2A report components. This analysis will aid us in prioritizing our testing efforts accordingly.
 
-# Handle dropdown widget change event
-dropdown.observe(dropdown_changed, names='value')
+To ensure smooth progress during the UAT phase and avoid last-minute confusion, we kindly ask that business users and report developers are informed and aligned with this revised understanding. Clear communication and alignment will be instrumental in achieving a successful release.
 
-# Display dropdown widget
-display(dropdown)
+Thank you for your prompt attention to these requests. Please let us know if you require any additional information or if there are any further updates regarding the project.
+
+Best regards,
+[Your Name]
