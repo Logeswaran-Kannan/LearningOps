@@ -1,29 +1,5 @@
-Subject: Request for Updated Scope, E2E HLD, and RTM for TS02 Release
-
-Dear Project Team,
-
-I hope this email finds you well. As we are halfway through our journey towards the 31st July release for TS02, I would like to request the following deliverables from your respective teams to ensure smooth progress and effective prioritization of test activities:
-
-Original vs. Revised Scope for TS02:
-During our recent meetings, I have come to understand that there have been discussions regarding the inclusion of the GOLD layer in the scope of TS02. It appears that some tables originally planned for TS02 will now be moved to TS03. As a result, the scope of this component has been reduced to being B2A report specific. To assess the impact from a reporting perspective, I kindly request an impact analysis to be conducted. This will help us better understand the changes and adjust our testing approach accordingly.
-
-End-to-End High-Level Design (HLD):
-In order to ensure proper alignment and understanding of the upcoming release, I kindly request the updated End-to-End High-Level Design (HLD). This document will provide us with a comprehensive overview of the system architecture, workflow, and integration points. Having access to the updated HLD will greatly assist our testing efforts and help us identify any potential gaps or risks early on.
-
-Requirements Traceability Matrix (RTM):
-I understand from Ermal that the RTM is scheduled to be available by mid-next week. I would like to emphasize the importance of this document as it serves as a critical reference point for our testing activities. It provides a clear mapping between the requirements and the corresponding test cases. Therefore, I kindly request that the RTM be delivered as planned, without any delays. This will allow us to efficiently prioritize and execute our test scenarios.
-
-It would be greatly appreciated if you could ensure that all relevant team members, including business users and report developers, are informed and aligned with these updates. This will help us avoid any last-minute confusion during the User Acceptance Testing (UAT) phase.
-
-Thank you in advance for your cooperation and prompt attention to these requests. Should you have any questions or require further clarification, please do not hesitate to reach out to me. I look forward to your positive response.
-
-Best regards,
-
-[Your Name]
-[Your Role/Position]
-
-
-
-
-
-
+Minimize frequent design changes during the build phase to ensure stability and reduce rework, enabling smoother progress and timely completion of the project.
+Emphasize the importance of clearly defining requirements before the build phase begins to prevent misunderstandings, enhance efficiency, and align stakeholders' expectations.
+Improve the impact analysis process by thoroughly evaluating business reports to avoid confusion during User Acceptance Testing (UAT) and ensure the system meets the desired objectives.
+Address timeline shrinkage for testing and UAT by allocating adequate resources, setting realistic schedules, and managing priorities effectively to maintain quality while meeting project deadlines.
+Implement a development practice that includes thorough unit testing before handing over the code to the Quality Assurance (QA) team, ensuring higher code quality, reducing bugs, and expediting the testing process.
