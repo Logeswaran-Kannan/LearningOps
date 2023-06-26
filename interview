@@ -1,5 +1,32 @@
-Minimize frequent design changes during the build phase to ensure stability and reduce rework, enabling smoother progress and timely completion of the project.
-Emphasize the importance of clearly defining requirements before the build phase begins to prevent misunderstandings, enhance efficiency, and align stakeholders' expectations.
-Improve the impact analysis process by thoroughly evaluating business reports to avoid confusion during User Acceptance Testing (UAT) and ensure the system meets the desired objectives.
-Address timeline shrinkage for testing and UAT by allocating adequate resources, setting realistic schedules, and managing priorities effectively to maintain quality while meeting project deadlines.
-Implement a development practice that includes thorough unit testing before handing over the code to the Quality Assurance (QA) team, ensuring higher code quality, reducing bugs, and expediting the testing process.
+import os
+import time
+
+# Function to get file statistics recursively
+def get_file_stats(path):
+    file_stats = []
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            stat = os.stat(file_path)
+            creation_date = time.strftime("%Y-%m-%d", time.localtime(stat.st_ctime))
+            last_update_date = time.strftime("%Y-%m-%d", time.localtime(stat.st_mtime))
+            is_delete_ready = "Yes" if (time.time() - stat.st_ctime) > (2 * 365 * 24 * 60 * 60) else "No"
+            file_stats.append({
+                "Name": file,
+                "Size": stat.st_size,
+                "Path": file_path,
+                "Creation Date": creation_date,
+                "Last Update Date": last_update_date,
+                "Delete Ready": is_delete_ready
+            })
+    return file_stats
+
+# Specify the DBFS path
+dbfs_path = "/dbfs/path/to/folder"
+
+# Retrieve file statistics
+stats = get_file_stats(dbfs_path)
+
+# Display the statistics
+for file_stat in stats:
+    print(file_stat)
