@@ -1,32 +1,39 @@
-Introduction:
-As a member of the testing team, it is crucial to ensure that the system behaves as expected and meets the requirements. System testing is an important process of validating the system behavior and functionality against the expected requirements. Azure DevOps is a cloud-based service that provides tools for continuous integration and continuous deployment (CI/CD) of software applications. Databricks is a cloud-based analytics platform that provides a collaborative environment for data science and machine learning. PySpark is a Python library that provides an interface for Apache Spark, an open-source big data processing engine. In this report, we will discuss the system testing framework in Azure DevOps integrated with Databricks using PySpark assert function, from the testing team perspective. Additionally, we will explore how post-execution XML result can be sent back to Azure DevOps test run captured.
+from pyspark.sql import SparkSession
+from datetime import datetime, timedelta
 
-System Testing Framework in Azure DevOps integrated with Databricks using PySpark assert function:
-As a member of the testing team, the system testing process in Azure DevOps integrated with Databricks using PySpark assert function can be performed in the following steps:
+# Create SparkSession
+spark = SparkSession.builder \
+    .appName("DBFS File Stats") \
+    .getOrCreate()
 
-Step 1: Define Test Cases:
-Review the requirements and define the test cases based on the expected outcomes. The test cases can be defined using PySpark functions such as assert, assertEquals, and assertRaises.
+# DBFS path to scan
+dbfs_path = "/path/to/scan"
 
-Step 2: Review the Test Script:
-Review the PySpark script that includes the test cases. Ensure that the script covers all the requirements and expected outcomes.
+# Get current date
+current_date = datetime.now()
 
-Step 3: Execute the Test Script:
-Execute the PySpark script in the Databricks cluster using the release pipeline in Azure DevOps. The PySpark command is used to run the script and capture the test results in an XML file.
+# Calculate date 2 years ago
+two_years_ago = current_date - timedelta(days=365 * 2)
 
-Step 4: Review the Test Results:
-Review the XML file containing the test results. Ensure that all the test cases have passed and there are no errors or failures.
+# Recursive function to retrieve file stats
+def get_file_stats(path):
+    stats = dbutils.fs.ls(path)
+    file_stats = []
+    for stat in stats:
+        if stat.isDir():
+            file_stats.extend(get_file_stats(stat.path))
+        else:
+            file_stats.append((stat.path, stat.name, stat.size, stat.creationTime, stat.modificationTime, stat.owner))
+    return file_stats
 
-Step 5: Troubleshoot any Issues:
-If any test cases have failed or there are errors or failures in the test results, troubleshoot the issues. Debug the PySpark script and identify the root cause of the issue.
+# Retrieve file stats recursively
+file_stats = get_file_stats(dbfs_path)
 
-Step 6: Re-Execute the Test Script:
-Make the necessary changes to the PySpark script and re-execute the test script in the Databricks cluster.
+# Convert file stats to DataFrame
+file_stats_df = spark.createDataFrame(file_stats, ["path", "name", "size", "creation_time", "last_update_time", "created_by"])
 
-Step 7: Capture Test Results:
-Capture the test results in an XML file using PySpark functions such as xmlrunner. Ensure that the XML file contains the test results in a structured format.
+# Add delete ready column
+file_stats_df = file_stats_df.withColumn("delete_ready", file_stats_df.creation_time < two_years_ago)
 
-Step 8: Send Test Results back to Azure DevOps:
-Send the XML file containing the test results back to Azure DevOps using the Publish Test Results task. The Publish Test Results task is a built-in task in Azure DevOps that can publish the test results from various testing frameworks including PySpark.
-
-Conclusion:
-In conclusion, as a member of the testing team, the system testing framework in Azure DevOps integrated with Databricks using PySpark assert function is a process of validating the system behavior and functionality against the expected requirements. The testing process includes defining test cases, reviewing and executing the test script, capturing and reviewing the test results, troubleshooting any issues, and re-executing the test script. It is important to ensure that the test results are captured in an XML file in a structured format and sent back to Azure DevOps using the Publish Test Results task. This process ensures that the system behaves as expected and meets the requirements, and enables the testing team to identify and fix any issues before the system is released to production.
+# Create temporary table
+file_stats_df.createOrReplaceTempView("file_stats_table")
