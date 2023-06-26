@@ -1,39 +1,45 @@
+# Import necessary libraries
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit, when
 from datetime import datetime, timedelta
 
-# Create SparkSession
-spark = SparkSession.builder \
-    .appName("DBFS File Stats") \
-    .getOrCreate()
+# Set the DBFS path
+dbfs_path = "/dbfs/path/to/folder"
 
-# DBFS path to scan
-dbfs_path = "/path/to/scan"
+# Create a Spark session
+spark = SparkSession.builder.getOrCreate()
 
-# Get current date
-current_date = datetime.now()
-
-# Calculate date 2 years ago
-two_years_ago = current_date - timedelta(days=365 * 2)
-
-# Recursive function to retrieve file stats
+# Define a recursive function to get all file stats from DBFS path and child paths
 def get_file_stats(path):
-    stats = dbutils.fs.ls(path)
     file_stats = []
-    for stat in stats:
-        if stat.isDir():
-            file_stats.extend(get_file_stats(stat.path))
+    files = dbutils.fs.ls(path)
+    for file in files:
+        if file.isDir():
+            file_stats += get_file_stats(file.path)
         else:
-            file_stats.append((stat.path, stat.name, stat.size, stat.creationTime, stat.modificationTime, stat.owner))
+            file_info = {
+                "name": file.name,
+                "size": file.size,
+                "path": file.path,
+                "creation_date": datetime.fromtimestamp(file.creationTime / 1000),
+                "last_update_date": datetime.fromtimestamp(file.modificationTime / 1000),
+                "created_by": file.owner,
+                "delete_ready": "Yes" if datetime.now() - timedelta(days=365 * 2) >= datetime.fromtimestamp(file.creationTime / 1000) else "No"
+            }
+            file_stats.append(file_info)
     return file_stats
 
-# Retrieve file stats recursively
+# Get file stats recursively
 file_stats = get_file_stats(dbfs_path)
 
-# Convert file stats to DataFrame
-file_stats_df = spark.createDataFrame(file_stats, ["path", "name", "size", "creation_time", "last_update_time", "created_by"])
+# Create a DataFrame from the file stats
+df = spark.createDataFrame(file_stats)
 
-# Add delete ready column
-file_stats_df = file_stats_df.withColumn("delete_ready", file_stats_df.creation_time < two_years_ago)
+# Create a temporary table
+df.createOrReplaceTempView("file_stats_table")
 
-# Create temporary table
-file_stats_df.createOrReplaceTempView("file_stats_table")
+# Display the DataFrame
+df.show()
+
+# Query the temporary table
+spark.sql("SELECT * FROM file_stats_table").show()
