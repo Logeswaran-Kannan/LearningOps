@@ -1,21 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DBFS File Stats</title>
+</head>
+<body>
+    <h1>DBFS File Stats</h1>
+    <form action="/" method="POST">
+        <label for="dbfs_path">Enter DBFS Path:</label>
+        <input type="text" id="dbfs_path" name="dbfs_path" required>
+        <input
+------------
+
+from flask import Flask, render_template, request
 import os
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 
-# Set the DBFS path you want to analyze
-dbfs_path = "/mnt/dbfs_path_to_analyze"
+app = Flask(__name__)
 
 # Connect to Databricks cluster
 spark = SparkSession.builder \
     .appName("DBFS File Stats") \
     .getOrCreate()
 
-# Get current date
-current_date = datetime.now()
-
-# Function to check if a file's creation date is 2 years from the current date
-def is_delete_ready(creation_date):
-    return (current_date - creation_date).days >= 365 * 2
+# Function to check if a file's last update date is 2 years from the current date
+def is_delete_ready(last_update_date):
+    return (datetime.now() - last_update_date).days >= 365 * 2
 
 # Function to retrieve file stats and create a DataFrame
 def get_file_stats(file_path):
@@ -26,10 +36,10 @@ def get_file_stats(file_path):
         file_creation_date = datetime.fromtimestamp(file_stats.st_ctime)
         file_last_update_date = datetime.fromtimestamp(file_stats.st_mtime)
         file_created_by = file_stats.st_uid
-        delete_ready = is_delete_ready(file_creation_date)
-        
+        delete_ready = is_delete_ready(file_last_update_date)
+
         return (file_name, file_size, file_path, file_creation_date, file_last_update_date, file_created_by, delete_ready)
-    
+
     except Exception as e:
         print(f"Error retrieving stats for file: {file_path}")
         print(str(e))
@@ -38,7 +48,7 @@ def get_file_stats(file_path):
 # Recursive function to traverse the directory structure and retrieve file stats
 def get_files_info(directory):
     file_stats_list = []
-    
+
     for root, dirs, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
@@ -46,24 +56,33 @@ def get_files_info(directory):
                 file_stats = get_file_stats(file_path)
                 if file_stats is not None:
                     file_stats_list.append(file_stats)
-    
+
     return file_stats_list
 
-# Get file stats for the DBFS path and its child paths
-file_stats_list = get_files_info(dbfs_path)
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        dbfs_path = request.form['dbfs_path']
+        file_stats_list = get_files_info(dbfs_path)
 
-# Convert the list to a DataFrame
-file_stats_df = spark.createDataFrame(file_stats_list, ["name", "size", "path", "creation_date", "last_update_date", "created_by", "delete_ready"])
+        # Convert the list to a DataFrame
+        file_stats_df = spark.createDataFrame(file_stats_list, ["name", "size", "path", "creation_date", "last_update_date", "created_by", "delete_ready"])
 
-# Temporary table name
-temp_table_name = "file_stats_temp"
+        # Temporary table name
+        temp_table_name = "file_stats_temp"
 
-# Register DataFrame as a temporary table
-file_stats_df.createOrReplaceTempView(temp_table_name)
+        # Register DataFrame as a temporary table
+        file_stats_df.createOrReplaceTempView(temp_table_name)
 
-# Query to show the file stats and the creator's username
-query = f"SELECT name, size, path, creation_date, last_update_date, delete_ready, username(created_by) as creator_username FROM {temp_table_name}"
+        # Query to select the file stats and the creator's username
+        query = f"SELECT name, size, path, creation_date, last_update_date, delete_ready, username(created_by) as creator_username FROM {temp_table_name}"
 
-# Run the query and display the results
-results = spark.sql(query)
-results.show()
+        # Run the query and retrieve the results
+        results = spark.sql(query).collect()
+
+        return render_template('result.html', results=results)
+    else:
+        return render_template('index.html')
+
+if __name__ == '__main__':
+    app.run()
