@@ -1,54 +1,69 @@
 import os
-import datetime
+from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 
-# Initialize SparkSession
+# Set the DBFS path you want to analyze
+dbfs_path = "/mnt/dbfs_path_to_analyze"
+
+# Connect to Databricks cluster
 spark = SparkSession.builder \
     .appName("DBFS File Stats") \
     .getOrCreate()
 
-# Define the DBFS path
-dbfs_path = "/dbfs/path/to/files"
+# Get current date
+current_date = datetime.now()
 
-# Get the current date
-current_date = datetime.date.today()
+# Function to check if a file's creation date is 2 years from the current date
+def is_delete_ready(creation_date):
+    return (current_date - creation_date).days >= 365 * 2
 
-# Function to retrieve file details recursively
-def get_file_details(file_path):
-    file_name = os.path.basename(file_path)
-    file_size = os.path.getsize(file_path)
-    file_creation_date = datetime.date.fromtimestamp(os.path.getctime(file_path))
-    file_last_update_date = datetime.date.fromtimestamp(os.path.getmtime(file_path))
-    file_created_by = os.stat(file_path).st_uid
-    return file_name, file_size, file_path, file_creation_date, file_last_update_date, file_created_by
+# Function to retrieve file stats and create a DataFrame
+def get_file_stats(file_path):
+    try:
+        file_stats = os.stat(file_path)
+        file_name = os.path.basename(file_path)
+        file_size = file_stats.st_size
+        file_creation_date = datetime.fromtimestamp(file_stats.st_ctime)
+        file_last_update_date = datetime.fromtimestamp(file_stats.st_mtime)
+        file_created_by = file_stats.st_uid
+        delete_ready = is_delete_ready(file_creation_date)
+        
+        return (file_name, file_size, file_path, file_creation_date, file_last_update_date, file_created_by, delete_ready)
+    
+    except Exception as e:
+        print(f"Error retrieving stats for file: {file_path}")
+        print(str(e))
+        return None
 
-# Function to check if file is "delete ready"
-def is_delete_ready(file_creation_date):
-    return file_creation_date <= current_date - datetime.timedelta(days=365 * 2)
+# Recursive function to traverse the directory structure and retrieve file stats
+def get_files_info(directory):
+    file_stats_list = []
+    
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            if os.path.isfile(file_path):
+                file_stats = get_file_stats(file_path)
+                if file_stats is not None:
+                    file_stats_list.append(file_stats)
+    
+    return file_stats_list
 
-# Recursive function to get file details and create table
-def get_files_and_create_table(directory):
-    files = os.listdir(directory)
-    for file in files:
-        file_path = os.path.join(directory, file)
-        if os.path.isdir(file_path):
-            get_files_and_create_table(file_path)
-        else:
-            try:
-                file_name, file_size, file_path, file_creation_date, file_last_update_date, file_created_by = get_file_details(file_path)
-                delete_ready = is_delete_ready(file_creation_date)
-                spark.sql(f"INSERT INTO temp_table VALUES ('{file_name}', {file_size}, '{file_path}', '{file_creation_date}', '{file_last_update_date}', '{file_created_by}', {delete_ready})")
-            except OSError as e:
-                print(f"Error: {e}")
+# Get file stats for the DBFS path and its child paths
+file_stats_list = get_files_info(dbfs_path)
 
-# Create temporary table
-spark.sql("CREATE OR REPLACE TEMPORARY VIEW temp_table (name STRING, size LONG, path STRING, creation_date DATE, last_update_date DATE, created_by STRING, delete_ready BOOLEAN)")
+# Convert the list to a DataFrame
+file_stats_df = spark.createDataFrame(file_stats_list, ["name", "size", "path", "creation_date", "last_update_date", "created_by", "delete_ready"])
 
-# Run the recursive function to get file details and populate the table
-get_files_and_create_table(dbfs_path)
+# Temporary table name
+temp_table_name = "file_stats_temp"
 
-# Show the contents of the temporary table
-spark.sql("SELECT * FROM temp_table").show()
+# Register DataFrame as a temporary table
+file_stats_df.createOrReplaceTempView(temp_table_name)
 
-# Stop the SparkSession
-spark.stop()
+# Query to show the file stats and the creator's username
+query = f"SELECT name, size, path, creation_date, last_update_date, delete_ready, username(created_by) as creator_username FROM {temp_table_name}"
+
+# Run the query and display the results
+results = spark.sql(query)
+results.show()
