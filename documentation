@@ -1,25 +1,8 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>DBFS File Stats</title>
-</head>
-<body>
-    <h1>DBFS File Stats</h1>
-    <form action="/" method="POST">
-        <label for="dbfs_path">Enter DBFS Path:</label>
-        <input type="text" id="dbfs_path" name="dbfs_path" required>
-        <input type="submit" value="Submit">
-    </form>
-</body>
-</html>
-------------
-
-from flask import Flask, render_template, request
 import os
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
-
-app = Flask(__name__)
+import tkinter as tk
+from tkinter import messagebox
 
 # Connect to Databricks cluster
 spark = SparkSession.builder \
@@ -28,9 +11,10 @@ spark = SparkSession.builder \
 
 # Function to check if a file's last update date is 2 years from the current date
 def is_delete_ready(last_update_date):
-    return (datetime.now() - last_update_date).days >= 365 * 2
+    current_date = datetime.now()
+    return (current_date - last_update_date).days >= 365 * 2
 
-# Function to retrieve file stats and create a DataFrame
+# Function to retrieve file stats and return a list
 def get_file_stats(file_path):
     try:
         file_stats = os.stat(file_path)
@@ -40,84 +24,84 @@ def get_file_stats(file_path):
         file_last_update_date = datetime.fromtimestamp(file_stats.st_mtime)
         file_created_by = file_stats.st_uid
         delete_ready = is_delete_ready(file_last_update_date)
-
-        return (file_name, file_size, file_path, file_creation_date, file_last_update_date, file_created_by, delete_ready)
-
+        
+        return [file_name, file_size, file_path, file_creation_date, file_last_update_date, file_created_by, delete_ready]
+    
     except Exception as e:
         print(f"Error retrieving stats for file: {file_path}")
         print(str(e))
         return None
 
-# Recursive function to traverse the directory structure and retrieve file stats
-def get_files_info(directory):
+# Function to retrieve file stats for the DBFS path and its child paths
+def get_files_info(dbfs_path):
     file_stats_list = []
-
-    for root, dirs, files in os.walk(directory):
+    
+    for root, dirs, files in os.walk(dbfs_path):
         for file in files:
             file_path = os.path.join(root, file)
             if os.path.isfile(file_path):
                 file_stats = get_file_stats(file_path)
                 if file_stats is not None:
                     file_stats_list.append(file_stats)
-
+    
     return file_stats_list
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        dbfs_path = request.form['dbfs_path']
-        file_stats_list = get_files_info(dbfs_path)
+# Function to handle the button click event
+def get_stats():
+    dbfs_path = entry.get()
 
-        # Convert the list to a DataFrame
-        file_stats_df = spark.createDataFrame(file_stats_list, ["name", "size", "path", "creation_date", "last_update_date", "created_by", "delete_ready"])
+    # Get file stats for the DBFS path and its child paths
+    file_stats_list = get_files_info(dbfs_path)
 
-        # Temporary table name
-        temp_table_name = "file_stats_temp"
+    # If no files found, show a message box
+    if not file_stats_list:
+        messagebox.showinfo("File Stats", "No files found in the specified path.")
+        return
 
-        # Register DataFrame as a temporary table
-        file_stats_df.createOrReplaceTempView(temp_table_name)
+    # Create a new window to display the file stats
+    stats_window = tk.Toplevel(window)
+    stats_window.title("File Stats")
 
-        # Query to select the file stats and the creator's username
-        query = f"SELECT name, size, path, creation_date, last_update_date, delete_ready, username(created_by) as creator_username FROM {temp_table_name}"
+    # Create a treeview widget to display the file stats
+    tree = tk.ttk.Treeview(stats_window)
+    tree["columns"] = ("name", "size", "path", "creation_date", "last_update_date", "created_by", "delete_ready")
+    tree.column("#0", width=0, stretch=tk.NO)
+    tree.column("name", width=200)
+    tree.column("size", width=100)
+    tree.column("path", width=300)
+    tree.column("creation_date", width=150)
+    tree.column("last_update_date", width=150)
+    tree.column("created_by", width=100)
+    tree.column("delete_ready", width=100)
+    tree.heading("#0", text="", anchor=tk.W)
+    tree.heading("name", text="Name")
+    tree.heading("size", text="Size")
+    tree.heading("path", text="Path")
+    tree.heading("creation_date", text="Creation Date")
+    tree.heading("last_update_date", text="Last Update Date")
+    tree.heading("created_by", text="Created By")
+    tree.heading("delete_ready", text="Delete Ready")
 
-        # Run the query and retrieve the results
-        results = spark.sql(query).collect()
+    # Insert the file stats into the treeview
+    for file_stats in file_stats_list:
+        tree.insert("", tk.END, values=file_stats)
 
-        return render_template('result.html', results=results)
-    else:
-        return render_template('index.html')
+    tree.pack(fill=tk.BOTH, expand=True)
 
-if __name__ == '__main__':
-    app.run()
------------------------
-<!DOCTYPE html>
-<html>
-<head>
-    <title>DBFS File Stats Results</title>
-</head>
-<body>
-    <h1>DBFS File Stats Results</h1>
-    <table>
-        <tr>
-            <th>Name</th>
-            <th>Size</th>
-            <th>Path</th>
-            <th>Creation Date</th>
-            <th>Last Update Date</th>
-            <th>Delete Ready</th>
-            <th>Creator Username</th>
-        </tr>
-        {% for result in results %}
-        <tr>
-            <td>{{ result['name'] }}</td>
-            <td>{{ result['size'] }}</td>
-            <td>{{ result['path'] }}</td>
-            <td>{{ result['creation_date'] }}</td>
-            <td>{{ result['last_update_date'] }}</td>
-            <td>{{ result['delete_ready'] }}</td>
-            <td>{{ result['creator_username'] }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-</body>
-</html>
+# Create the main window
+window = tk.Tk()
+window.title("DBFS File Stats")
+window.geometry("400x150")
+
+# Create the label and entry for DBFS path input
+label = tk.Label(window, text="DBFS Path:")
+label.pack()
+entry = tk.Entry(window, width=50)
+entry.pack()
+
+# Create the button to get file stats
+button = tk.Button(window, text="Submit", command=get_stats)
+button.pack()
+
+# Start the main event loop
+window.mainloop()
