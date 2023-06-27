@@ -1,35 +1,42 @@
 import os
-import datetime
+from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 
-# Create a Spark session
+# Set up Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Specify the DBFS path
-dbfs_path = "/dbfs/path/to/files"
+# DBFS path to analyze
+dbfs_path = "/dbfs/path/to/directory"
 
-# Define a function to recursively get file information
+# Function to recursively get file stats
 def get_file_stats(path):
-    file_stats = []
-    for root, dirs, files in os.walk(path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            stat_info = os.stat(file_path)
-            creation_date = datetime.datetime.fromtimestamp(stat_info.st_ctime)
-            last_update_date = datetime.datetime.fromtimestamp(stat_info.st_mtime)
-            current_date = datetime.datetime.now()
-            is_delete_ready = "Yes" if (current_date - creation_date).days >= 730 else "No"  # 2 years = 730 days
-            file_stats.append([file, stat_info.st_size, file_path, creation_date, last_update_date, is_delete_ready])
-    return file_stats
+    stats = []
+    file_info = dbutils.fs.ls(path)
+    for file in file_info:
+        if file.isDir():
+            stats.extend(get_file_stats(file.path))
+        else:
+            file_name = file.name
+            file_size = file.size
+            file_path = file.path
+            creation_date = datetime.fromtimestamp(file.creationTime / 1000)
+            last_update_date = datetime.fromtimestamp(file.modificationTime / 1000)
+            created_by = file.name.split('/')[2]  # Assumes the third element in the path is the creator
+            stats.append((file_name, file_size, file_path, creation_date, last_update_date, created_by))
+    return stats
 
-# Get the file statistics
+# Get file stats
 file_stats = get_file_stats(dbfs_path)
 
-# Create a DataFrame from the file statistics
-df = spark.createDataFrame(file_stats, ["Name", "Size", "Path", "CreationDate", "LastUpdateDate", "IsDeleteReady"])
+# Filter files that are ready for deletion
+two_years_ago = datetime.now() - timedelta(days=365*2)
+deletion_ready_files = [file for file in file_stats if file[3] <= two_years_ago]
 
-# Create a temporary table with the DataFrame
-df.createOrReplaceTempView("file_stats_temp")
+# Create DataFrame with the file stats
+df = spark.createDataFrame(deletion_ready_files, ["name", "size", "path", "creation_date", "last_update_date", "created_by"])
 
-# Display the temporary table
-spark.sql("SELECT * FROM file_stats_temp").show()
+# Register the DataFrame as a temporary table
+df.createOrReplaceTempView("file_stats")
+
+# Query the temporary table to show the results
+spark.sql("SELECT * FROM file_stats").show()
