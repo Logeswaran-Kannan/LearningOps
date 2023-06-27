@@ -1,83 +1,63 @@
-from flask import Flask, render_template, request
+import subprocess
 import os
 from datetime import datetime, timedelta
-from pyspark.sql import SparkSession
+import tkinter as tk
+from tkinter import messagebox
 
-app = Flask(__name__)
+def connect_to_databricks():
+    # Connect to Databricks cluster
+    subprocess.call(['databricks', 'connect', '--profile', 'your_profile'])
 
-# Connect to Databricks cluster
-spark = SparkSession.builder \
-    .appName("DBFS File Stats") \
-    .getOrCreate()
+def process_dbfs_files():
+    dbfs_path = dbfs_path_entry.get()
 
-# Get current date
-current_date = datetime.now()
-
-# Function to check if a file's last update date is 2 years from the current date
-def is_delete_ready(last_update_date):
-    return (current_date - last_update_date).days >= 365 * 2
-
-# Function to retrieve file stats and create a DataFrame
-def get_file_stats(file_path):
     try:
-        file_stats = os.stat(file_path)
-        file_name = os.path.basename(file_path)
-        file_size = file_stats.st_size
-        file_creation_date = datetime.fromtimestamp(file_stats.st_ctime)
-        file_last_update_date = datetime.fromtimestamp(file_stats.st_mtime)
-        file_created_by = file_stats.st_uid
-        delete_ready = is_delete_ready(file_last_update_date)
-        
-        return (file_name, file_size, file_path, file_creation_date, file_last_update_date, file_created_by, delete_ready)
-    
-    except Exception as e:
-        print(f"Error retrieving stats for file: {file_path}")
-        print(str(e))
-        return None
+        # Get list of files in the DBFS path
+        files_list = subprocess.check_output(['databricks', 'fs', 'ls', dbfs_path], universal_newlines=True)
 
-# Recursive function to traverse the directory structure and retrieve file stats
-def get_files_info(directory):
-    file_stats_list = []
-    
-    for root, dirs, files in os.walk(directory):
-        for file in files:
-            file_path = os.path.join(root, file)
-            if os.path.isfile(file_path):
-                file_stats = get_file_stats(file_path)
-                if file_stats is not None:
-                    file_stats_list.append(file_stats)
-    
-    return file_stats_list
+        # Process each file and collect stats
+        result = []
+        for line in files_list.split('\n'):
+            if line:
+                file_info = line.split()
+                name = file_info[-1]
+                size = int(file_info[-4])
+                path = os.path.join(dbfs_path, name)
+                creation_date = file_info[0] + ' ' + file_info[1]
+                last_update_date = file_info[2] + ' ' + file_info[3]
+                suggest_deletion = check_deletion_suggestion(last_update_date)
+                result.append((name, size, path, creation_date, last_update_date, suggest_deletion))
 
-# Home route
-@app.route('/', methods=['GET', 'POST'])
-def home():
-    if request.method == 'POST':
-        # Get the DBFS path from the user
-        dbfs_path = request.form['dbfs_path']
-        
-        # Get file stats for the DBFS path and its child paths
-        file_stats_list = get_files_info(dbfs_path)
+        # Display the result in a messagebox
+        messagebox.showinfo('Result', result)
+    except subprocess.CalledProcessError:
+        messagebox.showerror('Error', 'Invalid DBFS path')
 
-        # Convert the list to a DataFrame
-        file_stats_df = spark.createDataFrame(file_stats_list, ["name", "size", "path", "creation_date", "last_update_date", "created_by", "delete_ready"])
+def check_deletion_suggestion(last_update_date):
+    # Check if last update date is 2 years ago from the current date
+    last_update = datetime.strptime(last_update_date, '%Y-%m-%d %H:%M:%S')
+    current_date = datetime.now()
+    two_years_ago = current_date - timedelta(days=365 * 2)
+    return last_update < two_years_ago
 
-        # Temporary table name
-        temp_table_name = "file_stats_temp"
+# Create the main window
+window = tk.Tk()
+window.title('Databricks File Stats')
+window.geometry('300x150')
 
-        # Register DataFrame as a temporary table
-        file_stats_df.createOrReplaceTempView(temp_table_name)
+# Create and pack the DBFS Path label and entry widget
+dbfs_path_label = tk.Label(window, text='DBFS Path:')
+dbfs_path_label.pack()
 
-        # Query to show the file stats and the creator's username
-        query = f"SELECT name, size, path, creation_date, last_update_date, delete_ready, username(created_by) as creator_username FROM {temp_table_name}"
+dbfs_path_entry = tk.Entry(window, width=30)
+dbfs_path_entry.pack()
 
-        # Run the query and retrieve the results
-        results = spark.sql(query).collect()
+# Create and pack the Submit button
+submit_button = tk.Button(window, text='Submit', command=process_dbfs_files)
+submit_button.pack()
 
-        # Render the template with the results
-        return render_template('results.html', results=results)
-    
-    return render_template('index.html')
+# Connect to Databricks on startup
+connect_to_databricks()
 
-if __name__ == '__main__':
-    app.run(debug=True)
+# Start the main event loop
+window.mainloop()
