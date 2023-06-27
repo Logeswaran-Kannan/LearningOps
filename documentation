@@ -8,7 +8,10 @@
     <form action="/" method="POST">
         <label for="dbfs_path">Enter DBFS Path:</label>
         <input type="text" id="dbfs_path" name="dbfs_path" required>
-        <input
+        <input type="submit" value="Submit">
+    </form>
+</body>
+</html>
 ------------
 
 from flask import Flask, render_template, request
@@ -86,3 +89,35 @@ def index():
 
 if __name__ == '__main__':
     app.run()
+-----------------------
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DBFS File Stats Results</title>
+</head>
+<body>
+    <h1>DBFS File Stats Results</h1>
+    <table>
+        <tr>
+            <th>Name</th>
+            <th>Size</th>
+            <th>Path</th>
+            <th>Creation Date</th>
+            <th>Last Update Date</th>
+            <th>Delete Ready</th>
+            <th>Creator Username</th>
+        </tr>
+        {% for result in results %}
+        <tr>
+            <td>{{ result['name'] }}</td>
+            <td>{{ result['size'] }}</td>
+            <td>{{ result['path'] }}</td>
+            <td>{{ result['creation_date'] }}</td>
+            <td>{{ result['last_update_date'] }}</td>
+            <td>{{ result['delete_ready'] }}</td>
+            <td>{{ result['creator_username'] }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
