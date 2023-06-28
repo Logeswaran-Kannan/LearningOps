@@ -1,63 +1,110 @@
-import subprocess
+import datetime
+import json
 import os
-from datetime import datetime, timedelta
-import tkinter as tk
-from tkinter import messagebox
+import requests
 
-def connect_to_databricks():
-    # Connect to Databricks cluster
-    subprocess.call(['databricks', 'connect', '--profile', 'your_profile'])
+from databricks_cli.sdk.api_client import ApiClient
+from databricks_cli.workspace.api import WorkspaceApi
 
-def process_dbfs_files():
-    dbfs_path = dbfs_path_entry.get()
+# Import the necessary modules for creating the user form
+from tkinter import Tk, Label, Entry, Button, messagebox
 
+# Set up Databricks API configuration
+DATABRICKS_HOST = '<DATABRICKS_HOST>'  # Replace with your Databricks host
+DATABRICKS_TOKEN = '<DATABRICKS_TOKEN>'  # Replace with your Databricks token
+
+# Create a Databricks API client
+api_client = ApiClient(host=DATABRICKS_HOST, token=DATABRICKS_TOKEN)
+workspace_api = WorkspaceApi(api_client)
+
+# Function to connect to Databricks and run the Python file
+def run_python_file(dbfs_path):
+    # Run the Python file in Databricks cluster
+    response = workspace_api.run_now(dbfs_path=dbfs_path)
+    run_id = response["run_id"]
+    
+    # Wait for the run to finish
+    while True:
+        run_info = workspace_api.get_run(run_id=run_id)
+        if run_info["state"]["life_cycle_state"] != "RUNNING":
+            break
+    
+    # Get the run output and return it
+    output_path = run_info["run_page_url"]
+    response = requests.get(output_path)
+    return response.text
+
+# Function to create a table in the default schema with the file stats
+def create_stats_table(stats):
+    # Create the table schema
+    table_schema = [
+        {"name": "Name", "type": "STRING"},
+        {"name": "Size", "type": "LONG"},
+        {"name": "Path", "type": "STRING"},
+        {"name": "CreationDate", "type": "TIMESTAMP"},
+        {"name": "LastUpdateDate", "type": "TIMESTAMP"},
+    ]
+    
+    # Create the table
+    workspace_api.create_table(database='default', table_name='file_stats', schema=table_schema)
+    
+    # Insert the stats into the table
+    workspace_api.insert_into_table(database='default', table_name='file_stats', values=stats)
+
+# Function to collect file stats and suggest deletion if last update date is 2 years from the current date
+def collect_file_stats(dbfs_path):
+    # Get the list of files in the DBFS path
+    response = workspace_api.list(dbfs_path=dbfs_path)
+    files = response["files"]
+    
+    # Collect file stats
+    stats = []
+    for file in files:
+        name = os.path.basename(file["path"])
+        size = file["file_size"]
+        path = file["path"]
+        creation_date = datetime.datetime.fromtimestamp(file["creation_time"] / 1000)
+        last_update_date = datetime.datetime.fromtimestamp(file["last_modified_time"] / 1000)
+        
+        # Check if the file's last update date is 2 years from the current date
+        current_date = datetime.datetime.now()
+        delta = current_date - last_update_date
+        suggest_deletion = delta.days >= 365 * 2
+        
+        # Add the file stats to the list
+        stats.append((name, size, path, creation_date, last_update_date, suggest_deletion))
+    
+    # Create the stats table in Databricks
+    create_stats_table(stats)
+    
+    # Return the stats
+    return stats
+
+# Function to handle the form submission
+def submit_form():
+    dbfs_path = entry_path.get()
+    
     try:
-        # Get list of files in the DBFS path
-        files_list = subprocess.check_output(['databricks', 'fs', 'ls', dbfs_path], universal_newlines=True)
+        # Connect to Databricks and collect file stats
+        stats = collect_file_stats(dbfs_path)
+        
+        # Show the stats in a message box
+        messagebox.showinfo("File Stats", json.dumps(stats, indent=4))
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
 
-        # Process each file and collect stats
-        result = []
-        for line in files_list.split('\n'):
-            if line:
-                file_info = line.split()
-                name = file_info[-1]
-                size = int(file_info[-4])
-                path = os.path.join(dbfs_path, name)
-                creation_date = file_info[0] + ' ' + file_info[1]
-                last_update_date = file_info[2] + ' ' + file_info[3]
-                suggest_deletion = check_deletion_suggestion(last_update_date)
-                result.append((name, size, path, creation_date, last_update_date, suggest_deletion))
+# Create the user form
+root = Tk()
+root.title("Databricks File Stats")
+root.geometry("400x200")
 
-        # Display the result in a messagebox
-        messagebox.showinfo('Result', result)
-    except subprocess.CalledProcessError:
-        messagebox.showerror('Error', 'Invalid DBFS path')
+label_path = Label(root, text="DBFS Path:")
+label_path.pack()
 
-def check_deletion_suggestion(last_update_date):
-    # Check if last update date is 2 years ago from the current date
-    last_update = datetime.strptime(last_update_date, '%Y-%m-%d %H:%M:%S')
-    current_date = datetime.now()
-    two_years_ago = current_date - timedelta(days=365 * 2)
-    return last_update < two_years_ago
+entry_path = Entry(root, width=50)
+entry_path.pack()
 
-# Create the main window
-window = tk.Tk()
-window.title('Databricks File Stats')
-window.geometry('300x150')
+button_submit = Button(root, text="Submit", command=submit_form)
+button_submit.pack()
 
-# Create and pack the DBFS Path label and entry widget
-dbfs_path_label = tk.Label(window, text='DBFS Path:')
-dbfs_path_label.pack()
-
-dbfs_path_entry = tk.Entry(window, width=30)
-dbfs_path_entry.pack()
-
-# Create and pack the Submit button
-submit_button = tk.Button(window, text='Submit', command=process_dbfs_files)
-submit_button.pack()
-
-# Connect to Databricks on startup
-connect_to_databricks()
-
-# Start the main event loop
-window.mainloop()
+root.mainloop()
