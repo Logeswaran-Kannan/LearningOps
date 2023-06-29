@@ -1,110 +1,24 @@
-import datetime
-import json
-import os
-import requests
+Defect Triage Summary for Team
 
-from databricks_cli.sdk.api_client import ApiClient
-from databricks_cli.workspace.api import WorkspaceApi
+Dear Team,
 
-# Import the necessary modules for creating the user form
-from tkinter import Tk, Label, Entry, Button, messagebox
+I would like to provide a summary of the defect triage meeting for your reference. Please review the following points discussed:
 
-# Set up Databricks API configuration
-DATABRICKS_HOST = '<DATABRICKS_HOST>'  # Replace with your Databricks host
-DATABRICKS_TOKEN = '<DATABRICKS_TOKEN>'  # Replace with your Databricks token
+Source Data Issues:
+1.1) Missing Source Data: A query claim suggests that we are unable to locate the data created by the CDL team. Vinod will follow up with the source team to investigate this issue. In parallel, the testing team will collaborate with the program testing team to determine if any test scenarios are related to this table.
+1.2) Incorrect Party ID in Source Data: The source data received for mv_operator does not accurately reflect the correct party ID for the policy reference, resulting in incorrect and missing user IDs in the Silver Broker Policy.
 
-# Create a Databricks API client
-api_client = ApiClient(host=DATABRICKS_HOST, token=DATABRICKS_TOKEN)
-workspace_api = WorkspaceApi(api_client)
+Silver Quotes Defect Fix:
 
-# Function to connect to Databricks and run the Python file
-def run_python_file(dbfs_path):
-    # Run the Python file in Databricks cluster
-    response = workspace_api.run_now(dbfs_path=dbfs_path)
-    run_id = response["run_id"]
-    
-    # Wait for the run to finish
-    while True:
-        run_info = workspace_api.get_run(run_id=run_id)
-        if run_info["state"]["life_cycle_state"] != "RUNNING":
-            break
-    
-    # Get the run output and return it
-    output_path = run_info["run_page_url"]
-    response = requests.get(output_path)
-    return response.text
+Ben is planning to perform additional unit tests before raising a PR for deployment into the test environment for SI Analytical. After fixing the CORE-related defects post-SI, Ben will prioritize this for further analysis.
+Silver Policy Defects:
 
-# Function to create a table in the default schema with the file stats
-def create_stats_table(stats):
-    # Create the table schema
-    table_schema = [
-        {"name": "Name", "type": "STRING"},
-        {"name": "Size", "type": "LONG"},
-        {"name": "Path", "type": "STRING"},
-        {"name": "CreationDate", "type": "TIMESTAMP"},
-        {"name": "LastUpdateDate", "type": "TIMESTAMP"},
-    ]
-    
-    # Create the table
-    workspace_api.create_table(database='default', table_name='file_stats', schema=table_schema)
-    
-    # Insert the stats into the table
-    workspace_api.insert_into_table(database='default', table_name='file_stats', values=stats)
+As our priority is currently focused on delivering GOLD for testing, the decision has been made to put Silver Policy defects on hold. Eduard plans to raise a PR for approval for GOLD today and will likely address the Silver Policy defects starting tomorrow.
+Please make a note of these points and let me know if you have any questions or concerns.
 
-# Function to collect file stats and suggest deletion if last update date is 2 years from the current date
-def collect_file_stats(dbfs_path):
-    # Get the list of files in the DBFS path
-    response = workspace_api.list(dbfs_path=dbfs_path)
-    files = response["files"]
-    
-    # Collect file stats
-    stats = []
-    for file in files:
-        name = os.path.basename(file["path"])
-        size = file["file_size"]
-        path = file["path"]
-        creation_date = datetime.datetime.fromtimestamp(file["creation_time"] / 1000)
-        last_update_date = datetime.datetime.fromtimestamp(file["last_modified_time"] / 1000)
-        
-        # Check if the file's last update date is 2 years from the current date
-        current_date = datetime.datetime.now()
-        delta = current_date - last_update_date
-        suggest_deletion = delta.days >= 365 * 2
-        
-        # Add the file stats to the list
-        stats.append((name, size, path, creation_date, last_update_date, suggest_deletion))
-    
-    # Create the stats table in Databricks
-    create_stats_table(stats)
-    
-    # Return the stats
-    return stats
+Best regards,
+[Your Name]
 
-# Function to handle the form submission
-def submit_form():
-    dbfs_path = entry_path.get()
-    
-    try:
-        # Connect to Databricks and collect file stats
-        stats = collect_file_stats(dbfs_path)
-        
-        # Show the stats in a message box
-        messagebox.showinfo("File Stats", json.dumps(stats, indent=4))
-    except Exception as e:
-        messagebox.showerror("Error", str(e))
 
-# Create the user form
-root = Tk()
-root.title("Databricks File Stats")
-root.geometry("400x200")
 
-label_path = Label(root, text="DBFS Path:")
-label_path.pack()
 
-entry_path = Entry(root, width=50)
-entry_path.pack()
-
-button_submit = Button(root, text="Submit", command=submit_form)
-button_submit.pack()
-
-root.mainloop()
