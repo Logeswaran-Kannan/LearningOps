@@ -5,10 +5,7 @@ import time
 # Databricks cluster configuration
 cluster_url = "https://<databricks-instance>.cloud.databricks.com"
 token = "<databricks-access-token>"
-sample_code = '''
-# Your sample code here
-print("Hello, Databricks!")
-'''
+dbfs_path = "/mnt/dbfs-file-path"
 
 # API endpoint for submitting a run
 api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
@@ -19,24 +16,17 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Prepare the request body to run the sample code
+# Prepare the request body to read data from DBFS file
 data = {
     "run_name": "Databricks Run",
     "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
-    "spark_python_task": {
-        "python_file": "dbfs:/databricks/driver/sample_code.py"
+    "notebook_task": {
+        "notebook_path": "/databricks/python_code",
+        "base_parameters": {
+            "dbfs_path": dbfs_path
+        }
     }
 }
-
-# Create the sample code file on Databricks DBFS
-dbfs_create_endpoint = f"{cluster_url}/api/2.0/dbfs/create"
-dbfs_file_path = "/databricks/driver/sample_code.py"
-
-requests.put(
-    dbfs_create_endpoint,
-    headers=headers,
-    data=json.dumps({"path": dbfs_file_path, "contents": sample_code})
-)
 
 # Send the request to Databricks to execute the code
 response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
@@ -79,12 +69,3 @@ if response.status_code == 200:
     print(output)
 else:
     print("Error retrieving output:", response.text)
-
-# Delete the sample code file from Databricks DBFS
-dbfs_delete_endpoint = f"{cluster_url}/api/2.0/dbfs/delete"
-
-requests.post(
-    dbfs_delete_endpoint,
-    headers=headers,
-    data=json.dumps({"path": dbfs_file_path, "recursive": False})
-)
