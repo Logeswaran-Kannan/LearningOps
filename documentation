@@ -1,11 +1,12 @@
 import requests
+import json
 
-# Databricks cluster configuration
-cluster_url = "https://<databricks-instance>.cloud.databricks.com"
+# Azure Databricks cluster configuration
+cluster_url = "https://<region>.azuredatabricks.net"
 token = "<databricks-access-token>"
 
-# API endpoint for Databricks workspace
-api_endpoint = f"{cluster_url}/api/2.0"
+# API endpoint for Databricks jobs/runs
+api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
 
 # Prepare the request headers with the authentication token
 headers = {
@@ -13,13 +14,26 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Send a GET request to the workspace API to get the user information
-response = requests.get(f"{api_endpoint}/preview/scim/v2/Me", headers=headers)
+# Prepare the request body with the code to execute
+data = {
+    "run_name": "Databricks Run",
+    "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
+    "notebook_task": {
+        "notebook_path": "/your-notebook-path",
+        "base_parameters": {
+            "param1": "value1",  # Optional: Provide any additional parameters needed
+            "param2": "value2"
+        }
+    }
+}
+
+# Send the request to Databricks to execute the code
+response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
 
 # Check if the request was successful
 if response.status_code == 200:
-    user_info = response.json()
-    print("User Information:")
-    print(user_info)
+    run_id = response.json()["run_id"]
+    print(f"Run submitted successfully. Run ID: {run_id}")
 else:
-    print("Error connecting to Databricks:", response.text)
+    print("Error submitting run:", response.text)
+    exit()
