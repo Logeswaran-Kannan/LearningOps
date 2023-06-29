@@ -1,24 +1,45 @@
-Defect Triage Summary for Team
+import requests
+import json
 
-Dear Team,
+# Databricks configuration
+api_token = "<your_databricks_api_token>"
+api_url = "https://<databricks_instance>/api/2.0"
 
-I would like to provide a summary of the defect triage meeting for your reference. Please review the following points discussed:
+# Set up the HTTP request headers
+headers = {
+    "Authorization": f"Bearer {api_token}",
+    "Content-Type": "application/json"
+}
 
-Source Data Issues:
-1.1) Missing Source Data: A query claim suggests that we are unable to locate the data created by the CDL team. Vinod will follow up with the source team to investigate this issue. In parallel, the testing team will collaborate with the program testing team to determine if any test scenarios are related to this table.
-1.2) Incorrect Party ID in Source Data: The source data received for mv_operator does not accurately reflect the correct party ID for the policy reference, resulting in incorrect and missing user IDs in the Silver Broker Policy.
+# Create a new job run
+job_payload = {
+    "run_name": "My Job Run",
+    "existing_cluster_id": "<cluster_id>",
+    "notebook_task": {
+        "notebook_path": "/path/to/notebook"
+    }
+}
 
-Silver Quotes Defect Fix:
+response = requests.post(f"{api_url}/jobs/runs/create", headers=headers, json=job_payload)
+response.raise_for_status()
 
-Ben is planning to perform additional unit tests before raising a PR for deployment into the test environment for SI Analytical. After fixing the CORE-related defects post-SI, Ben will prioritize this for further analysis.
-Silver Policy Defects:
+# Get the run ID from the response
+run_id = response.json()["run_id"]
 
-As our priority is currently focused on delivering GOLD for testing, the decision has been made to put Silver Policy defects on hold. Eduard plans to raise a PR for approval for GOLD today and will likely address the Silver Policy defects starting tomorrow.
-Please make a note of these points and let me know if you have any questions or concerns.
+# Wait for the job run to complete
+status = "RUNNING"
 
-Best regards,
-[Your Name]
+while status == "RUNNING":
+    response = requests.get(f"{api_url}/jobs/runs/get?run_id={run_id}", headers=headers)
+    response.raise_for_status()
+    run_status = response.json()["state"]["life_cycle_state"]
+    status = run_status["state"]
 
+# Get the output of the job run
+response = requests.get(f"{api_url}/jobs/runs/get-output?run_id={run_id}", headers=headers)
+response.raise_for_status()
 
+output = response.json()["notebook_output"]["result"]
 
-
+# Print the output
+print(output)
