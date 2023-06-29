@@ -2,12 +2,15 @@ import requests
 import json
 import time
 
-# Azure Databricks cluster configuration
-cluster_url = "https://<databricks-instance>.azuredatabricks.net"
+# Databricks cluster configuration
+cluster_url = "https://<databricks-instance>.cloud.databricks.com"
 token = "<databricks-access-token>"
-repo_path = "/your-repo-path/sample_file.py"
+sample_code = '''
+# Your sample code here
+print("Hello, Databricks!")
+'''
 
-# API endpoint for Databricks runs
+# API endpoint for submitting a run
 api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
 
 # Prepare the request headers with the authentication token
@@ -16,14 +19,24 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Prepare the request body with the code to execute
+# Prepare the request body to run the sample code
 data = {
     "run_name": "Databricks Run",
     "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
-    "notebook_task": {
-        "notebook_path": repo_path
+    "spark_python_task": {
+        "python_file": "dbfs:/databricks/driver/sample_code.py"
     }
 }
+
+# Create the sample code file on Databricks DBFS
+dbfs_create_endpoint = f"{cluster_url}/api/2.0/dbfs/create"
+dbfs_file_path = "/databricks/driver/sample_code.py"
+
+requests.put(
+    dbfs_create_endpoint,
+    headers=headers,
+    data=json.dumps({"path": dbfs_file_path, "contents": sample_code})
+)
 
 # Send the request to Databricks to execute the code
 response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
@@ -36,28 +49,42 @@ else:
     print("Error submitting run:", response.text)
     exit()
 
-# Check the run status periodically until it is completed
+# Check the status of the run until it completes
 run_status_endpoint = f"{cluster_url}/api/2.0/jobs/runs/get?run_id={run_id}"
-status = None
 
-while status != "TERMINATED":
-    time.sleep(5)  # Wait for 5 seconds before checking the status again
+while True:
     response = requests.get(run_status_endpoint, headers=headers)
 
+    # Check if the request was successful
     if response.status_code == 200:
-        status = response.json()["state"]["life_cycle_state"]
-        print(f"Current status: {status}")
+        run_status = response.json()["state"]["life_cycle_state"]
+        print("Run status:", run_status)
+
+        if run_status == "TERMINATED":
+            break  # Run completed, exit the loop
     else:
         print("Error retrieving run status:", response.text)
-        break
+        exit()
 
-# Retrieve the final status and result
-response = requests.get(run_status_endpoint, headers=headers)
+    time.sleep(10)  # Wait for 10 seconds before checking the status again
 
+# Get the final run details
+final_run_endpoint = f"{cluster_url}/api/2.0/jobs/runs/get-output?run_id={run_id}"
+response = requests.get(final_run_endpoint, headers=headers)
+
+# Check if the request was successful
 if response.status_code == 200:
-    status = response.json()["state"]["result_state"]
-    result = response.json()["state"]["state_message"]
-    print(f"Run completed with status: {status}")
-    print(f"Result: {result}")
+    output = response.json()["notebook_output"]["result"]
+    print("Output:")
+    print(output)
 else:
-    print("Error retrieving final run status:", response.text)
+    print("Error retrieving output:", response.text)
+
+# Delete the sample code file from Databricks DBFS
+dbfs_delete_endpoint = f"{cluster_url}/api/2.0/dbfs/delete"
+
+requests.post(
+    dbfs_delete_endpoint,
+    headers=headers,
+    data=json.dumps({"path": dbfs_file_path, "recursive": False})
+)
