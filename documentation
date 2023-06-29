@@ -1,45 +1,53 @@
 import requests
 import json
 
-# Databricks configuration
-api_token = "<your_databricks_api_token>"
-api_url = "https://<databricks_instance>/api/2.0"
+# Databricks cluster configuration
+cluster_url = "https://<databricks-instance>.cloud.databricks.com"
+token = "<databricks-access-token>"
+command = "print('Hello, Databricks!')"
 
-# Set up the HTTP request headers
+# API endpoint for Databricks jobs/runs
+api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
+
+# Prepare the request headers with the authentication token
 headers = {
-    "Authorization": f"Bearer {api_token}",
+    "Authorization": f"Bearer {token}",
     "Content-Type": "application/json"
 }
 
-# Create a new job run
-job_payload = {
-    "run_name": "My Job Run",
-    "existing_cluster_id": "<cluster_id>",
+# Prepare the request body with the code to execute
+data = {
+    "run_name": "Databricks Run",
+    "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
     "notebook_task": {
-        "notebook_path": "/path/to/notebook"
+        "notebook_path": "/your-notebook-path",
+        "base_parameters": {
+            "cmd": command
+        }
     }
 }
 
-response = requests.post(f"{api_url}/jobs/runs/create", headers=headers, json=job_payload)
-response.raise_for_status()
+# Send the request to Databricks to execute the code
+response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
 
-# Get the run ID from the response
-run_id = response.json()["run_id"]
+# Check if the request was successful
+if response.status_code == 200:
+    run_id = response.json()["run_id"]
+    print(f"Run submitted successfully. Run ID: {run_id}")
+else:
+    print("Error submitting run:", response.text)
+    exit()
 
-# Wait for the job run to complete
-status = "RUNNING"
+# Get the output of the run
+run_status_endpoint = f"{cluster_url}/api/2.0/jobs/runs/get-output?run_id={run_id}"
 
-while status == "RUNNING":
-    response = requests.get(f"{api_url}/jobs/runs/get?run_id={run_id}", headers=headers)
-    response.raise_for_status()
-    run_status = response.json()["state"]["life_cycle_state"]
-    status = run_status["state"]
+# Send a GET request to retrieve the output
+response = requests.get(run_status_endpoint, headers=headers)
 
-# Get the output of the job run
-response = requests.get(f"{api_url}/jobs/runs/get-output?run_id={run_id}", headers=headers)
-response.raise_for_status()
-
-output = response.json()["notebook_output"]["result"]
-
-# Print the output
-print(output)
+# Check if the request was successful
+if response.status_code == 200:
+    output = response.json()["notebook_output"]["result"]
+    print("Output:")
+    print(output)
+else:
+    print("Error retrieving output:", response.text)
