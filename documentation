@@ -1,13 +1,14 @@
 import requests
 import json
+import time
 
-# Azure Databricks cluster configuration
-cluster_url = "https://<databricks-instance>.azuredatabricks.net"
+# Databricks cluster configuration
+databricks_instance = "<databricks-instance>"
 token = "<databricks-access-token>"
-repo_path = "your-repo-path/sample_file.py"
+repo_path = "/<repo-path>/sample_file.py"
 
-# API endpoint for Databricks jobs/runs
-api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
+# API endpoint for Databricks runs/submit
+api_endpoint = f"https://{databricks_instance}/api/2.0/runs/submit"
 
 # Prepare the request headers with the authentication token
 headers = {
@@ -15,16 +16,20 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Prepare the request body with the file to execute
+# Prepare the request body with the job configuration
 data = {
     "run_name": "Databricks Run",
-    "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
+    "new_cluster": {
+        "spark_version": "8.4.x-scala2.12",
+        "node_type_id": "Standard_DS3_v2",
+        "num_workers": 1
+    },
     "notebook_task": {
         "notebook_path": repo_path
     }
 }
 
-# Send the request to Databricks to execute the file
+# Send the request to Databricks to submit the run
 response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
 
 # Check if the request was successful
@@ -35,16 +40,34 @@ else:
     print("Error submitting run:", response.text)
     exit()
 
-# Get the output of the run
-run_status_endpoint = f"{cluster_url}/api/2.0/jobs/runs/get-output?run_id={run_id}"
+# API endpoint for Databricks runs/get
+run_status_endpoint = f"https://{databricks_instance}/api/2.0/runs/get?run_id={run_id}"
 
-# Send a GET request to retrieve the output
-response = requests.get(run_status_endpoint, headers=headers)
+# Check the run status until it completes
+while True:
+    response = requests.get(run_status_endpoint, headers=headers)
+    if response.status_code == 200:
+        run_status = response.json()["state"]["life_cycle_state"]
+        if run_status == "TERMINATED":
+            break
+        else:
+            print("Run is still in progress. Current status:", run_status)
+    else:
+        print("Error retrieving run status:", response.text)
+        exit()
+    
+    # Wait for 5 seconds before checking the status again
+    time.sleep(5)
+
+# Retrieve the run result
+result_endpoint = f"https://{databricks_instance}/api/2.0/runs/get-output?run_id={run_id}"
+response = requests.get(result_endpoint, headers=headers)
 
 # Check if the request was successful
 if response.status_code == 200:
     output = response.json()["notebook_output"]["result"]
+    print("Run completed successfully.")
     print("Output:")
     print(output)
 else:
-    print("Error retrieving output:", response.text)
+    print("Error retrieving run result:", response.text)
