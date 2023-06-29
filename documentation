@@ -1,11 +1,12 @@
 import requests
 import json
 
-# Azure Databricks cluster configuration
-cluster_url = "https://<region>.azuredatabricks.net"
+# Databricks cluster configuration
+cluster_url = "https://<databricks-instance>.azuredatabricks.net"
 token = "<databricks-access-token>"
+repo_path = "/<repo-username>/<repo-name>/<file-path>.py"
 
-# API endpoint for Databricks jobs/runs
+# API endpoint for submitting a job run
 api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
 
 # Prepare the request headers with the authentication token
@@ -14,26 +15,40 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Prepare the request body with the code to execute
+# Prepare the request body with the job details
 data = {
     "run_name": "Databricks Run",
-    "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
+    "new_cluster": {
+        "spark_version": "8.3.x-scala2.12",
+        "node_type_id": "Standard_DS3_v2",
+        "num_workers": 1
+    },
     "notebook_task": {
-        "notebook_path": "/your-notebook-path",
-        "base_parameters": {
-            "param1": "value1",  # Optional: Provide any additional parameters needed
-            "param2": "value2"
-        }
+        "notebook_path": repo_path
     }
 }
 
-# Send the request to Databricks to execute the code
+# Send the request to Databricks to submit the job run
 response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
 
 # Check if the request was successful
 if response.status_code == 200:
     run_id = response.json()["run_id"]
-    print(f"Run submitted successfully. Run ID: {run_id}")
+    print(f"Job run submitted successfully. Run ID: {run_id}")
 else:
-    print("Error submitting run:", response.text)
+    print("Error submitting job run:", response.text)
+    exit()
+
+# Check the status of the job run
+job_status_endpoint = f"{cluster_url}/api/2.0/jobs/runs/get?run_id={run_id}"
+
+# Send a GET request to retrieve the job run status
+response = requests.get(job_status_endpoint, headers=headers)
+
+# Check if the request was successful
+if response.status_code == 200:
+    status = response.json()["state"]["life_cycle_state"]
+    print(f"Job run status: {status}")
+else:
+    print("Error retrieving job run status:", response.text)
     exit()
