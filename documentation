@@ -1,13 +1,11 @@
 import requests
-import json
 
 # Databricks cluster configuration
 cluster_url = "https://<databricks-instance>.cloud.databricks.com"
 token = "<databricks-access-token>"
-command = "print('Hello, Databricks!')"
 
-# API endpoint for Databricks jobs/runs
-api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
+# API endpoint for Databricks workspace
+api_endpoint = f"{cluster_url}/api/2.0"
 
 # Prepare the request headers with the authentication token
 headers = {
@@ -15,39 +13,13 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Prepare the request body with the code to execute
-data = {
-    "run_name": "Databricks Run",
-    "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
-    "notebook_task": {
-        "notebook_path": "/your-notebook-path",
-        "base_parameters": {
-            "cmd": command
-        }
-    }
-}
-
-# Send the request to Databricks to execute the code
-response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
+# Send a GET request to the workspace API to get the user information
+response = requests.get(f"{api_endpoint}/preview/scim/v2/Me", headers=headers)
 
 # Check if the request was successful
 if response.status_code == 200:
-    run_id = response.json()["run_id"]
-    print(f"Run submitted successfully. Run ID: {run_id}")
+    user_info = response.json()
+    print("User Information:")
+    print(user_info)
 else:
-    print("Error submitting run:", response.text)
-    exit()
-
-# Get the output of the run
-run_status_endpoint = f"{cluster_url}/api/2.0/jobs/runs/get-output?run_id={run_id}"
-
-# Send a GET request to retrieve the output
-response = requests.get(run_status_endpoint, headers=headers)
-
-# Check if the request was successful
-if response.status_code == 200:
-    output = response.json()["notebook_output"]["result"]
-    print("Output:")
-    print(output)
-else:
-    print("Error retrieving output:", response.text)
+    print("Error connecting to Databricks:", response.text)
