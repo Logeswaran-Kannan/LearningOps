@@ -1,74 +1,44 @@
+import os
+from datetime import datetime
 from pyspark.sql import SparkSession
-from datetime import datetime, timedelta
+
+# Get the DBFS path from the base parameters
+dbfs_path = "/dbfs/<your_dbfs_path>"
 
 # Connect to Databricks cluster
 spark = SparkSession.builder.getOrCreate()
 
-# Get current date
-current_date = datetime.now()
-
 # Function to check if a file's last update date is 2 years from the current date
 def is_delete_ready(last_update_date):
+    current_date = datetime.now()
     return (current_date - last_update_date).days >= 365 * 2
 
-# Function to retrieve file stats and create a DataFrame
-def get_file_stats(file_path):
-    try:
-        file_stats = dbutils.fs.stat(file_path)
-        file_name = file_stats.name.split("/")[-1]
-        file_size = file_stats.size
-        file_creation_date = datetime.fromtimestamp(file_stats.creationTime / 1000)
-        file_last_update_date = datetime.fromtimestamp(file_stats.modificationTime / 1000)
-        delete_ready = is_delete_ready(file_last_update_date)
-        
-        return (file_name, file_size, file_path, file_creation_date, file_last_update_date, delete_ready)
-    
-    except Exception as e:
-        print(f"Error retrieving stats for file: {file_path}")
-        print(str(e))
-        return None
-
-# Recursive function to traverse the directory structure and retrieve file stats
-def get_files_info(directory):
+# Function to collect file stats
+def collect_file_stats(directory):
     file_stats_list = []
     
-    files = dbutils.fs.ls(directory)
-    for file in files:
-        file_path = file.path
-        if dbutils.fs.isFile(file_path):
-            file_stats = get_file_stats(file_path)
-            if file_stats is not None:
+    for root, dirs, files in dbutils.fs.ls(directory):
+        for file in files:
+            file_path = os.path.join(root, file.path)
+            if dbutils.fs.isFile(file_path):
+                file_stats = {
+                    "name": file.name,
+                    "size": file.size,
+                    "path": file.path,
+                    "creation_date": datetime.fromtimestamp(file.creationTime/1000),
+                    "last_update_date": datetime.fromtimestamp(file.modificationTime/1000),
+                    "delete_ready": is_delete_ready(datetime.fromtimestamp(file.modificationTime/1000))
+                }
                 file_stats_list.append(file_stats)
-        elif dbutils.fs.isDir(file_path):
-            file_stats_list.extend(get_files_info(file_path))
     
     return file_stats_list
 
-# Get the DBFS path from the user
-dbfs_path = "/dbfs/<user_input_path>"
-
-# Get file stats for the DBFS path and its child paths
-file_stats_list = get_files_info(dbfs_path)
+# Collect file stats for the DBFS path and its child paths
+file_stats_list = collect_file_stats(dbfs_path)
 
 # Convert the list to a DataFrame
-file_stats_df = spark.createDataFrame(file_stats_list, ["name", "size", "path", "creation_date", "last_update_date", "delete_ready"])
+file_stats_df = spark.createDataFrame(file_stats_list)
 
-# Create a temporary view for the DataFrame
-file_stats_df.createOrReplaceTempView("temp_file_stats")
-
-# Drop the existing table if it exists
-spark.sql("DROP TABLE IF EXISTS default.file_stats")
-
-# Create a permanent replaceable table
-spark.sql("""
-    CREATE TABLE IF NOT EXISTS default.file_stats
-    USING PARQUET
-    OPTIONS (
-      path '/tmp/file_stats',
-      mode 'overwrite'
-    )
-    AS SELECT * FROM temp_file_stats
-""")
-
-# Display the file stats
-spark.sql("SELECT * FROM default.file_stats").show()
+# Save the DataFrame as a permanent replaceable table in the default schema
+table_name = "file_stats"
+file_stats_df.write.mode("overwrite").saveAsTable(table_name, format="parquet")
