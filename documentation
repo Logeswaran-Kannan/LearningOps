@@ -1,32 +1,88 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import current_date
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Databricks Run</title>
+</head>
+<body>
+    <form method="POST" action="/">
+        <label for="dbfs_path">DBFS Path File:</label>
+        <input type="text" id="dbfs_path" name="dbfs_path">
+        <br><br>
+        <input type="submit" value="Submit">
+    </form>
+</body>
+</html>
+---------------------
 
-# Create a Spark session
-spark = SparkSession.builder.appName("DBFS_File_Stats").getOrCreate()
+from flask import Flask, render_template, request
+import requests
+import json
+import time
 
-# Set the DBFS path received from the user
-dbfs_path = input("Enter the DBFS path: ")
+app = Flask(__name__)
 
-# Get the current date
-current_date_value = current_date()
+# Databricks cluster configuration
+cluster_url = "https://<databricks-instance>.cloud.databricks.com"
+token = "<databricks-access-token>"
 
-# Read the DBFS files recursively
-files_df = spark.sql(f"DESCRIBE EXTENDED {dbfs_path}")
+# API endpoint for submitting a run
+api_endpoint = f"{cluster_url}/api/2.0/jobs/runs/submit"
 
-# Extract the necessary columns
-stats_df = files_df.select("name", "size", "path", "creationTime", "modificationTime")
+# Prepare the request headers with the authentication token
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json"
+}
 
-# Add a column for recommendation based on last update date
-stats_df = stats_df.withColumn("recommendation",
-                               (current_date_value - stats_df.modificationTime) > 30)
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        # Get the DBFS path file from the submitted form
+        dbfs_path = request.form['dbfs_path']
 
-# Create a permanent replaceable table in the default schema
-table_name = "dbfs_files_stats"
-stats_df.write.mode("overwrite").saveAsTable(table_name)
+        # Prepare the request body to read the data from DBFS path
+        data = {
+            "run_name": "Databricks Run",
+            "existing_cluster_id": "<cluster-id>",  # Enter your cluster ID here
+            "notebook_task": {
+                "notebook_path": "/databricks/python_code",  # Replace with your notebook path
+                "base_parameters": {
+                    "dbfs_path": dbfs_path
+                }
+            }
+        }
 
-# Print the results
-print(f"Statistics of DBFS files in '{dbfs_path}':")
-stats_df.show()
+        # Send the request to Databricks to execute the code
+        response = requests.post(api_endpoint, headers=headers, data=json.dumps(data))
 
-# Stop the Spark session
-spark.stop()
+        # Check if the request was successful
+        if response.status_code == 200:
+            run_id = response.json()["run_id"]
+            print(f"Run submitted successfully. Run ID: {run_id}")
+
+            # Check the status of the run until it completes
+            run_status_endpoint = f"{cluster_url}/api/2.0/jobs/runs/get?run_id={run_id}"
+            while True:
+                response = requests.get(run_status_endpoint, headers=headers)
+
+                # Check if the request was successful
+                if response.status_code == 200:
+                    run_status = response.json()["state"]["life_cycle_state"]
+                    print("Run status:", run_status)
+
+                    if run_status == "TERMINATED":
+                        break  # Run completed, exit the loop
+                else:
+                    print("Error retrieving run status:", response.text)
+                    exit()
+
+                time.sleep(10)  # Wait for 10 seconds before checking the status again
+
+            return f"Run completed. Status: {run_status}"
+        else:
+            return "Error submitting run"
+    else:
+        return render_template('index.html')
+
+if __name__ == '__main__':
+    app.run()
