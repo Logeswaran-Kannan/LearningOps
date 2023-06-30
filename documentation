@@ -1,67 +1,32 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, expr
-from datetime import datetime, timedelta
-import os
+from pyspark.sql.functions import current_date
 
-# Connect to Databricks cluster
-spark = SparkSession.builder \
-    .appName("DBFS File Stats") \
-    .getOrCreate()
+# Create a Spark session
+spark = SparkSession.builder.appName("DBFS_File_Stats").getOrCreate()
 
-# Get current date
-current_date = datetime.now()
+# Set the DBFS path received from the user
+dbfs_path = input("Enter the DBFS path: ")
 
-# Function to check if a file's last update date is 2 years from the current date
-def is_deletable(last_update_date):
-    return (current_date - last_update_date).days >= 365 * 2
+# Get the current date
+current_date_value = current_date()
 
-# Function to retrieve file stats
-def get_file_stats(file_path):
-    file_stats = os.stat(file_path)
-    file_name = os.path.basename(file_path)
-    file_size = file_stats.st_size
-    file_creation_date = datetime.fromtimestamp(file_stats.st_ctime)
-    file_last_update_date = datetime.fromtimestamp(file_stats.st_mtime)
-    delete_recommendation = is_deletable(file_last_update_date)
+# Read the DBFS files recursively
+files_df = spark.sql(f"DESCRIBE EXTENDED {dbfs_path}")
 
-    return (file_name, file_size, file_path, file_creation_date, file_last_update_date, delete_recommendation)
+# Extract the necessary columns
+stats_df = files_df.select("name", "size", "path", "creationTime", "modificationTime")
 
-# Function to traverse the directory structure and retrieve file stats
-def get_files_info(directory):
-    file_stats_list = []
-    
-    for root, dirs, files in os.walk(directory):
-        for file in files:
-            file_path = os.path.join(root, file)
-            if os.path.isfile(file_path):
-                file_stats = get_file_stats(file_path)
-                file_stats_list.append(file_stats)
-    
-    return file_stats_list
+# Add a column for recommendation based on last update date
+stats_df = stats_df.withColumn("recommendation",
+                               (current_date_value - stats_df.modificationTime) > 30)
 
-# Get the DBFS path from the user
-dbfs_path = input("Enter DBFS Path: ")
+# Create a permanent replaceable table in the default schema
+table_name = "dbfs_files_stats"
+stats_df.write.mode("overwrite").saveAsTable(table_name)
 
-# Get file stats for the DBFS path and its child paths
-file_stats_list = get_files_info(dbfs_path)
+# Print the results
+print(f"Statistics of DBFS files in '{dbfs_path}':")
+stats_df.show()
 
-# Convert the list to a DataFrame
-file_stats_df = spark.createDataFrame(file_stats_list, ["name", "size", "path", "creation_date", "last_update_date", "delete_recommendation"])
-
-# Create a temporary view for the DataFrame
-file_stats_df.createOrReplaceTempView("temp_file_stats")
-
-# SQL query to insert the file stats into the permanent replaceable table
-query = """
-    CREATE OR REPLACE TABLE default.file_stats
-    USING delta
-    AS
-    SELECT *, CASE WHEN delete_recommendation THEN 'Yes' ELSE 'No' END AS delete_ready
-    FROM temp_file_stats
-"""
-
-# Execute the SQL query
-spark.sql(query)
-
-# Show the file stats
-file_stats_df.show()
+# Stop the Spark session
+spark.stop()
