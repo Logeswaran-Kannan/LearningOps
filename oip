@@ -1,40 +1,35 @@
 import os
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit
 
-# Set the DBFS path to analyze
-dbfs_path = "/dbfs/path/to/analyze"
+# Set the DBFS path to scan for files
+dbfs_path = "/dbfs/path/to/files"
 
-# Set the threshold for deletable files (30 days)
-threshold_days = 30
+# Set the deletion threshold in days
+deletion_threshold = 30
 
-# Initialize SparkSession
+# Create a Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Get the list of files and directories recursively
-file_list = []
+# Collect file statistics
+file_stats = []
 for root, dirs, files in os.walk(dbfs_path):
     for file_name in files:
         file_path = os.path.join(root, file_name)
-        stat_info = os.stat(file_path)
-        file_size = stat_info.st_size
-        creation_time = datetime.fromtimestamp(stat_info.st_ctime)
-        last_update_time = datetime.fromtimestamp(stat_info.st_mtime)
-        deletable = (datetime.now() - last_update_time) >= timedelta(days=threshold_days)
-        delete_date = datetime.now().strftime("%Y-%m-%d") if deletable else None
-        file_list.append((file_name, file_size, file_path, creation_time, last_update_time, deletable, delete_date))
+        file_size = os.path.getsize(file_path)
+        creation_date = datetime.fromtimestamp(os.path.getctime(file_path))
+        last_update_date = datetime.fromtimestamp(os.path.getmtime(file_path))
+        del_status = "deletable" if last_update_date <= (datetime.now() - timedelta(days=deletion_threshold)) else "not deletable"
+        del_date = datetime.now().strftime("%Y-%m-%d")
+        
+        file_stats.append((file_name, file_size, file_path, creation_date, last_update_date, del_status, del_date))
 
-# Create a DataFrame from the file list
-columns = ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"]
-df = spark.createDataFrame(file_list, columns)
+# Convert file statistics to a DataFrame
+file_stats_df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
 
-# Create a temporary view for the DataFrame
-df.createOrReplaceTempView("file_stats")
+# Append the DataFrame to a permanent table in the default schema
+file_stats_df.write.mode("append").saveAsTable("default.file_stats")
 
-# Create a permanent table with append mode in the default schema
-table_name = "file_stats_table"
-spark.sql(f"CREATE TABLE IF NOT EXISTS default.{table_name} USING DELTA LOCATION '/delta/{table_name}'")
-spark.sql(f"INSERT INTO default.{table_name} SELECT * FROM file_stats")
-
-# Show the table
-spark.sql(f"SELECT * FROM default.{table_name}").show()
+# Display the file statistics table
+file_stats_df.show()
