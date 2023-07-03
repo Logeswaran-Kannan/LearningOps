@@ -1,51 +1,48 @@
-import os
+# Step 1: Import necessary libraries and set up Spark session
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit, current_timestamp
+from pyspark.sql.functions import col
+from datetime import datetime, timedelta
 
-# Create a SparkSession
-spark = SparkSession.builder \
-    .appName("FileStats") \
-    .getOrCreate()
+# Step 2: Set up Spark session
+spark = SparkSession.builder.appName("DBFS_File_Stats").getOrCreate()
 
-def collect_file_stats(dbfs_path):
-    # Create an empty DataFrame with the required columns
-    file_stats_df = spark.createDataFrame([], 
-                    "name STRING, size LONG, path STRING, creation_date TIMESTAMP, last_update_date TIMESTAMP, del_status STRING, del_date TIMESTAMP, recommendation STRING")
+# Step 3: Define a function to collect file statistics recursively
+def collect_file_stats(base_path):
+    file_stats = []
+    fs = dbutils.fs.ls(base_path)
+    for f in fs:
+        if f.isDir():
+            # If the entry is a directory, recursively call the function on it
+            file_stats.extend(collect_file_stats(f.path))
+        else:
+            # If the entry is a file, collect its stats
+            path = f.path
+            name = path.split("/")[-1]
+            size = f.size
+            creation_date = datetime.fromtimestamp(f.modificationTime / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
+            last_update_date = datetime.fromtimestamp(f.modificationTime / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
+            del_status = ""
+            del_date = ""
+            
+            # Check if the file is deletable based on last update date
+            current_date = datetime.now()
+            threshold_date = current_date - timedelta(days=30)  # Set a threshold of 30 days for deletability
+            if datetime.fromtimestamp(f.modificationTime / 1000.0) < threshold_date:
+                del_status = "Deletable"
+                del_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
+            
+            file_stats.append((name, size, path, creation_date, last_update_date, del_status, del_date))
     
-    # Recursive function to collect file stats from a given path
-    def collect_stats_recursively(path):
-        # Get the list of files and directories in the current path
-        files = dbutils.fs.ls(path)
-        
-        for file in files:
-            if file.isDir():
-                # If it's a directory, recursively call the function
-                collect_stats_recursively(file.path)
-            else:
-                # If it's a file, collect its stats
-                name = file.name
-                size = file.size
-                path = file.path
-                creation_date = file.creationTime
-                last_update_date = file.modificationTime
-                
-                # Create a new row with the file stats
-                new_row = spark.createDataFrame([(name, size, path, creation_date, last_update_date, "", None, "")],
-                                                "name STRING, size LONG, path STRING, creation_date TIMESTAMP, last_update_date TIMESTAMP, del_status STRING, del_date TIMESTAMP, recommendation STRING")
-                
-                # Append the new row to the DataFrame
-                file_stats_df.union(new_row)
+    return file_stats
 
-    # Call the recursive function to collect file stats from the given DBFS path
-    collect_stats_recursively(dbfs_path)
-    
-    # Add the current timestamp to the del_date column for all rows
-    file_stats_df = file_stats_df.withColumn("del_date", current_timestamp())
-    
-    # Write the DataFrame to a permanent table in the default schema
-    file_stats_df.write.mode("append").saveAsTable("default.file_stats")
-    
-    # Show the final result in table format
-    file_stats_df.show()
+# Step 4: Collect file stats and create a DataFrame
+base_dbfs_path = "/dbfs/path/to/your/folder"  # Input the desired DBFS path here
+file_stats_data = collect_file_stats(base_dbfs_path)
+file_stats_df = spark.createDataFrame(file_stats_data, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
 
-# Example usage: collect_file_stats("/dbfs/path/to/directory")
+# Step 5: Save the DataFrame as a permanent table in the default schema
+table_name = "file_stats_table"
+file_stats_df.write.mode("append").saveAsTable(table_name)
+
+# Display the table to verify the result
+spark.sql(f"SELECT * FROM {table_name}").show()
