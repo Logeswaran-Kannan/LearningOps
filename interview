@@ -1,46 +1,10 @@
-from pyspark.sql import SparkSession
-from datetime import datetime, timedelta
-import os
-
-# DBFS path input
-dbfs_path = "/dbfs/path/to/files"
-
-# Define the threshold for deletable files (30 days)
-threshold_days = 30
-
-# Set up SparkSession
-spark = SparkSession.builder.getOrCreate()
-
-# Read existing table or create a new one
-table_name = "file_stats"
-if spark.catalog.tableExists(table_name):
-    df = spark.sql(f"SELECT * FROM {table_name}")
-else:
-    df = spark.createDataFrame([], schema="name STRING, size LONG, path STRING, creation_date TIMESTAMP, last_update_date TIMESTAMP, del_status BOOLEAN, del_date DATE")
-
-# Function to check if a file can be deleted based on last update date
-def check_deletable(last_update_date):
-    return (datetime.now() - last_update_date).days > threshold_days
-
-# Function to recursively collect file stats and insert them into the DataFrame
-def collect_stats(path):
-    for entry in dbutils.fs.ls(path):
-        if entry.isDir():
-            collect_stats(entry.path)
-        else:
-            stats = dbutils.fs.head(entry.path, 1)
-            file_name = os.path.basename(entry.path)
-            file_size = stats[0].size
-            creation_date = datetime.fromtimestamp(stats[0].modificationTime / 1000.0)
-            last_update_date = datetime.fromtimestamp(stats[0].modificationTime / 1000.0)
-            del_status = check_deletable(last_update_date)
-            del_date = datetime.now().date() if del_status else None
-            row = (file_name, file_size, entry.path, creation_date, last_update_date, del_status, del_date)
-            if not df.filter(df.path == entry.path).count():
-                df = df.union(spark.createDataFrame([row], df.schema))
-
-# Collect file stats recursively from the given DBFS path
-collect_stats(dbfs_path)
-
-# Insert the DataFrame into the table using append mode
-df.write.mode("append").saveAsTable(table_name)
+CREATE TABLE IF NOT EXISTS your_table_name (
+  name STRING,
+  size BIGINT,
+  path STRING,
+  creation_date TIMESTAMP,
+  last_update_date TIMESTAMP,
+  del_status STRING,
+  del_date STRING
+)
+USING delta;
