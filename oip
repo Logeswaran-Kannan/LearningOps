@@ -1,50 +1,54 @@
-from pyspark.sql import SparkSession
-from datetime import datetime, timedelta
 import os
+from datetime import datetime, timedelta
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit
 
-# Set the DBFS path
-dbfs_path = "/dbfs/path/to/files"
+# Function to collect file statistics recursively inside DBFS
+def collect_file_stats(path, threshold_days):
+    file_list = []
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            stat_info = os.stat(file_path)
+            creation_date = datetime.fromtimestamp(stat_info.st_ctime)
+            last_update_date = datetime.fromtimestamp(stat_info.st_mtime)
+            size = stat_info.st_size
+            deletable = (datetime.now() - last_update_date) > timedelta(days=threshold_days)
+            del_status = "deletable" if deletable else "not deletable"
+            del_date = datetime.now() if deletable else None
 
-# Set the threshold for deletable files (in days)
-threshold = 30
+            file_list.append((file, size, file_path, creation_date, last_update_date, del_status, del_date))
 
-# Create a SparkSession
-spark = SparkSession.builder.getOrCreate()
+    return file_list
 
-# Get the list of files in the specified DBFS path recursively
-file_list = dbutils.fs.ls(dbfs_path)
+# Define the DBFS path and threshold for deletable files (30 days)
+dbfs_path = "/dbfs/path/to/directory"
+threshold_days = 30
 
-# Create an empty list to store the file statistics
-file_stats = []
+# Initialize Spark session
+spark = SparkSession.builder.appName("FileStats").getOrCreate()
 
 # Collect file statistics
-for file_info in file_list:
-    file_path = file_info.path
-    file_name = file_info.name
-    file_size = file_info.size
-    file_creation_date = datetime.fromtimestamp(file_info.creationTime / 1000)
-    file_last_update_date = datetime.fromtimestamp(file_info.modificationTime / 1000)
-    del_status = "deletable" if (datetime.now() - file_last_update_date) > timedelta(days=threshold) else ""
-    del_date = datetime.now().strftime("%Y-%m-%d")
+file_stats = collect_file_stats(dbfs_path, threshold_days)
 
-    # Append file statistics to the list
-    file_stats.append((file_name, file_size, file_path, file_creation_date, file_last_update_date, del_status, del_date))
+# Convert Python list to DataFrame
+file_stats_df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
 
-# Create a DataFrame from the file statistics list
-df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
+# Define the primary key column name
+primary_key_column = "name"
 
-# Create a temporary view for the DataFrame
-df.createOrReplaceTempView("file_stats")
+# Check if the table already exists
+table_exists = spark.catalog._jcatalog.tableExists(primary_key_column)
 
-# Create a table in the default schema using append mode
+# Insert data into the permanent table using append mode
 try:
-    spark.sql("CREATE TABLE IF NOT EXISTS default.file_stats (name STRING, size BIGINT, path STRING, creation_date TIMESTAMP, last_update_date TIMESTAMP, del_status STRING, del_date DATE)")
+    if not table_exists:
+        file_stats_df.write.saveAsTable(primary_key_column)
+    else:
+        file_stats_df.write.mode("append").insertInto(primary_key_column)
 except Exception as e:
-    print(f"Error creating table: {e}")
+    # Handle duplicate rows (if any) using an exception
+    print(f"Error occurred while inserting data into the table: {e}")
 
-# Insert the file statistics into the table, excluding duplicates
-try:
-    spark.sql("INSERT INTO default.file_stats SELECT * FROM file_stats EXCEPT SELECT * FROM default.file_stats")
-    print("File statistics inserted successfully!")
-except Exception as e:
-    print(f"Error inserting file statistics: {e}")
+# Stop the Spark session
+spark.stop()
