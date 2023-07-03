@@ -1,54 +1,54 @@
 import os
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit
 
-# Function to collect file statistics recursively inside DBFS
-def collect_file_stats(path, threshold_days):
-    file_list = []
-    for root, dirs, files in os.walk(path):
+# Function to collect file statistics
+def collect_file_stats(dbfs_path):
+    file_stats = []
+    for root, dirs, files in os.walk(dbfs_path):
         for file in files:
             file_path = os.path.join(root, file)
-            stat_info = os.stat(file_path)
-            creation_date = datetime.fromtimestamp(stat_info.st_ctime)
-            last_update_date = datetime.fromtimestamp(stat_info.st_mtime)
-            size = stat_info.st_size
-            deletable = (datetime.now() - last_update_date) > timedelta(days=threshold_days)
-            del_status = "deletable" if deletable else "not deletable"
-            del_date = datetime.now() if deletable else None
+            stat = os.stat(file_path)
+            file_name = os.path.basename(file_path)
+            size = stat.st_size
+            creation_date = datetime.fromtimestamp(stat.st_ctime)
+            last_update_date = datetime.fromtimestamp(stat.st_mtime)
+            del_status = 'deletable'
+            del_date = datetime.now()
+            recommend_deletable = (datetime.now() - last_update_date) > timedelta(days=30)
+            file_stats.append((file_name, size, file_path, creation_date, last_update_date, del_status, del_date, recommend_deletable))
+    return file_stats
 
-            file_list.append((file, size, file_path, creation_date, last_update_date, del_status, del_date))
-
-    return file_list
-
-# Define the DBFS path and threshold for deletable files (30 days)
-dbfs_path = "/dbfs/path/to/directory"
-threshold_days = 30
-
-# Initialize Spark session
+# Configure SparkSession
 spark = SparkSession.builder.appName("FileStats").getOrCreate()
 
+# Define DBFS path
+dbfs_input_path = "/dbfs/path/to/files"
+
 # Collect file statistics
-file_stats = collect_file_stats(dbfs_path, threshold_days)
+file_stats = collect_file_stats(dbfs_input_path)
 
-# Convert Python list to DataFrame
-file_stats_df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
+# Convert file statistics to DataFrame
+df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date", "recommend_deletable"])
 
-# Define the primary key column name
-primary_key_column = "name"
+# Append DataFrame to existing table in default schema or create a new table
+table_name = "file_stats_table"
+df.write.mode("append").saveAsTable(table_name)
 
-# Check if the table already exists
-table_exists = spark.catalog._jcatalog.tableExists(primary_key_column)
-
-# Insert data into the permanent table using append mode
+# Check for duplicate rows and handle exceptions
 try:
-    if not table_exists:
-        file_stats_df.write.saveAsTable(primary_key_column)
-    else:
-        file_stats_df.write.mode("append").insertInto(primary_key_column)
-except Exception as e:
-    # Handle duplicate rows (if any) using an exception
-    print(f"Error occurred while inserting data into the table: {e}")
+    spark.sql(f"ALTER TABLE {table_name} ADD COLUMNS (record_id STRING)")
+except:
+    pass
 
-# Stop the Spark session
-spark.stop()
+df.createOrReplaceTempView("temp_table")
+spark.sql(f"""
+    INSERT INTO TABLE {table_name}
+    SELECT * FROM temp_table
+    WHERE record_id NOT IN (
+        SELECT record_id FROM {table_name}
+    )
+""")
+
+# Print the updated table
+spark.table(table_name).show()
