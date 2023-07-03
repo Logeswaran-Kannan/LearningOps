@@ -1,57 +1,40 @@
-from pyspark.sql.functions import col, count, isnan, when
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
+import os
+from datetime import datetime, timedelta
+from pyspark.sql import SparkSession
 
-def data_profile(database_name):
-  # Get all table names in the database
-  table_names = spark.catalog.listTables(database_name)
-  
-  # Filter out table names that start with '__'
-  table_names = [table.name for table in table_names if not table.name.startswith('__')]
-  
-  # Iterate over all tables and columns
-  column_profiles = []
-  for table_name in table_names:
-    table = spark.table(f"{database_name}.{table_name}")
-    for column_name in table.columns:
-      # Calculate null percentage
-      null_count = table.select(count(when(isnan(col(column_name)) | col(column_name).isNull(), column_name))).collect()[0][0]
-      total_count = table.count()
-      null_percentage = null_count / total_count
-      
-      # Calculate data density
-      data_density = 1 - null_percentage
-      
-      # Get all unique values in the column
-      unique_values = [str(row[column_name]) for row in table.select(column_name).distinct().collect()]
-      
-      # Store the column profile in a list
-      column_profile = (table_name, column_name, null_percentage, data_density, unique_values)
-      column_profiles.append(column_profile)
-  
-  # Define the schema for the temporary table
-  schema = StructType([
-    StructField("table_name", StringType(), True),
-    StructField("column_name", StringType(), True),
-    StructField("null_percentage", DoubleType(), True),
-    StructField("data_density", DoubleType(), True),
-    StructField("unique_values", StringType(), True)
-  ])
-  
-  # Create a DataFrame from the column profiles and store it in a temporary table
-  column_profiles_df = spark.createDataFrame(column_profiles, schema=schema)
-  column_profiles_df.createOrReplaceTempView("column_profiles")
-  
-  
-  
-  
-  
-  
-  # Call the data_profile function with the name of your database
-data_profile("my_database")
+# Set the DBFS path to analyze
+dbfs_path = "/dbfs/path/to/analyze"
 
-# Query the column_profiles table to get the null percentage for a specific column
-spark.sql("SELECT column_name, null_percentage FROM column_profiles WHERE table_name = 'my_table' AND column_name = 'my_column'")
+# Set the threshold for deletable files (30 days)
+threshold_days = 30
 
-# Query the column_profiles table to get the unique values for a specific column
-spark.sql("SELECT column_name, unique_values FROM column_profiles WHERE table_name = 'my_table' AND column_name = 'my_column'")
+# Initialize SparkSession
+spark = SparkSession.builder.getOrCreate()
 
+# Get the list of files and directories recursively
+file_list = []
+for root, dirs, files in os.walk(dbfs_path):
+    for file_name in files:
+        file_path = os.path.join(root, file_name)
+        stat_info = os.stat(file_path)
+        file_size = stat_info.st_size
+        creation_time = datetime.fromtimestamp(stat_info.st_ctime)
+        last_update_time = datetime.fromtimestamp(stat_info.st_mtime)
+        deletable = (datetime.now() - last_update_time) >= timedelta(days=threshold_days)
+        delete_date = datetime.now().strftime("%Y-%m-%d") if deletable else None
+        file_list.append((file_name, file_size, file_path, creation_time, last_update_time, deletable, delete_date))
+
+# Create a DataFrame from the file list
+columns = ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"]
+df = spark.createDataFrame(file_list, columns)
+
+# Create a temporary view for the DataFrame
+df.createOrReplaceTempView("file_stats")
+
+# Create a permanent table with append mode in the default schema
+table_name = "file_stats_table"
+spark.sql(f"CREATE TABLE IF NOT EXISTS default.{table_name} USING DELTA LOCATION '/delta/{table_name}'")
+spark.sql(f"INSERT INTO default.{table_name} SELECT * FROM file_stats")
+
+# Show the table
+spark.sql(f"SELECT * FROM default.{table_name}").show()
