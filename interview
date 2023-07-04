@@ -1,45 +1,58 @@
 import os
+from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import current_date, lit
+from pyspark.sql.functions import lit
 
-# Set the DBFS path to scan
-dbfs_path = '/dbfs/path/to/scan'
-
-# Set the deletion threshold in days
-deletion_threshold = 30
+# Define the threshold for considering a file deletable (30 days)
+threshold_days = 30
 
 # Initialize SparkSession
 spark = SparkSession.builder.getOrCreate()
 
-# Get the file statistics
-file_stats = spark.createDataFrame(spark.sparkContext.wholeTextFiles(dbfs_path), ['path', 'content'])
-file_stats = file_stats.select('path', 'content')
+# Define the DBFS path to start collecting file statistics
+dbfs_path = "/path/to/dbfs"
 
-# Extract file information
-file_stats = file_stats.withColumn('name', os.path.basename(file_stats['path']))
-file_stats = file_stats.withColumn('size', file_stats['content'].alias('size'))
-file_stats = file_stats.withColumn('creation_date', lit(None).cast('timestamp'))
-file_stats = file_stats.withColumn('last_update_date', lit(None).cast('timestamp'))
+# Get the current date
+current_date = datetime.now().strftime("%Y-%m-%d")
 
-# Get file creation date and last update date
-file_stats = file_stats.withColumn('creation_date', os.path.getctime(file_stats['path']).cast('timestamp'))
-file_stats = file_stats.withColumn('last_update_date', os.path.getmtime(file_stats['path']).cast('timestamp'))
+# Collect file statistics recursively from the specified DBFS path
+file_stats = []
+for root, dirs, files in os.walk(dbfs_path):
+    for file_name in files:
+        file_path = os.path.join(root, file_name)
+        file_size = os.path.getsize(file_path)
+        creation_date = os.path.getctime(file_path)
+        last_update_date = os.path.getmtime(file_path)
+        
+        # Convert timestamps to date strings
+        creation_date_str = datetime.fromtimestamp(creation_date).strftime("%Y-%m-%d")
+        last_update_date_str = datetime.fromtimestamp(last_update_date).strftime("%Y-%m-%d")
+        
+        # Calculate the number of days since the last update
+        days_since_last_update = (datetime.now() - datetime.fromtimestamp(last_update_date)).days
+        
+        # Determine the deletion status and recommendation
+        if days_since_last_update >= threshold_days:
+            del_status = "deletable"
+            del_date = current_date
+        else:
+            del_status = "non-deletable"
+            del_date = None
+        
+        # Append the file statistics to the list
+        file_stats.append((file_name, file_size, file_path, creation_date_str, last_update_date_str, del_status, del_date))
 
-# Calculate deletion recommendation
-current_date_col = current_date()
-file_stats = file_stats.withColumn('del_status', lit('deletable'))
-file_stats = file_stats.withColumn('del_date', current_date_col)
-file_stats = file_stats.withColumn('recommendation', lit(True))
-file_stats = file_stats.withColumn('recommendation',
-                                   file_stats['recommendation'] &
-                                   (file_stats['last_update_date'] < current_date_col - deletion_threshold))
+# Create a DataFrame from the collected file statistics
+file_stats_df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
 
-# Read existing table to handle duplicates
-existing_table = spark.table('existing_table')
+# Read the existing table into a DataFrame
+existing_table_df = spark.table("existing_table_name")
 
-# Append the new data, excluding duplicates
-file_stats = file_stats.join(existing_table, 'path', 'left_anti')
-file_stats.write.mode('append').insertInto('existing_table')
+# Append the file statistics to the existing table
+final_df = existing_table_df.union(file_stats_df)
 
-# Print the results
-file_stats.show()
+# Deduplicate based on the 'path' column and keep the latest record
+final_df = final_df.dropDuplicates(["path"]).sort("last_update_date")
+
+# Insert the final DataFrame into the existing table using append mode
+final_df.write.mode("append").insertInto("existing_table_name")
