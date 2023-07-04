@@ -1,58 +1,44 @@
 import os
-from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit
+from pyspark.sql.functions import col, lit, current_date
+from pyspark.sql.types import StringType, IntegerType, TimestampType
 
-# Define the threshold for considering a file deletable (30 days)
+# Set the DBFS path to scan
+dbfs_path = "/dbfs/path/to/scan"
+
+# Set the threshold for deletion (in days)
 threshold_days = 30
 
 # Initialize SparkSession
 spark = SparkSession.builder.getOrCreate()
 
-# Define the DBFS path to start collecting file statistics
-dbfs_path = "/path/to/dbfs"
-
-# Get the current date
-current_date = datetime.now().strftime("%Y-%m-%d")
-
-# Collect file statistics recursively from the specified DBFS path
+# Collect file statistics
 file_stats = []
 for root, dirs, files in os.walk(dbfs_path):
-    for file_name in files:
-        file_path = os.path.join(root, file_name)
+    for file in files:
+        file_path = os.path.join(root, file)
         file_size = os.path.getsize(file_path)
-        creation_date = os.path.getctime(file_path)
-        last_update_date = os.path.getmtime(file_path)
-        
-        # Convert timestamps to date strings
-        creation_date_str = datetime.fromtimestamp(creation_date).strftime("%Y-%m-%d")
-        last_update_date_str = datetime.fromtimestamp(last_update_date).strftime("%Y-%m-%d")
-        
-        # Calculate the number of days since the last update
-        days_since_last_update = (datetime.now() - datetime.fromtimestamp(last_update_date)).days
-        
-        # Determine the deletion status and recommendation
-        if days_since_last_update >= threshold_days:
-            del_status = "deletable"
-            del_date = current_date
-        else:
-            del_status = "non-deletable"
-            del_date = None
-        
-        # Append the file statistics to the list
-        file_stats.append((file_name, file_size, file_path, creation_date_str, last_update_date_str, del_status, del_date))
+        file_create_time = os.path.getctime(file_path)
+        file_update_time = os.path.getmtime(file_path)
+        file_stats.append((file, file_size, file_path, file_create_time, file_update_time))
 
-# Create a DataFrame from the collected file statistics
-file_stats_df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
+# Create DataFrame from file statistics
+df = spark.createDataFrame(file_stats, ["name", "size", "path", "create_date", "update_date"])
+df = df.withColumn("del_status", lit("deletable"))
+df = df.withColumn("del_date", current_date())
 
-# Read the existing table into a DataFrame
-existing_table_df = spark.table("existing_table_name")
+# Check for duplicates
+existing_df = spark.table("your_existing_table")
+existing_paths = existing_df.select("path").rdd.flatMap(lambda x: x).collect()
+df = df.filter(~col("path").isin(existing_paths))
 
-# Append the file statistics to the existing table
-final_df = existing_table_df.union(file_stats_df)
+# Filter files based on threshold for deletion
+current_date = spark.sql("SELECT current_date()").first()[0]
+threshold_date = current_date.subtractExpr(f"INTERVAL {threshold_days} days")
+df = df.withColumn("recommend_deletion", col("update_date") < threshold_date)
 
-# Deduplicate based on the 'path' column and keep the latest record
-final_df = final_df.dropDuplicates(["path"]).sort("last_update_date")
+# Insert the new values into the existing table using insert mode
+df.write.insertInto("your_existing_table", mode="append")
 
-# Insert the final DataFrame into the existing table using append mode
-final_df.write.mode("append").insertInto("existing_table_name")
+# Show the final DataFrame
+df.show(truncate=False)
