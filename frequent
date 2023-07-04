@@ -1,34 +1,28 @@
-import datetime
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
 
-# Create a SparkSession
+# Initialize Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Get the DBFS path from the dropdown widget
-dbfs_path = dbutils.widgets.get("dbfs_path")
+# Load the existing table with path and deletable columns
+table_name = "your_table_name"
+df = spark.table(table_name)
 
-# Get the current date
-current_date = datetime.datetime.now()
+# Filter rows where deletable is set to "deletable"
+deletable_rows = df.filter(df["deletable"] == "deletable")
 
-# Get the files metadata in the DBFS path
-files_df = spark.sql(f"DESCRIBE EXTENDED {dbfs_path}")
-files_df = files_df.select(
-    col("name").alias("File"),
-    col("size").alias("Size"),
-    col("path").alias("Path"),
-    col("creationTime").alias("Creation Date"),
-    col("modificationTime").alias("Last Update Date")
-)
+# Iterate over each deletable row and delete the file
+for row in deletable_rows.collect():
+    # Get the path from the row (assuming the column name is "path")
+    path = row["path"]
 
-# Add a new column indicating if the file is ready for deletion
-two_years_ago = current_date - datetime.timedelta(days=365 * 2)
-files_df = files_df.withColumn("Ready for Deletion", col("Creation Date") < two_years_ago)
+    # Remove "/dbfs" from the path
+    path = path.replace("/dbfs", "")
 
-# Show the file metadata
-files_df.show()
----------------------------------------------------------------------------
+    # Delete the file
+    dbutils.fs.rm(path)
 
+    # Update the "deletable" column to "deleted"
+    df = df.withColumn("deletable", when(df["path"] == path, "deleted").otherwise(df["deletable"]))
 
-dbutils.widgets.dropdown("dbfs_path", "/path/to/files", ["/path/to/files", "/another/path"])
-----------------------------------------------------------------------------
+# Save the updated DataFrame back to the table
+df.write.mode("overwrite").saveAsTable(table_name)
