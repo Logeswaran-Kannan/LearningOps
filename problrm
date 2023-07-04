@@ -1,68 +1,69 @@
+# Step 1: Import required libraries
 import os
+from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import current_date, lit, when
+from pyspark.sql.functions import col, lit, when
+from pyspark.sql.types import StructType, StructField, StringType, LongType, TimestampType
 
-
+# Step 2: Function to collect file stats and determine if files are deletable
 def collect_file_stats(dbfs_path):
-    # Remove "/dbfs" from the path
-    dbfs_path = dbfs_path.replace("/dbfs", "")
-    
-    # Get file stats recursively
-    file_stats = []
-    for root, dirs, files in os.walk(dbfs_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            stat = os.stat(file_path)
-            name = os.path.basename(file_path)
-            size = stat.st_size
-            create_date = stat.st_ctime
-            update_date = stat.st_mtime
-            deletable = 1 if (current_date() - update_date) > 30 else 0
-            del_date = current_date() if deletable else None
-            
-            file_stats.append((name, size, file_path, create_date, update_date, deletable, del_date))
-    
-    return file_stats
+    files_data = []
+    for root, _, files in os.walk(dbfs_path):
+        for file_name in files:
+            file_path = os.path.join(root, file_name)
+            file_stat = os.stat(file_path)
+            file_size = file_stat.st_size
+            creation_date = datetime.fromtimestamp(file_stat.st_ctime)
+            last_update_date = datetime.fromtimestamp(file_stat.st_mtime)
+            del_status = "deletable" if datetime.now() - last_update_date > timedelta(days=30) else "not_deletable"
+            files_data.append((file_name, file_size, file_path, creation_date, last_update_date, del_status))
+    return files_data
 
+# Step 3: Get list of files and their details recursively from DBFS path
+dbfs_path_input = "/dbfs/path/to/files"  # Input your DBFS path here
+file_stats = collect_file_stats(dbfs_path_input)
 
-def insert_file_stats(spark, dbfs_path):
-    # Collect file stats
-    file_stats = collect_file_stats(dbfs_path)
-    
-    # Create DataFrame from the collected stats
-    df = spark.createDataFrame(file_stats, ["name", "size", "path", "create_date", "update_date",
-                                            "del_status", "del_date"])
-    
-    # Read the existing table
-    existing_table = spark.table("your_existing_table")
-    
-    # Append the new stats to the existing table
-    updated_table = existing_table.union(df)
-    
-    # Handle duplicate rows based on the path column
-    updated_table = updated_table.dropDuplicates(["path"])
-    
-    # Write the updated table back to the existing table in append mode
-    updated_table.write.mode("append").insertInto("your_existing_table")
-    
-    # Delete files marked as deletable and update del_status column
-    deleted_files = updated_table.filter(updated_table["del_status"] == 1)
-    deleted_paths = deleted_files.select("path").rdd.flatMap(lambda x: x).collect()
-    
-    for path in deleted_paths:
-        try:
-            os.remove(path)
-        except Exception as e:
-            print(f"Failed to delete file: {path}")
-    
-    # Update the original table with del_status = "deleted"
-    existing_table = existing_table.withColumn("del_status", when(existing_table["path"].isin(deleted_paths), "deleted")
-                                               .otherwise(existing_table["del_status"]))
-    existing_table.write.mode("overwrite").insertInto("your_existing_table")
+# Step 4: Filter out files that are deletable based on the last update date threshold
+deletable_files = [file for file in file_stats if file[5] == "deletable"]
 
-
-# Create SparkSession
+# Step 5: Insert results into the existing table using the append mode
 spark = SparkSession.builder.getOrCreate()
+schema = StructType([
+    StructField("name", StringType(), True),
+    StructField("size", LongType(), True),
+    StructField("path", StringType(), True),
+    StructField("creation_date", TimestampType(), True),
+    StructField("last_update_date", TimestampType(), True),
+    StructField("del_status", StringType(), True)
+])
 
-# Call the function to insert file stats and perform deletions
-insert_file_stats(spark, "/dbfs/path/to/dbfs_folder")
+df = spark.createDataFrame(deletable_files, schema=schema)
+
+# Handle duplicate rows based on the path column
+existing_table = "existing_table_name"  # Replace with the name of your existing table
+df.createOrReplaceTempView("new_data")
+existing_df = spark.sql(f"SELECT DISTINCT path FROM {existing_table}")
+existing_paths = set(row.path for row in existing_df.collect())
+
+df_filtered = df.filter(~col("path").isin(existing_paths))
+
+# Insert the filtered data into the existing table
+df_filtered.write.mode("append").insertInto(existing_table)
+
+# Step 6: Mark deletable files as deleted in the original table
+# Update the del_status column in the original table
+spark.sql(f"UPDATE {existing_table} SET del_status = 'deleted' WHERE del_status = 'deletable'")
+
+# Remove "/dbfs" from path before deleting files
+for file in deletable_files:
+    file_path = file[2]
+    dbfs_file_path = file_path.replace("/dbfs", "")
+    try:
+        os.remove(dbfs_file_path)
+    except Exception as e:
+        print(f"Error deleting file: {dbfs_file_path} - {str(e)}")
+
+# Update the original table with the updated del_status column
+spark.sql(f"UPDATE {existing_table} SET del_status = 'deleted' WHERE del_status = 'deletable'")
+
+print("File stats collection and deletion completed successfully.")
