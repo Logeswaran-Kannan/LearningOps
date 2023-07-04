@@ -1,6 +1,7 @@
 import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
+from pyspark.sql.types import StringType
 
 # Initialize SparkSession
 spark = SparkSession.builder.getOrCreate()
@@ -8,23 +9,27 @@ spark = SparkSession.builder.getOrCreate()
 # Load the existing table
 existing_table = spark.table("your_existing_table_name")
 
-# Filter files to be deleted
-files_to_delete = existing_table.filter(col("deletable") == "deletable").select("path").collect()
+# Filter files that are deletable
+deletable_files = existing_table.filter(col("deletable") == "deletable")
 
-# Delete files
-for row in files_to_delete:
-    file_path = row.path
+# Get the DBFS paths of the deletable files
+dbfs_paths = deletable_files.select("path").rdd.flatMap(lambda x: x).collect()
+
+# Delete files from DBFS and update the table
+for dbfs_path in dbfs_paths:
+    # Remove "dbfs/" from the path
+    path = dbfs_path.replace("dbfs/", "")
+    
+    # Delete the file
     try:
-        # Delete the file
-        dbfs_path = "dbfs:" + file_path
-        dbutils.fs.rm(dbfs_path, recurse=True)
+        os.remove(path)
+        print(f"Deleted file: {dbfs_path}")
         
-        # Update the existing table with the "deleted" value
-        existing_table = existing_table.withColumn("deletable", \
-                                                   when(col("path") == file_path, "deleted").otherwise(col("deletable")))
-        
-    except Exception as e:
-        print(f"Failed to delete file {file_path}: {str(e)}")
+        # Update the existing table
+        existing_table = existing_table.withColumn("deletable", col("deletable").cast(StringType())) \
+            .withColumn("deletable", col("deletable").replace("deletable", "deleted"))
+    except OSError as e:
+        print(f"Error deleting file: {dbfs_path}. {str(e)}")
 
-# Update the existing table with the changes
+# Update the existing table with the updated "deletable" column
 existing_table.write.mode("overwrite").saveAsTable("your_existing_table_name")
