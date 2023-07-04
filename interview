@@ -1,47 +1,38 @@
 import os
+from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, current_date, lit
-
-# Set the base path for the DBFS
-base_path = "/dbfs/path/to/files"
-
-# Set the threshold for deletability (in days)
-threshold_days = 30
 
 # Initialize SparkSession
 spark = SparkSession.builder.getOrCreate()
 
-# Get the list of files and subdirectories recursively
-files = []
-for root, dirs, filenames in os.walk(base_path):
-    for filename in filenames:
-        file_path = os.path.join(root, filename)
-        file_name = os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)
-        file_creation_date = os.path.getctime(file_path)
-        file_last_update_date = os.path.getmtime(file_path)
-        
-        # Calculate the difference between the current date and the last update date
-        days_since_last_update = (current_date() - file_last_update_date).days
-        
-        # Determine the deletability status based on the threshold
-        deletable = days_since_last_update >= threshold_days
-        
-        # Prepare the row for insertion
-        row = (file_name, file_size, file_path, file_creation_date, file_last_update_date, deletable)
-        files.append(row)
+# Function to collect file stats and check deletable status
+def collect_file_stats(dbfs_path):
+    stats_list = []
+    today_date = datetime.now().strftime('%Y-%m-%d')
+    threshold_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    
+    def process_file(path):
+        stat = os.stat(path)
+        name = os.path.basename(path)
+        size = stat.st_size
+        creation_date = datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d')
+        last_update_date = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d')
+        deletable = last_update_date <= threshold_date
+        stats_list.append((name, size, path, creation_date, last_update_date, deletable, today_date))
+    
+    # Traverse the DBFS path recursively
+    for root, _, files in os.walk(dbfs_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            process_file(file_path)
 
-# Create a DataFrame from the collected file stats
-df = spark.createDataFrame(files, ["name", "size", "path", "creation_date", "last_update_date", "deletable"])
+    # Create a DataFrame from the collected stats list
+    columns = ["name", "size", "path", "creation_date", "last_update_date", "deletable", "del_date"]
+    df = spark.createDataFrame(stats_list, columns)
+    
+    # Insert into the existing table, handling duplicates
+    df.write.mode("append").insertInto("your_existing_table", overwrite=False)
 
-# Insert the DataFrame into the existing table using insert mode
-df.write.mode("append").insertInto("default.my_table")
-
-# Check for duplicates based on the path column
-duplicate_count = spark.sql("SELECT COUNT(*) FROM (SELECT path, COUNT(*) AS count FROM default.my_table GROUP BY path HAVING count > 1) AS duplicates").collect()[0][0]
-
-# Handle duplicate insertions
-if duplicate_count > 0:
-    print(f"Skipping {duplicate_count} duplicate rows.")
-else:
-    print("All rows inserted successfully.")
+# Call the function with the desired DBFS path
+dbfs_path = "/dbfs/path/to/your/folder"
+collect_file_stats(dbfs_path)
