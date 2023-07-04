@@ -1,10 +1,45 @@
-CREATE TABLE IF NOT EXISTS your_table_name (
-  name STRING,
-  size BIGINT,
-  path STRING,
-  creation_date TIMESTAMP,
-  last_update_date TIMESTAMP,
-  del_status STRING,
-  del_date STRING
-)
-USING delta;
+import os
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import current_date, lit
+
+# Set the DBFS path to scan
+dbfs_path = '/dbfs/path/to/scan'
+
+# Set the deletion threshold in days
+deletion_threshold = 30
+
+# Initialize SparkSession
+spark = SparkSession.builder.getOrCreate()
+
+# Get the file statistics
+file_stats = spark.createDataFrame(spark.sparkContext.wholeTextFiles(dbfs_path), ['path', 'content'])
+file_stats = file_stats.select('path', 'content')
+
+# Extract file information
+file_stats = file_stats.withColumn('name', os.path.basename(file_stats['path']))
+file_stats = file_stats.withColumn('size', file_stats['content'].alias('size'))
+file_stats = file_stats.withColumn('creation_date', lit(None).cast('timestamp'))
+file_stats = file_stats.withColumn('last_update_date', lit(None).cast('timestamp'))
+
+# Get file creation date and last update date
+file_stats = file_stats.withColumn('creation_date', os.path.getctime(file_stats['path']).cast('timestamp'))
+file_stats = file_stats.withColumn('last_update_date', os.path.getmtime(file_stats['path']).cast('timestamp'))
+
+# Calculate deletion recommendation
+current_date_col = current_date()
+file_stats = file_stats.withColumn('del_status', lit('deletable'))
+file_stats = file_stats.withColumn('del_date', current_date_col)
+file_stats = file_stats.withColumn('recommendation', lit(True))
+file_stats = file_stats.withColumn('recommendation',
+                                   file_stats['recommendation'] &
+                                   (file_stats['last_update_date'] < current_date_col - deletion_threshold))
+
+# Read existing table to handle duplicates
+existing_table = spark.table('existing_table')
+
+# Append the new data, excluding duplicates
+file_stats = file_stats.join(existing_table, 'path', 'left_anti')
+file_stats.write.mode('append').insertInto('existing_table')
+
+# Print the results
+file_stats.show()
