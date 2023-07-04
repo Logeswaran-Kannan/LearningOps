@@ -1,45 +1,47 @@
-CREATE OR REPLACE TEMPORARY VIEW profile_results AS
-SELECT table_name, NULL AS col_name, NULL AS data_type,
-       COUNT(*) AS count,
-       COUNT(*) - COUNT(*) * COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name) AS not_null_count,
-       COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name) / COUNT(*) AS null_pct,
-       NULL AS valid_values,
-       (COUNT(*) - COUNT(DISTINCT col)) / COUNT(*) AS data_density,
-       COUNT(DISTINCT col) / COUNT(*) AS unique_pct
-FROM (
-  SELECT table_name, col
-  FROM (
-    SELECT t.table_name, c.column_name
-    FROM information_schema.tables t
-    JOIN information_schema.columns c ON t.table_name = c.table_name AND t.table_schema = c.table_schema
-    WHERE t.table_schema = 'your_database_name'
-      AND NOT t.table_name LIKE '_%'
-      AND c.column_name NOT LIKE '%_id'
-  ) x
-  LATERAL VIEW explode_outer(array(*)) cols AS col
-  LATERAL VIEW explode_outer(array(*)) cols2 AS col2
-) y
-GROUP BY table_name
-UNION ALL
-SELECT table_name, col_name, data_type,
-       COUNT(*) AS count,
-       COUNT(*) - COUNT(*) * COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name, col_name) AS not_null_count,
-       COUNT(CASE WHEN col IS NULL THEN 1 END) OVER (PARTITION BY table_name, col_name) / COUNT(*) AS null_pct,
-       COLLECT_LIST(col) AS valid_values,
-       NULL AS data_density,
-       COUNT(DISTINCT col) / COUNT(*) AS unique_pct
-FROM (
-  SELECT table_name, col_name, col, data_type
-  FROM (
-    SELECT t.table_name, c.column_name AS col_name, CAST(NULL AS STRING) AS col, CAST(c.data_type AS STRING) AS data_type
-    FROM information_schema.tables t
-    JOIN information_schema.columns c ON t.table_name = c.table_name AND t.table_schema = c.table_schema
-    WHERE t.table_schema = 'your_database_name'
-      AND NOT t.table_name LIKE '_%'
-      AND c.column_name NOT LIKE '%_id'
-  ) x
-  LATERAL VIEW explode_outer(array(*)) cols AS col
-  LATERAL VIEW explode_outer(array(*)) cols2 AS col2
-) y
-GROUP BY table_name, col_name, data_type
-HAVING unique_pct < 0.5
+import os
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import current_date
+
+# Specify the DBFS path
+dbfs_path = "/dbfs/path/to/files"
+
+# Specify the table name to insert the results
+table_name = "your_table_name"
+
+# Specify the threshold for file deletability in days
+deletability_threshold = 30
+
+# Initialize SparkSession
+spark = SparkSession.builder.getOrCreate()
+
+# Collect file statistics
+file_stats = []
+try:
+    for root, dirs, files in os.walk(dbfs_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            creation_date = os.path.getctime(file_path)
+            last_update_date = os.path.getmtime(file_path)
+            deletable = last_update_date < (current_date() - deletability_threshold * 86400)
+            del_date = current_date()
+            file_stats.append((file_name, file_size, file_path, creation_date, last_update_date, deletable, del_date))
+except Exception as e:
+    print("Error occurred while collecting file stats:", str(e))
+
+# Create a DataFrame from the file statistics
+if file_stats:
+    df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
+
+    # Check for duplicates based on the path column
+    existing_paths = spark.table(table_name).select("path").distinct()
+    df = df.join(existing_paths, ["path"], "left_anti")
+
+    # Insert the new values into the existing table using insert mode
+    df.write.mode("append").insertInto(table_name)
+
+    # Print the resulting DataFrame
+    df.show()
+else:
+    print("No files or subfolders found in the specified DBFS path.")
