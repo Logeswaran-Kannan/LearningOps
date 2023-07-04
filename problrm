@@ -31,3 +31,6 @@ spark.sql("DROP TABLE your_existing_table")
 
 # Rename the updated table to the original table name
 spark.sql("ALTER TABLE your_updated_table RENAME TO your_existing_table")
+-----------------------------
+
+ALTER TABLE your_table_name ALTER COLUMN size_col_name TYPE BIGINT;
