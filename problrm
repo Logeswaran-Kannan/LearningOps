@@ -34,3 +34,10 @@ spark.sql("ALTER TABLE your_updated_table RENAME TO your_existing_table")
 -----------------------------
 
 ALTER TABLE your_table_name ALTER COLUMN size_col_name TYPE BIGINT;
+---------------------------------
+
+# Create SparkSession
+spark = SparkSession.builder.getOrCreate()
+
+# Alter the table and change the column data type
+spark.sql("ALTER TABLE your_table_name ALTER COLUMN size TYPE Long")
