@@ -1,9 +1,10 @@
-CREATE TABLE your_table_name (
-    name VARCHAR(255),
-    size BIGINT,
-    path VARCHAR(255) PRIMARY KEY,
-    creation_date DATE,
-    last_update_date DATE,
-    deletable BOOLEAN,
-    del_date DATE
-);
+CREATE TABLE IF NOT EXISTS your_table_name (
+  name STRING,
+  size INT,
+  path STRING PRIMARY KEY,
+  creation_date STRING,
+  last_update_date STRING,
+  deletable BOOLEAN,
+  del_date STRING
+)
+USING delta
