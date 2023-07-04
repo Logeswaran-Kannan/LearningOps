@@ -1,50 +1,68 @@
-from pyspark.sql.functions import *
-from pyspark.sql.types import *
+import os
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import current_date, lit, when
 
-# Define the name of the database
-database_name = "your_database_name"
 
-# Get a list of all tables in the database
-tables = spark.sql(f"SHOW TABLES IN {database_name}").select("tableName").collect()
-
-# Loop through each table and perform data profiling on each column
-for table in tables:
-  table_name = table[0]
-  df = spark.table(f"{database_name}.{table_name}")
-  
-  # Create a new dataframe to hold the profiling results
-  profiling_results = spark.createDataFrame([], StructType([
-    StructField("table_name", StringType(), True),
-    StructField("column_name", StringType(), True),
-    StructField("data_type", StringType(), True),
-    StructField("distinct_count", IntegerType(), True),
-    StructField("null_count", IntegerType(), True),
-    StructField("avg_value_length", DoubleType(), True),
-    StructField("min_value", StringType(), True),
-    StructField("max_value", StringType(), True),
-    StructField("most_common_values", StringType(), True)
-  ]))
-  
-  # Loop through each column in the dataframe and perform data profiling
-  for column in df.columns:
-    data_type = str(df.schema[column].dataType)
-    distinct_count = df.select(column).distinct().count()
-    null_count = df.filter(col(column).isNull()).count()
-    avg_value_length = df.select(avg(length(column))).collect()[0][0]
-    min_value = df.select(min(column)).collect()[0][0]
-    max_value = df.select(max(column)).collect()[0][0]
+def collect_file_stats(dbfs_path):
+    # Remove "/dbfs" from the path
+    dbfs_path = dbfs_path.replace("/dbfs", "")
     
-    # Determine the most common values in the column
-    value_counts = df.groupBy(column).count().orderBy(desc("count")).limit(10)
-    most_common_values = ""
-    for row in value_counts.collect():
-      most_common_values += f"{row[column]}: {row['count']}\n"
+    # Get file stats recursively
+    file_stats = []
+    for root, dirs, files in os.walk(dbfs_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            stat = os.stat(file_path)
+            name = os.path.basename(file_path)
+            size = stat.st_size
+            create_date = stat.st_ctime
+            update_date = stat.st_mtime
+            deletable = 1 if (current_date() - update_date) > 30 else 0
+            del_date = current_date() if deletable else None
+            
+            file_stats.append((name, size, file_path, create_date, update_date, deletable, del_date))
     
-    # Add the profiling results for this column to the dataframe
-    profiling_results = profiling_results.union(
-      spark.createDataFrame([(table_name, column, data_type, distinct_count, null_count, avg_value_length, min_value, max_value, most_common_values)],
-                            profiling_results.schema)
-    )
-  
-  # Display the profiling results for this table
-  display(profiling_results)
+    return file_stats
+
+
+def insert_file_stats(spark, dbfs_path):
+    # Collect file stats
+    file_stats = collect_file_stats(dbfs_path)
+    
+    # Create DataFrame from the collected stats
+    df = spark.createDataFrame(file_stats, ["name", "size", "path", "create_date", "update_date",
+                                            "del_status", "del_date"])
+    
+    # Read the existing table
+    existing_table = spark.table("your_existing_table")
+    
+    # Append the new stats to the existing table
+    updated_table = existing_table.union(df)
+    
+    # Handle duplicate rows based on the path column
+    updated_table = updated_table.dropDuplicates(["path"])
+    
+    # Write the updated table back to the existing table in append mode
+    updated_table.write.mode("append").insertInto("your_existing_table")
+    
+    # Delete files marked as deletable and update del_status column
+    deleted_files = updated_table.filter(updated_table["del_status"] == 1)
+    deleted_paths = deleted_files.select("path").rdd.flatMap(lambda x: x).collect()
+    
+    for path in deleted_paths:
+        try:
+            os.remove(path)
+        except Exception as e:
+            print(f"Failed to delete file: {path}")
+    
+    # Update the original table with del_status = "deleted"
+    existing_table = existing_table.withColumn("del_status", when(existing_table["path"].isin(deleted_paths), "deleted")
+                                               .otherwise(existing_table["del_status"]))
+    existing_table.write.mode("overwrite").insertInto("your_existing_table")
+
+
+# Create SparkSession
+spark = SparkSession.builder.getOrCreate()
+
+# Call the function to insert file stats and perform deletions
+insert_file_stats(spark, "/dbfs/path/to/dbfs_folder")
