@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, when
 
 # Create SparkSession
 spark = SparkSession.builder.getOrCreate()
@@ -21,4 +21,13 @@ updated_table = existing_table.withColumn("del_status",
                                            .otherwise(col("del_status")))
 
 # Save the updated table
-updated_table.write.format("delta").mode("overwrite").saveAsTable("your_existing_table")
+updated_table.write.format("delta").mode("overwrite").saveAsTable("your_updated_table")
+
+# Optimize the table to avoid table locking
+spark.sql("OPTIMIZE your_updated_table")
+
+# Drop the original table
+spark.sql("DROP TABLE your_existing_table")
+
+# Rename the updated table to the original table name
+spark.sql("ALTER TABLE your_updated_table RENAME TO your_existing_table")
