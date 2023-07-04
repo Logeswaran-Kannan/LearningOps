@@ -1,52 +1,24 @@
-import os
-from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# Set the DBFS path you want to collect stats for
-dbfs_path = '/dbfs/your_directory'
-
-# Define the threshold for deletable files (30 days)
-threshold_days = 30
-
-# Get the current date
-current_date = datetime.now().date()
-
-# Create a SparkSession
+# Create SparkSession
 spark = SparkSession.builder.getOrCreate()
 
 # Read the existing table
-existing_table = spark.table('your_table')
+existing_table = spark.table("your_existing_table")
 
-# Collect file stats
-file_stats = []
-for root, dirs, files in os.walk(dbfs_path):
-    for file in files:
-        file_path = os.path.join(root, file)
-        file_size = os.path.getsize(file_path)
-        file_creation_date = datetime.fromtimestamp(os.path.getctime(file_path)).date()
-        file_last_update_date = datetime.fromtimestamp(os.path.getmtime(file_path)).date()
+# Filter rows with del_status = "deletable"
+deletable_files = existing_table.filter(col("del_status") == "deletable")
 
-        del_status = 'deletable' if (current_date - file_last_update_date).days > threshold_days else ''
-        del_date = current_date if del_status == 'deletable' else None
+# Iterate over the rows and delete files
+for row in deletable_files.collect():
+    file_path = row["path"].replace("/dbfs", "")  # Remove "/dbfs" from path
+    dbutils.fs.rm(file_path, True)  # Delete the file recursively
 
-        # Check if the file_path already exists in the existing table
-        if file_path not in existing_table.select('path').rdd.flatMap(lambda x: x).collect():
-            file_stats.append((file, file_size, file_path, file_creation_date, file_last_update_date, del_status, del_date))
+# Update the original table with new del_status
+updated_table = existing_table.withColumn("del_status",
+                                           when(col("del_status") == "deletable", "deleted")
+                                           .otherwise(col("del_status")))
 
-# Create a DataFrame from the file stats
-file_stats_df = spark.createDataFrame(file_stats, ['name', 'size', 'path', 'creation_date', 'last_update_date', 'del_status', 'del_date'])
-
-# Append the DataFrame to the existing table
-file_stats_df.write.mode('append').insertInto('your_table')
-
-# Delete files marked as deletable
-for row in file_stats_df.filter(file_stats_df.del_status == 'deletable').collect():
-    file_path = row['path'].replace('/dbfs', '')  # Remove '/dbfs' from the path
-    os.remove(file_path)
-
-# Update the original table with the del_status column updated as 'deleted'
-existing_table = spark.table('your_table')
-existing_table.createOrReplaceTempView('temp_table')
-deleted_files = spark.sql("SELECT name, size, path, creation_date, last_update_date, 'deleted' AS del_status, del_date FROM temp_table WHERE del_status = 'deletable'")
-existing_table.union(deleted_files).write.mode('overwrite').insertInto('your_table')
-
+# Save the updated table
+updated_table.write.format("delta").mode("overwrite").saveAsTable("your_existing_table")
