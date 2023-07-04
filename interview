@@ -1,32 +1,30 @@
 import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
-import databricks.koalas as ks
 
 # Initialize SparkSession
 spark = SparkSession.builder.getOrCreate()
 
-# Load the existing table into a DataFrame
+# Load the existing table
 existing_table = spark.table("your_existing_table_name")
 
-# Filter files that are deletable
-deletable_files = existing_table.filter(col("deletable") == "deletable")
+# Filter files to be deleted
+files_to_delete = existing_table.filter(col("deletable") == "deletable").select("path").collect()
 
-# Convert the DataFrame to a Koalas DataFrame for easier manipulation
-deletable_files = deletable_files.to_koalas()
+# Delete files
+for row in files_to_delete:
+    file_path = row.path
+    try:
+        # Delete the file
+        dbfs_path = "dbfs:" + file_path
+        dbutils.fs.rm(dbfs_path, recurse=True)
+        
+        # Update the existing table with the "deleted" value
+        existing_table = existing_table.withColumn("deletable", \
+                                                   when(col("path") == file_path, "deleted").otherwise(col("deletable")))
+        
+    except Exception as e:
+        print(f"Failed to delete file {file_path}: {str(e)}")
 
-# Iterate over the deletable files and delete them
-for index, row in deletable_files.iterrows():
-    dbfs_path = row["path"]
-    if ks.is_file(dbfs_path):
-        ks.rm(dbfs_path)
-        deletable_files.at[index, "deletable"] = "deleted"
-
-# Convert the Koalas DataFrame back to a Spark DataFrame
-deletable_files_spark = spark.createDataFrame(deletable_files)
-
-# Update the existing table with the updated deletable column
-deletable_files_spark.write.mode("overwrite").insertInto("your_existing_table_name")
-
-# Display the updated DataFrame
-deletable_files_spark.show()
+# Update the existing table with the changes
+existing_table.write.mode("overwrite").saveAsTable("your_existing_table_name")
