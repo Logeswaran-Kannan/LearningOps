@@ -1,28 +1,22 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# Initialize Spark session
+# Initialize SparkSession
 spark = SparkSession.builder.getOrCreate()
 
-# Load the existing table with path and deletable columns
-table_name = "your_table_name"
-df = spark.table(table_name)
+# Load the existing table
+existing_table = spark.table("your_existing_table")
 
-# Filter rows where deletable is set to "deletable"
-deletable_rows = df.filter(df["deletable"] == "deletable")
+# Filter the rows where del_status is "deletable"
+deletable_rows = existing_table.filter(col("del_status") == "deletable")
 
-# Iterate over each deletable row and delete the file
-for row in deletable_rows.collect():
-    # Get the path from the row (assuming the column name is "path")
-    path = row["path"]
+# Iterate over the rows and delete the files
+for row in deletable_rows.rdd.collect():
+    file_path = row["path"].replace("/dbfs", "")
+    dbutils.fs.rm(file_path, True)  # Delete the file
 
-    # Remove "/dbfs" from the path
-    path = path.replace("/dbfs", "")
+# Update the del_status column to "deleted" for the deleted files
+existing_table = existing_table.withColumn("del_status", col("del_status").when(col("del_status") == "deletable", "deleted"))
 
-    # Delete the file
-    dbutils.fs.rm(path)
-
-    # Update the "deletable" column to "deleted"
-    df = df.withColumn("deletable", when(df["path"] == path, "deleted").otherwise(df["deletable"]))
-
-# Save the updated DataFrame back to the table
-df.write.mode("overwrite").saveAsTable(table_name)
+# Save the updated table back to the same location
+existing_table.write.mode("overwrite").saveAsTable("your_existing_table")
