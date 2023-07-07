@@ -1,3 +1,1 @@
-I kindly request you to share your H1 performance appraisal points from a delivery perspective, specifically focusing on achievements, expectations, and areas for improvement. Please send your comments to me directly, as I would like to discuss them during our call today.
-
-Thank you for your cooperation.
+Since this issue is specific to the production environment and related to the deployment process, it is necessary to understand how to recreate the same scenario in a lower environment. Typically, in a full refresh, the existing records should be removed before processing new ones, but this step was overlooked. We need to manually perform the deletion process. However, replicating this scenario in a testing environment poses a challenge in terms of test data. The only feasible option is to recreate it by adding manipulated test data to the DIM_EMPLOYEE table.
