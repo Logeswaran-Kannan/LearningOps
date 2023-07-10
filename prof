@@ -1,17 +1,19 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import count, expr, current_date
-from pyspark.sql.utils import AnalysisException
+from pyspark.sql.functions import count, expr
+from datetime import date
 
-# Get the schema and table names from the CSV file in repository location
-csv_path = "/path/to/csv/file.csv"
-schema_table_df = spark.read.option("header", "true").csv(csv_path)
-schemas = schema_table_df.select("schema").distinct().rdd.flatMap(lambda x: x).collect()
-tables = schema_table_df.select("table").distinct().rdd.flatMap(lambda x: x).collect()
+# Get the CSV file path from the repository location
+csv_file_path = "/path/to/csv/file.csv"
+
+# Read the schema and table name from the CSV file
+schema_df = spark.read.option("header", "true").csv(csv_file_path)
+schemas = schema_df.select("schema_name").distinct().rdd.flatMap(lambda x: x).collect()
+tables = schema_df.select("table_name").distinct().rdd.flatMap(lambda x: x).collect()
 
 # Create a Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Iterate over each schema and table and perform data profiling
+# Iterate over each schema and table name
 for schema_name in schemas:
     for table_name in tables:
         try:
@@ -31,12 +33,29 @@ for schema_name in schemas:
             total_rows = profile_df.select("row_count").first()["row_count"]
             profile_df = profile_df.withColumn("value_contribution", expr(f"row_count/{total_rows} * 100"))
 
-            # Add columns for schema, table name, and current date
+            # Add columns for schema, table name, and profiling date
+            current_date = date.today().isoformat()
             profile_df = profile_df.withColumn("schema", expr(f"'{schema_name}'"))
             profile_df = profile_df.withColumn("tablename", expr(f"'{table_name}'"))
-            profile_df = profile_df.withColumn("profiling_date", current_date())
+            profile_df = profile_df.withColumn("profiling_date", expr(f"'{current_date}'"))
 
-            # Save the data profiling results to the "dataprofile" table in overwrite mode
-            profile_df.write.mode("overwrite").insertInto("dataprofile")
-        except AnalysisException as e:
-            print(f"Table {schema_name}.{table_name} not found: {str(e)}")
+            # Save the data profiling results to the table
+            profile_df.write.mode("overwrite").saveAsTable("dataprofile")
+
+            # Print the data profiling results
+            profile_df.show()
+
+        except Exception as e:
+            print(f"Error profiling table {schema_name}.{table_name}: {str(e)}")
+----------------
+
+CREATE TABLE IF NOT EXISTS dataprofile (
+  schema STRING,
+  tablename STRING,
+  columnname STRING,
+  distinct_value LONG,
+  value_contribution DOUBLE,
+  profiling_date DATE
+)
+USING DELTA;
+
