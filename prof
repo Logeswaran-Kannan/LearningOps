@@ -1,15 +1,42 @@
-I would like to provide my feedback on Aki's performance during this year-end appraisal. Aki has played a significant role in developing the SIT framework, showcasing a strong learning attitude and taking full responsibility for the tasks assigned to him. His proficiency in Python scripting has been particularly commendable. He has already demonstrated the capabilities expected at the associate level.
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import count, expr, current_date
+from pyspark.sql.utils import AnalysisException
 
-Furthermore, Aki possesses the potential to develop automation models that add value to our business, aligning with our H2 goals. This is an area where we have high expectations from him and the team shares the same sentiment. It would greatly benefit the team if Aki could address the comments provided by his fellow team members. I recommend having a conversation with him regarding his expectations moving forward.
+# Get the schema and table names from the CSV file in repository location
+csv_path = "/path/to/csv/file.csv"
+schema_table_df = spark.read.option("header", "true").csv(csv_path)
+schemas = schema_table_df.select("schema").distinct().rdd.flatMap(lambda x: x).collect()
+tables = schema_table_df.select("table").distinct().rdd.flatMap(lambda x: x).collect()
 
-Thank you for your attention to this matter.
+# Create a Spark session
+spark = SparkSession.builder.getOrCreate()
 
+# Iterate over each schema and table and perform data profiling
+for schema_name in schemas:
+    for table_name in tables:
+        try:
+            # Read the data from the specified schema and table
+            df = spark.table(f"{schema_name}.{table_name}")
 
-___________________________________________________
+            # Perform data profiling
+            profile_df = df.selectExpr(
+                "*",  # Select all columns
+                "1 as row_count"  # Add a column with constant value 1 for counting rows
+            ).groupBy().agg(
+                count("*").alias("row_count"),  # Total row count
+                *[count(c).alias(c) for c in df.columns]  # Count distinct values for each column
+            )
 
+            # Calculate the value contribution percentage
+            total_rows = profile_df.select("row_count").first()["row_count"]
+            profile_df = profile_df.withColumn("value_contribution", expr(f"row_count/{total_rows} * 100"))
 
-I would like to provide my feedback on Jeni's performance during this year-end appraisal. With the experience gained from the previous project, Jeni has made significant contributions to the Aurora TS01 Release. His progress in team management has been noticeable, as he has started taking ownership of team responsibilities. He consistently meets project expectations, but there is room for improvement in terms of focusing on end-to-end delivery perspective.
+            # Add columns for schema, table name, and current date
+            profile_df = profile_df.withColumn("schema", expr(f"'{schema_name}'"))
+            profile_df = profile_df.withColumn("tablename", expr(f"'{table_name}'"))
+            profile_df = profile_df.withColumn("profiling_date", current_date())
 
-In his role as a Technical Lead, Jeni provides valuable support to the teams, extending his assistance when needed. However, it is important for him to develop better communication with subject matter experts (SMEs). This will enable smoother collaboration and knowledge sharing.
-
-Looking ahead to the second half of the year, Jeni has set a goal to develop a Scenario repository for the insurance business and automate its daily operations. This objective aligns well with the team's goals and will bring significant value to our business.
+            # Save the data profiling results to the "dataprofile" table in overwrite mode
+            profile_df.write.mode("overwrite").insertInto("dataprofile")
+        except AnalysisException as e:
+            print(f"Table {schema_name}.{table_name} not found: {str(e)}")
