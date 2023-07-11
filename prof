@@ -1,44 +1,51 @@
+import os
 import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import *
+from pyspark.sql.functions import col, countDistinct, current_date
 
-# Set the DBFS location to save the profiling output
-output_location = "/dbfs/path/to/output.txt"
+# Set the DBFS location where you want to save the profiling output
+output_location = "/dbfs/path/to/output/"
 
-# Read the CSV file containing database and table names
-csv_file_path = "/dbfs/path/to/input.csv"
-df_csv = pd.read_csv(csv_file_path)
+# Read the CSV file containing the database and table names
+csv_file_path = "/dbfs/path/to/repo_tables.csv"
+df_tables = pd.read_csv(csv_file_path)
 
-# Convert the pandas DataFrame to a Spark DataFrame
+# Create a SparkSession
 spark = SparkSession.builder.getOrCreate()
-df_tables = spark.createDataFrame(df_csv)
 
-# Iterate over each row in the DataFrame
-for row in df_tables.collect():
-    database = row['database']
-    table = row['table']
+# Iterate over each row in the dataframe
+for index, row in df_tables.iterrows():
+    database_name = row['Database']
+    table_name = row['Table']
 
-    try:
-        # Perform data profiling
-        df = spark.table(f"{database}.{table}")
-        profile_df = df.select(*[countDistinct(col(c)).alias(c) for c in df.columns])
+    # Check if the table exists
+    if spark.catalog._jcatalog.tableExists(database_name, table_name):
+        # Get the column names from the table
+        column_names = spark.catalog.listColumns(database_name, table_name)
+        column_names = [col_name.name for col_name in column_names]
 
-        # Add columns for schema, tablename, and current date
-        profile_df = profile_df.withColumn("schema", lit(database))
-        profile_df = profile_df.withColumn("tablename", lit(table))
-        profile_df = profile_df.withColumn("currentdate", current_date())
+        # Perform data profiling using SQL
+        df_profile = spark.sql(f"SELECT {', '.join(column_names)} FROM {database_name}.{table_name}")
+        for column in column_names:
+            distinct_values = df_profile.select(column).distinct().collect()
+            distinct_count = len(distinct_values)
+            total_count = df_profile.count()
+            value_contribution = (distinct_count / total_count) * 100
 
-        # Calculate value contribution in %
-        total_rows = df.count()
-        profile_df = profile_df.withColumn("value_contribution", profile_df[profile_df.columns[1:]].sum() / total_rows * 100)
+            # Create a dataframe with profiling results
+            profiling_data = pd.DataFrame({
+                'schema': [database_name],
+                'tablename': [table_name],
+                'columnname': [column],
+                'distinct value': [distinct_count],
+                'value contribution in %': [value_contribution],
+                'currentdate': [current_date()]
+            })
 
-        # Save the profiling output in overwrite mode
-        profile_df.write.mode("overwrite").format("csv").option("header", "true").save(output_location)
+            # Save the profiling results as a TXT file
+            output_file_path = os.path.join(output_location, f"{database_name}_{table_name}_{column}.txt")
+            profiling_data.to_csv(output_file_path, sep='\t', index=False, mode='overwrite')
+    else:
+        print(f"Table '{database_name}.{table_name}' not found.")
 
-        # Move the output file to the desired DBFS location with TXT format
-        output_file_path = f"{output_location}/{database}_{table}.txt"
-        dbutils.fs.mv(output_location, output_file_path)
-
-    except Exception as e:
-        # Handle exceptions if table is not found
-        print(f"Error profiling table {database}.{table}: {str(e)}")
+print("Data profiling completed.")
