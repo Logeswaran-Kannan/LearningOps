@@ -1,54 +1,44 @@
-import csv
-import datetime
+import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import countDistinct
+from pyspark.sql.functions import *
 
-# Initialize SparkSession
-spark = SparkSession.builder \
-    .appName("Data Profiling") \
-    .getOrCreate()
+# Set the DBFS location to save the profiling output
+output_location = "/dbfs/path/to/output.txt"
 
-# Read database and table names from CSV
-csv_file_path = "/path/to/csv_file.csv"
-with open(csv_file_path, "r") as csv_file:
-    csv_reader = csv.reader(csv_file)
-    db_table_names = list(csv_reader)
+# Read the CSV file containing database and table names
+csv_file_path = "/dbfs/path/to/input.csv"
+df_csv = pd.read_csv(csv_file_path)
 
-# DBFS output location for profiling results
-output_location = "dbfs:/path/to/output_location/"
+# Convert the pandas DataFrame to a Spark DataFrame
+spark = SparkSession.builder.getOrCreate()
+df_tables = spark.createDataFrame(df_csv)
 
-# Perform data profiling for each table
-for db_name, table_name in db_table_names:
+# Iterate over each row in the DataFrame
+for row in df_tables.collect():
+    database = row['database']
+    table = row['table']
+
     try:
-        # Read table data
-        df = spark.table(f"{db_name}.{table_name}")
-
         # Perform data profiling
-        profiling_df = df.agg(*[
-            countDistinct(col_name).alias(col_name)
-            for col_name in df.columns
-        ])
+        df = spark.table(f"{database}.{table}")
+        profile_df = df.select(*[countDistinct(col(c)).alias(c) for c in df.columns])
 
-        # Prepare profiling output
-        output_df = profiling_df \
-            .selectExpr("*", f"current_date() AS profiling_date") \
-            .withColumnRenamed("profiling_date", "currentdate")
+        # Add columns for schema, tablename, and current date
+        profile_df = profile_df.withColumn("schema", lit(database))
+        profile_df = profile_df.withColumn("tablename", lit(table))
+        profile_df = profile_df.withColumn("currentdate", current_date())
 
-        # Write profiling output to TXT file
-        output_file_path = f"{output_location}/{db_name}_{table_name}_profiling.txt"
-        output_df.write \
-            .option("header", "true") \
-            .option("sep", "\t") \
-            .option("overwrite", "true") \
-            .format("csv") \
-            .mode("overwrite") \
-            .save(output_file_path)
+        # Calculate value contribution in %
+        total_rows = df.count()
+        profile_df = profile_df.withColumn("value_contribution", profile_df[profile_df.columns[1:]].sum() / total_rows * 100)
 
-        print(f"Data profiling completed for table: {db_name}.{table_name}")
+        # Save the profiling output in overwrite mode
+        profile_df.write.mode("overwrite").format("csv").option("header", "true").save(output_location)
+
+        # Move the output file to the desired DBFS location with TXT format
+        output_file_path = f"{output_location}/{database}_{table}.txt"
+        dbutils.fs.mv(output_location, output_file_path)
 
     except Exception as e:
-        print(f"Error occurred while profiling table: {db_name}.{table_name}")
-        print(f"Error message: {str(e)}")
-
-# Stop SparkSession
-spark.stop()
+        # Handle exceptions if table is not found
+        print(f"Error profiling table {database}.{table}: {str(e)}")
