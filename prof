@@ -1,61 +1,54 @@
+import csv
+import datetime
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import count, expr
-from datetime import date
+from pyspark.sql.functions import countDistinct
 
-# Get the CSV file path from the repository location
-csv_file_path = "/path/to/csv/file.csv"
+# Initialize SparkSession
+spark = SparkSession.builder \
+    .appName("Data Profiling") \
+    .getOrCreate()
 
-# Read the schema and table name from the CSV file
-schema_df = spark.read.option("header", "true").csv(csv_file_path)
-schemas = schema_df.select("schema_name").distinct().rdd.flatMap(lambda x: x).collect()
-tables = schema_df.select("table_name").distinct().rdd.flatMap(lambda x: x).collect()
+# Read database and table names from CSV
+csv_file_path = "/path/to/csv_file.csv"
+with open(csv_file_path, "r") as csv_file:
+    csv_reader = csv.reader(csv_file)
+    db_table_names = list(csv_reader)
 
-# Create a Spark session
-spark = SparkSession.builder.getOrCreate()
+# DBFS output location for profiling results
+output_location = "dbfs:/path/to/output_location/"
 
-# Iterate over each schema and table name
-for schema_name in schemas:
-    for table_name in tables:
-        try:
-            # Read the data from the specified schema and table
-            df = spark.table(f"{schema_name}.{table_name}")
+# Perform data profiling for each table
+for db_name, table_name in db_table_names:
+    try:
+        # Read table data
+        df = spark.table(f"{db_name}.{table_name}")
 
-            # Perform data profiling
-            profile_df = df.selectExpr(
-                "*",  # Select all columns
-                "1 as row_count"  # Add a column with constant value 1 for counting rows
-            ).groupBy().agg(
-                count("*").alias("row_count"),  # Total row count
-                *[count(c).alias(c) for c in df.columns]  # Count distinct values for each column
-            )
+        # Perform data profiling
+        profiling_df = df.agg(*[
+            countDistinct(col_name).alias(col_name)
+            for col_name in df.columns
+        ])
 
-            # Calculate the value contribution percentage
-            total_rows = profile_df.select("row_count").first()["row_count"]
-            profile_df = profile_df.withColumn("value_contribution", expr(f"row_count/{total_rows} * 100"))
+        # Prepare profiling output
+        output_df = profiling_df \
+            .selectExpr("*", f"current_date() AS profiling_date") \
+            .withColumnRenamed("profiling_date", "currentdate")
 
-            # Add columns for schema, table name, and profiling date
-            current_date = date.today().isoformat()
-            profile_df = profile_df.withColumn("schema", expr(f"'{schema_name}'"))
-            profile_df = profile_df.withColumn("tablename", expr(f"'{table_name}'"))
-            profile_df = profile_df.withColumn("profiling_date", expr(f"'{current_date}'"))
+        # Write profiling output to TXT file
+        output_file_path = f"{output_location}/{db_name}_{table_name}_profiling.txt"
+        output_df.write \
+            .option("header", "true") \
+            .option("sep", "\t") \
+            .option("overwrite", "true") \
+            .format("csv") \
+            .mode("overwrite") \
+            .save(output_file_path)
 
-            # Save the data profiling results to the table
-            profile_df.write.mode("overwrite").saveAsTable("dataprofile")
+        print(f"Data profiling completed for table: {db_name}.{table_name}")
 
-            # Print the data profiling results
-            profile_df.show()
+    except Exception as e:
+        print(f"Error occurred while profiling table: {db_name}.{table_name}")
+        print(f"Error message: {str(e)}")
 
-        except Exception as e:
-            print(f"Error profiling table {schema_name}.{table_name}: {str(e)}")
-----------------
-
-CREATE TABLE IF NOT EXISTS dataprofile (
-  schema STRING,
-  tablename STRING,
-  columnname STRING,
-  distinct_value LONG,
-  value_contribution DOUBLE,
-  profiling_date DATE
-)
-USING DELTA;
-
+# Stop SparkSession
+spark.stop()
