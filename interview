@@ -1,39 +1,31 @@
 from pyspark.sql import SparkSession
 
-# Create SparkSession
-spark = SparkSession.builder \
-    .appName("TableColumnList") \
-    .getOrCreate()
+# Create a SparkSession
+spark = SparkSession.builder.getOrCreate()
 
-# Set the database name
-database_name = "<your_database_name>"
+# Define the database name
+database_name = "your_database_name"
 
-# Get the table names in the database
+# Get the list of table names in the database
 table_names = spark.catalog.listTables(database_name)
 
-# Initialize an empty dictionary to store the table names and their column lists
-table_columns = {}
-
-# Iterate over the table names
+# Iterate over each table and retrieve the column list
 for table in table_names:
     table_name = table.name
 
     # Exclude tables starting with "__app%"
     if not table_name.startswith("__app%"):
-        # Get the table schema
-        table_schema = spark.table(f"{database_name}.{table_name}").schema
-
-        # Get the column names excluding "__START_AT" and "__END_AT"
-        column_list = [column.name for column in table_schema
-                       if column.name not in ["__START_AT", "__END_AT"]]
-
-        # Add the table name and column list to the dictionary
-        table_columns[table_name] = column_list
-
-# Print the table names and their column lists
-for table, columns in table_columns.items():
-    print(f"Table: {table}")
-    print(f"Columns: {columns}\n")
-
-# Stop the SparkSession
-spark.stop()
+        
+        # Get the DataFrame corresponding to the table
+        df = spark.table(f"{database_name}.{table_name}")
+        
+        # Exclude "__START_AT" and "__END_AT" columns
+        excluded_columns = ["__START_AT", "__END_AT"]
+        columns = [col for col in df.columns if col not in excluded_columns]
+        
+        # Print the table name and its columns
+        print(f"Table: {table_name}")
+        print("Columns:")
+        for col in columns:
+            print(col)
+        print("\n")
