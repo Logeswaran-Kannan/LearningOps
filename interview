@@ -29,3 +29,9 @@ for table in table_names:
         for col in columns:
             print(col)
         print("\n")
+---------
+
+SELECT
+  ROUND(DATEDIFF(DATE_TRUNC('MONTH', current_date()), your_date_column) / 12, 0) AS rounded_result
+FROM
+  your_table
