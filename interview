@@ -1,6 +1,56 @@
-Adelina, I wanted to inform you that the manual test data has been successfully added to the dim_employee and dim_contact_centre_emp tables in the Synapse database. Now, we need to proceed with the following steps:
+import os
+import pandas as pd
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, countDistinct, current_date
 
-Refresh the goldpolicy.dim_policy table, ensuring that historic data is included.
-Perform a refresh of the fact tables.
-This time, we should have data available for the agents.
-Once the refresh is complete, please notify Guy about the status. Thank you!
+# Set the DBFS location where you want to save the profiling output
+output_location = "/dbfs/path/to/output/"
+
+# Read the CSV file containing the database and table names
+csv_file_path = "/dbfs/path/to/repo_tables.csv"
+df_tables = pd.read_csv(csv_file_path)
+
+# Create a SparkSession
+spark = SparkSession.builder.getOrCreate()
+
+# Convert the pandas DataFrame to a Spark DataFrame
+spark_df_tables = spark.createDataFrame(df_tables)
+
+# Register a temporary table for querying
+spark_df_tables.createOrReplaceTempView("tables")
+
+# Iterate over each table in the DataFrame
+for row in spark_df_tables.collect():
+    database_name = row['Database']
+    table_name = row['Table']
+
+    # Check if the table exists
+    if spark.catalog._jcatalog.tableExists(database_name, table_name):
+        # Get the column names from the table
+        column_names = [column.name for column in spark.catalog.listColumns(database_name, table_name)]
+
+        # Perform data profiling using Spark DataFrame operations
+        df_profile = spark.table(f"{database_name}.{table_name}")
+        for column in column_names:
+            distinct_values = df_profile.select(column).distinct().collect()
+            distinct_count = len(distinct_values)
+            total_count = df_profile.count()
+            value_contribution = (distinct_count / total_count) * 100
+
+            # Create a DataFrame with profiling results
+            profiling_data = pd.DataFrame({
+                'schema': [database_name],
+                'tablename': [table_name],
+                'columnname': [column],
+                'distinct value': [distinct_count],
+                'value contribution in %': [value_contribution],
+                'currentdate': [current_date()]
+            })
+
+            # Save the profiling results as a TXT file
+            output_file_path = os.path.join(output_location, f"{database_name}_{table_name}_{column}.txt")
+            profiling_data.to_csv(output_file_path, sep='\t', index=False, mode='overwrite')
+    else:
+        print(f"Table '{database_name}.{table_name}' not found.")
+
+print("Data profiling completed.")
