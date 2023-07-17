@@ -1,28 +1,3 @@
-trigger:
-- main
+As this is a test environment and we don't have real users or agents coming through CDL as in the production system, it has been decided to create manipulated test data in both DIM_EMPLOYEE and DIM_CONTACT_CENTRE_EMP tables. Afterward, we will refresh the Fact tables to ensure they contain some data. It is expected that the fact table refresh will be completed before today. Adelina will confirm this.
 
-pool:
-  vmImage: 'ubuntu-latest'
-
-steps:
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: '3.9'
-  displayName: 'Use Python 3.9'
-
-- task: Bash@3
-  inputs:
-    targetType: 'inline'
-    script: |
-      # Get the last run ID
-      RUN_ID=$(az pipelines runs list --pipeline-id $(System.DefinitionId) --status Completed --query '[0].id' --output tsv)
-
-      # Get the test run summary
-      TEST_SUMMARY=$(az pipelines runs show --id $RUN_ID --query 'resources.summary.testsSummary' --output json)
-
-      # Extract the graph URL
-      GRAPH_URL=$(echo $TEST_SUMMARY | jq -r '.graphUrl')
-
-      # Post message to MS Teams
-      curl -H "Content-Type: application/json" -d "{\"text\": \"Last run test summary graph: $GRAPH_URL\"}" YOUR_WEBHOOK_URL_HERE
-  displayName: 'Get test summary and post message to MS Teams'
+In addition to Mahesh's comment, there is a defect (DCD-38136) related to missing history data in the goldpolicy.dim_employee table. The defect is currently under analysis, and I will provide an update once there is more information available.
