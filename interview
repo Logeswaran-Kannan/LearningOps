@@ -1,41 +1,37 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, countDistinct, current_date
 
-# Set the DBFS location where you want to save the profiling output
-output_location = "/dbfs/path/to/output/"
-
-# Read the CSV file containing the database and table names
-csv_file_path = "/dbfs/path/to/repo_tables.csv"
-df_tables = spark.read.format("csv").option("header", "true").load(csv_file_path)
-
 # Create a SparkSession
 spark = SparkSession.builder.getOrCreate()
 
-# Iterate over each row in the dataframe
-for row in df_tables.collect():
-    database_name = row['Database']
-    table_name = row['Table']
+# Read the input CSV file containing the list of table names
+table_names_df = spark.read.csv("/path/to/table_names.csv", header=True)
 
-    # Check if the table exists
-    if spark.catalog._jcatalog.tableExists(database_name, table_name):
-        # Get the column names from the table
-        column_names = [col_name.name for col_name in spark.catalog.listColumns(database_name, table_name)]
+# Collect the table names from the DataFrame
+table_names = table_names_df.select("table_name").rdd.flatMap(lambda x: x).collect()
 
-        # Perform data profiling using Spark
-        df_profile = spark.table(f"{database_name}.{table_name}")
-        for column in column_names:
-            distinct_count = df_profile.select(column).distinct().count()
-            total_count = df_profile.count()
-            value_contribution = (distinct_count / total_count) * 100
+# Iterate over the table names
+for table_name in table_names:
+    try:
+        # Read the table data
+        table_df = spark.table(table_name)
 
-            # Create a dataframe with profiling results
-            profiling_data = spark.createDataFrame([(database_name, table_name, column, distinct_count, value_contribution, current_date())],
-                                                   ["schema", "tablename", "columnname", "distinct value", "value contribution in %", "currentdate"])
+        # Perform data profiling using Spark functions
+        profiling_df = table_df.select(
+            col("schema"),
+            col("tablename"),
+            col("columnname"),
+            countDistinct(col("columnname")).alias("distinct_value")
+        ).withColumn(
+            "value_contribution",
+            col("distinct_value") / table_df.count() * 100
+        ).withColumn(
+            "date_of_profiling",
+            current_date()
+        )
 
-            # Save the profiling results as a TXT file
-            output_file_path = f"{output_location}/{database_name}_{table_name}_{column}.txt"
-            profiling_data.write.mode("overwrite").format("csv").option("header", "true").option("delimiter", "\t").save(output_file_path)
-    else:
-        print(f"Table '{database_name}.{table_name}' not found.")
+        # Save the profiling output as a text file
+        profiling_df.write.mode("overwrite").text(f"/path/to/output/{table_name}_profiling.txt")
 
-print("Data profiling completed.")
+    except Exception as e:
+        print(f"Error processing table {table_name}: {str(e)}")
