@@ -1,37 +1,6 @@
-from pyspark.sql import SparkSession
+Adelina, I wanted to inform you that the manual test data has been successfully added to the dim_employee and dim_contact_centre_emp tables in the Synapse database. Now, we need to proceed with the following steps:
 
-# Create a SparkSession
-spark = SparkSession.builder.getOrCreate()
-
-# Define the database name
-database_name = "your_database_name"
-
-# Get the list of table names in the database
-table_names = spark.catalog.listTables(database_name)
-
-# Iterate over each table and retrieve the column list
-for table in table_names:
-    table_name = table.name
-
-    # Exclude tables starting with "__app%"
-    if not table_name.startswith("__app%"):
-        
-        # Get the DataFrame corresponding to the table
-        df = spark.table(f"{database_name}.{table_name}")
-        
-        # Exclude "__START_AT" and "__END_AT" columns
-        excluded_columns = ["__START_AT", "__END_AT"]
-        columns = [col for col in df.columns if col not in excluded_columns]
-        
-        # Print the table name and its columns
-        print(f"Table: {table_name}")
-        print("Columns:")
-        for col in columns:
-            print(col)
-        print("\n")
----------
-
-SELECT
-  ROUND(DATEDIFF(DATE_TRUNC('MONTH', current_date()), your_date_column) / 12, 0) AS rounded_result
-FROM
-  your_table
+Refresh the goldpolicy.dim_policy table, ensuring that historic data is included.
+Perform a refresh of the fact tables.
+This time, we should have data available for the agents.
+Once the refresh is complete, please notify Guy about the status. Thank you!
