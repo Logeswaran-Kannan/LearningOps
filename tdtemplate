@@ -1,0 +1,61 @@
+import pandas as pd
+import tkinter as tk
+from tkinter import filedialog
+
+
+def select_template_file():
+    root = tk.Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename(title="Select Template CSV File")
+    return file_path
+
+
+def select_table_list_file():
+    root = tk.Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename(title="Select Table List CSV File")
+    return file_path
+
+
+def generate_consolidated_csv(template_file, table_list_file, output_file):
+    # Read the template CSV file
+    template_df = pd.read_csv(template_file)
+
+    # Read the table list CSV file
+    table_list_df = pd.read_csv(table_list_file)
+
+    # Iterate over each table in the table list
+    for _, row in table_list_df.iterrows():
+        table_name = row['Table_name']
+        layer = row['Layer']
+        source_layer = row['source_Layer']
+        target_layer = row['Target_Layer']
+
+        # Copy rows from the template file where the header matches the table name
+        table_rows = template_df[template_df['Table_name'] == table_name].copy()
+
+        # Replace relevant values with values from the table list
+        table_rows['Table_name'] = table_name
+        table_rows['Layer'] = layer
+        table_rows['source_Layer'] = source_layer
+        table_rows['Target_Layer'] = target_layer
+
+        # Append the table rows to the consolidated dataframe
+        if 'consolidated_df' not in locals():
+            consolidated_df = table_rows
+        else:
+            consolidated_df = consolidated_df.append(table_rows)
+
+    # Write the consolidated dataframe to the output CSV file
+    consolidated_df.to_csv(output_file, index=False)
+
+
+# Select the template file through GUI
+template_file_path = select_template_file()
+# Select the table list file through GUI
+table_list_file_path = select_table_list_file()
+# Specify the output file path
+output_file_path = "/path/to/output.csv"  # Replace with desired output file path
+
+# Generate the consolidated CSV file
+generate_consolidated_csv(template_file_path, table_list_file_path, output_file_path)
