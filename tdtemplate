@@ -1,61 +1,49 @@
 import pandas as pd
-import tkinter as tk
-from tkinter import filedialog
+from tkinter import Tk, filedialog
 
+# Function to handle button click event and generate the new CSV documents
+def generate_csv_documents():
+    # Open file browser dialog to select template document
+    Tk().withdraw()
+    template_file_path = filedialog.askopenfilename(title="Select Template Document")
 
-def select_template_file():
-    root = tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(title="Select Template CSV File")
-    return file_path
+    # Open file browser dialog to select output path
+    output_folder_path = filedialog.askdirectory(title="Select Output Folder")
 
+    # Read the template document
+    template_df = pd.read_csv(template_file_path)
 
-def select_table_list_file():
-    root = tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(title="Select Table List CSV File")
-    return file_path
-
-
-def generate_consolidated_csv(template_file, table_list_file, output_file):
-    # Read the template CSV file
-    template_df = pd.read_csv(template_file)
-
-    # Read the table list CSV file
-    table_list_df = pd.read_csv(table_list_file)
+    # Read the table list from the "Tablelist" tab
+    table_list_df = pd.read_csv(template_file_path, sheet_name="Tablelist")
 
     # Iterate over each table in the table list
-    for _, row in table_list_df.iterrows():
-        table_name = row['Table_name']
-        layer = row['Layer']
-        source_layer = row['source_Layer']
-        target_layer = row['Target_Layer']
+    for _, table_row in table_list_df.iterrows():
+        table_name = table_row["Table Name"]
+        layer = table_row["(Layer)"]
+        source_layer = table_row["(source_Layer)"]
+        target_layer = table_row["(Target_Layer)"]
 
-        # Copy rows from the template file where the header matches the table name
-        table_rows = template_df[template_df['Table_name'] == table_name].copy()
+        # Copy relevant rows from the template document based on table name
+        table_df = template_df[template_df["Table Name"] == table_name].copy()
 
-        # Replace relevant values with values from the table list
-        table_rows['Table_name'] = table_name
-        table_rows['Layer'] = layer
-        table_rows['source_Layer'] = source_layer
-        table_rows['Target_Layer'] = target_layer
+        # Replace relevant values in the table DataFrame
+        table_df["Table Name"] = table_name
+        table_df["(Layer)"] = layer
+        table_df["(source_Layer)"] = source_layer
+        table_df["(Target_Layer)"] = target_layer
 
-        # Append the table rows to the consolidated dataframe
-        if 'consolidated_df' not in locals():
-            consolidated_df = table_rows
-        else:
-            consolidated_df = consolidated_df.append(table_rows)
+        # Generate the output CSV file path
+        output_file_path = f"{output_folder_path}/{table_name}.csv"
 
-    # Write the consolidated dataframe to the output CSV file
-    consolidated_df.to_csv(output_file, index=False)
+        # Save the table DataFrame as a new CSV document
+        table_df.to_csv(output_file_path, index=False)
 
+# Create the GUI window
+window = Tk()
 
-# Select the template file through GUI
-template_file_path = select_template_file()
-# Select the table list file through GUI
-table_list_file_path = select_table_list_file()
-# Specify the output file path
-output_file_path = "/path/to/output.csv"  # Replace with desired output file path
+# Add a button to select the template document and generate CSV documents
+generate_button = Button(window, text="Generate CSV Documents", command=generate_csv_documents)
+generate_button.pack()
 
-# Generate the consolidated CSV file
-generate_consolidated_csv(template_file_path, table_list_file_path, output_file_path)
+# Start the GUI event loop
+window.mainloop()
