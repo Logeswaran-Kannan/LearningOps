@@ -3,6 +3,7 @@ from tkinter import filedialog, messagebox
 import csv
 import os
 import shutil
+import requests
 
 def select_template_file():
     file_path = filedialog.askopenfilename(title="Select Template File", filetypes=(("CSV files", "*.csv"),))
@@ -19,31 +20,77 @@ def select_output_file():
     output_entry.delete(0, tk.END)
     output_entry.insert(tk.END, file_path)
 
-def generate_csv_documents():
-    template_file_path = template_entry.get()
-    table_list_file_path = table_list_entry.get()
+def upload_to_azure_devops():
     output_file_path = output_entry.get()
 
-    with open(table_list_file_path, 'r') as table_list_file:
-        reader = csv.DictReader(table_list_file)
-        for row in reader:
-            table_name = row['Table']
-            layer = row['Layer']
-            source_layer = row['(source_Layer)']
-            target_layer = row['(Target_Layer)']
+    # Azure DevOps information
+    organization = "your_organization"
+    project = "your_project"
+    repository = "your_repository"
+    pat = "your_personal_access_token"
 
-            with open(template_file_path, 'r') as template_file:
-                content = template_file.read()
+    # API endpoint
+    api_endpoint = f"https://dev.azure.com/{organization}/{project}/_apis/git/repositories/{repository}/pushes?api-version=6.1"
 
-            content = content.replace("{table_name}", table_name)
-            content = content.replace("{Layer}", layer)
-            content = content.replace("{source_Layer}", source_layer)
-            content = content.replace("{Target_Layer}", target_layer)
+    # Create a new branch for the push
+    branch_name = "new_branch"
+    branch_api_endpoint = f"https://dev.azure.com/{organization}/{project}/_apis/git/repositories/{repository}/refs?api-version=6.1"
+    branch_headers = {
+        "Authorization": "Bearer " + pat,
+        "Content-Type": "application/json"
+    }
+    branch_data = {
+        "name": branch_name,
+        "oldObjectId": "0000000000000000000000000000000000000000",
+        "newObjectId": "7dab89e1628754ac0a217c042be35c737f0e3c77"
+    }
+    branch_response = requests.post(branch_api_endpoint, headers=branch_headers, json=branch_data)
+    if branch_response.status_code != 201:
+        tk.messagebox.showerror("Upload Error", "Error creating branch for push")
+        return
 
-            with open(output_file_path, 'a') as output_file:
-                output_file.write(content)
+    # Read the contents of the output CSV file
+    with open(output_file_path, 'r') as file:
+        content = file.read()
 
-    tk.messagebox.showinfo("CSV Document Generated", "The consolidated CSV document has been generated successfully!")
+    # Create a new file in the repository
+    file_path = f"{branch_name}/{os.path.basename(output_file_path)}"
+    file_api_endpoint = f"https://dev.azure.com/{organization}/{project}/_apis/git/repositories/{repository}/pushes?api-version=6.1"
+    file_headers = {
+        "Authorization": "Bearer " + pat,
+        "Content-Type": "application/json"
+    }
+    file_data = {
+        "refUpdates": [
+            {
+                "name": f"refs/heads/{branch_name}",
+                "oldObjectId": "0000000000000000000000000000000000000000"
+            }
+        ],
+        "commits": [
+            {
+                "comment": "Uploading output CSV file",
+                "changes": [
+                    {
+                        "changeType": "add",
+                        "item": {
+                            "path": file_path
+                        },
+                        "newContent": {
+                            "content": content,
+                            "contentType": "rawtext"
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    file_response = requests.post(file_api_endpoint, headers=file_headers, json=file_data)
+    if file_response.status_code != 201:
+        tk.messagebox.showerror("Upload Error", "Error uploading file to Azure DevOps")
+        return
+
+    tk.messagebox.showinfo("Upload Complete", "The CSV file has been successfully uploaded to Azure DevOps!")
 
 # Create the GUI window
 window = tk.Tk()
@@ -73,9 +120,9 @@ output_entry.pack()
 output_button = tk.Button(window, text="Save As", command=select_output_file)
 output_button.pack()
 
-# Generate CSV document button
-generate_button = tk.Button(window, text="Generate CSV Document", command=generate_csv_documents)
-generate_button.pack()
+# Upload to Azure DevOps button
+upload_button = tk.Button(window, text="Upload to Azure DevOps", command=upload_to_azure_devops)
+upload_button.pack()
 
 # Start the GUI event loop
 window.mainloop()
