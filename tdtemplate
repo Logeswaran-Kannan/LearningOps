@@ -1,40 +1,88 @@
-import pandas as pd
-from tkinter import Tk, filedialog
+import tkinter as tk
+from tkinter import filedialog
+import csv
+import os
+import shutil
 
-# Create the GUI to select input and output files
-root = Tk()
-root.withdraw()
+def select_template_file():
+    file_path = filedialog.askopenfilename(title="Select Template File", filetypes=(("CSV files", "*.csv"),))
+    template_entry.delete(0, tk.END)
+    template_entry.insert(tk.END, file_path)
 
-# Select the input CSV template file using the file dialog
-input_filepath = filedialog.askopenfilename(title="Select Input CSV Template", filetypes=[("CSV Files", "*.csv")])
+def select_table_list_file():
+    file_path = filedialog.askopenfilename(title="Select Table List File", filetypes=(("CSV files", "*.csv"),))
+    table_list_entry.delete(0, tk.END)
+    table_list_entry.insert(tk.END, file_path)
 
-# Select the output CSV file using the file dialog
-output_filepath = filedialog.asksaveasfilename(title="Save Output CSV", defaultextension=".csv", filetypes=[("CSV Files", "*.csv")])
+def select_output_directory():
+    dir_path = filedialog.askdirectory(title="Select Output Directory")
+    output_entry.delete(0, tk.END)
+    output_entry.insert(tk.END, dir_path)
 
-# Read the input CSV template into a pandas DataFrame
-df_template = pd.read_csv(input_filepath)
+def generate_csv_documents():
+    template_file_path = template_entry.get()
+    table_list_file_path = table_list_entry.get()
+    output_directory = output_entry.get()
 
-# Read the Tablelist tab of the input CSV template
-df_tablelist = pd.read_csv(input_filepath, sheet_name="Tablelist")
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
 
-# Iterate over each table in the Tablelist tab
-for index, row in df_tablelist.iterrows():
-    table_name = row["Table Name"]
-    layer = row["(Layer)"]
-    source_layer = row["(Source_Layer)"]
-    target_layer = row["(Target_Layer)"]
+    with open(table_list_file_path, 'r') as table_list_file:
+        reader = csv.DictReader(table_list_file)
+        for row in reader:
+            table_name = row['Table']
+            layer = row['Layer']
+            source_layer = row['(source_Layer)']
+            target_layer = row['(Target_Layer)']
 
-    # Filter the rows of the template based on the table name
-    filtered_rows = df_template[df_template["table_name"] == table_name].copy()
+            output_file_path = os.path.join(output_directory, "{}.csv".format(table_name))
 
-    # Replace relevant values in the filtered rows
-    filtered_rows["table_name"] = table_name
-    filtered_rows["(Layer)"] = layer
-    filtered_rows["(Source_Layer)"] = source_layer
-    filtered_rows["(Target_Layer)"] = target_layer
+            shutil.copy(template_file_path, output_file_path)
 
-    # Append the filtered rows to the consolidated sheet
-    df_template = df_template.append(filtered_rows)
+            with open(output_file_path, 'r') as output_file:
+                content = output_file.read()
 
-# Save the modified DataFrame as the output CSV file
-df_template.to_csv(output_filepath, index=False)
+            content = content.replace("{table_name}", table_name)
+            content = content.replace("{Layer}", layer)
+            content = content.replace("{source_Layer}", source_layer)
+            content = content.replace("{Target_Layer}", target_layer)
+
+            with open(output_file_path, 'w') as output_file:
+                output_file.write(content)
+
+    tk.messagebox.showinfo("CSV Documents Generated", "CSV documents have been generated successfully!")
+
+# Create the GUI window
+window = tk.Tk()
+window.title("CSV Document Generator")
+
+# Template file selection
+template_label = tk.Label(window, text="Template File:")
+template_label.pack()
+template_entry = tk.Entry(window, width=50)
+template_entry.pack()
+template_button = tk.Button(window, text="Browse", command=select_template_file)
+template_button.pack()
+
+# Table list file selection
+table_list_label = tk.Label(window, text="Table List File:")
+table_list_label.pack()
+table_list_entry = tk.Entry(window, width=50)
+table_list_entry.pack()
+table_list_button = tk.Button(window, text="Browse", command=select_table_list_file)
+table_list_button.pack()
+
+# Output directory selection
+output_label = tk.Label(window, text="Output Directory:")
+output_label.pack()
+output_entry = tk.Entry(window, width=50)
+output_entry.pack()
+output_button = tk.Button(window, text="Browse", command=select_output_directory)
+output_button.pack()
+
+# Generate CSV documents button
+generate_button = tk.Button(window, text="Generate CSV Documents", command=generate_csv_documents)
+generate_button.pack()
+
+# Start the GUI event loop
+window.mainloop()
