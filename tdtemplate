@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import csv
 import os
 import shutil
@@ -14,18 +14,15 @@ def select_table_list_file():
     table_list_entry.delete(0, tk.END)
     table_list_entry.insert(tk.END, file_path)
 
-def select_output_directory():
-    dir_path = filedialog.askdirectory(title="Select Output Directory")
+def select_output_file():
+    file_path = filedialog.asksaveasfilename(title="Save Consolidated CSV File", filetypes=(("CSV files", "*.csv"),))
     output_entry.delete(0, tk.END)
-    output_entry.insert(tk.END, dir_path)
+    output_entry.insert(tk.END, file_path)
 
 def generate_csv_documents():
     template_file_path = template_entry.get()
     table_list_file_path = table_list_entry.get()
-    output_directory = output_entry.get()
-
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
+    output_file_path = output_entry.get()
 
     with open(table_list_file_path, 'r') as table_list_file:
         reader = csv.DictReader(table_list_file)
@@ -35,22 +32,18 @@ def generate_csv_documents():
             source_layer = row['(source_Layer)']
             target_layer = row['(Target_Layer)']
 
-            output_file_path = os.path.join(output_directory, "{}.csv".format(table_name))
-
-            shutil.copy(template_file_path, output_file_path)
-
-            with open(output_file_path, 'r') as output_file:
-                content = output_file.read()
+            with open(template_file_path, 'r') as template_file:
+                content = template_file.read()
 
             content = content.replace("{table_name}", table_name)
             content = content.replace("{Layer}", layer)
             content = content.replace("{source_Layer}", source_layer)
             content = content.replace("{Target_Layer}", target_layer)
 
-            with open(output_file_path, 'w') as output_file:
+            with open(output_file_path, 'a') as output_file:
                 output_file.write(content)
 
-    tk.messagebox.showinfo("CSV Documents Generated", "CSV documents have been generated successfully!")
+    tk.messagebox.showinfo("CSV Document Generated", "The consolidated CSV document has been generated successfully!")
 
 # Create the GUI window
 window = tk.Tk()
@@ -72,16 +65,16 @@ table_list_entry.pack()
 table_list_button = tk.Button(window, text="Browse", command=select_table_list_file)
 table_list_button.pack()
 
-# Output directory selection
-output_label = tk.Label(window, text="Output Directory:")
+# Output file selection
+output_label = tk.Label(window, text="Output File:")
 output_label.pack()
 output_entry = tk.Entry(window, width=50)
 output_entry.pack()
-output_button = tk.Button(window, text="Browse", command=select_output_directory)
+output_button = tk.Button(window, text="Save As", command=select_output_file)
 output_button.pack()
 
-# Generate CSV documents button
-generate_button = tk.Button(window, text="Generate CSV Documents", command=generate_csv_documents)
+# Generate CSV document button
+generate_button = tk.Button(window, text="Generate CSV Document", command=generate_csv_documents)
 generate_button.pack()
 
 # Start the GUI event loop
