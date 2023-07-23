@@ -1,22 +1,19 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+Subject: Gym Membership Cancellation - August Onwards
 
-# Initialize SparkSession
-spark = SparkSession.builder.getOrCreate()
+Dear [Gym Name],
 
-# Load the existing table
-existing_table = spark.table("your_existing_table")
+I hope this email finds you well. I am writing to request the cancellation of my gym membership from August onwards.
 
-# Filter the rows where del_status is "deletable"
-deletable_rows = existing_table.filter(col("del_status") == "deletable")
+Due to changes in my personal circumstances, I will no longer be able to continue my gym membership after the end of July. Therefore, I kindly request that you stop the direct debit for the month of August and terminate my membership effective from the beginning of that month.
 
-# Iterate over the rows and delete the files
-for row in deletable_rows.rdd.collect():
-    file_path = row["path"].replace("/dbfs", "")
-    dbutils.fs.rm(file_path, True)  # Delete the file
+I appreciate the services and facilities provided during my time as a member and would like to express my gratitude to the staff for their support.
 
-# Update the del_status column to "deleted" for the deleted files
-existing_table = existing_table.withColumn("del_status", col("del_status").when(col("del_status") == "deletable", "deleted"))
+If there are any additional steps or procedures required to finalize the cancellation, please let me know, and I will be happy to comply.
 
-# Save the updated table back to the same location
-existing_table.write.mode("overwrite").saveAsTable("your_existing_table")
+Thank you for your attention to this matter. I look forward to your confirmation of the membership cancellation.
+
+Best regards,
+
+[Your Name]
+[Your Gym Membership Number (if applicable)]
+[Your Contact Information]
