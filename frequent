@@ -1,19 +1,50 @@
-The analysis was conducted to understand why the modified test data added in dim_employee and dim_contact_centre_emp tables is not producing the expected results in the dataset. During this investigation, we noticed that the tables were joined using the "staff_no," "valid from dttm," "valid to dttm," "Employee_Key," and "Agent_Key" fields, similar to the example provided below.
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, countDistinct, avg, min, max, concat_ws, lit
 
-Unfortunately, we found that no output was generated for any of the agents. We identified two key factors contributing to this issue:
+# Create a SparkSession
+spark = SparkSession.builder.appName("DataProfiling").getOrCreate()
 
-Difference in 'Valid from dttm' and 'valid to dttm' equivalent of '__START_AT' and '__END_AT' in the gold layer for dim_employee:
+# Define the database and filtering conditions for table names
+database_name = "your_database_name"
+table_filter_conditions = "tableName not like '__apply_change_%' and tableName not like '%_final_audi%'"
 
-For initial records, the "__END_DT" field behaves slightly differently in the gold layer, which causes discrepancies in staff_no matching between dim_employee and dim_contact_centre_emp tables.
+# Get the list of tables from the specified database
+tables_df = spark.sql(f"SHOW TABLES IN {database_name}").filter(table_filter_conditions)
 
-To address this issue for initial records, I made a modification. Specifically, I considered cases where the "__END_DT" field is null and treated them as "9999-12-31." This adjustment allows the records to match appropriately in the dim_contact_centre_emp table.
+# Initialize an empty DataFrame to store the profiling results
+profiling_results = spark.createDataFrame([], "column_name STRING, distinct_count LONG, null_count LONG, null_percentage DOUBLE, avg_length DOUBLE, data_type STRING, min_value STRING, max_value STRING, most_common_value STRING")
 
-For incremental updates, we need Mahesh's input. In the legacy world, DIM_EMPLOYEE tables would end-date the previous record for the staff_no by one day less, but the gold layer behaves differently in this aspect, leading to discrepancies while joining goldpolicy.dim_employee with the dim_contact_centre_emp table. We will seek Mahesh's insights to resolve this part of the issue.
+# Iterate over each table and perform data profiling
+for table_row in tables_df.collect():
+    table_name = table_row["tableName"]
 
-Uppercase/lowercase issue for Cost_Centre 'ISell' in the sample test data added:
+    # Read the table data
+    table_df = spark.table(f"{database_name}.{table_name}")
 
-There is an existing uppercase/lowercase inconsistency in the Cost_Centre field, particularly for 'ISell' values in the test data.
-We have a fix in progress to address this inconsistency.
-We kindly request your insight and guidance on the incremental updates for the staff_no issue, and we will continue working towards resolving the uppercase/lowercase inconsistency in the Cost_Centre field.
+    # Iterate over each column in the table
+    for column_name in table_df.columns:
+        # Calculate distinct count, null count, null percentage, average length, data type, min, max, and most common value
+        distinct_count = table_df.select(countDistinct(column_name)).collect()[0][0]
+        null_count = table_df.select(col(column_name).isNull()).where(col(column_name).isNull()).count()
+        total_rows = table_df.count()
+        null_percentage = (null_count / total_rows) * 100
+        avg_length = table_df.select(avg(col(column_name).cast("string"))).collect()[0][0]
+        data_type = table_df.schema[column_name].dataType.typeName()
+        min_value = table_df.select(min(column_name)).collect()[0][0]
+        max_value = table_df.select(max(column_name)).collect()[0][0]
+        most_common_value = table_df.groupBy(column_name).count().orderBy(col("count").desc()).select(column_name).limit(1).collect()[0][0]
 
-Thank you for your attention to these matters, and we look forward to further collaboration to address these issues effectively.
+        # Append the profiling results to the DataFrame
+        profiling_results = profiling_results.union(
+            spark.createDataFrame([(column_name, distinct_count, null_count, null_percentage, avg_length, data_type, str(min_value), str(max_value), str(most_common_value))], profiling_results.schema)
+        )
+
+# Save the profiling results as a table
+table_name_suffix = "data_profiling_results"
+profiling_results.createOrReplaceTempView(table_name_suffix)
+
+# Alternatively, you can save the results to a permanent table in Databricks, replacing 'your_db' and 'your_table' with desired names:
+# profiling_results.write.mode("overwrite").saveAsTable("your_db.your_table")
+
+# Stop the SparkSession
+spark.stop()
