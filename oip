@@ -1,54 +1,50 @@
-import os
-from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, countDistinct, avg, min, max, concat_ws, lit
 
-# Function to collect file statistics
-def collect_file_stats(dbfs_path):
-    file_stats = []
-    for root, dirs, files in os.walk(dbfs_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            stat = os.stat(file_path)
-            file_name = os.path.basename(file_path)
-            size = stat.st_size
-            creation_date = datetime.fromtimestamp(stat.st_ctime)
-            last_update_date = datetime.fromtimestamp(stat.st_mtime)
-            del_status = 'deletable'
-            del_date = datetime.now()
-            recommend_deletable = (datetime.now() - last_update_date) > timedelta(days=30)
-            file_stats.append((file_name, size, file_path, creation_date, last_update_date, del_status, del_date, recommend_deletable))
-    return file_stats
+# Create a SparkSession
+spark = SparkSession.builder.appName("DataProfiling").getOrCreate()
 
-# Configure SparkSession
-spark = SparkSession.builder.appName("FileStats").getOrCreate()
+# Define the database and filtering conditions for table names
+database_name = "your_database_name"
+table_filter_conditions = "tableName not like '__apply_change_%' and tableName not like '%_final_audi%'"
 
-# Define DBFS path
-dbfs_input_path = "/dbfs/path/to/files"
+# Get the list of tables from the specified database
+tables_df = spark.sql(f"SHOW TABLES IN {database_name}").filter(table_filter_conditions)
 
-# Collect file statistics
-file_stats = collect_file_stats(dbfs_input_path)
+# Initialize an empty DataFrame to store the profiling results
+profiling_results = spark.createDataFrame([], "column_name STRING, distinct_count LONG, null_count LONG, null_percentage DOUBLE, avg_length DOUBLE, data_type STRING, min_value STRING, max_value STRING, most_common_value STRING")
 
-# Convert file statistics to DataFrame
-df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date", "recommend_deletable"])
+# Iterate over each table and perform data profiling
+for table_row in tables_df.collect():
+    table_name = table_row["tableName"]
 
-# Append DataFrame to existing table in default schema or create a new table
-table_name = "file_stats_table"
-df.write.mode("append").saveAsTable(table_name)
+    # Read the table data
+    table_df = spark.table(f"{database_name}.{table_name}")
 
-# Check for duplicate rows and handle exceptions
-try:
-    spark.sql(f"ALTER TABLE {table_name} ADD COLUMNS (record_id STRING)")
-except:
-    pass
+    # Iterate over each column in the table
+    for column_name in table_df.columns:
+        # Calculate distinct count, null count, null percentage, average length, data type, min, max, and most common value
+        distinct_count = table_df.select(countDistinct(column_name)).collect()[0][0]
+        null_count = table_df.select(col(column_name).isNull()).where(col(column_name).isNull()).count()
+        total_rows = table_df.count()
+        null_percentage = (null_count / total_rows) * 100
+        avg_length = table_df.select(avg(col(column_name).cast("string"))).collect()[0][0]
+        data_type = table_df.schema[column_name].dataType.typeName()
+        min_value = table_df.select(min(column_name)).collect()[0][0]
+        max_value = table_df.select(max(column_name)).collect()[0][0]
+        most_common_value = table_df.groupBy(column_name).count().orderBy(col("count").desc()).select(column_name).limit(1).collect()[0][0]
 
-df.createOrReplaceTempView("temp_table")
-spark.sql(f"""
-    INSERT INTO TABLE {table_name}
-    SELECT * FROM temp_table
-    WHERE record_id NOT IN (
-        SELECT record_id FROM {table_name}
-    )
-""")
+        # Append the profiling results to the DataFrame
+        profiling_results = profiling_results.union(
+            spark.createDataFrame([(column_name, distinct_count, null_count, null_percentage, avg_length, data_type, str(min_value), str(max_value), str(most_common_value))], profiling_results.schema)
+        )
 
-# Print the updated table
-spark.table(table_name).show()
+# Save the profiling results as a table
+table_name_suffix = "data_profiling_results"
+profiling_results.createOrReplaceTempView(table_name_suffix)
+
+# Alternatively, you can save the results to a permanent table in Databricks, replacing 'your_db' and 'your_table' with desired names:
+# profiling_results.write.mode("overwrite").saveAsTable("your_db.your_table")
+
+# Stop the SparkSession
+spark.stop()
