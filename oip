@@ -16,8 +16,19 @@ def perform_data_profiling(table_name):
     # Read the table data
     table_df = spark.table(f"{database_name}.{table_name}")
 
-    # Define the columns to profile
-    columns_to_profile = table_df.columns
+    # Define the explicit schema to ensure correct data types
+    schema = StructType([
+        StructField("tableName", StringType(), False),
+        StructField("columnName", StringType(), False),
+        StructField("distinctCount", IntegerType(), True),
+        StructField("nullCount", IntegerType(), True),
+        StructField("nullPercentage", FloatType(), True),
+        StructField("avgLength", FloatType(), True),
+        StructField("dataType", StringType(), False),
+        StructField("minValue", StringType(), True),
+        StructField("maxValue", StringType(), True),
+        StructField("mostCommonValue", StringType(), True),
+    ])
 
     # List to store the profiling results
     profiling_results = []
