@@ -1,2 +1,67 @@
-        except Exception as e:
-            print(f"Error occurred while profiling table {table_name}: {str(e)}")
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import StringType
+
+# Initialize SparkSession
+spark = SparkSession.builder.appName("DataProfiling").getOrCreate()
+
+# Set the necessary database and table name filters
+database_name = "your_database_name"
+table_name_filter = "(tableName not like '__apply_change_%') and (tableName not like '%_final_audi%')"
+
+# Function to perform data profiling on a column
+def profile_column(table_name, column_name):
+    # Get distinct count, null count, and null percentage
+    distinct_count = df.select(column_name).distinct().count()
+    null_count = df.filter(F.col(column_name).isNull()).count()
+    null_percentage = (null_count / total_rows) * 100
+
+    # Get average length and datatype
+    avg_length = df.select(F.length(column_name).cast("double")).agg(F.avg(column_name)).collect()[0][0]
+    data_type = df.select(F.col(column_name).cast(StringType())).dtypes[0][1]
+
+    # Get min and max values
+    min_value = df.select(F.min(column_name)).collect()[0][0]
+    max_value = df.select(F.max(column_name)).collect()[0][0]
+
+    # Get the most common value
+    most_common_value = df.groupBy(column_name).count().orderBy(F.desc("count")).first()[0]
+
+    return (table_name, column_name, distinct_count, null_count, null_percentage, avg_length, data_type, min_value, max_value, most_common_value)
+
+# Function to perform data profiling on a table
+def profile_table(table_name):
+    df = spark.table(table_name)
+    total_rows = df.count()
+    
+    # Get column names
+    column_names = df.columns
+
+    # Iterate through each column and perform data profiling
+    profiling_results = []
+    for column_name in column_names:
+        result = profile_column(table_name, column_name)
+        profiling_results.append(result)
+
+    return profiling_results
+
+# Get all table names from the database and apply filters
+table_names = spark.sql(f"SHOW TABLES IN {database_name}").filter(table_name_filter).select("tableName").rdd.flatMap(lambda x: x).collect()
+
+# Perform data profiling on each table and store the results
+all_results = []
+for table_name in table_names:
+    df = spark.table(table_name)
+    total_rows = df.count()
+    table_results = profile_table(table_name)
+    all_results.extend(table_results)
+
+# Create a DataFrame from the profiling results
+result_df = spark.createDataFrame(all_results, ['Table', 'Column', 'DistinctCount', 'NullCount', 'NullPercentage', 'AvgLength', 'DataType', 'MinValue', 'MaxValue', 'MostCommonValue'])
+
+# Save the results as a new table or overwrite an existing one
+result_table_name = "data_profiling_results"
+result_df.write.mode("overwrite").saveAsTable(result_table_name)
+
+# Stop the SparkSession
+spark.stop()
