@@ -1,41 +1,6 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, countDistinct, avg, min, max, when, count, lit
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType
-from pyspark.sql.types import StringType
-
-# Create a SparkSession
-spark = SparkSession.builder.appName("DataProfiling").getOrCreate()
-
-# Database name
-database_name = "your_database_name"
-
-# Get the list of tables in the database
-tables = spark.catalog.listTables(database_name)
-
-# Function to perform data profiling for each column in a table
-def perform_data_profiling(table_name):
-    # Read the table data
-    table_df = spark.table(f"{database_name}.{table_name}")
-
-    # Define the explicit schema to ensure correct data types
-    schema = StructType([
-        StructField("tableName", StringType(), False),
-        StructField("columnName", StringType(), False),
-        StructField("distinctCount", IntegerType(), True),
-        StructField("nullCount", IntegerType(), True),
-        StructField("nullPercentage", FloatType(), True),
-        StructField("avgLength", FloatType(), True),
-        StructField("dataType", StringType(), False),
-        StructField("minValue", StringType(), True),
-        StructField("maxValue", StringType(), True),
-        StructField("mostCommonValue", StringType(), True),
-    ])
-
-    # List to store the profiling results
-    profiling_results = []
 
     # Loop through each column and perform data profiling
-    for column_name in columns_to_profile:
+    for column_name in table_df.columns:
         # Count of distinct values
         distinct_count = table_df.select(countDistinct(col(column_name))).collect()[0][0]
 
@@ -64,32 +29,13 @@ def perform_data_profiling(table_name):
             max_value = None
 
         # Most common value
-        most_common_value = table_df.groupBy(column_name).agg(count(lit(1)).alias("count")) \
-            .orderBy(col("count").desc()).first()[column_name]
+        most_common_value = None
+        if not table_df.isEmpty():
+            most_common_value = table_df.groupBy(column_name).agg(count(lit(1)).alias("count")) \
+                .orderBy(col("count").desc()).first()[column_name]
 
         # Append the profiling results to the list
         profiling_results.append((table_name, column_name, distinct_count, null_count, null_percentage,
                                   avg_length, data_type, min_value, max_value, most_common_value))
 
     return profiling_results
-
-# List to store the overall profiling results
-overall_profiling_results = []
-
-# Loop through each table and perform data profiling
-for table in tables:
-    table_name = table.name
-    if not (table_name.startswith("__apply_change_") or table_name.endswith("_final_audi")):
-        table_profiling_results = perform_data_profiling(table_name)
-        overall_profiling_results.extend(table_profiling_results)
-
-# Create a DataFrame from the profiling results list
-profiling_df = spark.createDataFrame(overall_profiling_results,
-                                     ["tableName", "columnName", "distinctCount", "nullCount", "nullPercentage",
-                                      "avgLength", "dataType", "minValue", "maxValue", "mostCommonValue"])
-
-# Save the DataFrame as a table
-profiling_df.write.mode("overwrite").saveAsTable(f"{database_name}.data_profiling_results")
-
-# Stop the SparkSession
-spark.stop()
