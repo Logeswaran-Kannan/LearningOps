@@ -1,50 +1,18 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, countDistinct, avg, min, max, concat_ws, lit
+Subject: Upcoming Mandatory Meeting: InfoSec Guidance and Doubt Clarification
 
-# Create a SparkSession
-spark = SparkSession.builder.appName("DataProfiling").getOrCreate()
+Dear Team,
 
-# Define the database and filtering conditions for table names
-database_name = "your_database_name"
-table_filter_conditions = "tableName not like '__apply_change_%' and tableName not like '%_final_audi%'"
+In light of recent security incidents, it is essential that we take proactive measures to safeguard our data. To ensure that we are all on the same page and equipped to handle potential vulnerabilities, I would like to organize a mandatory meeting.
 
-# Get the list of tables from the specified database
-tables_df = spark.sql(f"SHOW TABLES IN {database_name}").filter(table_filter_conditions)
+In this meeting, we will go over the Information Security (InfoSec) guidance and address any doubts or questions related to security that you may have. Your active participation is crucial in reinforcing our security practices and creating a more secure work environment.
 
-# Initialize an empty DataFrame to store the profiling results
-profiling_results = spark.createDataFrame([], "column_name STRING, distinct_count LONG, null_count LONG, null_percentage DOUBLE, avg_length DOUBLE, data_type STRING, min_value STRING, max_value STRING, most_common_value STRING")
+Please take a moment to fill out the attached sheet with any security-related doubts you may have before the meeting. This will help us structure the discussion to ensure we cover all your concerns comprehensively.
 
-# Iterate over each table and perform data profiling
-for table_row in tables_df.collect():
-    table_name = table_row["tableName"]
+Amber, as the team lead, I kindly request your assistance in ensuring everyone's participation and that their doubts are clarified during the meeting.
 
-    # Read the table data
-    table_df = spark.table(f"{database_name}.{table_name}")
+Meeting Details:
+Date: [Insert Date]
+Time: [Insert Time]
+Location: [Insert Location/Conference Link]
 
-    # Iterate over each column in the table
-    for column_name in table_df.columns:
-        # Calculate distinct count, null count, null percentage, average length, data type, min, max, and most common value
-        distinct_count = table_df.select(countDistinct(column_name)).collect()[0][0]
-        null_count = table_df.select(col(column_name).isNull()).where(col(column_name).isNull()).count()
-        total_rows = table_df.count()
-        null_percentage = (null_count / total_rows) * 100
-        avg_length = table_df.select(avg(col(column_name).cast("string"))).collect()[0][0]
-        data_type = table_df.schema[column_name].dataType.typeName()
-        min_value = table_df.select(min(column_name)).collect()[0][0]
-        max_value = table_df.select(max(column_name)).collect()[0][0]
-        most_common_value = table_df.groupBy(column_name).count().orderBy(col("count").desc()).select(column_name).limit(1).collect()[0][0]
-
-        # Append the profiling results to the DataFrame
-        profiling_results = profiling_results.union(
-            spark.createDataFrame([(column_name, distinct_count, null_count, null_percentage, avg_length, data_type, str(min_value), str(max_value), str(most_common_value))], profiling_results.schema)
-        )
-
-# Save the profiling results as a table
-table_name_suffix = "data_profiling_results"
-profiling_results.createOrReplaceTempView(table_name_suffix)
-
-# Alternatively, you can save the results to a permanent table in Databricks, replacing 'your_db' and 'your_table' with desired names:
-# profiling_results.write.mode("overwrite").saveAsTable("your_db.your_table")
-
-# Stop the SparkSession
-spark.stop()
+Thank you for your attention to this matter, and I look forward to an insightful and productive meeting.
