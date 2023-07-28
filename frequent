@@ -1,36 +1,43 @@
-# Step 1: Import the required libraries
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+# Read the CSV file from DBFS
+csv_file_path = "/dbfs/path/to/csv/file.csv"
+df = spark.read.format("csv").option("header", "true").load(csv_file_path)
 
-# Step 2: Create a SparkSession
-spark = SparkSession.builder \
-    .appName("DataTesting") \
-    .getOrCreate()
+# Register the DataFrame as a temporary view
+df.createOrReplaceTempView("temp_table")
 
-# Step 3: Define the paths for CSV files and table names
-csv_path = "/dbfs/path/to/csv_file.csv"
-table_name = "created_table"
+table_name = "existing_table"
+
+# Check if the table exists
+if spark.catalog.tableExists(table_name):
+    # If the table exists, drop it to overwrite
+    spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+
+# Create a new table using the DataFrame
+spark.sql(f"CREATE TABLE {table_name} AS SELECT * FROM temp_table")
+
+# Query the existing table using SQL
 existing_table_name = "existing_table"
+query_result = spark.sql(f"SELECT * FROM {existing_table_name}")
 
-# Step 4: Load the CSV file and create a table with overwrite option
-created_table_df = spark.read.csv(csv_path, header=True, inferSchema=True)
-created_table_df.write.mode("overwrite").saveAsTable(table_name)
+# Perform the minus operation for each column based on the policy number
+policy_column = "policy_number"
+columns_to_compare = df.columns
 
-# Step 5: Query the existing table based on the policy numbers mentioned in the sheet
-existing_table_df = spark.sql(f"SELECT * FROM {existing_table_name} WHERE policy_number IN (SELECT DISTINCT policy_number FROM {table_name})")
+for column in columns_to_compare:
+    minus_df = df.select(policy_column, column).subtract(query_result.select(policy_column, column))
+    minus_df.createOrReplaceTempView(f"minus_table_{column}")
 
-# Step 6: Perform column-wise minus between the created table and existing table
-diff_df = created_table_df.join(existing_table_df, on="policy_number", how="left_anti")
+# Highlight differences for each column based on the policy number
+highlighted_differences_df = df
 
-# Step 7: Capture the before and after pictures of the differences
-before_pandas_df = existing_table_df.toPandas()
-after_pandas_df = diff_df.toPandas()
+for column in columns_to_compare:
+    minus_table_name = f"minus_table_{column}"
+    join_condition = f"{highlighted_differences_df[policy_column]} = {minus_table_name}[{policy_column}]"
+    
+    highlighted_differences_df = highlighted_differences_df \
+        .join(minus_table_name, join_condition, "left_outer") \
+        .withColumn(f"diff_{column}", when(col(f"{column}_x").isNull(), col(f"{column}_y")).otherwise(col(column))) \
+        .drop(f"{column}_x", f"{column}_y")
 
-# Step 8: Highlight the differences for each policy number column-wise
-for column in created_table_df.columns:
-    diff_pandas_df = after_pandas_df[after_pandas_df[column].ne(before_pandas_df[column])]
-    print(f"Differences for column '{column}':")
-    print(diff_pandas_df)
-
-# Step 9: Stop the SparkSession
-spark.stop()
+# Show the highlighted differences
+highlighted_differences_df.show()
