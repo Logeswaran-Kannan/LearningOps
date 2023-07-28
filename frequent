@@ -1,16 +1,36 @@
-Subject: Mandatory Meeting: Addressing Security Concerns and Ensuring InfoSec Compliance
+# Step 1: Import the required libraries
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-Dear Team,
+# Step 2: Create a SparkSession
+spark = SparkSession.builder \
+    .appName("DataTesting") \
+    .getOrCreate()
 
-I hope this email finds you well. As you may be aware, we have recently experienced some security incidents that have highlighted the importance of maintaining strict information security measures, particularly regarding potential vulnerabilities related to AI and data safeguarding.
+# Step 3: Define the paths for CSV files and table names
+csv_path = "/dbfs/path/to/csv_file.csv"
+table_name = "created_table"
+existing_table_name = "existing_table"
 
-To ensure we are all aligned and equipped to handle security challenges effectively, I would like to request each team member to fill out the attached sheet with any security-related doubts or questions they may have. Your inputs are crucial in helping us identify areas that require further clarification and reinforcement.
+# Step 4: Load the CSV file and create a table with overwrite option
+created_table_df = spark.read.csv(csv_path, header=True, inferSchema=True)
+created_table_df.write.mode("overwrite").saveAsTable(table_name)
 
-Additionally, I have scheduled a mandatory meeting to address these concerns and provide guidance on how we can collectively improve our security practices. The meeting will take place on [Meeting Date] at [Meeting Time], and it is essential that all team members attend.
+# Step 5: Query the existing table based on the policy numbers mentioned in the sheet
+existing_table_df = spark.sql(f"SELECT * FROM {existing_table_name} WHERE policy_number IN (SELECT DISTINCT policy_number FROM {table_name})")
 
-Amber, I kindly request your support in ensuring that everyone is aware of this meeting and encouraged to participate actively. Together, we can strengthen our knowledge and understanding of information security and uphold the highest standards when it comes to safeguarding our data and systems.
+# Step 6: Perform column-wise minus between the created table and existing table
+diff_df = created_table_df.join(existing_table_df, on="policy_number", how="left_anti")
 
-Please complete the attached sheet by [Deadline] so that we can adequately prepare for the meeting and address all your questions comprehensively.
+# Step 7: Capture the before and after pictures of the differences
+before_pandas_df = existing_table_df.toPandas()
+after_pandas_df = diff_df.toPandas()
 
-Thank you for your attention to this matter, and I look forward to a productive and enlightening session.
+# Step 8: Highlight the differences for each policy number column-wise
+for column in created_table_df.columns:
+    diff_pandas_df = after_pandas_df[after_pandas_df[column].ne(before_pandas_df[column])]
+    print(f"Differences for column '{column}':")
+    print(diff_pandas_df)
 
+# Step 9: Stop the SparkSession
+spark.stop()
