@@ -1,73 +1,72 @@
-import jira
-import openpyxl
 import tkinter as tk
 from tkinter import filedialog
+from jira import JIRA
+from openpyxl import load_workbook
 
 def connect_to_jira(server, username, token):
     try:
-        options = {
-            'server': server,
-            'verify': True,
-            'headers': {
-                'Authorization': 'Basic %s' % jira.utils.base64string(username, token)
-            }
-        }
-        jira_client = jira.JIRA(**options)
-        print("Connection to Jira successful.")
-        return jira_client
+        jira_options = {'server': server}
+        jira = JIRA(options=jira_options, basic_auth=(username, token))
+        return jira
     except Exception as e:
-        print("Error connecting to Jira:", str(e))
+        print(f"Failed to connect to Jira: {e}")
         return None
 
-def read_excel_file(file_path):
+def link_users(jira, excel_file_path):
     try:
-        workbook = openpyxl.load_workbook(file_path)
-        sheet = workbook.active
-        # Assuming the data is in the format "defect_id, user_story_id"
-        data = [(row[0].value, row[1].value) for row in sheet.iter_rows(min_row=2)]
-        return data
+        wb = load_workbook(excel_file_path)
+        sheet = wb.active
+
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            user_id_1, user_id_2 = row[0], row[1]
+
+            # Perform Jira user linking operation here with user_id_1 and user_id_2
+            # For example: jira.link_users(user_id_1, user_id_2)
+
+        print("User linking completed successfully.")
     except Exception as e:
-        print("Error reading Excel file:", str(e))
-        return None
+        print(f"Error while linking users: {e}")
 
-def link_issues_in_jira(jira_client, data):
-    if not jira_client:
-        return
+def browse_excel_file():
+    file_path = filedialog.askopenfilename()
+    excel_file_entry.delete(0, tk.END)
+    excel_file_entry.insert(0, file_path)
 
-    for defect_id, user_story_id in data:
-        try:
-            jira_client.link_issue(defect_id, user_story_id, "Blocks")
-            print(f"Linked Defect {defect_id} with User Story {user_story_id}")
-        except Exception as e:
-            print(f"Error linking Defect {defect_id} with User Story {user_story_id}: {str(e)}")
+def connect_and_link_users():
+    server = server_entry.get()
+    username = username_entry.get()
+    token = token_entry.get()
+    excel_file_path = excel_file_entry.get()
 
-def main():
-    # Ask for Jira connection details
-    server = input("Enter Jira server URL: ")
-    username = input("Enter Jira username: ")
-    token = input("Enter Jira token: ")
+    jira = connect_to_jira(server, username, token)
+    if jira is not None:
+        link_users(jira, excel_file_path)
 
-    # Connect to Jira
-    jira_client = connect_to_jira(server, username, token)
-    if not jira_client:
-        return
+# Create GUI
+root = tk.Tk()
+root.title("Jira User Linking")
+root.geometry("400x200")
 
-    # Ask for Excel file using GUI
-    root = tk.Tk()
-    root.withdraw()  # Hide the main window
+tk.Label(root, text="Jira Server:").pack()
+server_entry = tk.Entry(root)
+server_entry.pack()
 
-    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=(("Excel files", "*.xlsx"),))
-    if not file_path:
-        print("No file selected. Exiting...")
-        return
+tk.Label(root, text="Username:").pack()
+username_entry = tk.Entry(root)
+username_entry.pack()
 
-    # Read data from Excel file
-    data = read_excel_file(file_path)
-    if not data:
-        return
+tk.Label(root, text="Jira Token:").pack()
+token_entry = tk.Entry(root, show="*")
+token_entry.pack()
 
-    # Link issues in Jira
-    link_issues_in_jira(jira_client, data)
+tk.Label(root, text="Excel File Path:").pack()
+excel_file_entry = tk.Entry(root)
+excel_file_entry.pack()
 
-if __name__ == "__main__":
-    main()
+browse_button = tk.Button(root, text="Browse", command=browse_excel_file)
+browse_button.pack()
+
+connect_button = tk.Button(root, text="Connect and Link Users", command=connect_and_link_users)
+connect_button.pack()
+
+root.mainloop()
