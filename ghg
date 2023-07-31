@@ -1,27 +1,63 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when
+from pyspark.sql.functions import col, lit
 
-def update_avro_file_with_condition(spark, avro_file_path):
-    # Read the Avro file into a DataFrame
-    df = spark.read.format("avro").load(avro_file_path)
+# Initialize the SparkSession
+spark = SparkSession.builder.appName("Data Comparison").getOrCreate()
 
-    # Check the condition and update the "renewal" column accordingly
-    updated_df = df.withColumn("renewal", when(col("polivyrefer") == 5678, "updated_value").otherwise(col("renewal")))
+# Step 1: Create the first table based on a CSV file in DBFS
+csv_file_path = "/dbfs/path/to/your/csv/file.csv"
+table_name = "first_table"
 
-    # Write the updated DataFrame back to the Avro file
-    updated_df.write.format("avro").mode("overwrite").save(avro_file_path)
+df = spark.read.option("header", "true").csv(csv_file_path)
+df.createOrReplaceTempView(table_name)
 
-if __name__ == "__main__":
-    # Initialize SparkSession
-    spark = SparkSession.builder \
-        .appName("Update Avro File") \
-        .getOrCreate()
+# Step 2: Check if the table already exists and drop if required
+overwrite_existing = True
 
-    # Replace 'your_avro_file_path' with the actual DBFS path of the Avro file
-    avro_file_path = "dbfs:/path/to/your_avro_file.avro"
+if spark.catalog.tableExists(table_name) and overwrite_existing:
+    spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+    df.write.saveAsTable(table_name)
+elif not spark.catalog.tableExists(table_name):
+    df.write.saveAsTable(table_name)
 
-    # Call the function to update the Avro file with the specified condition
-    update_avro_file_with_condition(spark, avro_file_path)
+# Step 3: Create the second table with distinct policy_reference values
+second_table_name = "second_table"
+distinct_df = spark.sql(f"SELECT DISTINCT policy_reference FROM {table_name}")
+distinct_df.createOrReplaceTempView(second_table_name)
 
-    # Stop the SparkSession
-    spark.stop()
+# Define the list of columns for data comparison
+columns_to_compare = ["column1", "column2", "column3"]
+
+# Step 4: Define a function to perform data comparison for the specified columns
+def compare_data(policy_reference, columns_to_compare):
+    df1 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
+    df2 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
+
+    comparison_results = []
+    for column in columns_to_compare:
+        df1_value = df1.select(col(column).cast("string")).collect()[0][0]
+        df2_value = df2.select(col(column).cast("string")).collect()[0][0]
+        status = "Pass" if df1_value == df2_value else "Fail"
+        comparison_results.append((policy_reference, column, df1_value, df2_value, status))
+
+    return comparison_results
+
+# Step 5: Perform data comparison and capture the results in an output DataFrame
+all_comparison_results = []
+
+# Loop through each distinct policy_reference and compare the data
+for row in distinct_df.collect():
+    policy_reference = row[0]
+    comparison_results = compare_data(policy_reference, columns_to_compare)
+    all_comparison_results.extend(comparison_results)
+
+# Create a DataFrame from the comparison results
+output_df = spark.createDataFrame(all_comparison_results, ["policy_reference", "column", "df1_value", "df2_value", "status"])
+
+# Show the comparison results
+output_df.show()
+
+# Save the output DataFrame as a Delta table with overwrite mode
+output_table_name = "comparison_output_table"
+
+output_df.write.mode("overwrite").format("delta").saveAsTable(output_table_name)
