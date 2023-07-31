@@ -1,69 +1,57 @@
+import os
 import tkinter as tk
 from tkinter import filedialog
-import requests
-import pandas as pd
+from jira import JIRA
+import openpyxl
 
-# Function to get the Jira authentication token (assuming you already have it)
-def get_jira_token():
-    return "YOUR_JIRA_TOKEN"
-
-# Function to link defect IDs with test cases in Jira
-def link_defects_with_testcases(jira_token, excel_file_path):
-    # Read the Excel file to get the defect IDs and test case IDs
-    data = pd.read_excel(excel_file_path)
-
-    # Jira REST API endpoint for issue linking
-    jira_url = "https://your_jira_instance/rest/api/2/issueLink"
-
-    # Headers for the Jira REST API request
-    headers = {
-        "Authorization": f"Bearer {jira_token}",
-        "Content-Type": "application/json"
-    }
-
-    for _, row in data.iterrows():
-        defect_id = row["Defect_ID"]
-        test_case_id = row["Test_Case_ID"]
-        link_data = {
-            "type": {
-                "name": "Tests",
-            },
-            "inwardIssue": {
-                "key": defect_id
-            },
-            "outwardIssue": {
-                "key": test_case_id
-            }
+def connect_to_jira(server, username, jira_token):
+    try:
+        options = {
+            'server': server,
+            'basic_auth': (username, jira_token)
         }
+        jira = JIRA(options)
+        return jira
+    except Exception as e:
+        print("Failed to connect to Jira. Error:", e)
+        return None
 
-        # Make the API request to link the issues
-        response = requests.post(jira_url, json=link_data, headers=headers)
+def link_defects_to_bugs(jira, excel_file_path):
+    try:
+        wb = openpyxl.load_workbook(excel_file_path)
+        ws = wb.active
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            defect_id, bug_id = row[0], row[1]
+            jira.add_issues_to_epic(bug_id, [defect_id])
+        print("Defect IDs linked to bugs successfully!")
+        return True
+    except Exception as e:
+        print("Failed to link defects to bugs. Error:", e)
+        return False
 
-        if response.status_code == 201:
-            print(f"Successfully linked defect '{defect_id}' with test case '{test_case_id}'.")
-        else:
-            print(f"Failed to link defect '{defect_id}' with test case '{test_case_id}'.")
-            print(f"Response: {response.text}")
-
-# Function to ask for the Excel file path using GUI
-def browse_excel_file():
+def ask_file_path():
     root = tk.Tk()
     root.withdraw()
-    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=(("Excel Files", "*.xlsx"),))
+    file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
     return file_path
 
-def main():
-    jira_token = get_jira_token()
-    excel_file_path = browse_excel_file()
-
-    if not excel_file_path:
-        print("No Excel file selected.")
-    else:
-        try:
-            link_defects_with_testcases(jira_token, excel_file_path)
-            print("Issue linking process completed successfully.")
-        except Exception as e:
-            print(f"An error occurred: {str(e)}")
-
 if __name__ == "__main__":
-    main()
+    server = input("Jira Server URL: ")
+    username = input("Jira Username: ")
+    jira_token = input("Jira Token (API token or password): ")
+
+    jira = connect_to_jira(server, username, jira_token)
+
+    if jira:
+        print("Successfully connected to Jira.")
+        excel_file_path = ask_file_path()
+        if excel_file_path:
+            connection_success = link_defects_to_bugs(jira, excel_file_path)
+            if connection_success:
+                print("Defect IDs linked to bugs successfully!")
+            else:
+                print("Failed to link defects to bugs.")
+        else:
+            print("No Excel file selected.")
+    else:
+        print("Connection to Jira failed. Please check your credentials and Jira server URL.")
