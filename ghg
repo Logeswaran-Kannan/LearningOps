@@ -62,3 +62,9 @@ output_df.write.saveAsTable(output_table_name)
 
 # Show the comparison results
 output_df.show()
+
+if spark.catalog.tableExists(output_table_name) and overwrite_existing:
+    spark.sql(f"DROP TABLE IF EXISTS {output_table_name}")
+
+# Save the output DataFrame as a table
+output_df.write.mode("overwrite").saveAsTable(output_table_name)
