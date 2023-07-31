@@ -1,57 +1,73 @@
-import os
+import jira
+import openpyxl
 import tkinter as tk
 from tkinter import filedialog
-from jira import JIRA
-import openpyxl
 
-def connect_to_jira(server, username, jira_token):
+def connect_to_jira(server, username, token):
     try:
         options = {
             'server': server,
-            'basic_auth': (username, jira_token)
+            'verify': True,
+            'headers': {
+                'Authorization': 'Basic %s' % jira.utils.base64string(username, token)
+            }
         }
-        jira = JIRA(options)
-        return jira
+        jira_client = jira.JIRA(**options)
+        print("Connection to Jira successful.")
+        return jira_client
     except Exception as e:
-        print("Failed to connect to Jira. Error:", e)
+        print("Error connecting to Jira:", str(e))
         return None
 
-def link_defects_to_bugs(jira, excel_file_path):
+def read_excel_file(file_path):
     try:
-        wb = openpyxl.load_workbook(excel_file_path)
-        ws = wb.active
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            defect_id, bug_id = row[0], row[1]
-            jira.add_issues_to_epic(bug_id, [defect_id])
-        print("Defect IDs linked to bugs successfully!")
-        return True
+        workbook = openpyxl.load_workbook(file_path)
+        sheet = workbook.active
+        # Assuming the data is in the format "defect_id, user_story_id"
+        data = [(row[0].value, row[1].value) for row in sheet.iter_rows(min_row=2)]
+        return data
     except Exception as e:
-        print("Failed to link defects to bugs. Error:", e)
-        return False
+        print("Error reading Excel file:", str(e))
+        return None
 
-def ask_file_path():
+def link_issues_in_jira(jira_client, data):
+    if not jira_client:
+        return
+
+    for defect_id, user_story_id in data:
+        try:
+            jira_client.link_issue(defect_id, user_story_id, "Blocks")
+            print(f"Linked Defect {defect_id} with User Story {user_story_id}")
+        except Exception as e:
+            print(f"Error linking Defect {defect_id} with User Story {user_story_id}: {str(e)}")
+
+def main():
+    # Ask for Jira connection details
+    server = input("Enter Jira server URL: ")
+    username = input("Enter Jira username: ")
+    token = input("Enter Jira token: ")
+
+    # Connect to Jira
+    jira_client = connect_to_jira(server, username, token)
+    if not jira_client:
+        return
+
+    # Ask for Excel file using GUI
     root = tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
-    return file_path
+    root.withdraw()  # Hide the main window
+
+    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=(("Excel files", "*.xlsx"),))
+    if not file_path:
+        print("No file selected. Exiting...")
+        return
+
+    # Read data from Excel file
+    data = read_excel_file(file_path)
+    if not data:
+        return
+
+    # Link issues in Jira
+    link_issues_in_jira(jira_client, data)
 
 if __name__ == "__main__":
-    server = input("Jira Server URL: ")
-    username = input("Jira Username: ")
-    jira_token = input("Jira Token (API token or password): ")
-
-    jira = connect_to_jira(server, username, jira_token)
-
-    if jira:
-        print("Successfully connected to Jira.")
-        excel_file_path = ask_file_path()
-        if excel_file_path:
-            connection_success = link_defects_to_bugs(jira, excel_file_path)
-            if connection_success:
-                print("Defect IDs linked to bugs successfully!")
-            else:
-                print("Failed to link defects to bugs.")
-        else:
-            print("No Excel file selected.")
-    else:
-        print("Connection to Jira failed. Please check your credentials and Jira server URL.")
+    main()
