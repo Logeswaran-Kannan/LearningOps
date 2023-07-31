@@ -1,64 +1,64 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit
+from pyspark.sql.functions import col, lit, expr
 
-# Initialize SparkSession
-spark = SparkSession.builder \
-    .appName("Column-level Data Comparison") \
-    .getOrCreate()
+# Initialize the SparkSession
+spark = SparkSession.builder.appName("Data Comparison").getOrCreate()
 
-# Load CSV file into a DataFrame and create the first table
-csv_file_path = "/dbfs/path/to/csv/file.csv"
-first_table_name = "table_1"
+# Step 1: Create the first table based on a CSV file in DBFS
+csv_file_path = "/dbfs/path/to/your/csv/file.csv"
+table_name = "first_table"
 
-# Use try-except block to handle exception if the table already exists
-try:
-    df = spark.read.csv(csv_file_path, header=True, inferSchema=True)
-    df.write.mode("overwrite").saveAsTable(first_table_name)
-except:
-    print(f"Table '{first_table_name}' already exists. Skipping table creation.")
+df = spark.read.option("header", "true").csv(csv_file_path)
+df.createOrReplaceTempView(table_name)
 
-# Define the list of columns to compare
-columns_to_compare = ["column1", "column2", "column3"]  # Add your column names here
+# Step 2: Check if the table already exists and overwrite if required
+overwrite_existing = True
 
-# Load the second table from the database
-second_table_name = "table_2"
-second_table_df = spark.table(second_table_name)
+if spark.catalog.tableExists(table_name) and overwrite_existing:
+    spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+    df.write.saveAsTable(table_name)
+elif not spark.catalog.tableExists(table_name):
+    df.write.saveAsTable(table_name)
 
-# Filter records in the second table that exist in the first table based on policy_reference
-distinct_policy_references = df.select("policy_reference").distinct()
-filtered_second_table_df = second_table_df.join(
-    distinct_policy_references, on="policy_reference", how="inner"
-)
+# Step 3: Create the second table with distinct policy_reference values
+second_table_name = "second_table"
+distinct_df = spark.sql(f"SELECT DISTINCT policy_reference FROM {table_name}")
+distinct_df.createOrReplaceTempView(second_table_name)
 
-# Perform minus operation between the two tables for the specified columns
-comparison_results = df.alias("df1").join(
-    filtered_second_table_df.alias("df2"),
-    on=["policy_reference"],
-    how="left_anti"
-)
+# Define the list of columns for data comparison
+columns_to_compare = ["column1", "column2", "column3"]
 
-# Create a DataFrame to hold the comparison results
-results_df = comparison_results.select("policy_reference")
+# Step 4: Define a function to perform data comparison for the specified columns
+def compare_data(policy_reference, columns_to_compare):
+    df1 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
+    df2 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
 
-# Compare each column and add the result to the results DataFrame
-for column in columns_to_compare:
-    result_column = f"{column}_result"
-    result_value = f"{column}_value"
-    
-    results_df = results_df.withColumn(
-        result_column,
-        (col(f"df1.{column}") == col(f"df2.{column}")).cast("string")
-    ).withColumn(
-        result_value,
-        lit(f"df1.{column} = {{df1.{column}}}, df2.{column} = {{df2.{column}}}")
-    )
+    comparison_results = []
+    for column in columns_to_compare:
+        df1_value = df1.select(column).collect()[0][0]
+        df2_value = df2.select(column).collect()[0][0]
+        status = "Pass" if df1_value == df2_value else "Fail"
+        comparison_results.append((column, df1_value, df2_value, status))
 
-# Show the results DataFrame with comparison status and values
-results_df.show()
+    return comparison_results
 
-# Save the results DataFrame as an output table
-output_table_name = "comparison_output"
-results_df.write.mode("overwrite").saveAsTable(output_table_name)
+# Step 5: Perform data comparison and capture the results in an output table
+output_table_name = "comparison_output_table"
 
-# Stop the SparkSession
-spark.stop()
+# Create a list to store the results for all policy_references
+all_comparison_results = []
+
+# Loop through each distinct policy_reference and compare the data
+for row in distinct_df.collect():
+    policy_reference = row[0]
+    comparison_results = compare_data(policy_reference, columns_to_compare)
+    all_comparison_results.extend(comparison_results)
+
+# Create a DataFrame from the comparison results
+output_df = spark.createDataFrame(all_comparison_results, ["column", "df1_value", "df2_value", "status"])
+
+# Save the output DataFrame as a table
+output_df.write.saveAsTable(output_table_name)
+
+# Show the comparison results
+output_df.show()
