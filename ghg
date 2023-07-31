@@ -2,51 +2,63 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, lit
 
 # Initialize SparkSession
-spark = SparkSession.builder.appName("DataComparison").getOrCreate()
+spark = SparkSession.builder \
+    .appName("Column-level Data Comparison") \
+    .getOrCreate()
 
-# Replace these with your actual file paths and table names
-csv_file_path = "/dbfs/path/to/your/csv_file.csv"
-database_name = "your_database"
-first_table_name = "table_from_csv"
-second_table_name = "existing_table"
-output_table_name = "data_comparison_output"
-columns_to_compare = ["column1", "column2", "column3"]  # Add the columns you want to compare
+# Load CSV file into a DataFrame and create the first table
+csv_file_path = "/dbfs/path/to/csv/file.csv"
+first_table_name = "table_1"
 
-# Create the first table from the CSV file, if it doesn't exist
+# Use try-except block to handle exception if the table already exists
 try:
-    spark.sql(f"CREATE DATABASE IF NOT EXISTS {database_name}")
-    df_csv = spark.read.option("header", "true").csv(csv_file_path)
-    df_csv.write.mode("overwrite").saveAsTable(f"{database_name}.{first_table_name}")
-except Exception as e:
-    print(f"Error creating first table: {e}")
+    df = spark.read.csv(csv_file_path, header=True, inferSchema=True)
+    df.write.mode("overwrite").saveAsTable(first_table_name)
+except:
+    print(f"Table '{first_table_name}' already exists. Skipping table creation.")
 
-# Query both tables using the policy_reference as the filter
-try:
-    df_first_table = spark.sql(f"SELECT * FROM {database_name}.{first_table_name}")
-    df_second_table = spark.sql(f"SELECT * FROM {database_name}.{second_table_name}")
-except Exception as e:
-    print(f"Error querying tables: {e}")
+# Define the list of columns to compare
+columns_to_compare = ["column1", "column2", "column3"]  # Add your column names here
 
-# Perform the column-wise minus for the specified columns
-diff_df = df_first_table.select("policy_reference", *columns_to_compare).subtract(
-    df_second_table.select("policy_reference", *columns_to_compare)
+# Load the second table from the database
+second_table_name = "table_2"
+second_table_df = spark.table(second_table_name)
+
+# Filter records in the second table that exist in the first table based on policy_reference
+distinct_policy_references = df.select("policy_reference").distinct()
+filtered_second_table_df = second_table_df.join(
+    distinct_policy_references, on="policy_reference", how="inner"
 )
 
-# Prepare the output DataFrame with differences and status
-output_df = diff_df.select("policy_reference", *columns_to_compare).withColumn("status", lit("Fail"))
+# Perform minus operation between the two tables for the specified columns
+comparison_results = df.alias("df1").join(
+    filtered_second_table_df.alias("df2"),
+    on=["policy_reference"],
+    how="left_anti"
+)
 
-# If there are no differences, mark the status as "Pass"
-if output_df.count() == 0:
-    output_df = df_first_table.select("policy_reference", *columns_to_compare).withColumn("status", lit("Pass"))
+# Create a DataFrame to hold the comparison results
+results_df = comparison_results.select("policy_reference")
 
-# Create the output table to capture the differences
-try:
-    output_df.write.mode("overwrite").saveAsTable(f"{database_name}.{output_table_name}")
-except Exception as e:
-    print(f"Error creating output table: {e}")
+# Compare each column and add the result to the results DataFrame
+for column in columns_to_compare:
+    result_column = f"{column}_result"
+    result_value = f"{column}_value"
+    
+    results_df = results_df.withColumn(
+        result_column,
+        (col(f"df1.{column}") == col(f"df2.{column}")).cast("string")
+    ).withColumn(
+        result_value,
+        lit(f"df1.{column} = {{df1.{column}}}, df2.{column} = {{df2.{column}}}")
+    )
 
-# Show the results
-output_df.show()
+# Show the results DataFrame with comparison status and values
+results_df.show()
+
+# Save the results DataFrame as an output table
+output_table_name = "comparison_output"
+results_df.write.mode("overwrite").saveAsTable(output_table_name)
 
 # Stop the SparkSession
 spark.stop()
