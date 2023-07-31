@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, when
 
 # Step 1: Initialize SparkSession
 spark = SparkSession.builder.appName("DataComparison").getOrCreate()
@@ -22,29 +22,30 @@ columns_to_compare = ["column1", "column2", "column3"]
 existing_table_name = "existing_table"
 policy_reference_column = "policy_reference"
 
-query_template = """
-    SELECT {columns}
-    FROM {existing_table}
-    WHERE {policy_reference_column} IN (SELECT DISTINCT {policy_reference_column} FROM {temp_table})
-"""
-
-columns_sql = ", ".join([f'IFNULL(t1.{col}, "") AS t1_{col}, IFNULL(t2.{col}, "") AS t2_{col}' for col in columns_to_compare])
-query = query_template.format(columns=columns_sql, existing_table=existing_table_name, policy_reference_column=policy_reference_column, temp_table=table_name)
-
-existing_data_df = spark.sql(query)
-existing_data_df.createOrReplaceTempView("existing_data_view")
-
-# Perform the "minus" operation
-minus_conditions = " OR ".join([f't1.{col} <> t2.{col}' for col in columns_to_compare])
 query = f"""
-    SELECT t1.{policy_reference_column}, {columns_sql}
-    FROM {table_name} t1
-    LEFT JOIN existing_data_view t2
-    ON t1.{policy_reference_column} = t2.{policy_reference_column}
-    WHERE {minus_conditions}
+    SELECT DISTINCT {policy_reference_column}
+    FROM {table_name}
 """
+policy_references = spark.sql(query).collect()
 
-result_df = spark.sql(query)
+result_df = None
+for policy_reference_row in policy_references:
+    policy_reference = policy_reference_row[policy_reference_column]
+    query = f"""
+        SELECT '{policy_reference}' AS {policy_reference_column},
+               {", ".join([f'IFNULL(t1.{col}, "") AS t1_{col}', f'IFNULL(t2.{col}, "") AS t2_{col}') for col in columns_to_compare]}
+        FROM {table_name} t1
+        LEFT JOIN {existing_table_name} t2
+        ON t1.{policy_reference_column} = t2.{policy_reference_column}
+        WHERE t1.{policy_reference_column} = '{policy_reference}'
+          AND ({f' OR '.join([f't1.{col} <> t2.{col}' for col in columns_to_compare])})
+    """
+    policy_result_df = spark.sql(query)
+    
+    if result_df is None:
+        result_df = policy_result_df
+    else:
+        result_df = result_df.union(policy_result_df)
 
 # Step 6: Store the results in the output table
 result_df.createOrReplaceTempView(output_table_name)
