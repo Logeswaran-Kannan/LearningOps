@@ -1,64 +1,69 @@
+import tkinter as tk
+from tkinter import filedialog
 import requests
 import pandas as pd
-from tkinter import filedialog, Tk
 
-# Jira API base URL
-jira_url = "https://your-jira-instance.atlassian.net/rest/api/latest/issue/"
+# Function to get the Jira authentication token (assuming you already have it)
+def get_jira_token():
+    return "YOUR_JIRA_TOKEN"
 
-# Jira token (Replace with your Jira API token)
-jira_token = "your-jira-token"
+# Function to link defect IDs with test cases in Jira
+def link_defects_with_testcases(jira_token, excel_file_path):
+    # Read the Excel file to get the defect IDs and test case IDs
+    data = pd.read_excel(excel_file_path)
 
-# Function to link defect IDs with existing test cases in Jira
-def link_defect_to_test_case(defect_id, test_case_id):
+    # Jira REST API endpoint for issue linking
+    jira_url = "https://your_jira_instance/rest/api/2/issueLink"
+
+    # Headers for the Jira REST API request
     headers = {
-        "Authorization": f"Basic {jira_token}",
-        "Content-Type": "application/json",
+        "Authorization": f"Bearer {jira_token}",
+        "Content-Type": "application/json"
     }
 
-    data = {
-        "update": {
-            "issuelinks": [
-                {
-                    "add": {
-                        "type": {"name": "Tests"},
-                        "inwardIssue": {"key": defect_id},
-                        "outwardIssue": {"key": test_case_id},
-                    }
-                }
-            ]
+    for _, row in data.iterrows():
+        defect_id = row["Defect_ID"]
+        test_case_id = row["Test_Case_ID"]
+        link_data = {
+            "type": {
+                "name": "Tests",
+            },
+            "inwardIssue": {
+                "key": defect_id
+            },
+            "outwardIssue": {
+                "key": test_case_id
+            }
         }
-    }
 
-    response = requests.post(jira_url + test_case_id, json=data, headers=headers)
-    if response.status_code == 204:
-        print(f"Defect {defect_id} linked with Test Case {test_case_id} successfully.")
-    else:
-        print(f"Error linking defect {defect_id} with Test Case {test_case_id}.")
-        print(response.json())
+        # Make the API request to link the issues
+        response = requests.post(jira_url, json=link_data, headers=headers)
 
+        if response.status_code == 201:
+            print(f"Successfully linked defect '{defect_id}' with test case '{test_case_id}'.")
+        else:
+            print(f"Failed to link defect '{defect_id}' with test case '{test_case_id}'.")
+            print(f"Response: {response.text}")
 
-# GUI to get Excel file path
-def get_excel_file_path():
-    root = Tk()
+# Function to ask for the Excel file path using GUI
+def browse_excel_file():
+    root = tk.Tk()
     root.withdraw()
-    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=[("Excel Files", "*.xlsx")])
+    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=(("Excel Files", "*.xlsx"),))
     return file_path
 
-
-# Main function to link defects with test cases
 def main():
-    # Get Excel file path using GUI
-    excel_file_path = get_excel_file_path()
+    jira_token = get_jira_token()
+    excel_file_path = browse_excel_file()
 
-    # Read the data from Excel file
-    df = pd.read_excel(excel_file_path)
-
-    # Iterate through each row and link defects with test cases
-    for index, row in df.iterrows():
-        defect_id = row["Defect ID"]
-        test_case_id = row["Test Case ID"]
-        link_defect_to_test_case(defect_id, test_case_id)
-
+    if not excel_file_path:
+        print("No Excel file selected.")
+    else:
+        try:
+            link_defects_with_testcases(jira_token, excel_file_path)
+            print("Issue linking process completed successfully.")
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
     main()
