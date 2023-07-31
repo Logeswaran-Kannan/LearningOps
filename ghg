@@ -1,59 +1,64 @@
-import openpyxl
 import requests
-import tkinter as tk
-from tkinter import filedialog
+import pandas as pd
+from tkinter import filedialog, Tk
 
-# Jira credentials and URL
-JIRA_BASE_URL = "https://your-jira-instance.atlassian.net"
-JIRA_USERNAME = "your-jira-username"
-JIRA_TOKEN = "your-jira-token"
+# Jira API base URL
+jira_url = "https://your-jira-instance.atlassian.net/rest/api/latest/issue/"
 
-# Function to authenticate with Jira API using token
-def jira_auth():
-    return requests.auth.HTTPBasicAuth(JIRA_USERNAME, JIRA_TOKEN)
+# Jira token (Replace with your Jira API token)
+jira_token = "your-jira-token"
 
-# Function to link defect ID with an existing test case in Jira
-def link_defect_with_test_case(defect_id, test_case_key):
-    url = f"{JIRA_BASE_URL}/rest/api/2/issueLink"
-    auth = jira_auth()
-    headers = {"Content-Type": "application/json"}
+# Function to link defect IDs with existing test cases in Jira
+def link_defect_to_test_case(defect_id, test_case_id):
+    headers = {
+        "Authorization": f"Basic {jira_token}",
+        "Content-Type": "application/json",
+    }
 
     data = {
-        "type": {
-            "name": "Tests"
-        },
-        "inwardIssue": {
-            "key": test_case_key
-        },
-        "outwardIssue": {
-            "key": defect_id
+        "update": {
+            "issuelinks": [
+                {
+                    "add": {
+                        "type": {"name": "Tests"},
+                        "inwardIssue": {"key": defect_id},
+                        "outwardIssue": {"key": test_case_id},
+                    }
+                }
+            ]
         }
     }
 
-    response = requests.post(url, json=data, auth=auth, headers=headers)
-    if response.status_code == 201:
-        print(f"Successfully linked Defect {defect_id} with Test Case {test_case_key}")
+    response = requests.post(jira_url + test_case_id, json=data, headers=headers)
+    if response.status_code == 204:
+        print(f"Defect {defect_id} linked with Test Case {test_case_id} successfully.")
     else:
-        print(f"Failed to link Defect {defect_id} with Test Case {test_case_key}")
+        print(f"Error linking defect {defect_id} with Test Case {test_case_id}.")
+        print(response.json())
 
-# Function to open file dialog and get the Excel file path
+
+# GUI to get Excel file path
 def get_excel_file_path():
-    root = tk.Tk()
+    root = Tk()
     root.withdraw()
-    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=[("Excel files", "*.xlsx")])
+    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=[("Excel Files", "*.xlsx")])
     return file_path
 
-# Main function
+
+# Main function to link defects with test cases
 def main():
+    # Get Excel file path using GUI
     excel_file_path = get_excel_file_path()
 
-    if excel_file_path:
-        workbook = openpyxl.load_workbook(excel_file_path)
-        worksheet = workbook.active
+    # Read the data from Excel file
+    df = pd.read_excel(excel_file_path)
 
-        for row in worksheet.iter_rows(min_row=2, values_only=True):
-            defect_id, test_case_key = row[0], row[1]
-            link_defect_with_test_case(defect_id, test_case_key)
+    # Iterate through each row and link defects with test cases
+    for index, row in df.iterrows():
+        defect_id = row["Defect ID"]
+        test_case_id = row["Test Case ID"]
+        link_defect_to_test_case(defect_id, test_case_id)
+
 
 if __name__ == "__main__":
     main()
