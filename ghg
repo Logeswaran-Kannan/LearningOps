@@ -1,49 +1,59 @@
-import pandas as pd
+import openpyxl
 import requests
+import tkinter as tk
+from tkinter import filedialog
 
-def link_defect_with_testcase(jira_url, jira_token, project_key, defect_id, testcase_id):
-    headers = {
-        "Authorization": f"Basic {jira_token}",
-        "Content-Type": "application/json"
-    }
+# Jira credentials and URL
+JIRA_BASE_URL = "https://your-jira-instance.atlassian.net"
+JIRA_USERNAME = "your-jira-username"
+JIRA_TOKEN = "your-jira-token"
 
-    issue_key = f"{project_key}-{defect_id}"
-    testcase_issue_key = f"{project_key}-{testcase_id}"
+# Function to authenticate with Jira API using token
+def jira_auth():
+    return requests.auth.HTTPBasicAuth(JIRA_USERNAME, JIRA_TOKEN)
+
+# Function to link defect ID with an existing test case in Jira
+def link_defect_with_test_case(defect_id, test_case_key):
+    url = f"{JIRA_BASE_URL}/rest/api/2/issueLink"
+    auth = jira_auth()
+    headers = {"Content-Type": "application/json"}
 
     data = {
         "type": {
-            "name": "Relates"
-        },
-        "outwardIssue": {
-            "key": issue_key
+            "name": "Tests"
         },
         "inwardIssue": {
-            "key": testcase_issue_key
+            "key": test_case_key
+        },
+        "outwardIssue": {
+            "key": defect_id
         }
     }
 
-    api_url = f"{jira_url}/rest/api/2/issueLink"
-    response = requests.post(api_url, json=data, headers=headers)
-
+    response = requests.post(url, json=data, auth=auth, headers=headers)
     if response.status_code == 201:
-        print(f"Successfully linked Defect {defect_id} with Testcase {testcase_id}")
+        print(f"Successfully linked Defect {defect_id} with Test Case {test_case_key}")
     else:
-        print(f"Failed to link Defect {defect_id} with Testcase {testcase_id}. Status code: {response.status_code}")
+        print(f"Failed to link Defect {defect_id} with Test Case {test_case_key}")
 
+# Function to open file dialog and get the Excel file path
+def get_excel_file_path():
+    root = tk.Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=[("Excel files", "*.xlsx")])
+    return file_path
+
+# Main function
 def main():
-    # Replace with your Jira settings
-    jira_url = "https://your-jira-instance.com"
-    jira_token = "your-jira-token"
-    project_key = "YOUR_PROJECT_KEY"
+    excel_file_path = get_excel_file_path()
 
-    # Read data from Excel file
-    excel_file = "path/to/your/excel_file.xlsx"
-    data = pd.read_excel(excel_file)
+    if excel_file_path:
+        workbook = openpyxl.load_workbook(excel_file_path)
+        worksheet = workbook.active
 
-    for index, row in data.iterrows():
-        defect_id = row['Defect ID']
-        testcase_id = row['Testcase ID']
-        link_defect_with_testcase(jira_url, jira_token, project_key, defect_id, testcase_id)
+        for row in worksheet.iter_rows(min_row=2, values_only=True):
+            defect_id, test_case_key = row[0], row[1]
+            link_defect_with_test_case(defect_id, test_case_key)
 
 if __name__ == "__main__":
     main()
