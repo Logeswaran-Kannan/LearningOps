@@ -1,59 +1,49 @@
-import os
-from datetime import datetime, timedelta
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit
+import pandas as pd
+import requests
 
-# Define the threshold for considering a file deletable (30 days)
-threshold_days = 30
+def link_defect_with_testcase(jira_url, jira_token, project_key, defect_id, testcase_id):
+    headers = {
+        "Authorization": f"Basic {jira_token}",
+        "Content-Type": "application/json"
+    }
 
-# Initialize SparkSession
-spark = SparkSession.builder.getOrCreate()
+    issue_key = f"{project_key}-{defect_id}"
+    testcase_issue_key = f"{project_key}-{testcase_id}"
 
-# Define the DBFS path to start collecting file statistics
-dbfs_path = "/path/to/dbfs"
+    data = {
+        "type": {
+            "name": "Relates"
+        },
+        "outwardIssue": {
+            "key": issue_key
+        },
+        "inwardIssue": {
+            "key": testcase_issue_key
+        }
+    }
 
-# Get the current date
-current_date = datetime.now().strftime("%Y-%m-%d")
+    api_url = f"{jira_url}/rest/api/2/issueLink"
+    response = requests.post(api_url, json=data, headers=headers)
 
-# Collect file statistics recursively from the specified DBFS path
-file_stats = []
-for root, dirs, files in os.walk(dbfs_path):
-    for file_name in files:
-        file_path = os.path.join(root, file_name)
-        file_size = os.path.getsize(file_path)
-        creation_date = os.path.getctime(file_path)
-        last_update_date = os.path.getmtime(file_path)
-        
-        # Convert timestamps to date strings
-        creation_date_str = datetime.fromtimestamp(creation_date).strftime("%Y-%m-%d")
-        last_update_date_str = datetime.fromtimestamp(last_update_date).strftime("%Y-%m-%d")
-        
-        # Calculate the number of days since the last update
-        days_since_last_update = (datetime.now() - datetime.fromtimestamp(last_update_date)).days
-        
-        # Determine the deletion status and recommendation
-        if days_since_last_update >= threshold_days:
-            del_status = "deletable"
-            del_date = current_date
-        else:
-            del_status = "non-deletable"
-            del_date = None
-        
-        # Append the file statistics to the list
-        file_stats.append((file_name, file_size, file_path, creation_date_str, last_update_date_str, del_status, del_date))
+    if response.status_code == 201:
+        print(f"Successfully linked Defect {defect_id} with Testcase {testcase_id}")
+    else:
+        print(f"Failed to link Defect {defect_id} with Testcase {testcase_id}. Status code: {response.status_code}")
 
-# Create a DataFrame from the collected file statistics
-file_stats_df = spark.createDataFrame(file_stats, ["name", "size", "path", "creation_date", "last_update_date", "del_status", "del_date"])
+def main():
+    # Replace with your Jira settings
+    jira_url = "https://your-jira-instance.com"
+    jira_token = "your-jira-token"
+    project_key = "YOUR_PROJECT_KEY"
 
-# Read the existing table into a DataFrame
-existing_table_df = spark.table("existing_table_name")
+    # Read data from Excel file
+    excel_file = "path/to/your/excel_file.xlsx"
+    data = pd.read_excel(excel_file)
 
-# Append the file statistics to the existing table
-final_df = existing_table_df.union(file_stats_df)
+    for index, row in data.iterrows():
+        defect_id = row['Defect ID']
+        testcase_id = row['Testcase ID']
+        link_defect_with_testcase(jira_url, jira_token, project_key, defect_id, testcase_id)
 
-# Deduplicate based on the 'path' column and keep the latest record
-final_df = final_df.dropDuplicates(["path"]).sort("last_update_date")
-
-# Insert the final DataFrame into the existing table using append mode
-final_df.write.mode("append").insertInto("existing_table_name")
-
+if __name__ == "__main__":
+    main()
