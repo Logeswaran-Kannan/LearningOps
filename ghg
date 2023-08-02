@@ -13,7 +13,7 @@ def link_issues_to_test_cases(csv_file, server, username, token):
             test_case_key = row['Test Case Ticket ID']
             
             try:
-                jira.issue_link("Relates", jira_issue_key, test_case_key)
+                jira.create_issue_link("Relates", jira_issue_key, test_case_key)
                 print(f"Linked {jira_issue_key} to {test_case_key} successfully.")
             except Exception as e:
                 print(f"Error linking {jira_issue_key} to {test_case_key}: {e}")
