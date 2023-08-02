@@ -1,4 +1,58 @@
+import csv
+import tkinter as tk
+from tkinter import filedialog
+from jira import JIRA
 
-Based on my conversation with Mitul, we have identified several risks, and he is fully aware of the situation. Given the significant number of S1 issues we have, Mitul has communicated with the leadership team to extend the silver release date from 8th August to 15th August. Additionally, there has been a delay in Sungin joining the Aurora team due to customer operations, which means that Ben is currently handling the defect fixes alone.
+def link_issues_to_test_cases(csv_file, server, username, token):
+    jira = JIRA(server=server, basic_auth=(username, token))
+    
+    with open(csv_file, 'r') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            jira_issue_key = row['Jira Issue']
+            test_case_key = row['Test Case Ticket ID']
+            
+            try:
+                jira.issue_link("Relates", jira_issue_key, test_case_key)
+                print(f"Linked {jira_issue_key} to {test_case_key} successfully.")
+            except Exception as e:
+                print(f"Error linking {jira_issue_key} to {test_case_key}: {e}")
 
-Regarding Sutapa's release, I plan to speak with Mitul about the possibility of extending it. However, I am concerned that due to the effort already expended on testing, it might be challenging to obtain approval for an extension. At the moment, we are facing blockers in multiple areas, but Mitul is actively working on aligning resources to address these constraints in the development team.
+def browse_csv_file():
+    file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
+    csv_file_entry.delete(0, tk.END)
+    csv_file_entry.insert(0, file_path)
+
+def link_issues():
+    csv_file = csv_file_entry.get()
+    server = server_entry.get()
+    username = username_entry.get()
+    token = token_entry.get()
+    
+    link_issues_to_test_cases(csv_file, server, username, token)
+
+# GUI Setup
+root = tk.Tk()
+root.title("Jira Issue-Test Case Linking Tool")
+
+# Labels
+tk.Label(root, text="CSV File Path:").grid(row=0, column=0, padx=5, pady=5)
+tk.Label(root, text="Jira Server URL:").grid(row=1, column=0, padx=5, pady=5)
+tk.Label(root, text="Username:").grid(row=2, column=0, padx=5, pady=5)
+tk.Label(root, text="Token:").grid(row=3, column=0, padx=5, pady=5)
+
+# Entry fields
+csv_file_entry = tk.Entry(root, width=40)
+csv_file_entry.grid(row=0, column=1, padx=5, pady=5)
+server_entry = tk.Entry(root, width=40)
+server_entry.grid(row=1, column=1, padx=5, pady=5)
+username_entry = tk.Entry(root, width=40)
+username_entry.grid(row=2, column=1, padx=5, pady=5)
+token_entry = tk.Entry(root, show='*', width=40)
+token_entry.grid(row=3, column=1, padx=5, pady=5)
+
+# Buttons
+tk.Button(root, text="Browse", command=browse_csv_file).grid(row=0, column=2, padx=5, pady=5)
+tk.Button(root, text="Link Issues", command=link_issues).grid(row=4, column=1, padx=5, pady=10)
+
+root.mainloop()
