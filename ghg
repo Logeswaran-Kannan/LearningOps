@@ -1,1 +1,19 @@
-Yes, Adelina triggered these workflows to test both the custom and non-custom ones. Unfortunately, they have been running for an extended period. Initially, we thought the delay was due to the catch-up load, but further investigation is required to pinpoint the actual cause. We need to stop some of these workflows as they are incurring unnecessary costs.
+To gain more clarity on the requirements, I have taken the "quote_result_breakdown" table as a sample, but the questions apply to other tables as well. Could you please help us clarify the following questions:
+
+Scenario 1:
+
+Is it expected to have both SI and CORE records for any web reference, or are there exceptional cases where only one of them should be populated? We noticed that for some sample web references, only one record is populated while the other is missing (e.g., Example: 2345).
+Scenario 2:
+
+For some samples, we observed that both SI and CORE records are populated, but either of them lacks full details, even for grain columns. For example, in this sample, "policy_reference" and "Result_id" are populated for CORE, while SI has them as 0, and SI has "RESULT_POS" and "TRANSACTION_ID." Without complete data, it's challenging to relate them with "RPTLOG_ID" and "POLICY_REFERENCE" (e.g., Example: 2345). If a policy has more than one "policy_reference," how should we relate them to their corresponding SI and CORE records?
+Scenario 3:
+
+For a sample (e.g., Example: 34343), we are unable to identify to which web reference it belongs and its relevant SI record.
+Scenario 4:
+
+From a CDL perspective, which one is created first, CORE or SI? If one of them generates first, how much time does it take for the second one to generate? Understanding the generation sequence and potential lags between them might help in addressing catch-up scenarios. All these samples were created on or after July 1st.
+Please provide clarification to help us understand the requirements correctly.
+
+
+
+
