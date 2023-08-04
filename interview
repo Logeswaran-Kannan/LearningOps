@@ -1,37 +1,24 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, countDistinct, current_date
+Dear Team,
 
-# Create a SparkSession
-spark = SparkSession.builder.getOrCreate()
+As discussed with Sujatha this morning, we have a crucial task ahead - performing regression testing for the LCM source following the recent upgrade. Abinaya will be leading this effort. To ensure a smooth and successful regression testing process, we would like to request your assistance with the following:
 
-# Read the input CSV file containing the list of table names
-table_names_df = spark.read.csv("/path/to/table_names.csv", header=True)
+Informatica and Azure Key Vault Secrets:
+We believe that the informatica connection and Azure Key Vault secrets have been updated with the new connection string details as per the RITM. To proceed, we need the updated connection details and scope information (similar to the previous connection details). This will enable us to modify our regression script with the correct connection details.
 
-# Collect the table names from the DataFrame
-table_names = table_names_df.select("table_name").rdd.flatMap(lambda x: x).collect()
+LCM Pipeline Data Load:
+Rashmi from the development team will be responsible for running the LCM pipeline to load data into Clev2. We kindly request John to provide us with the specific date range based on the upgrade date. This will allow us to filter the data appropriately during the regression testing.
 
-# Iterate over the table names
-for table_name in table_names:
-    try:
-        # Read the table data
-        table_df = spark.table(table_name)
+Regression Testing:
+Once Rashmi completes the data load, Abinaya will initiate the regression testing. We request the entire team to provide timely updates on the outcomes of the testing, and upon completion, please provide your signoff.
 
-        # Perform data profiling using Spark functions
-        profiling_df = table_df.select(
-            col("schema"),
-            col("tablename"),
-            col("columnname"),
-            countDistinct(col("columnname")).alias("distinct_value")
-        ).withColumn(
-            "value_contribution",
-            col("distinct_value") / table_df.count() * 100
-        ).withColumn(
-            "date_of_profiling",
-            current_date()
-        )
+By collaborating effectively and addressing these requirements, we aim to ensure a comprehensive and accurate regression testing process. Your support is crucial to the success of this effort, and we appreciate your cooperation.
 
-        # Save the profiling output as a text file
-        profiling_df.write.mode("overwrite").text(f"/path/to/output/{table_name}_profiling.txt")
+Please feel free to reach out if you have any questions or need further clarification.
 
-    except Exception as e:
-        print(f"Error processing table {table_name}: {str(e)}")
+Best regards,
+[Your Name]
+
+
+
+
+
