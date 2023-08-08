@@ -1,19 +1,63 @@
-To gain more clarity on the requirements, I have taken the "quote_result_breakdown" table as a sample, but the questions apply to other tables as well. Could you please help us clarify the following questions:
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from IPython.display import HTML
 
-Scenario 1:
+# Initialize Spark session
+spark = SparkSession.builder.appName("ExploratoryDataAnalysis").getOrCreate()
 
-Is it expected to have both SI and CORE records for any web reference, or are there exceptional cases where only one of them should be populated? We noticed that for some sample web references, only one record is populated while the other is missing (e.g., Example: 2345).
-Scenario 2:
+# Load input CSV containing DLT view names
+input_csv_path = "dbfs:/path/to/input.csv"  # Update with the actual DBFS path
+input_df = spark.read.option("header", "true").csv(input_csv_path)
+dlt_view_names = input_df.select("DLTViewName").rdd.flatMap(lambda x: x).collect()
 
-For some samples, we observed that both SI and CORE records are populated, but either of them lacks full details, even for grain columns. For example, in this sample, "policy_reference" and "Result_id" are populated for CORE, while SI has them as 0, and SI has "RESULT_POS" and "TRANSACTION_ID." Without complete data, it's challenging to relate them with "RPTLOG_ID" and "POLICY_REFERENCE" (e.g., Example: 2345). If a policy has more than one "policy_reference," how should we relate them to their corresponding SI and CORE records?
-Scenario 3:
+# Output DBFS path for saving HTML files
+output_dbfs_path = "dbfs:/path/to/output_folder/"  # Update with the actual DBFS path
 
-For a sample (e.g., Example: 34343), we are unable to identify to which web reference it belongs and its relevant SI record.
-Scenario 4:
+# Function to generate EDA HTML report for a DLT view
+def generate_eda_report(dlt_view_name):
+    # Load data from DLT view
+    data = spark.sql(f"SELECT * FROM {dlt_view_name}")
 
-From a CDL perspective, which one is created first, CORE or SI? If one of them generates first, how much time does it take for the second one to generate? Understanding the generation sequence and potential lags between them might help in addressing catch-up scenarios. All these samples were created on or after July 1st.
-Please provide clarification to help us understand the requirements correctly.
+    # EDA code (similar to the previous example)
+    # ...
 
+    # Convert summary, missing_values, and correlation_matrix to HTML
+    # ...
 
+    # Combine HTML components
+    eda_report_html = f"""
+    <html>
+    <head>
+    <style>
+    {correlation_matrix_html}
+    </style>
+    </head>
+    <body>
+    <h2>Exploratory Data Analysis Report for {dlt_view_name}</h2>
+    <h3>Summary Statistics</h3>
+    {summary_html}
+    <h3>Missing Values</h3>
+    {missing_values_html}
+    <h3>Correlation Matrix</h3>
+    {correlation_matrix_html}
+    </body>
+    </html>
+    """
 
+    # Save HTML report to output DBFS path
+    output_file_path = f"{output_dbfs_path}/{dlt_view_name}_eda_report.html"
+    with open(output_file_path, "w") as html_file:
+        html_file.write(eda_report_html)
 
+# Generate EDA reports and save HTML files for each DLT view
+for dlt_view_name in dlt_view_names:
+    generate_eda_report(dlt_view_name)
+
+# Cleanup: Delete existing output files
+dbutils.fs.rm(output_dbfs_path, True)
+
+# Display completion message
+print("EDA reports generated and HTML files saved.")
