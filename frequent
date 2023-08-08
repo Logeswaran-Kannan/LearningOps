@@ -1,33 +1,56 @@
-# Import required libraries
+# Import necessary libraries
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import *
-from databricks import koalas as ks
-import databricks.automl
+from pyspark.sql.functions import col
+import pandas as pd
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("ExploratoryDataAnalysis").getOrCreate()
+spark = SparkSession.builder.appName("EDA").getOrCreate()
 
-# Replace 'database_name' with your actual database name
-database_name = "your_database_name"
+# Define the database and table names
+database_name = "your_database"
+table_name = "your_table"
 
-# Replace 'table_names' with a list of table names you want to analyze
-table_names = ["table1", "table2", "table3"]
+# Read data from the table
+data = spark.sql(f"SELECT * FROM {database_name}.{table_name}")
 
-# Load tables into DataFrames
-dataframes = {}
-for table in table_names:
-    dataframes[table] = spark.table(f"{database_name}.{table}")
+# Perform basic EDA
+summary = data.describe().toPandas()
 
-# Perform EDA
-eda_results = {}
-for table, df in dataframes.items():
-    eda_results[table] = df.describe().toPandas()
+# Calculate missing values
+missing_values = data.select([col(c).alias(c, str(int(col(c).isNull().mean() * 100)) + '% missing') for c in data.columns])
 
-# Convert EDA results to HTML
-eda_html = ""
-for table, eda_df in eda_results.items():
-    eda_html += f"<h2>{table}</h2>"
-    eda_html += eda_df.to_html()
+# Calculate data types
+data_types = pd.DataFrame(data.dtypes, columns=["column", "data_type"])
 
-# Display HTML using Databricks AutoML libraries
-dbutils.automl.displayHTML(eda_html)
+# Convert the EDA results to HTML format
+eda_html = """
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    table {{
+      border-collapse: collapse;
+      width: 50%;
+      margin: auto;
+    }}
+    th, td {{
+      border: 1px solid black;
+      padding: 8px;
+      text-align: left;
+    }}
+  </style>
+</head>
+<body>
+  <h2>Exploratory Data Analysis</h2>
+  <h3>Summary Statistics</h3>
+  {}
+  <h3>Missing Values</h3>
+  {}
+  <h3>Data Types</h3>
+  {}
+</body>
+</html>
+""".format(summary.to_html(index=False), missing_values.toPandas().to_html(index=False), data_types.to_html(index=False))
+
+# Save the HTML content to a Databricks notebook cell
+displayHTML(eda_html)
