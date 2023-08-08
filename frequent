@@ -1,40 +1,33 @@
+# Import required libraries
 from pyspark.sql import SparkSession
-import pandas as pd
-import IPython
+from pyspark.sql.functions import *
+from databricks import koalas as ks
+import databricks.automl
 
 # Initialize Spark session
-spark = SparkSession.builder \
-    .appName("Exploratory Data Analysis") \
-    .getOrCreate()
+spark = SparkSession.builder.appName("ExploratoryDataAnalysis").getOrCreate()
 
-# Replace 'database_name' with the actual name of your database
-database_name = 'your_database_name'
+# Replace 'database_name' with your actual database name
+database_name = "your_database_name"
 
-# List of table names to perform EDA on
-table_names = ['table1', 'table2', 'table3']
+# Replace 'table_names' with a list of table names you want to analyze
+table_names = ["table1", "table2", "table3"]
 
-# Function to perform EDA on a table and return a Pandas DataFrame
-def perform_eda(table_name):
-    table = spark.table(f'{database_name}.{table_name}')
-    summary = table.describe().toPandas()
-    data_types = pd.DataFrame(table.dtypes, columns=['Column', 'Data Type'])
-    distinct_values = pd.DataFrame([(col, table.select(col).distinct().count()) for col in table.columns], columns=['Column', 'Distinct Values'])
-    null_counts = pd.DataFrame([(col, table.where(table[col].isNull()).count()) for col in table.columns], columns=['Column', 'Null Count'])
-    
-    eda_result = pd.merge(data_types, summary, on='Column').merge(distinct_values, on='Column').merge(null_counts, on='Column')
-    return eda_result
+# Load tables into DataFrames
+dataframes = {}
+for table in table_names:
+    dataframes[table] = spark.table(f"{database_name}.{table}")
 
-# Perform EDA on each table and store results in a dictionary
-eda_results = {table_name: perform_eda(table_name) for table_name in table_names}
+# Perform EDA
+eda_results = {}
+for table, df in dataframes.items():
+    eda_results[table] = df.describe().toPandas()
 
-# Generate HTML reports for each table's EDA results
-html_reports = {}
-for table_name, eda_result in eda_results.items():
-    html_reports[table_name] = eda_result.to_html()
+# Convert EDA results to HTML
+eda_html = ""
+for table, eda_df in eda_results.items():
+    eda_html += f"<h2>{table}</h2>"
+    eda_html += eda_df.to_html()
 
-# Display HTML reports using IPython display
-for table_name, html_report in html_reports.items():
-    display(IPython.display.HTML(f'<h2>{table_name}</h2>{html_report}'))
-
-# Stop Spark session
-spark.stop()
+# Display HTML using Databricks AutoML libraries
+dbutils.automl.displayHTML(eda_html)
