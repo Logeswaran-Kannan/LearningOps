@@ -1,56 +1,58 @@
 # Import necessary libraries
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import *
 import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from IPython.display import HTML
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("EDA").getOrCreate()
+spark = SparkSession.builder.appName("ExploratoryDataAnalysis").getOrCreate()
 
-# Define the database and table names
-database_name = "your_database"
-table_name = "your_table"
+# Load data from DLT view
+data = spark.sql("SELECT * FROM your_dlt_view")
 
-# Read data from the table
-data = spark.sql(f"SELECT * FROM {database_name}.{table_name}")
-
-# Perform basic EDA
+# Display basic statistics
 summary = data.describe().toPandas()
 
-# Calculate missing values
-missing_values = data.select([col(c).alias(c, str(int(col(c).isNull().mean() * 100)) + '% missing') for c in data.columns])
+# Display missing values count
+missing_values = data.select([count(when(col(c).isNull(), c)).alias(c) for c in data.columns]).toPandas()
 
-# Calculate data types
-data_types = pd.DataFrame(data.dtypes, columns=["column", "data_type"])
+# Create correlation matrix
+correlation_matrix = data.drop("some_non-numeric_columns").toPandas().corr()
 
-# Convert the EDA results to HTML format
-eda_html = """
-<!DOCTYPE html>
+# Visualize distributions using Seaborn
+sns.set(style="whitegrid")
+plt.figure(figsize=(12, 8))
+for column in data.columns:
+    sns.histplot(data.toPandas(), x=column, kde=True)
+    plt.title(f'Distribution of {column}')
+    plt.show()
+
+# Convert summary, missing_values, and correlation_matrix to HTML
+summary_html = summary.to_html()
+missing_values_html = missing_values.to_html()
+correlation_matrix_html = correlation_matrix.style.background_gradient(cmap='coolwarm').render()
+
+# Combine HTML components
+eda_report_html = f"""
 <html>
 <head>
-  <style>
-    table {{
-      border-collapse: collapse;
-      width: 50%;
-      margin: auto;
-    }}
-    th, td {{
-      border: 1px solid black;
-      padding: 8px;
-      text-align: left;
-    }}
-  </style>
+<style>
+{correlation_matrix_html}
+</style>
 </head>
 <body>
-  <h2>Exploratory Data Analysis</h2>
-  <h3>Summary Statistics</h3>
-  {}
-  <h3>Missing Values</h3>
-  {}
-  <h3>Data Types</h3>
-  {}
+<h2>Exploratory Data Analysis Report</h2>
+<h3>Summary Statistics</h3>
+{summary_html}
+<h3>Missing Values</h3>
+{missing_values_html}
+<h3>Correlation Matrix</h3>
+{correlation_matrix_html}
 </body>
 </html>
-""".format(summary.to_html(index=False), missing_values.toPandas().to_html(index=False), data_types.to_html(index=False))
+"""
 
-# Save the HTML content to a Databricks notebook cell
-displayHTML(eda_html)
+# Display the EDA report in the notebook
+displayHTML(eda_report_html)
