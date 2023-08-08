@@ -1,98 +1,11 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType
+# DBFS path to the HTML file
+html_file_path = "dbfs:/path/to/your/html/file.html"
 
-# Create a SparkSession
-spark = SparkSession.builder.appName("DataProfiling").getOrCreate()
+# Function to read and display HTML content
+def display_html_from_dbfs(file_path):
+    with open(file_path, "r") as html_file:
+        html_content = html_file.read()
+        displayHTML(html_content)
 
-# Database name
-database_name = "your_database_name"
-
-# Get the list of tables in the database
-tables = spark.catalog.listTables(database_name)
-
-# Function to perform data profiling for each column in a table
-def perform_data_profiling(table_name):
-    # Read the table data
-    table_df = spark.table(f"{database_name}.{table_name}")
-
-    # Define the explicit schema to ensure correct data types
-    schema = StructType([
-        StructField("tableName", StringType(), False),
-        StructField("columnName", StringType(), False),
-        StructField("distinctCount", IntegerType(), True),
-        StructField("nullCount", IntegerType(), True),
-        StructField("nullPercentage", FloatType(), True),
-        StructField("avgLength", FloatType(), True),
-        StructField("dataType", StringType(), False),
-        StructField("minValue", StringType(), True),
-        StructField("maxValue", StringType(), True),
-        StructField("mostCommonValue", StringType(), True),
-    ])
-
-    # List to store the profiling results
-    profiling_results = []
-
-    # Loop through each column and perform data profiling
-    for column_name in table_df.columns:
-        # Count of distinct values
-        distinct_count = table_df.select(countDistinct(col(column_name))).collect()[0][0]
-
-        # Count of null values
-        null_count = table_df.select(count(when(col(column_name).isNull(), True))).collect()[0][0]
-
-        # Null percentage
-        total_rows = table_df.count()
-        null_percentage = (null_count / total_rows) * 100
-
-        # Average length (for StringType columns)
-        if isinstance(table_df.schema[column_name].dataType, StringType):
-            avg_length = table_df.select(avg(length(col(column_name)))).collect()[0][0]
-        else:
-            avg_length = None
-
-        # Data type
-        data_type = table_df.schema[column_name].dataType
-
-        # Minimum and Maximum values (for numeric columns)
-        if isinstance(data_type, (int, float)):
-            min_value = table_df.select(min(col(column_name))).collect()[0][0]
-            max_value = table_df.select(max(col(column_name))).collect()[0][0]
-        else:
-            min_value = None
-            max_value = None
-
-        # Most common value
-        most_common_value = None
-        if not table_df.isEmpty():
-            most_common_value = table_df.groupBy(column_name).agg(count(lit(1)).alias("count")) \
-                .orderBy(col("count").desc()).first()[column_name]
-
-        # Append the profiling results to the list
-        profiling_results.append((table_name, column_name, distinct_count, null_count, null_percentage,
-                                  avg_length, str(data_type), str(min_value), str(max_value), str(most_common_value)))
-
-    return profiling_results
-
-# List to store the overall profiling results
-overall_profiling_results = []
-
-# Loop through each table and perform data profiling
-for table in tables:
-    table_name = table.name
-    if not (table_name.startswith("__apply_changes_") or table_name.endswith("_final_audit")):
-        try:
-            table_profiling_results = perform_data_profiling(table_name)
-            overall_profiling_results.extend(table_profiling_results)
-        except Exception as e:
-            print(f"Error occurred while profiling table {table_name}: {str(e)}")
-
-# Create a DataFrame from the profiling results list
-profiling_df = spark.createDataFrame(overall_profiling_results,
-                                     ["tableName", "columnName", "distinctCount", "nullCount", "nullPercentage",
-                                      "avgLength", "dataType", "minValue", "maxValue", "mostCommonValue"])
-
-# Save the DataFrame as a table
-profiling_df.write.mode("overwrite").saveAsTable(f"{database_name}.data_profiling_results")
-
-# Stop the SparkSession
-spark.stop()
+# Display the HTML content from the specified DBFS path
+display_html_from_dbfs(html_file_path)
