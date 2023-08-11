@@ -1,33 +1,9 @@
-import os
-import tkinter as tk
-from tkinter import filedialog
-import pandas as pd
+I hope you're all well. As we're progressing with our Automation Validation using the SIT framework, I'd like to gather your valuable insights. Could you please provide a list of any changes, enhancements, pain points, or issues you've encountered during the process?
 
-# Create a Tkinter dialog box to select the directory containing the CSV files
-root = tk.Tk()
-root.withdraw()
-directory = filedialog.askdirectory()
+Our recent conversation with Simon revealed that he's willing to support us in streamlining our automation testing if we have specific requirements.
 
-# Loop through all the CSV files in the directory
-all_data = []
-for filename in os.listdir(directory):
-    if filename.endswith('.csv'):
-        # Read the CSV file into a Pandas DataFrame
-        filepath = os.path.join(directory, filename)
-        data = pd.read_csv(filepath)
-        
-        # Add a column to the DataFrame with the filename
-        data['filename'] = filename
-        
-        # Append the DataFrame to the list of all data
-        all_data.append(data)
+Kindly share your input before EOD today, so that I can consolidate the information and discuss it with Simon.
 
-# Concatenate all the data into a single DataFrame
-combined_data = pd.concat(all_data)
+For example, a common challenge we're facing is token expiry impacting the pipeline's results capture in DevOps.
 
-# Write the combined data to an Excel file
-writer = pd.ExcelWriter('combined_data.xlsx', engine='xlsxwriter')
-combined_data.to_excel(writer, index=False)
-writer.save()
-
-print('Data successfully written to combined_data.xlsx')
+Your cooperation is highly appreciated.
