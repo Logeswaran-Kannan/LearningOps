@@ -1,58 +1,13 @@
-# Import necessary libraries
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import *
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from IPython.display import HTML
+Dear Mitul,
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("ExploratoryDataAnalysis").getOrCreate()
+As per our recent discussion during the daily standup meeting, I'm writing to formalize a request related to the DAVE1.0 Synapse cluster and the DAVE1.0 test and development Databricks cluster. These actions are crucial in ensuring the success of our upcoming Aurora TS02 release. Kindly pass this request on to Val for further processing.
 
-# Load data from DLT view
-data = spark.sql("SELECT * FROM your_dlt_view")
+Justification 1:
+Activity Planned: The current B2A report dataset has been intricately designed to leverage data from the DAVE1.0 Synapse cluster, the DAVE2.0 gold layer, and Apollo data. This data collaboration is essential for validating integrated report data and KPIs during the SIT and UAT phases. To ensure that these reports fully meet the required specifications, it is imperative that the DAVE1.0 Synapse database remains active.
+Duration Required: The DAVE1.0 Synapse database needs to remain active until the end of the UAT phase.
 
-# Display basic statistics
-summary = data.describe().toPandas()
+Justification 2:
+Activity Planned: We are planning to keep the DAVE1.0 Databricks cluster active for a one-week duration. This activity is in line with the requirement of removing the DAVE2.0 silver to DAVE1.0 clev4 handshake, which was introduced during the TS01 phase. Vinod and Mahesh have confirmed that this action needs to be executed across all environments, including production, during our TS02 release. Additionally, we would appreciate it if you could confirm whether any Informatica VMs need to be active during this period. Please provide any necessary details for the smooth execution of this activity in the test and development environments.
+Duration Required: The duration for this activity will be confirmed by Ben.
 
-# Display missing values count
-missing_values = data.select([count(when(col(c).isNull(), c)).alias(c) for c in data.columns]).toPandas()
-
-# Create correlation matrix
-correlation_matrix = data.drop("some_non-numeric_columns").toPandas().corr()
-
-# Visualize distributions using Seaborn
-sns.set(style="whitegrid")
-plt.figure(figsize=(12, 8))
-for column in data.columns:
-    sns.histplot(data.toPandas(), x=column, kde=True)
-    plt.title(f'Distribution of {column}')
-    plt.show()
-
-# Convert summary, missing_values, and correlation_matrix to HTML
-summary_html = summary.to_html()
-missing_values_html = missing_values.to_html()
-correlation_matrix_html = correlation_matrix.style.background_gradient(cmap='coolwarm').render()
-
-# Combine HTML components
-eda_report_html = f"""
-<html>
-<head>
-<style>
-{correlation_matrix_html}
-</style>
-</head>
-<body>
-<h2>Exploratory Data Analysis Report</h2>
-<h3>Summary Statistics</h3>
-{summary_html}
-<h3>Missing Values</h3>
-{missing_values_html}
-<h3>Correlation Matrix</h3>
-{correlation_matrix_html}
-</body>
-</html>
-"""
-
-# Display the EDA report in the notebook
-displayHTML(eda_report_html)
+Thank you for your attention to these matters. Your assistance in ensuring the proper functioning of these clusters and databases is greatly appreciated. If you require any further details or have any inquiries, please feel free to reach out.
