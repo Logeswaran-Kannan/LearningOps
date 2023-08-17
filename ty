@@ -1,60 +1,15 @@
-trigger:
-  - master
+Problem Statement: Incorporating Exploratory Data Analysis (EDA) in Data Testing Execution Phase
 
-pool:
-  vmImage: 'ubuntu-latest'
+In a time-sensitive data testing environment involving multiple tables and columns, the need for efficient Exploratory Data Analysis (EDA) arises. This aims to ensure data quality, accuracy, and comprehensiveness during the testing execution phase. The challenge is to conduct thorough EDA on numerous tables and columns while optimizing time usage. The primary objectives include:
 
-steps:
-  - task: UsePythonVersion@0
-    inputs:
-      versionSpec: '3.8'
-      addToPath: true
-
-  - script: |
-      pip install requests
-    displayName: 'Install requests library'
-
-  - script: |
-      import os
-      import json
-      import requests
-
-      # Set the Teams webhook URL as a pipeline variable
-      teams_webhook_url = os.environ['TEAMS_WEBHOOK_URL']
-
-      # Get the test run ID from pipeline variables
-      test_run_id = os.environ['TEST_RUN_ID']
-
-      # Use the Azure DevOps REST API to get the summary of the test run ID
-      api_url = f"{os.environ['SYSTEM_TEAMFOUNDATIONSERVERURI']}/{os.environ['SYSTEM_TEAMPROJECT']}/_apis/test/runs/{test_run_id}?api-version=6.1-preview.3"
-      headers = {'Authorization': f'Bearer {os.environ['SYSTEM_ACCESSTOKEN']}'}
-      response = requests.get(api_url, headers=headers)
-      summary = response.json()['summary']
-
-      # Prepare the message to be sent to Teams
-      message = {
-          "@type": "MessageCard",
-          "@context": "https://schema.org/extensions",
-          "summary": summary,
-          "title": f"Test Run {test_run_id} Summary",
-          "sections": [
-              {
-                  "activityTitle": "Test Summary",
-                  "facts": [
-                      {
-                          "name": "Test Run ID",
-                          "value": test_run_id
-                      },
-                      {
-                          "name": "Summary",
-                          "value": summary
-                      }
-                  ]
-              }
-          ]
-      }
-
-      # Send the message to Teams using the webhook
-      response = requests.post(teams_webhook_url, json=message)
-
-    displayName: 'Send Test Run Summary to Teams'
+Data Integrity Assurance: Verify the consistency, correctness, and completeness of data across multiple tables and columns.
+Anomaly Detection: Identify outliers, data discrepancies, and unexpected patterns within a limited timeframe.
+Pattern Validation: Validate expected patterns and relationships between data points, considering the interplay of various columns.
+Data Distribution Understanding: Gain insights into data distributions, even with a high number of tables and columns.
+Coverage Enhancement: Optimize the test suite by targeting specific columns and tables based on EDA insights.
+Regression Testing: Ensure that changes in data sources do not negatively impact the expected behavior of existing systems.
+Data Preprocessing Confirmation: Validate data preprocessing steps to ensure that the tested data is in the desired format.
+Risk Mitigation: Identify potential data quality risks that might affect testing accuracy and reporting credibility.
+Hypothesis Validation: Validate hypotheses about data behavior to guide focused testing strategies.
+Resource Optimization: Streamline the EDA process to perform the necessary analyses within a minimal timeframe.
+Amid the challenge of performing EDA on a multitude of tables and columns within a constrained timeline, the goal is to deliver effective testing outcomes that ensure data quality and support decision-making processes while adhering to project timelines.
