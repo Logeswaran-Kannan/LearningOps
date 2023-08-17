@@ -59,3 +59,18 @@ Flexibility: The code can be customized to adapt to different deletion threshold
 By utilizing the provided code, data testing teams can effectively manage their testing environments, optimize cloud storage costs, and maintain a clean and efficient workspace for testing activities.
 
 
+------------------------------
+
+Problem Statement: Managing files in Databricks DBFS, including collecting file statistics, marking deletable files based on last update date, and automating the deletion process, while also updating the existing table to reflect deletion status.
+
+Solution: The provided Python code automates the process of collecting file statistics, identifying deletable files based on a threshold date, deleting them, and updating the original table with deletion status. This helps in efficient management of files, especially during the build process, by clearing out old and unnecessary files, thus saving on cloud storage costs and ensuring better organization.
+
+Benefits:
+
+Cloud Storage Cost Saving: The code's automated deletion of files older than the specified threshold date ensures that outdated files are removed, leading to reduced storage costs on the cloud platform.
+
+Efficient File Management: By marking files as deletable based on the last update date and automating the deletion process, the code ensures that only relevant and up-to-date files are retained, streamlining file management and improving data accuracy.
+
+Storage during Build Process: During the data testing and build process, temporary files and versions might accumulate. The code helps to automatically identify and delete such files, maintaining a clean workspace for the testing team and avoiding storage clutter.
+
+In summary, the code provides an automated solution to manage file storage, optimize cloud costs, and facilitate efficient data testing and build processes, ensuring that files are kept organized and up to date.
