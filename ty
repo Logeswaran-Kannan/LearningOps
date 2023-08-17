@@ -1,76 +1,52 @@
-Problem Statement:
+# ... (Previous code)
 
-The data testing team needs an automated solution to collect statistics about files stored in Databricks DBFS, determine if they are eligible for deletion based on their last update date, and then manage their deletion and record-keeping.
+# Function to generate EDA HTML report for a DLT view
+def generate_eda_report(dlt_view_name):
+    # Load data from DLT view
+    data = spark.sql(f"SELECT * FROM {dlt_view_name}")
 
-Benefits of the Code:
+    # Basic statistics
+    summary = data.describe().toPandas()
+    summary_html = summary.to_html()
 
-Efficiency: The code automates the process of collecting file statistics, determining deletable files, and managing their deletion, saving valuable time for the data testing team.
+    # Missing values count
+    missing_values = data.select([count(when(col(c).isNull(), c)).alias(c) for c in data.columns]).toPandas()
+    missing_values_html = missing_values.to_html()
 
-Accuracy: File details like name, size, path, creation, and last update date are collected accurately, reducing manual errors and ensuring data integrity.
+    # Correlation matrix
+    correlation_matrix = data.drop(*[c for c, dtype in data.dtypes if dtype == 'string']).toPandas().corr()
+    correlation_matrix_html = correlation_matrix.style.background_gradient(cmap='coolwarm').render()
 
-Deletion Recommendation: The code provides a recommendation on whether a file should be deleted based on the last update date, aiding the team in decision-making.
+    # ... (Distribution plots)
 
-Regular Updates: The code appends new file statistics to an existing table on each run, enabling the team to track changes and trends over time.
+    # Combine HTML components
+    eda_report_html = f"""
+    <html>
+    <head>
+    <style>
+    {correlation_matrix.style.background_gradient(cmap='coolwarm').render()}
+    </style>
+    </head>
+    <body>
+    <h2>Exploratory Data Analysis Report for {dlt_view_name}</h2>
+    <h3>Summary Statistics</h3>
+    {summary_html}
+    <h3>Missing Values</h3>
+    {missing_values_html}
+    <h3>Correlation Matrix</h3>
+    {correlation_matrix.style.background_gradient(cmap='coolwarm').render()}
+    """
 
-Deletion Management: The code not only marks files as "deletable" but also handles their actual deletion, ensuring data space optimization without manual intervention.
+    # ... (Distribution plots)
 
-Duplicate Prevention: Duplicate file entries are automatically excluded based on the path column, maintaining a clean and accurate record in the table.
+    eda_report_html += """
+    </body>
+    </html>
+    """
 
-Enhanced Record-Keeping: The code updates the original table with the deletion status, providing a clear history of file deletions.
+    # Save HTML report to output DBFS path
+    output_file_path = f"{output_dbfs_path}/{dlt_view_name}_eda_report.html"
+    with open(output_file_path, "w") as html_file:
+        html_file.write(eda_report_html)
 
-Immediate Insights: The updated table can be queried to quickly identify files that have been marked for deletion or have already been deleted.
-
-Consistency: The code enforces a consistent deletion policy based on the last update date, preventing unnecessary data accumulation.
-
-User-Friendly Reporting: The final table presents file details along with their deletion status, aiding the team in tracking and verifying the file management process.
-
-Reliability: By using Spark and Databricks, the code leverages reliable technologies for data processing and storage, minimizing the risk of data loss or corruption.
-
-Overall, this code streamlines file management, provides recommendations, automates deletions, and maintains a reliable record of file activities, contributing to efficient and effective data testing operations.
-
-
-------------------------------------------------
-
-Problem Statement:
-Data testing environments can accumulate unnecessary files over time, leading to increased cloud storage costs. Manual cleanup is time-consuming and error-prone. An automated solution is needed to identify and delete files that are no longer required, based on their last update date.
-
-Benefits of the Provided Code:
-
-Automated Cleanup: The code automates the process of identifying and deleting files based on their last update date, eliminating the need for manual intervention.
-
-Cost Savings: By regularly deleting files that are no longer needed, the code helps reduce cloud storage usage and associated costs for data testing environments.
-
-Efficiency: The code efficiently scans through files and folders, identifying files that are eligible for deletion based on a specified threshold, optimizing the storage usage.
-
-Accurate Deletion: The deletion criteria are based on the last update date, ensuring that only files that are unlikely to be needed are removed. This prevents accidental deletion of active or essential files.
-
-Data Integrity: The code prevents duplicate entries in the table by dropping duplicate rows based on the file path, maintaining data integrity in the database.
-
-Scalability: The solution is scalable and can handle large amounts of data and files efficiently, making it suitable for various data testing environments.
-
-Consistency: By running the code on a regular basis, the environment is kept consistent and clutter-free, promoting efficient testing processes.
-
-Audit Trail: The code updates the original table with the deletion status, providing an audit trail of which files were deleted and when.
-
-Time Savings: Manual cleanup tasks can be time-consuming and error-prone. The code automates this process, saving valuable time for data testing teams.
-
-Flexibility: The code can be customized to adapt to different deletion thresholds, criteria, and file types, providing flexibility to match specific environment requirements.
-
-By utilizing the provided code, data testing teams can effectively manage their testing environments, optimize cloud storage costs, and maintain a clean and efficient workspace for testing activities.
-
-
-------------------------------
-
-Problem Statement: Managing files in Databricks DBFS, including collecting file statistics, marking deletable files based on last update date, and automating the deletion process, while also updating the existing table to reflect deletion status.
-
-Solution: The provided Python code automates the process of collecting file statistics, identifying deletable files based on a threshold date, deleting them, and updating the original table with deletion status. This helps in efficient management of files, especially during the build process, by clearing out old and unnecessary files, thus saving on cloud storage costs and ensuring better organization.
-
-Benefits:
-
-Cloud Storage Cost Saving: The code's automated deletion of files older than the specified threshold date ensures that outdated files are removed, leading to reduced storage costs on the cloud platform.
-
-Efficient File Management: By marking files as deletable based on the last update date and automating the deletion process, the code ensures that only relevant and up-to-date files are retained, streamlining file management and improving data accuracy.
-
-Storage during Build Process: During the data testing and build process, temporary files and versions might accumulate. The code helps to automatically identify and delete such files, maintaining a clean workspace for the testing team and avoiding storage clutter.
-
-In summary, the code provides an automated solution to manage file storage, optimize cloud costs, and facilitate efficient data testing and build processes, ensuring that files are kept organized and up to date.
+# ... (Rest of the code)
