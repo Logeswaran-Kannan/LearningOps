@@ -1,28 +1,3 @@
-Subject: Scope Clarification and Next Steps for Release 1 - Alignment from Today's Standup
+Big thanks for confirming that the issue is sorted for your respective branches. Now, talking about the timeout thing, I was checking that link you shared – seems like it's just covering the hour for running the test framework. It's not considering the time for loading the data, right?
 
-Hello Team,
-
-I hope this email finds you well. I'd like to ensure that we're all on the same page regarding the discussions from today's daily standup meeting, particularly concerning the upcoming Release 1.
-
-Given the open defects we currently have, we've made a collective decision to streamline the scope of release items. Our approach will be based on the B2A report perspective, and any remaining tasks will be covered under panel extract changes. Here's a summary of the scope we've defined:
-
-RTP Analytical Tables: We'll be focusing on RTP Analytical tables for this release.
-Silver Motor Quotes Tables: We'll address two Silver Motor Quotes tables based on the priority list provided by Vinod.
-Pre-Prod Custom Task Changes: We're planning for changes related to pre-prod custom tasks.
-Kindly correct me if I've missed any essential details or if there are any amendments required to this scope.
-
-In relation to the RTP tables, Sungjin has five assigned defects. If it's plausible that these issues might be tied to source data, I'd appreciate it if you could reassign them to either Mailka or Vinoth for further analysis.
-
-Additionally, it's essential to highlight that any source data-related issues will be considered outside the scope of our release. Unfortunately, we don't have control over the turnaround time for source data fixes. Similarly, for the Silver Quote tables, we're aligning with the priority list provided by Vinod. If we can also receive a priority list for the analytical layer, that would greatly assist us.
-
-Regarding the Silver Quotes tables, we'll concentrate solely on those tables outlined in Vinod's priority list. We're currently encountering a dependency data load issue that requires immediate attention.
-
-Once the defect fixes for the aforementioned areas are complete, we'll proceed to elevate the code to the pre-production environment. Subsequent testing will be carried out in that environment, followed by a high-level cost analysis.
-
-Your cooperation and collaboration on these matters are greatly appreciated. Please feel free to share any further insights, suggestions, or corrections.
-
-Thank you for your dedication to the success of Release 1.
-
-Similar to the Silver Quote approach, if we receive a priority list for the analytical layer, it would greatly assist our efforts.
-
-Best regards,
+Has anyone tried running this workbook in those pipelines to see if it goes through smoothly? I'm thinking, especially for the test framework that's clocking over 60 minutes, we might want to tweak things a bit. You know, like breaking it into two workflows or trimming down the data chunk. Hardeep's likely gonna raise eyebrows if we're telling him we need more than an hour just for running some test scripts, so optimizing the script performance could be a point we'd better get ahead of.
