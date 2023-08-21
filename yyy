@@ -1,3 +1,6 @@
 The RES_CREATED_DATE field is observed to have instances of being populated with null values despite the presence of valid result IDs. Furthermore, there are instances where this field is populated only when the associated presenting column is marked as true. Curiously, there are cases where, even though the presenting column is true, the RES_CREATED_DATE remains unpopulated. This incongruity makes it challenging to ascertain the specific conditions under which this column is populated.
 
 A discrepancy is noted in the population of the SCHEME NAME field, which is unexpectedly populated with null values. According to expectations, this field should consistently hold non-null values.
+----
+
+Vinod clarified that one of the causes for the null population of policyreference and webreference is connected to the transfer and replace scenario. Jeelani will be investigating both of these scenarios to assess their impact on the issue and will subsequently update the defect report with the findings.
