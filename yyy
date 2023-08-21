@@ -1,1 +1,7 @@
-Right now, we've got our plates pretty full with tasks. We could really use some extra hands to take care of the following items. Is anyone up for grabbing this and getting in touch with Simon to coordinate? Your help would be much appreciated.
+The RTPLOG_ID is incorrectly populated during the data loading process from the analytical layer. This discrepancy arises from the concurrent processing of the silver layer, which relies on the completion of the analytical layer. This issue stems from the architectural framework of DAVE2.
+
+Following discussions in a meeting with lead developers, both temporary and permanent solutions have been devised to tackle this problem. Currently, the development team is actively working to implement these solutions. This issue is adversely affecting the timely completion of testing for release 1.
+
+
+
+
