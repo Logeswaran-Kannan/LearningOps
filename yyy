@@ -3,4 +3,17 @@ The RES_CREATED_DATE field is observed to have instances of being populated with
 A discrepancy is noted in the population of the SCHEME NAME field, which is unexpectedly populated with null values. According to expectations, this field should consistently hold non-null values.
 ----
 
-Vinod clarified that one of the causes for the null population of policyreference and webreference is connected to the transfer and replace scenario. Jeelani will be investigating both of these scenarios to assess their impact on the issue and will subsequently update the defect report with the findings.
+I wanted to provide you with an overview of the progress we've made in the first round of testing for both the revised scope of RTP and silver tables. Below, you'll find a summary of the details:
+
+RTP Validation:
+We've successfully completed the first round of RTP validation testing. Presently, there are a total of six open defects in the RTP tables. Out of these, two defects are under the purview of our build team, while the remaining four are with the CDL source team. It's important to note that the source data defect fixes fall outside the scope of our release timeline, and we have limited control over these source issues. The recent upgrade to the Kingfisher platform is primarily responsible for most of these source data issues. Consequently, our test coverage has been constrained, specifically for testing all RTP tables. There's a plan to mitigate this risk during the pre-production phase, provided we have ample time to cover it adequately.
+
+Silver Validation:
+Regarding the validation of the silver tables, we've refined our testing scope to focus solely on the table list relevant to the B2A report perspective. We've successfully concluded the first round of validation in this context. We've identified a number of open defects that require design and build fixes. Some of these defects necessitate changes in design and platform architecture, which may impact our ability to conclude testing within our planned closure period. There are a couple of major issues that warrant immediate attention:
+
+2.1 The interdependency between workflows is leading to an erroneous population of RTPLOG_ID within the silver layer. Resolving this hinges on ensuring that the analytical layer workflow completes successfully before the silver layer workflow begins. Our build team is actively addressing this issue, and we anticipate that the data reload will be completed before revalidation commences.
+
+2.2 Incremental CDC for two out of the three scoped tables is not aligning with the expected outcomes. For one of these tables, the design has been updated and handed over to the build team. The other table is currently under investigation alongside design considerations.
+
+Pre-Production Validation:
+The initiation of pre-production validation will be determined based on the resolution of defect fixes and the pass percentage ratio observed in lower environments. Given our tight timeline, we anticipate conducting minimal validation. The window to commence testing should not extend beyond the 23rd. Any identified defects must be resolved and closed before the 25th to ensure timely production of the TSR on the same date.
