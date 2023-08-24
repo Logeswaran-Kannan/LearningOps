@@ -1,1 +1,1 @@
-We've successfully validated this concern within the scope of Release 1, focusing on three silver tables. While we've resolved the issue for these tables, it's worth noting, as per Ben's input, that the resolution for similar issues in other silver tables will be addressed at a later stage in the panel project. As a result, the severity has been downgraded to S2, and the defect has been excluded from the Release 1 scope.
+After revalidation, the count problem persists, indicating a potential connection to issues with task dependencies within the workflow.
