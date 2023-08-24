@@ -1,2 +1,1 @@
-
-We've made significant progress, with 70% completion, on the incremental validation of the three designated silver tables. While we've advanced, challenges related to RTPLOG_ID, CDC, and record count disparities persist. We've reopened these issues with relevant samples for investigation. Kindly review and provide further insights. Additionally, Mutual, here are two defect IDs that require tracking with the Kingfisher team:
+Vinod, your clarification is much appreciated. Currently, there seems to be an issue with the loaded data. Once that is resolved, I'll revalidate this scenario, and I'll certainly take your explanation into consideration during the process.
