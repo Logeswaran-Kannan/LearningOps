@@ -1,2 +1,1 @@
-
-Hello Malikq, if the design for Agent ID change has been completed, kindly provide us with the updated logic. This will allow us to make the necessary modifications to our test scripts.
+It appears necessary to implement the solution suggested by Malika for the Agent ID issue within the quote header table. This will allow the gold quote fact to correctly associate the agent key from the dimension employee table. Currently, the agent ID in the quote header doesn't align with the staff number in the dimension employee. Upon applying the proposed fix to the quote header, it will enable the linkage to the dimension employee table, resolving the issue.
