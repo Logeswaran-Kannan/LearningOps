@@ -74,3 +74,14 @@ spark.sql(f"SELECT * FROM {output_table_name}").show()
 
 # Stop the Spark session
 spark.stop()
+___________________________________
+
+
+comparison_results.append({
+    "policy_reference": policy_reference,
+    "dim_date_key": dim_date_key,
+    "column": column,
+    "value_first": str(value_first),  # Convert to string
+    "value_second": value_second,
+    "status": "pass" if str(value_first) == value_second else "fail"  # Compare as strings
+})
