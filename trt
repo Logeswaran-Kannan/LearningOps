@@ -1,75 +1,64 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, concat_ws
+from pyspark.sql.functions import col, concat_ws, lit
 
-# Initialize the SparkSession
-spark = SparkSession.builder.appName("Data Comparison").getOrCreate()
+# Initialize Spark session
+spark = SparkSession.builder.appName("DataComparison").getOrCreate()
 
-# Step 1: Create the first table based on a CSV file in DBFS
-csv_file_path = "/dbfs/path/to/your/csv/file.csv"
-table_name = "first_table"
+# Define paths and table names
+csv_path = "dbfs:<your_dbfs_path>/data.csv"
+table1_name = "<your_table1>"
+table2_name = "<your_table2>"
+output_table_name = "<your_output_table>"
 
-df = spark.read.option("header", "true").csv(csv_file_path)
-df.createOrReplaceTempView(table_name)
+# Load CSV into DataFrame and create first table
+df1 = spark.read.option("header", "true").csv(csv_path)
+df1.createOrReplaceTempView(table1_name)
 
-# Step 2: Check if the table already exists and drop if required
-overwrite_existing = True
+# Create the second table from an existing table
+table2_df = spark.sql(f"SELECT * FROM {table2_name}")
+table2_df.createOrReplaceTempView(table2_name)
 
-if spark.catalog.tableExists(table_name) and overwrite_existing:
-    spark.sql(f"DROP TABLE IF EXISTS {table_name}")
-    df.write.saveAsTable(table_name)
-elif not spark.catalog.tableExists(table_name):
-    df.write.saveAsTable(table_name)
+# Define columns for data comparison
+comparison_columns = ["column1", "column2", "column3"]  # Replace with your actual column names
 
-# Step 3: Create the second table with distinct policy_reference values
-second_table_name = "second_table"
-distinct_df = spark.sql(f"SELECT DISTINCT policy_reference FROM {table_name}")
-distinct_df.createOrReplaceTempView(second_table_name)
+# Function to perform data comparison
+def compare_data(row):
+    key = row.policy_reference + row.dim_date_key
+    status = "pass" if all(row[f"{col}_df1"] == row[f"{col}_df2"] for col in comparison_columns) else "fail"
+    return (*key, *row[comparison_columns], status)
 
-# Define the list of columns for data comparison
-columns_to_compare = ["column1", "column2", "column3"]
+# Apply filter on concatenated columns
+comparison_query = f"""
+    SELECT
+        {table1_name}.policy_reference,
+        {table1_name}.dim_date_key,
+        {', '.join([f"{table1_name}.{col} AS {col}_df1" for col in comparison_columns])},
+        {', '.join([f"{table2_name}.{col} AS {col}_df2" for col in comparison_columns])}
+    FROM
+        {table1_name}
+    JOIN
+        {table2_name}
+    ON
+        {table1_name}.policy_reference = {table2_name}.policy_reference
+        AND {table1_name}.dim_date_key = {table2_name}.dim_date_key
+    WHERE
+        CONCAT_WS('', {table1_name}.policy_reference, {table1_name}.dim_date_key) = 
+        CONCAT_WS('', {table2_name}.policy_reference, {table2_name}.dim_date_key)
+"""
 
-# Step 4: Define a function to perform data comparison for the specified columns
-def compare_data(policy_reference, columns_to_compare):
-    df1 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
-    df2 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
+# Execute comparison query
+comparison_result = spark.sql(comparison_query).rdd.map(compare_data)
 
-    # Concatenate policy_reference and dim_date_key for filtering
-    concat_condition = concat_ws('_', col("policy_reference"), col("dim_date_key"))
+# Convert RDD to DataFrame
+result_columns = comparison_columns + ["status"]
+result_schema = table2_df.schema.add(*[col(col_name) for col_name in result_columns])
+result_df = spark.createDataFrame(comparison_result, result_schema)
 
-    # Filter records in both dataframes using the concatenated condition
-    df1 = df1.filter(concat_condition.isin(df2.select(concat_condition).collect()))
-    df2 = df2.filter(concat_condition.isin(df1.select(concat_condition).collect()))
+# Drop output table if exists
+spark.sql(f"DROP TABLE IF EXISTS {output_table_name}")
 
-    # Order the values before comparison
-    for column in columns_to_compare:
-        df1 = df1.orderBy(concat_condition, col(column))
-        df2 = df2.orderBy(concat_condition, col(column))
+# Save result DataFrame as a table
+result_df.write.saveAsTable(output_table_name)
 
-    comparison_results = []
-    for column in columns_to_compare:
-        df1_values = [row[column] for row in df1.collect()]
-        df2_values = [row[column] for row in df2.collect()]
-        status = "Pass" if df1_values == df2_values else "Fail"
-        comparison_results.append((policy_reference, column, df1_values, df2_values, status))
-
-    return comparison_results
-
-# Step 5: Perform data comparison and capture the results in an output DataFrame
-all_comparison_results = []
-
-# Loop through each distinct policy_reference and compare the data
-for row in distinct_df.collect():
-    policy_reference = row[0]
-    comparison_results = compare_data(policy_reference, columns_to_compare)
-    all_comparison_results.extend(comparison_results)
-
-# Create a DataFrame from the comparison results
-output_df = spark.createDataFrame(all_comparison_results, ["policy_reference", "column", "df1_values", "df2_values", "status"])
-
-# Show the comparison results
-output_df.show()
-
-# Save the output DataFrame as a Delta table with overwrite mode
-output_table_name = "comparison_output_table"
-
-output_df.write.mode("overwrite").format("delta").saveAsTable(output_table_name)
+# Stop Spark session
+spark.stop()
