@@ -41,6 +41,13 @@ filtered_second_table = spark.sql(f"SELECT * FROM {second_table_name} WHERE {fil
 # Define list of columns for data comparison
 comparison_columns = ["column1", "column2", "column3"]  # Add your column names here
 
+# Check the count of rows in both dataframes
+count_first_table = filtered_first_table.count()
+count_second_table = filtered_second_table.count()
+
+if count_first_table == count_second_table:
+
+
 # Create a list to store comparison results
 comparison_results = []
 
