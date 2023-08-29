@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, concat_ws
 
 # Initialize the SparkSession
 spark = SparkSession.builder.appName("Data Comparison").getOrCreate()
@@ -31,15 +31,26 @@ columns_to_compare = ["column1", "column2", "column3"]
 # Step 4: Define a function to perform data comparison for the specified columns
 def compare_data(policy_reference, columns_to_compare):
     df1 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
-    df2 = spark.sql(f"SELECT * FROM {second_table_name} WHERE policy_reference = '{policy_reference}'")
+    df2 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
+
+    # Concatenate policy_reference and dim_date_key for filtering
+    concat_condition = concat_ws('_', col("policy_reference"), col("dim_date_key"))
+
+    # Filter records in both dataframes using the concatenated condition
+    df1 = df1.filter(concat_condition.isin(df2.select(concat_condition).collect()))
+    df2 = df2.filter(concat_condition.isin(df1.select(concat_condition).collect()))
+
+    # Order the values before comparison
+    for column in columns_to_compare:
+        df1 = df1.orderBy(concat_condition, col(column))
+        df2 = df2.orderBy(concat_condition, col(column))
 
     comparison_results = []
     for column in columns_to_compare:
-        # Order values before comparison
-        df1_value = df1.select(col(column)).orderBy(col(column)).collect()[0][0]
-        df2_value = df2.select(col(column)).orderBy(col(column)).collect()[0][0]
-        status = "Pass" if df1_value == df2_value else "Fail"
-        comparison_results.append((policy_reference, column, df1_value, df2_value, status))
+        df1_values = [row[column] for row in df1.collect()]
+        df2_values = [row[column] for row in df2.collect()]
+        status = "Pass" if df1_values == df2_values else "Fail"
+        comparison_results.append((policy_reference, column, df1_values, df2_values, status))
 
     return comparison_results
 
@@ -53,7 +64,7 @@ for row in distinct_df.collect():
     all_comparison_results.extend(comparison_results)
 
 # Create a DataFrame from the comparison results
-output_df = spark.createDataFrame(all_comparison_results, ["policy_reference", "column", "df1_value", "df2_value", "status"])
+output_df = spark.createDataFrame(all_comparison_results, ["policy_reference", "column", "df1_values", "df2_values", "status"])
 
 # Show the comparison results
 output_df.show()
