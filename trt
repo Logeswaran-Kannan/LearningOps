@@ -152,3 +152,7 @@ displayHTML(open(html_file_path).read())
 
 # Stop the Spark session
 spark.stop()
+
+------------
+
+csv_df = spark.read.csv(csv_path, header=True, inferSchema=True, ignoreLeadingWhiteSpace=True)
