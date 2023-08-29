@@ -115,3 +115,40 @@ comparison_results.append({
     "value_second": value_second,
     "status": "pass" if str(value_first) == value_second else "fail"  # Compare as strings
 })
+__________________________________________
+
+
+# ... (previous code)
+
+# Perform data comparison
+comparison_results = []
+
+# ... (rest of the comparison code)
+
+# Convert the comparison results list into a DataFrame
+comparison_df = spark.createDataFrame(comparison_results)
+
+# Create or replace output table
+comparison_df.createOrReplaceTempView(output_table_name)
+
+# Calculate pass and fail counts
+pass_count = comparison_df.filter(comparison_df.status == "pass").count()
+fail_count = comparison_df.filter(comparison_df.status == "fail").count()
+
+# Generate HTML code for the pie chart
+import plotly.graph_objs as go
+
+labels = ['Pass', 'Fail']
+values = [pass_count, fail_count]
+
+pie_chart = go.Figure(data=[go.Pie(labels=labels, values=values)])
+
+# Save the HTML code to a file
+html_file_path = "/dbfs/tmp/dashboard.html"
+pie_chart.write_html(html_file_path)
+
+# Display the HTML dashboard
+displayHTML(open(html_file_path).read())
+
+# Stop the Spark session
+spark.stop()
