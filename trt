@@ -41,18 +41,20 @@ filtered_second_table = spark.sql(f"SELECT * FROM {second_table_name} WHERE {fil
 # Define list of columns for data comparison
 comparison_columns = ["column1", "column2", "column3"]  # Add your column names here
 
-# Function to perform data comparison and return results
-def compare_data(row):
+# Create a list to store comparison results
+comparison_results = []
+
+# Perform data comparison
+for row in filtered_first_table.collect():
     policy_reference = row.policy_reference
     dim_date_key = row.dim_date_key
-    comparisons = []
     for column in comparison_columns:
         value_first = row[column]
         value_second = filtered_second_table.filter(
             (filtered_second_table.policy_reference == policy_reference) &
             (filtered_second_table.dim_date_key == dim_date_key)
         ).select(column).first()[0]
-        comparisons.append({
+        comparison_results.append({
             "policy_reference": policy_reference,
             "dim_date_key": dim_date_key,
             "column": column,
@@ -60,13 +62,12 @@ def compare_data(row):
             "value_second": value_second,
             "status": "pass" if value_first == value_second else "fail"
         })
-    return comparisons
 
-# Perform data comparison
-comparison_results = filtered_first_table.rdd.flatMap(compare_data).toDF()
+# Convert the comparison results list into a DataFrame
+comparison_df = spark.createDataFrame(comparison_results)
 
 # Create or replace output table
-comparison_results.createOrReplaceTempView(output_table_name)
+comparison_df.createOrReplaceTempView(output_table_name)
 
 # Show comparison results
 spark.sql(f"SELECT * FROM {output_table_name}").show()
