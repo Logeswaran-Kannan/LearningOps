@@ -30,20 +30,16 @@ columns_to_compare = ["column1", "column2", "column3"]
 
 # Step 4: Define a function to perform data comparison for the specified columns
 def compare_data(policy_reference, columns_to_compare):
-    df1 = spark.sql(f"SELECT {', '.join(columns_to_compare)} FROM {table_name} WHERE policy_reference = '{policy_reference}'")
-    df2 = spark.sql(f"SELECT {', '.join(columns_to_compare)} FROM {table_name} WHERE policy_reference = '{policy_reference}'")
-
-    # Sort the DataFrame rows based on the policy_reference and dim_date_key columns
-    df1 = df1.orderBy("policy_reference", "dim_date_key")
-    df2 = df2.orderBy("policy_reference", "dim_date_key")
+    df1 = spark.sql(f"SELECT * FROM {table_name} WHERE policy_reference = '{policy_reference}'")
+    df2 = spark.sql(f"SELECT * FROM {second_table_name} WHERE policy_reference = '{policy_reference}'")
 
     comparison_results = []
     for column in columns_to_compare:
-        df1_values = df1.select(col(column)).rdd.flatMap(lambda x: x).collect()
-        df2_values = df2.select(col(column)).rdd.flatMap(lambda x: x).collect()
-
-        status = "Pass" if df1_values == df2_values else "Fail"
-        comparison_results.append((policy_reference, column, df1_values, df2_values, status))
+        # Order values before comparison
+        df1_value = df1.select(col(column)).orderBy(col(column)).collect()[0][0]
+        df2_value = df2.select(col(column)).orderBy(col(column)).collect()[0][0]
+        status = "Pass" if df1_value == df2_value else "Fail"
+        comparison_results.append((policy_reference, column, df1_value, df2_value, status))
 
     return comparison_results
 
@@ -57,7 +53,7 @@ for row in distinct_df.collect():
     all_comparison_results.extend(comparison_results)
 
 # Create a DataFrame from the comparison results
-output_df = spark.createDataFrame(all_comparison_results, ["policy_reference", "column", "df1_values", "df2_values", "status"])
+output_df = spark.createDataFrame(all_comparison_results, ["policy_reference", "column", "df1_value", "df2_value", "status"])
 
 # Show the comparison results
 output_df.show()
