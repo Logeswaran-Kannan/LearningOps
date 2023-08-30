@@ -1,1 +1,5 @@
-Good morning, Mitual. Certainly, we'll be addressing the matters concerning S1's. Following my conversation with Vinod, we've identified a temporary solution for the RTPLOG_ID issue, and Ben is actively working on its implementation. However, it came to our attention that there were pipeline complications yesterday. We're optimistic that the situation has been resolved by now.
+# Filter out columns with empty values
+columns_with_data = [col for col in csv_df.columns if not csv_df.filter(csv_df[col].isNotNull()).isEmpty()]
+
+# Create a new DataFrame with only non-empty columns
+filtered_csv_df = csv_df.select(*columns_with_data)
