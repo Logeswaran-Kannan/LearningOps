@@ -1,4 +1,1 @@
-df = spark.read.option("header", "true") \
-             .option("inferSchema", "true") \
-             .option("columnNameOfCorruptRecord", "_corrupt_record") \
-             .csv(csv_path)
+In our recent automation call, the topic of these metrics was brought up. After conversing with Sujatha, it appears that there's some uncertainty regarding the purpose and accuracy of these metrics. As a result, the decision has been made to reevaluate the current process. It's been proposed that we retrieve these metrics directly from Jira to ensure their accuracy and alignment with our goals. Could you please liaise with Sujatha to discuss this matter further?
