@@ -1,11 +1,6 @@
-Congratulations, Jen!
+Subject: Urgent: Signoff Needed for Analytical and Silver Data Validation
 
-Hi Team,
+Hi Both,
 
-Great news! Jen has been blessed with a baby girl. Both mom and child are doing well.
+Please sign off on analytical and silver data validation before our daily stand-up tomorrow. The dev team will proceed with pre-prod load based on this. Ensure all technical and business scenarios are covered. If any failures occur, raise them in the defect triage group with proper samples and initial investigation SQL without delay.
 
-Congratulations, Jen!
-
-Best regards,
-
-[Your Name]
