@@ -1,6 +1,7 @@
-Subject: Urgent: Signoff Needed for Analytical and Silver Data Validation
+Regarding the clarification regarding provenance code and cover level reference data, there is an issue with certain quote records that come through the CDL source data. Specifically, in the reference file shared by Mahesh (provided SharePoint link), we are missing data for certain provenance and product combinations. This is resulting in the fact that we are seeing a "-1" populated in the "provenance_key" field in the fact quote table.
 
-Hi Both,
+For instance, in the reference table, the suitable product code for the provenance code "S002" is listed as 'HOME.' However, from the source data, we are receiving 'MOTOR' as well for this same provenance code. This kind of mismatch exists for other combinations coming from the source data as well.
 
-Please sign off on analytical and silver data validation before our daily stand-up tomorrow. The dev team will proceed with pre-prod load based on this. Ensure all technical and business scenarios are covered. If any failures occur, raise them in the defect triage group with proper samples and initial investigation SQL without delay.
+Similarly, there is a similar issue with cover levels. In the source CDL data, we are receiving a cover level 'T' for motor, but this cover level is not referenced in the reference table.
 
+In summary, the problem is that the source data contains combinations of provenance codes and product codes, as well as cover levels, that do not have corresponding references in the reference table, leading to the '-1' value being populated in the "provenance_key" field and discrepancies in cover levels.
