@@ -1,25 +1,23 @@
-# Calculate pass and fail metrics
-    pass_count = comparison_df.filter(comparison_df.status == "pass").count()
-    fail_count = comparison_df.filter(comparison_df.status == "fail").count()
-    
-    # Create a pie chart for pass and fail metrics using matplotlib
-    import matplotlib.pyplot as plt
-
-    labels = ['Pass', 'Fail']
-    sizes = [pass_count, fail_count]
-    colors = ['green', 'red']
-    plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140)
-    plt.axis('equal')
-    plt.title('Pass/Fail Metrics')
+    pass_fail_count = comparison_df.groupBy("status").count().toPandas()
+    plt.figure(figsize=(8, 6))
+    plt.bar(pass_fail_count["status"], pass_fail_count["count"], color=['green', 'red'])
+    plt.xlabel("Status")
+    plt.ylabel("Count")
+    plt.title("Pass/Fail Metrics")
     plt.show()
 
-    # Create other metrics in HTML format
-    metrics_html = f"""
-    <h2>Pass/Fail Metrics</h2>
-    <p>Pass Count: {pass_count}</p>
-    <p>Fail Count: {fail_count}</p>
-    """
+    # Create HTML report with failed columns
+    failed_columns_df = comparison_df.filter(comparison_df["status"] == "fail")
+    html_report = StringIO()
+    failed_columns_df.limit(10).toPandas().to_html(html_report, escape=False, index=False, classes='table table-bordered table-condensed table-responsive')
+    display(HTML(html_report.getvalue()))
 
-    # Display metrics HTML
-    from IPython.display import HTML, display
-    display(HTML(metrics_html))
+
+import matplotlib.pyplot as plt
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import concat_ws
+from pyspark.sql.types import StructType, StructField, StringType
+import pandas as pd
+import matplotlib.pyplot as plt
+from io import StringIO
+from IPython.display import display, HTML
