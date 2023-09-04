@@ -1,41 +1,25 @@
-Subject: Clarification Request Regarding Provenance Code and Cover Level Reference Data
+# Calculate pass and fail metrics
+    pass_count = comparison_df.filter(comparison_df.status == "pass").count()
+    fail_count = comparison_df.filter(comparison_df.status == "fail").count()
+    
+    # Create a pie chart for pass and fail metrics using matplotlib
+    import matplotlib.pyplot as plt
 
-Dear [Recipient's Name],
+    labels = ['Pass', 'Fail']
+    sizes = [pass_count, fail_count]
+    colors = ['green', 'red']
+    plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140)
+    plt.axis('equal')
+    plt.title('Pass/Fail Metrics')
+    plt.show()
 
-I hope this message finds you well. I am writing to seek clarification regarding certain discrepancies related to the provenance code and cover level reference data in our recent data analysis.
+    # Create other metrics in HTML format
+    metrics_html = f"""
+    <h2>Pass/Fail Metrics</h2>
+    <p>Pass Count: {pass_count}</p>
+    <p>Fail Count: {fail_count}</p>
+    """
 
-Specifically, we have identified issues with the provenance code data and its corresponding cover level reference data for certain quote records that originate from the CDL source. It has come to our attention that in the reference file shared by Mahesh (accessible via the provided SharePoint link), the necessary data is missing. Consequently, we have observed instances where the provenance_key on the fact quote table is populated with '-1'.
-
-To illustrate the issue further, consider the following examples:
-
-Example 1:
-In the reference table, the suitable product code for provenance code S002 is indicated as 'HOME.' However, from the CDL source, we are receiving 'MOTOR' as well for the same provenance code. Similar discrepancies exist for other combinations originating from the source.
-
-Example 2:
-Provenance code M039 is entirely absent from the reference file, presenting a situation where we lack essential reference data for this specific code.
-
-Furthermore, similar scenarios have arisen concerning cover levels. For instance, in the CDL source, we are receiving cover level 'T' for motor-related entries, but this is not reflected in the reference table.
-
-To address these discrepancies effectively and ensure the accuracy of our records, we kindly request clarification or guidance on the following:
-
-Could you please provide insights into the missing data or discrepancies between the CDL source data and the reference file shared by Mahesh?
-
-Are there any specific actions or updates required to align the provenance code and cover level reference data with our current data analysis?
-
-Is there a timeline for resolving these discrepancies, or are there any ongoing efforts to synchronize the data sources?
-
-Your assistance in resolving these matters is greatly appreciated, as it will significantly contribute to the accuracy and reliability of our records and analyses. If you require any additional information or if there are specific steps we should follow to address these issues, please do not hesitate to inform us.
-
-Thank you for your prompt attention to this matter, and we look forward to your guidance on resolving these data discrepancies.
-
-Best regards,
-
-[Your Name]
-[Your Title]
-[Your Company]
-[Your Contact Information]
-
-
-
-
-
+    # Display metrics HTML
+    from IPython.display import HTML, display
+    display(HTML(metrics_html))
