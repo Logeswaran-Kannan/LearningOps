@@ -1,23 +1,11 @@
-    pass_fail_count = comparison_df.groupBy("status").count().toPandas()
-    plt.figure(figsize=(8, 6))
-    plt.bar(pass_fail_count["status"], pass_fail_count["count"], color=['green', 'red'])
-    plt.xlabel("Status")
-    plt.ylabel("Count")
-    plt.title("Pass/Fail Metrics")
-    plt.show()
+Subject: Escalation and Clarification Needed for Release
 
-    # Create HTML report with failed columns
-    failed_columns_df = comparison_df.filter(comparison_df["status"] == "fail")
-    html_report = StringIO()
-    failed_columns_df.limit(10).toPandas().to_html(html_report, escape=False, index=False, classes='table table-bordered table-condensed table-responsive')
-    display(HTML(html_report.getvalue()))
+Hi Team,
 
+I hope you're doing well. First of all, a big thanks for your continuous support thus far. With the release date nearing, there are a few key points I'd like to address. I trust both of you to take complete ownership of the deliverables for this release, especially when it comes to data analysis, defect tracking, SQL writing, minimizing defect leakage, and reducing false passes.
 
-import matplotlib.pyplot as plt
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import concat_ws
-from pyspark.sql.types import StructType, StructField, StringType
-import pandas as pd
-import matplotlib.pyplot as plt
-from io import StringIO
-from IPython.display import display, HTML
+Please don't hesitate to voice out any concerns or questions during our daily stand-up meetings. It's crucial to clarify any doubts then and there. Waiting until the end of the day, or sometimes even until the end of my day, to report issues makes it challenging for me to follow up and get them resolved promptly. My role primarily involves engaging with the project team to align and arrange support for your needs. Spending a significant amount of time on data analysis and SQL corrections hinders my ability to manage other important meetings and responsibilities.
+
+You both have the experience and capability to run the entire project under your ownership. This aligns with the project manager's expectations and the forward model of Project Portfolio Management (PPM). I encourage you to take on the right responsibility and guide me with your expertise. I'm more than willing to support you in any way I can.
+
+Let's work together to ensure a successful release. Your proactive approach and ownership will play a significant role in achieving our goals.
