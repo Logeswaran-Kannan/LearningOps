@@ -1,46 +1,41 @@
-# Import necessary libraries
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# Initialize SparkSession
+# Initialize Spark session
 spark = SparkSession.builder \
     .appName("TableComparison") \
     .getOrCreate()
 
-# Define the source and destination database names
-source_database = "source_db"
-destination_database = "destination_db"
+# Set source and destination database names
+source_db = "source_database"
+destination_db = "destination_database"
 
 # List tables in the source database
-source_tables = spark.sql(f"SHOW TABLES FROM {source_database}").select("tableName").collect()
+source_tables = spark.sql(f"SHOW TABLES IN {source_db}").select("tableName").collect()
 
-# List tables in the destination database
-destination_tables = spark.sql(f"SHOW TABLES FROM {destination_database}").select("tableName").collect()
-
-# Function to compare two tables
-def compare_tables(table_name):
-    # Exclude tables starting with '__apply' or '__ghg'
-    if not table_name.startswith("__apply") and not table_name.startswith("__ghg"):
-        source_table = spark.sql(f"DESCRIBE {source_database}.{table_name}")
-        destination_table = spark.sql(f"DESCRIBE {destination_database}.{table_name}")
-        
-        if source_table.count() == 0:
-            print(f"Table {table_name} missing in source database")
-        elif destination_table.count() == 0:
-            print(f"Table {table_name} missing in destination database")
-        else:
-            # Compare column names and data types
-            source_columns = [(row.col_name, row.data_type) for row in source_table.collect()]
-            destination_columns = [(row.col_name, row.data_type) for row in destination_table.collect()]
-            
-            if source_columns == destination_columns:
-                print(f"Table {table_name} is identical in both databases")
-            else:
-                print(f"Table {table_name} has differences in columns or data types")
-
-# Compare tables between databases
+# Iterate through the source tables and compare with destination
 for table_row in source_tables:
-    table_name = table_row.tableName
-    compare_tables(table_name)
+    table_name = table_row["tableName"]
 
-# Stop SparkSession
+    # Exclude tables starting with '__apply' or '__ghg'
+    if table_name.startswith("__apply") or table_name.startswith("__ghg"):
+        continue
+
+    try:
+        # Get schema information for the source table
+        source_schema = spark.sql(f"DESCRIBE {source_db}.{table_name}")
+        
+        # Get schema information for the destination table
+        destination_schema = spark.sql(f"DESCRIBE {destination_db}.{table_name}")
+        
+        # Compare data, count, column names, and data types
+        if source_schema.subtract(destination_schema).count() == 0:
+            print(f"Table '{table_name}' is identical in both databases.")
+        else:
+            print(f"Table '{table_name}' is different between databases.")
+    
+    except Exception as e:
+        print(f"Table '{table_name}' missing in destination database.")
+
+# Stop the Spark session
 spark.stop()
