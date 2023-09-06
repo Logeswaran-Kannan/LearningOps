@@ -1,33 +1,71 @@
-# Define the two databases to compare
-source_database = "source_db"
-destination_database = "destination_db"
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# Get the list of tables in the source and destination databases
-source_tables = [table.name for table in spark.catalog.listTables(source_database)]
-destination_tables = [table.name for table in spark.catalog.listTables(destination_database)]
+# Create Spark session
+spark = SparkSession.builder \
+    .appName("Databricks Table Comparison") \
+    .getOrCreate()
 
-# Function to compare table schemas
-def compare_table_schemas(table_name):
-    source_table = f"{source_database}.{table_name}"
-    destination_table = f"{destination_database}.{table_name}"
+# Set the databases to compare
+source_database_name = "source_db"
+destination_database_name = "destination_db"
 
-    # Check if the table names start with '__apply' or '__ghg', and exclude them
-    if table_name.startswith("__apply") or table_name.startswith("__ghg"):
-        print(f"Skipping table '{table_name}' as it starts with '__apply' or '__ghg'.")
-        return
+# Get the list of tables in source database
+source_tables = spark.sql(f"SHOW TABLES IN {source_database_name}").filter(~col("tableName").startswith("__apply") & ~col("tableName").startswith("__ghg"))
 
-    # Get the schemas of the source and destination tables
-    source_schema = spark.sql(f"DESCRIBE {source_table}")
-    destination_schema = spark.sql(f"DESCRIBE {destination_table}")
+# Initialize a list to store mismatched tables
+mismatched_tables = []
 
-    # Compare schema differences
-    if source_schema.collect() != destination_schema.collect():
-        print(f"Schema mismatch for table '{table_name}':")
-        print(f"Source Table Schema:")
-        source_schema.show(truncate=False)
-        print(f"Destination Table Schema:")
-        destination_schema.show(truncate=False)
+# Loop through the tables in the source database
+for row in source_tables.collect():
+    table_name = row['tableName']
 
-# Compare tables in the source and destination databases
-for table_name in set(source_tables).intersection(destination_tables):
-    compare_table_schemas(table_name)
+    try:
+        # Read the source table
+        source_df = spark.sql(f"SELECT * FROM {source_database_name}.{table_name}")
+
+        # Read the destination table
+        destination_df = spark.sql(f"SELECT * FROM {destination_database_name}.{table_name}")
+
+        # Compare table counts
+        if source_df.count() != destination_df.count():
+            mismatched_tables.append(f"Table '{table_name}' has a count mismatch.")
+
+        # Compare column names and data types
+        source_columns = set(source_df.columns)
+        destination_columns = set(destination_df.columns)
+
+        if source_columns != destination_columns:
+            mismatched_tables.append(f"Table '{table_name}' has column name mismatch: {', '.join(source_columns - destination_columns)}")
+
+        for column in source_df.schema:
+            source_column_name = column.name
+            source_data_type = str(column.dataType)
+
+            destination_column = destination_df.schema.fields
+            matching_destination_column = next(
+                (c for c in destination_column if c.name == source_column_name), None)
+
+            if not matching_destination_column:
+                mismatched_tables.append(
+                    f"Column '{source_column_name}' in table '{table_name}' is missing in the destination database.")
+            else:
+                destination_data_type = str(matching_destination_column.dataType)
+                if source_data_type != destination_data_type:
+                    mismatched_tables.append(
+                        f"Column '{source_column_name}' in table '{table_name}' has data type mismatch: {source_data_type} vs {destination_data_type}")
+
+    except Exception as e:
+        mismatched_tables.append(
+            f"Error comparing table '{table_name}': {str(e)}")
+
+# Print mismatched tables and details
+if mismatched_tables:
+    print("Mismatched Tables:")
+    for table_info in mismatched_tables:
+        print(table_info)
+else:
+    print("No mismatches found.")
+
+# Stop the Spark session
+spark.stop()
