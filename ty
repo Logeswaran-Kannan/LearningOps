@@ -1,15 +1,33 @@
-Subject: Escalation and Expectations for Release
+# Define the two databases to compare
+source_database = "source_db"
+destination_database = "destination_db"
 
-Hi Team,
+# Get the list of tables in the source and destination databases
+source_tables = [table.name for table in spark.catalog.listTables(source_database)]
+destination_tables = [table.name for table in spark.catalog.listTables(destination_database)]
 
-I hope you're doing well. First off, I want to express my gratitude for your continuous support throughout the project. As we approach the release date, there are a few critical points I'd like to address.
+# Function to compare table schemas
+def compare_table_schemas(table_name):
+    source_table = f"{source_database}.{table_name}"
+    destination_table = f"{destination_database}.{table_name}"
 
-I kindly request both of you to take complete ownership of the deliverables for the upcoming release, especially in areas such as data analysis, defect tracking, SQL writing, minimizing defect leakage, and reducing false passes. Given that both of you are billed at 100%, I expect these tasks to be primarily driven from the offshore side rather than relying heavily on on-site support.
+    # Check if the table names start with '__apply' or '__ghg', and exclude them
+    if table_name.startswith("__apply") or table_name.startswith("__ghg"):
+        print(f"Skipping table '{table_name}' as it starts with '__apply' or '__ghg'.")
+        return
 
-Please don't hesitate to voice your concerns or seek clarification during our daily stand-up meetings. It's crucial to address any issues or doubts promptly, as this will help manage expectations not only from me but also from the project manager. Waiting until the end of the day, or worse, until the end of my day, to report problems makes it challenging for me to follow up and get them resolved in a timely manner.
+    # Get the schemas of the source and destination tables
+    source_schema = spark.sql(f"DESCRIBE {source_table}")
+    destination_schema = spark.sql(f"DESCRIBE {destination_table}")
 
-My role and responsibilities primarily involve engaging with the project team to align and arrange the necessary support. I'd rather not spend excessive time on data analysis and SQL corrections, as it hinders my ability to manage other important meetings and tasks. Both of you have the experience and capability to effectively run the entire project under your ownership. This aligns with the project manager's expectations and the future model of Project Portfolio Management (PPM).
+    # Compare schema differences
+    if source_schema.collect() != destination_schema.collect():
+        print(f"Schema mismatch for table '{table_name}':")
+        print(f"Source Table Schema:")
+        source_schema.show(truncate=False)
+        print(f"Destination Table Schema:")
+        destination_schema.show(truncate=False)
 
-I'm more than willing to support you in any way I can, so please take the initiative, assume the right responsibilities, and guide me with your expertise. Let's work together to ensure a successful release.
-
-Thank you for your understanding and cooperation.
+# Compare tables in the source and destination databases
+for table_name in set(source_tables).intersection(destination_tables):
+    compare_table_schemas(table_name)
