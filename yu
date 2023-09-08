@@ -1,60 +1,57 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
 
-# Initialize a Spark session
-spark = SparkSession.builder \
-    .appName("TableComparison") \
-    .getOrCreate()
+# Create a Spark session
+spark = SparkSession.builder.appName("TableComparison").getOrCreate()
 
-# Define the source and destination database names
-source_db_name = "your_source_database_name"
-destination_db_name = "your_destination_database_name"
+# Define your source and destination databases
+source_database = "your_source_database"
+destination_database = "your_destination_database"
 
-# Exclude tables that start with '__apply' or end with '__ghg' from comparison
-exclude_tables = ["__apply%", "%__ghg"]
+# Define the exclusion patterns
+exclusion_patterns = ["__apply%", "%__ghg"]
 
 # Create a list of table names from the source database
-source_tables = spark.sql(f"SHOW TABLES IN {source_db_name}").select("tableName").collect()
+source_tables = spark.sql(f"SHOW TABLES IN {source_database}").select("tableName").collect()
 
-# Create a temporary table to store the comparison results
-temp_table_name = "table_comparison_results"
+# Create a list of table names from the destination database
+destination_tables = spark.sql(f"SHOW TABLES IN {destination_database}").select("tableName").collect()
 
-# Initialize an empty list to store the results
+# Initialize a result list to store the comparison results
 comparison_results = []
 
-# Loop through the source tables and compare their counts with the destination tables
-for table_row in source_tables:
-    table_name = table_row["tableName"]
-    
-    # Check if the table name matches the exclusion patterns
-    if any(exclude_pattern in table_name for exclude_pattern in exclude_tables):
+# Loop through source tables
+for source_table in source_tables:
+    table_name = source_table["tableName"]
+
+    # Check if the table should be excluded
+    if any(pattern in table_name for pattern in exclusion_patterns):
         continue
-    
-    # Get the count of the source table
-    source_count = spark.sql(f"SELECT COUNT(*) FROM {source_db_name}.{table_name}").first()[0]
-    
-    # Get the count of the corresponding table in the destination database
-    try:
-        destination_count = spark.sql(f"SELECT COUNT(*) FROM {destination_db_name}.{table_name}").first()[0]
-    except Exception as e:
-        # Handle the case where the table is missing in the destination database
-        comparison_results.append((table_name, source_count, "Table missing in destination"))
-        continue
-    
-    # Compare the counts and store the result
-    if source_count == destination_count:
-        comparison_results.append((table_name, source_count, "Counts match"))
+
+    # Check if the table exists in the destination database
+    if source_table in destination_tables:
+        # Get row count for the source table
+        source_count = spark.sql(f"SELECT COUNT(*) FROM {source_database}.{table_name}").collect()[0][0]
+
+        # Get row count for the corresponding table in the destination database
+        target_count = spark.sql(f"SELECT COUNT(*) FROM {destination_database}.{table_name}").collect()[0][0]
+
+        # Determine the status
+        if source_count == target_count:
+            status = "Match"
+        else:
+            status = "Mismatch"
+
+        # Append the result to the comparison_results list
+        comparison_results.append((table_name, source_count, target_count, status))
     else:
-        comparison_results.append((table_name, source_count, "Counts do not match"))
+        # Table is missing in the destination database
+        comparison_results.append((table_name, "N/A", "N/A", "Missing in Destination"))
 
-# Create a DataFrame from the comparison results
-result_df = spark.createDataFrame(comparison_results, ["Table", "SourceCount", "ComparisonResult"])
+# Create a DataFrame from the comparison_results list
+result_df = spark.createDataFrame(comparison_results, ["Table Name", "Source Count", "Target Count", "Status"])
 
-# Register the DataFrame as a temporary table
-result_df.createOrReplaceTempView(temp_table_name)
+# Create a temporary table to store the results
+result_df.createOrReplaceTempView("table_comparison_results")
 
-# Show the comparison results
-spark.sql(f"SELECT * FROM {temp_table_name}").show()
-
-# Stop the Spark session
-spark.stop()
+# Show the result table
+result_df.show()
