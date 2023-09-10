@@ -1,23 +1,93 @@
-trigger:
-- master
+# Import necessary libraries
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, unix_timestamp
+import matplotlib.pyplot as plt
 
-pool:
-  vmImage: 'ubuntu-latest'
+# Set up the Spark session
+spark = SparkSession.builder.appName("DataComparison").getOrCreate()
 
-steps:
-- script: echo Run tests here
-  displayName: 'Run tests'
+# Define source and destination databases and table lists
+source_db = "source_database"
+destination_db = "destination_database"
+table_list = ["table1", "table2", "table3"]  # Add your table names here
 
-- task: PublishTestResults@2
-  inputs:
-    testRunner: 'JUnit'
-    testResultsFiles: '**/TEST-*.xml'
-    failTaskOnFailedTests: true
-  displayName: 'Publish test results'
+# Define the timestamp range
+start_timestamp = "2023-08-30T08:43:28.123+0000"
+end_timestamp = "2023-09-04T08:43:28.123+0000"
 
-- task: teams-devops-notify@1
-  inputs:
-    teamsWebhookUrl: 'https://<your_teams_webhook_url>'
-    message: 'The test results are published'
-    title: 'Azure DevOps Pipeline Test Results'
-  displayName: 'Notify Microsoft Teams'
+# Initialize counters for tracking progress
+total_tables = len(table_list)
+tables_processed = 0
+tables_missing_in_destination = 0
+
+# Initialize lists for storing completion status and table names
+completion_status = []
+table_names = []
+
+# Iterate through the table list
+for table_name in table_list:
+    # Check if the table is excluded
+    if table_name.startswith("__apply") or table_name.endswith("__ghg"):
+        continue
+
+    # Try to read the source and destination tables
+    try:
+        source_table = spark.read.table(f"{source_db}.{table_name}")
+        destination_table = spark.read.table(f"{destination_db}.{table_name}")
+    except:
+        # Handle the exception when the table is not present in the destination
+        tables_missing_in_destination += 1
+        completion_status.append("Missing in Destination")
+        table_names.append(table_name)
+        continue
+
+    # Filter the source table based on the timestamp range
+    source_table_filtered = source_table.filter(
+        (unix_timestamp("timestamp_column", "yyyy-MM-dd'T'HH:mm:ss.SSSZ") >=
+         unix_timestamp(start_timestamp, "yyyy-MM-dd'T'HH:mm:ss.SSSZ")) &
+        (unix_timestamp("timestamp_column", "yyyy-MM-dd'T'HH:mm:ss.SSSZ") <=
+         unix_timestamp(end_timestamp, "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))
+    )
+
+    # Take a sample of 50 records from the source table
+    source_sample = source_table_filtered.sample(False, 0.5, seed=42)
+
+    # Exclude specified columns
+    source_columns = [col for col in source_sample.columns if col not in ["source_system", "valid_from_dt"]]
+
+    # Select only the relevant columns
+    source_sample = source_sample.select(source_columns)
+
+    # Compare the source sample with the destination table
+    is_equal = source_sample.subtract(destination_table).isEmpty()
+
+    if is_equal:
+        completion_status.append("Match")
+    else:
+        completion_status.append("Mismatch")
+
+    table_names.append(table_name)
+    tables_processed += 1
+
+# Display the progression of completion in a chart
+progression_data = [(table_name, status) for table_name, status in zip(table_names, completion_status)]
+progression_df = spark.createDataFrame(progression_data, ["Table Name", "Status"])
+
+# Count the number of matches and mismatches
+match_count = progression_df.filter(col("Status") == "Match").count()
+mismatch_count = progression_df.filter(col("Status") == "Mismatch").count()
+missing_count = tables_missing_in_destination
+
+# Plot a bar chart
+plt.figure(figsize=(8, 6))
+plt.bar(["Match", "Mismatch", "Missing in Destination"], [match_count, mismatch_count, missing_count])
+plt.xlabel("Status")
+plt.ylabel("Count")
+plt.title("Progression of Completion")
+plt.show()
+
+# Display the final results
+progression_df.show()
+
+# Stop the Spark session
+spark.stop()
