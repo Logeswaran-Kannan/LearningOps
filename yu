@@ -1,43 +1,66 @@
-# Databricks code
+# Import necessary libraries
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+from pyspark.sql.window import Window
 
-# Define parameters
-source_database_name = "source_db"
-destination_database_name = "destination_db"
-start_date = "2023-08-30T8:43:28.123+0000"
-end_date = "2023-09-04T8:43:28.123+0000"
-sequence_by_column = "sequence_column"
-exclusion_table_patterns = ["__apply*", "*_table", "*_prov_codes"]
-exclusion_column_names = ["source_system", "valid_from_dt"]
+# Define your source and target database names
+source_database = "<source_database>"
+target_database = "<target_database>"
 
-# Create a Spark session
+# Initialize Spark session
 spark = SparkSession.builder.appName("DataComparison").getOrCreate()
 
 # Function to compare tables
-def compare_tables(source_table_name, destination_table_name):
-    # Check if the table exists in the destination database
-    if destination_table_name not in spark.catalog.listTables(destination_database_name):
-        print(f"Table '{destination_table_name}' missing in destination.")
-    else:
-        # Compare column counts
-        source_columns = spark.catalog.listColumns(source_database_name, source_table_name)
-        destination_columns = spark.catalog.listColumns(destination_database_name, destination_table_name)
-        
-        if len(source_columns) != len(destination_columns):
-            print(f"DDL mismatch for '{destination_table_name}': Column counts do not match.")
-        else:
-            # Perform data comparison
-            # You can implement your data comparison logic here
+def compare_tables(table_name):
+    try:
+        # Read source and target tables
+        source_df = spark.table(f"{source_database}.{table_name}")
+        target_df = spark.table(f"{target_database}.{table_name}")
 
-# Iterate through tables in the source database
-for table_info in spark.catalog.listTables(source_database_name):
-    source_table_name = table_info.name
-    
-    # Check if the table matches exclusion patterns
-    if any(pattern in source_table_name for pattern in exclusion_table_patterns):
-        continue
-    
-    compare_tables(source_table_name, source_table_name)  # Assume same table name in destination
+        # Check if the column count matches
+        if len(source_df.columns) != len(target_df.columns):
+            return f"DDL mismatch for table '{table_name}'"
+
+        # Exclude specified columns
+        columns_to_exclude = ["source_system", "valid_from_dt"]
+        source_columns = [col for col in source_df.columns if col not in columns_to_exclude]
+
+        # Sample data from the source table
+        source_sample = source_df.where(
+            (col("sequence_by").between("2023-08-30T08:43:28.123+0000", "2023-09-04T08:43:28.123+0000"))
+        ).limit(50)
+
+        # Sample data from the target table
+        target_sample = target_df.where(
+            col("sequence_by").between("2023-08-30T08:43:28.123+0000", "2023-09-04T08:43:28.123+0000")
+        ).limit(50)
+
+        # Compare data
+        if source_sample.subtract(target_sample).count() > 0:
+            return f"Data mismatch for table '{table_name}'"
+        else:
+            return f"Data matches for table '{table_name}'"
+
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Get the list of tables in the source database (excluding excluded tables)
+source_tables = spark.catalog.listTables(source_database)
+source_table_names = [table.name for table in source_tables if not (
+    table.name.startswith("__apply") or
+    table.name.endswith("_table") or
+    table.name.endswith("_prov_codes")
+)]
+
+# Iterate through the tables and compare them
+results = []
+for table_name in source_table_names:
+    result = compare_tables(table_name)
+    results.append(result)
+
+# Print the results
+for result in results:
+    print(result)
 
 # Stop the Spark session
 spark.stop()
