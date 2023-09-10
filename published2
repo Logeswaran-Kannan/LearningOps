@@ -1,37 +1,80 @@
-- task: PublishTestResults@2
-  inputs:
-    testRunner: JUnit
-    testResultsFiles: '**/test-results.xml' # change this to match the path where your test results are stored
-    mergeTestResults: true
-    testRunTitle: 'Test Run Results'
-  condition: always() # this ensures that the task runs even if previous tasks fail
-- task: HttpPost@1
-  displayName: 'Publish Test Results to Microsoft Teams'
-  inputs:
-    url: 'https://outlook.office.com/webhook/your-webhook-url-here' # replace with your actual webhook URL
-    body: |
-      {
-          "@type": "MessageCard",
-          "@context": "http://schema.org/extensions",
-          "themeColor": "0076D7",
-          "summary": "Test Run Results",
-          "sections": [
-              {
-                  "activityTitle": "Test Run Results",
-                  "activitySubtitle": "$(Build.BuildNumber)",
-                  "activityImage": "https://your-company-logo-url-here.png",
-                  "facts": [
-                      {
-                          "name": "Test Run Name:",
-                          "value": "$(Build.DefinitionName)"
-                      },
-                      {
-                          "name": "Test Results:",
-                          "value": "$(Common.TestResultsDirectory)/TestResults.xml"
-                      }
-                  ],
-                  "markdown": true
-              }
-          ]
-      }
-  condition: succeededOrFailed() # this ensures that the task runs even if previous tasks fail
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+from pyspark.sql import functions as F
+
+# Create a Spark session
+spark = SparkSession.builder.appName("TableComparison").getOrCreate()
+
+# Define source and destination databases
+source_db = "source_database"
+destination_db = "destination_database"
+
+# Define the timestamp range
+start_timestamp = "2023-08-30T08:43:28.123+0000"
+end_timestamp = "2023-09-04T08:43:28.123+0000"
+
+# Get the list of tables to compare
+source_tables = spark.sql(f"SHOW TABLES IN {source_db}").filter(
+    ~col("tableName").startswith("__apply") &
+    ~col("tableName").endswith("_table") &
+    ~col("tableName").endswith("_prov_codes")
+)
+
+destination_tables = spark.sql(f"SHOW TABLES IN {destination_db}").filter(
+    ~col("tableName").startswith("__apply") &
+    ~col("tableName").endswith("_table") &
+    ~col("tableName").endswith("_prov_codes")
+)
+
+# Initialize a list to store comparison results
+results = []
+
+# Loop through the tables and perform comparisons
+for source_table_row in source_tables.collect():
+    table_name = source_table_row["tableName"]
+    
+    # Check if the table exists in the destination database
+    if destination_tables.filter(col("tableName") == table_name).count() == 0:
+        results.append((table_name, "Table missing in destination", None, None, None, "Table missing in destination"))
+        continue
+    
+    # Get the schema of the source and destination tables
+    source_schema = spark.sql(f"DESCRIBE {source_db}.{table_name}")
+    destination_schema = spark.sql(f"DESCRIBE {destination_db}.{table_name}")
+    
+    # Check if the column counts match
+    if source_schema.count() != destination_schema.count():
+        results.append((table_name, "DDL mismatch", None, None, None, "DDL mismatch"))
+        continue
+    
+    # Filter records based on the timestamp range
+    source_data_sql = f"SELECT * FROM {source_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+    destination_data_sql = f"SELECT * FROM {destination_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+    
+    source_count = spark.sql(source_data_sql).count()
+    destination_count = spark.sql(destination_data_sql).count()
+    
+    # Perform data comparison
+    if source_count > 0 and destination_count > 0:
+        source_data = spark.sql(source_data_sql)
+        destination_data = spark.sql(destination_data_sql)
+        
+        if source_data.subtract(destination_data).count() == 0 and destination_data.subtract(source_data).count() == 0:
+            result_status = "Data matches"
+        else:
+            result_status = "Data mismatch"
+    else:
+        result_status = "No data to compare"
+    
+    results.append((table_name, source_count, destination_count, source_data_sql, destination_data_sql, result_status))
+
+# Create a DataFrame from the results list
+result_df = spark.createDataFrame(results, ["tablename", "source_count", "destination_count", "source_data_sql", "destination_data_sql", "result_status"])
+
+# Show the result DataFrame
+result_df.show()
+
+# Store the result DataFrame in a temporary table
+result_df.createOrReplaceTempView("comparison_result")
+
+# You can also use Databricks notebook widgets to monitor progress and visualize metrics.
