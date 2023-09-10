@@ -1,93 +1,65 @@
 # Import necessary libraries
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, unix_timestamp
-import matplotlib.pyplot as plt
+from pyspark.sql.functions import col
+import random
 
-# Set up the Spark session
-spark = SparkSession.builder.appName("DataComparison").getOrCreate()
-
-# Define source and destination databases and table lists
-source_db = "source_database"
-destination_db = "destination_database"
-table_list = ["table1", "table2", "table3"]  # Add your table names here
+# Define your source and destination database names
+source_db = "your_source_db"
+destination_db = "your_destination_db"
 
 # Define the timestamp range
 start_timestamp = "2023-08-30T08:43:28.123+0000"
 end_timestamp = "2023-09-04T08:43:28.123+0000"
 
-# Initialize counters for tracking progress
-total_tables = len(table_list)
-tables_processed = 0
-tables_missing_in_destination = 0
+# Get a list of table names in the source database (excluding '__apply' and '__ghg' tables)
+source_tables = spark.sql(f"SHOW TABLES IN {source_db}").filter(~col("tableName").like("__apply%")).filter(~col("tableName").like("%__ghg")).select("tableName").rdd.map(lambda x: x[0]).collect()
 
-# Initialize lists for storing completion status and table names
-completion_status = []
-table_names = []
+# Initialize a dictionary to store the comparison results
+comparison_results = {}
 
-# Iterate through the table list
-for table_name in table_list:
-    # Check if the table is excluded
-    if table_name.startswith("__apply") or table_name.endswith("__ghg"):
-        continue
-
-    # Try to read the source and destination tables
+# Loop through each table in the source database
+for table_name in source_tables:
+    # Check if the table exists in the destination database
     try:
-        source_table = spark.read.table(f"{source_db}.{table_name}")
-        destination_table = spark.read.table(f"{destination_db}.{table_name}")
-    except:
-        # Handle the exception when the table is not present in the destination
-        tables_missing_in_destination += 1
-        completion_status.append("Missing in Destination")
-        table_names.append(table_name)
+        spark.sql(f"SELECT 1 FROM {destination_db}.{table_name} LIMIT 1")
+    except Exception as e:
+        # Table does not exist in the destination database
+        comparison_results[table_name] = "Table missing in destination"
         continue
-
-    # Filter the source table based on the timestamp range
-    source_table_filtered = source_table.filter(
-        (unix_timestamp("timestamp_column", "yyyy-MM-dd'T'HH:mm:ss.SSSZ") >=
-         unix_timestamp(start_timestamp, "yyyy-MM-dd'T'HH:mm:ss.SSSZ")) &
-        (unix_timestamp("timestamp_column", "yyyy-MM-dd'T'HH:mm:ss.SSSZ") <=
-         unix_timestamp(end_timestamp, "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))
-    )
-
-    # Take a sample of 50 records from the source table
-    source_sample = source_table_filtered.sample(False, 0.5, seed=42)
-
-    # Exclude specified columns
-    source_columns = [col for col in source_sample.columns if col not in ["source_system", "valid_from_dt"]]
-
-    # Select only the relevant columns
-    source_sample = source_sample.select(source_columns)
-
-    # Compare the source sample with the destination table
-    is_equal = source_sample.subtract(destination_table).isEmpty()
-
-    if is_equal:
-        completion_status.append("Match")
+    
+    # Generate a random sample of 50 records from the source database based on 'sequence_by' column and timestamp range
+    sample_query = f"""
+        SELECT *
+        FROM {source_db}.{table_name}
+        WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'
+        ORDER BY sequence_by
+        LIMIT 50
+    """
+    
+    source_sample = spark.sql(sample_query)
+    
+    # Exclude columns 'source_system' and 'valid_from_dt'
+    source_sample = source_sample.drop("source_system", "valid_from_dt")
+    
+    # Perform data comparison between source and destination samples
+    source_count = source_sample.count()
+    
+    destination_sample = spark.sql(f"SELECT * FROM {destination_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}' ORDER BY sequence_by LIMIT {source_count}")
+    destination_sample = destination_sample.drop("source_system", "valid_from_dt")
+    
+    if source_sample.subtract(destination_sample).isEmpty() and destination_sample.subtract(source_sample).isEmpty():
+        comparison_results[table_name] = "Data matches"
     else:
-        completion_status.append("Mismatch")
+        comparison_results[table_name] = "Data does not match"
 
-    table_names.append(table_name)
-    tables_processed += 1
+# Generate a chart to show the progression of completion
+import matplotlib.pyplot as plt
 
-# Display the progression of completion in a chart
-progression_data = [(table_name, status) for table_name, status in zip(table_names, completion_status)]
-progression_df = spark.createDataFrame(progression_data, ["Table Name", "Status"])
+labels = comparison_results.keys()
+values = [1 if result == "Data matches" else 0 for result in comparison_results.values()]
 
-# Count the number of matches and mismatches
-match_count = progression_df.filter(col("Status") == "Match").count()
-mismatch_count = progression_df.filter(col("Status") == "Mismatch").count()
-missing_count = tables_missing_in_destination
-
-# Plot a bar chart
-plt.figure(figsize=(8, 6))
-plt.bar(["Match", "Mismatch", "Missing in Destination"], [match_count, mismatch_count, missing_count])
-plt.xlabel("Status")
-plt.ylabel("Count")
-plt.title("Progression of Completion")
+plt.bar(labels, values)
+plt.xlabel("Tables")
+plt.ylabel("Completion")
+plt.title("Comparison Progress")
 plt.show()
-
-# Display the final results
-progression_df.show()
-
-# Stop the Spark session
-spark.stop()
