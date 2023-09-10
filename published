@@ -83,5 +83,28 @@ result_df = spark.createDataFrame(results, ["tablename", "source_count", "destin
 # Show the result DataFrame
 result_df.show()
 
+# Create HTML content with colored status indicators
+html_content = """<table border="1"><tr><th>Table Name</th><th>Source Count</th><th>Destination Count</th><th>Result Status</th></tr>"""
+
+for row in result_df.collect():
+    table_name = row["tablename"]
+    source_count = row["source_count"]
+    destination_count = row["destination_count"]
+    result_status = row["result_status"]
+    
+    if result_status == "Data matches":
+        status_color = "green"
+    elif result_status == "Data mismatch":
+        status_color = "red"
+    else:
+        status_color = "yellow"
+    
+    html_content += f"""<tr><td>{table_name}</td><td>{source_count}</td><td>{destination_count}</td><td style="background-color:{status_color}">{result_status}</td></tr>"""
+
+html_content += "</table>"
+
+# Display the HTML content
+displayHTML(html_content)
+
 # Store the result DataFrame in a temporary table
 result_df.createOrReplaceTempView("comparison_result")
