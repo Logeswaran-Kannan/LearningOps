@@ -1,62 +1,43 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
 
-# Create a Spark session
-spark = SparkSession.builder.appName("DataComparison").getOrCreate()
+# Initialize Spark session
+spark = SparkSession.builder \
+    .appName("DataComparison") \
+    .getOrCreate()
 
-# Define your source and destination databases
-source_database_name = "your_source_database"
-destination_database_name = "your_destination_database"
+# Define the source and destination databases and tables
+source_database = "source_db"
+destination_database = "destination_db"
+sample_size = 50  # Number of sample records to compare
 
-# Function to get table names from a database excluding '__apply' and '__ghg' tables
-def get_table_names(database_name):
-    tables = spark.sql(f"SHOW TABLES IN {database_name}").toPandas()
-    return tables[~tables.tableName.str.startswith("__apply") & ~tables.tableName.str.endswith("__ghg")]
+# List tables in the source database and filter out tables to exclude
+source_tables = spark.sql(f"SHOW TABLES IN {source_database}").filter(
+    ~col("tableName").startswith("__apply") &
+    ~col("tableName").endswith("__ghg")
+)
 
-# Get table names from source and destination databases
-source_tables = get_table_names(source_database_name)
-destination_tables = get_table_names(destination_database_name)
+for row in source_tables.collect():
+    table_name = row["tableName"]
 
-# Define the columns to exclude
-excluded_columns = ['source_system', 'valid_from_dt']
-
-# Create a temporary DataFrame to store the comparison results
-comparison_results = []
-
-# Compare data between source and destination databases
-for table_row in source_tables.itertuples():
-    table_name = table_row.tableName
+    # Skip excluded columns
+    source_df = spark.sql(f"SELECT * FROM {source_database}.{table_name}").drop("source_system", "valid_from_dt")
     
-    # Check if the table exists in the destination database
-    if table_name in destination_tables['tableName'].values:
-        # Get the list of columns for the current table, excluding the excluded columns
-        columns = [col_name for col_name in spark.sql(f"DESCRIBE {source_database_name}.{table_name}").select('col_name').rdd.flatMap(lambda x: x).collect() if col_name not in excluded_columns]
-        
-        # Take a sample of 50 records from the source table
-        source_sample = spark.sql(f"SELECT {', '.join(columns)} FROM {source_database_name}.{table_name}").sample(False, 0.01)
-        
-        # Take the same sample from the destination table
-        destination_sample = spark.sql(f"SELECT {', '.join(columns)} FROM {destination_database_name}.{table_name}").sample(False, 0.01)
-        
-        # Compare the samples
-        is_equal = source_sample.exceptAll(destination_sample).isEmpty()
-        
-        status = "Match" if is_equal else "Mismatch"
-        comparison_results.append((table_name, status))
-    else:
-        comparison_results.append((table_name, "Missing in Destination"))
+    try:
+        # Load the destination table
+        destination_df = spark.sql(f"SELECT * FROM {destination_database}.{table_name}").drop("source_system", "valid_from_dt")
 
-# Add missing tables from destination to comparison results
-for table_row in destination_tables.itertuples():
-    table_name = table_row.tableName
-    if table_name not in source_tables['tableName'].values:
-        comparison_results.append((table_name, "Missing in Source"))
+        # Take a sample from both source and destination tables
+        source_sample = source_df.sample(False, sample_size / source_df.count())
+        destination_sample = destination_df.sample(False, sample_size / destination_df.count())
 
-# Create a DataFrame from the results
-comparison_df = spark.createDataFrame(comparison_results, ["Table_Name", "Status"])
+        # Compare the data
+        if source_sample.subtract(destination_sample).count() == 0 and destination_sample.subtract(source_sample).count() == 0:
+            print(f"Table '{table_name}' data matches between source and destination databases.")
+        else:
+            print(f"Table '{table_name}' data does not match between source and destination databases.")
 
-# Show the comparison results
-comparison_df.show()
+    except Exception as e:
+        print(f"Table '{table_name}' missing in destination database. Error: {str(e)}")
 
 # Stop the Spark session
 spark.stop()
