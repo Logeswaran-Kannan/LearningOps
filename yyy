@@ -1,21 +1,66 @@
-The RES_CREATED_DATE field is observed to have instances of being populated with null values despite the presence of valid result IDs. Furthermore, there are instances where this field is populated only when the associated presenting column is marked as true. Curiously, there are cases where, even though the presenting column is true, the RES_CREATED_DATE remains unpopulated. This incongruity makes it challenging to ascertain the specific conditions under which this column is populated.
+from pyspark.sql import SparkSession
 
-A discrepancy is noted in the population of the SCHEME NAME field, which is unexpectedly populated with null values. According to expectations, this field should consistently hold non-null values.
-----
+# Create a Spark session
+spark = SparkSession.builder.appName("DataComparison").getOrCreate()
 
-We have successfully completed the initial round of testing for both the revised scope of RTP and silver tables. Here are the details of our progress:
+# Define your source and destination databases
+source_database_name = "your_source_database"
+destination_database_name = "your_destination_database"
 
-RTP Validation:
-We have concluded the first round of testing for RTP validation. Presently, there are six open defects in the RTP tables. Among these, two defects are currently being addressed by our build team, while the remaining issues are under the purview of the CDL source team. It's important to note that rectifying the source data defects is outside the scope of our release timeline, and we lack control over these issues. Many of these source data problems seem to be linked to recent upgrades on the Kingfisher platform, which have led to a higher incidence of issues. Given this scenario, we've taken a strategic decision to limit test coverage to specific RTP tables. However, we're planning to mitigate this risk during the pre-production phase, under the assumption that we'll be able to address this issue if we're granted sufficient time.
+# Function to get table names from a database excluding '__apply' and '__ghg' tables
+def get_table_names(database_name):
+    tables = spark.sql(f"SHOW TABLES IN {database_name}").toPandas()
+    return tables[~tables.tableName.str.startswith("__apply") & ~tables.tableName.str.endswith("__ghg")]
 
-Silver Validation:
-Our testing focus for silver validation has been adjusted to concentrate solely on the table list relevant to B2A report perspective. The first round of validation for this scope has been completed, resulting in a list of open defects that require design and build fixes. Some of these defects necessitate changes in design, while others involve platform architecture solutions. It's important to highlight a few major issues that demand immediate attention:
+# Function to compare data in two DataFrames for the same table
+def compare_data(source_df, destination_df):
+    source_columns = [col for col in source_df.columns if col not in ['source_system', 'valid_from_dt']]
+    destination_columns = [col for col in destination_df.columns if col not in ['source_system', 'valid_from_dt']]
+    
+    source_sample = source_df.select(*source_columns).limit(50).toPandas()
+    destination_sample = destination_df.select(*destination_columns).limit(50).toPandas()
+    
+    return source_sample.equals(destination_sample)
 
-2.1 Workflow Interdependency: A critical issue is the interdependency between workflows causing the erroneous population of RTPLOG_ID in the silver layer. To address this, we are actively working on ensuring the analytical layer workflow completes successfully before the silver layer begins its processing. Our build team is currently addressing this issue, and we expect the data reload to finalize prior to commencing revalidation.
+# Create a temporary DataFrame to store the comparison results
+comparison_results = []
 
-2.2 Incremental CDC Discrepancies: Our analysis has revealed that the incremental CDC (Change Data Capture) process is not aligned with the expected outcomes for two out of the three scoped tables. In response, the design for one of these tables has been updated and handed over to the build team, while the other is still under investigation with the design team.
+# Get table names from source and destination databases
+source_tables = get_table_names(source_database_name)
+destination_tables = get_table_names(destination_database_name)
 
-Pre-Production Validation:
-We're preparing for pre-production validation, which will be initiated based on the resolution of defects and the pass percentage ratio achieved in the lower environments. Due to the tight timeline, our scope for validation will be limited, ensuring a window to begin testing by the 23rd. It is imperative that any defects identified are fixed and closed by the 25th, to enable the production of the TSR on the same date.
+# Compare data for each table in both databases
+for table_row in source_tables.itertuples():
+    table_name = table_row.tableName
+    
+    source_df = spark.table(f"{source_database_name}.{table_name}")
+    
+    destination_table_row = destination_tables[destination_tables['tableName'] == table_name]
+    
+    if not destination_table_row.empty:
+        destination_df = spark.table(f"{destination_database_name}.{table_name}")
+        if compare_data(source_df, destination_df):
+            status = "Match"
+        else:
+            status = "Mismatch"
+        comparison_results.append((table_name, status))
+    else:
+        comparison_results.append((table_name, "Missing in Destination"))
 
-We appreciate your attention to these matters and your understanding of the challenges we're currently navigating. Your support is instrumental in ensuring the success of our testing and validation efforts. If you have any further questions or concerns, please don't hesitate to reach out.
+# Add missing tables from destination to comparison results
+for table_row in destination_tables.itertuples():
+    table_name = table_row.tableName
+    if table_name not in source_tables['tableName'].values:
+        comparison_results.append((table_name, "Missing in Source"))
+
+# Create a DataFrame from the results
+comparison_df = spark.createDataFrame(comparison_results, ["Table_Name", "Status"])
+
+# Show the comparison results
+comparison_df.show()
+
+# Save the comparison results to a temporary table
+comparison_df.createOrReplaceTempView("data_comparison")
+
+# Stop the Spark session
+spark.stop()
