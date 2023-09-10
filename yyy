@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
 # Create a Spark session
 spark = SparkSession.builder.appName("DataComparison").getOrCreate()
@@ -12,37 +13,35 @@ def get_table_names(database_name):
     tables = spark.sql(f"SHOW TABLES IN {database_name}").toPandas()
     return tables[~tables.tableName.str.startswith("__apply") & ~tables.tableName.str.endswith("__ghg")]
 
-# Function to compare data in two DataFrames for the same table
-def compare_data(source_df, destination_df):
-    source_columns = [col for col in source_df.columns if col not in ['source_system', 'valid_from_dt']]
-    destination_columns = [col for col in destination_df.columns if col not in ['source_system', 'valid_from_dt']]
-    
-    source_sample = source_df.select(*source_columns).limit(50).toPandas()
-    destination_sample = destination_df.select(*destination_columns).limit(50).toPandas()
-    
-    return source_sample.equals(destination_sample)
-
-# Create a temporary DataFrame to store the comparison results
-comparison_results = []
-
 # Get table names from source and destination databases
 source_tables = get_table_names(source_database_name)
 destination_tables = get_table_names(destination_database_name)
 
-# Compare data for each table in both databases
+# Define the columns to exclude
+excluded_columns = ['source_system', 'valid_from_dt']
+
+# Create a temporary DataFrame to store the comparison results
+comparison_results = []
+
+# Compare data between source and destination databases
 for table_row in source_tables.itertuples():
     table_name = table_row.tableName
     
-    source_df = spark.table(f"{source_database_name}.{table_name}")
-    
-    destination_table_row = destination_tables[destination_tables['tableName'] == table_name]
-    
-    if not destination_table_row.empty:
-        destination_df = spark.table(f"{destination_database_name}.{table_name}")
-        if compare_data(source_df, destination_df):
-            status = "Match"
-        else:
-            status = "Mismatch"
+    # Check if the table exists in the destination database
+    if table_name in destination_tables['tableName'].values:
+        # Get the list of columns for the current table, excluding the excluded columns
+        columns = [col_name for col_name in spark.sql(f"DESCRIBE {source_database_name}.{table_name}").select('col_name').rdd.flatMap(lambda x: x).collect() if col_name not in excluded_columns]
+        
+        # Take a sample of 50 records from the source table
+        source_sample = spark.sql(f"SELECT {', '.join(columns)} FROM {source_database_name}.{table_name}").sample(False, 0.01)
+        
+        # Take the same sample from the destination table
+        destination_sample = spark.sql(f"SELECT {', '.join(columns)} FROM {destination_database_name}.{table_name}").sample(False, 0.01)
+        
+        # Compare the samples
+        is_equal = source_sample.exceptAll(destination_sample).isEmpty()
+        
+        status = "Match" if is_equal else "Mismatch"
         comparison_results.append((table_name, status))
     else:
         comparison_results.append((table_name, "Missing in Destination"))
@@ -58,9 +57,6 @@ comparison_df = spark.createDataFrame(comparison_results, ["Table_Name", "Status
 
 # Show the comparison results
 comparison_df.show()
-
-# Save the comparison results to a temporary table
-comparison_df.createOrReplaceTempView("data_comparison")
 
 # Stop the Spark session
 spark.stop()
