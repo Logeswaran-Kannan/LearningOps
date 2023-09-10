@@ -1,65 +1,53 @@
-# Import necessary libraries
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
-import random
+Subject: Weekend Support Preprod Test Summary Results
 
-# Define your source and destination database names
-source_db = "your_source_db"
-destination_db = "your_destination_db"
+Dear Team,
 
-# Define the timestamp range
-start_timestamp = "2023-08-30T08:43:28.123+0000"
-end_timestamp = "2023-09-04T08:43:28.123+0000"
+I hope this email finds you well. I wanted to provide you with a detailed summary of the test results from our weekend support activities on the preprod environment. Please see below for a breakdown of the findings:
 
-# Get a list of table names in the source database (excluding '__apply' and '__ghg' tables)
-source_tables = spark.sql(f"SHOW TABLES IN {source_db}").filter(~col("tableName").like("__apply%")).filter(~col("tableName").like("%__ghg")).select("tableName").rdd.map(lambda x: x[0]).collect()
+1. Analytical Layer - Core & RTP:
 
-# Initialize a dictionary to store the comparison results
-comparison_results = {}
+In the data comparison between spoke and non-custom workflows, only 10% of the tables matched during automated test execution.
+Approximately 26% of the tables exhibited datatype or data mismatches.
+A significant 64% of the tables had no data available for data comparison.
+To address the 64% of tables with no data, we have two potential options:
+Reactivate the non-custom workflow in the preprod environment, which was previously shut down for cost reasons.
+Request exceptional access for the testing team in the prod environment, as they currently lack permission to access it.
+Orchestration for the latest load has also failed.
+2. Analytical Layer - SI & RTP:
 
-# Loop through each table in the source database
-for table_name in source_tables:
-    # Check if the table exists in the destination database
-    try:
-        spark.sql(f"SELECT 1 FROM {destination_db}.{table_name} LIMIT 1")
-    except Exception as e:
-        # Table does not exist in the destination database
-        comparison_results[table_name] = "Table missing in destination"
-        continue
-    
-    # Generate a random sample of 50 records from the source database based on 'sequence_by' column and timestamp range
-    sample_query = f"""
-        SELECT *
-        FROM {source_db}.{table_name}
-        WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'
-        ORDER BY sequence_by
-        LIMIT 50
-    """
-    
-    source_sample = spark.sql(sample_query)
-    
-    # Exclude columns 'source_system' and 'valid_from_dt'
-    source_sample = source_sample.drop("source_system", "valid_from_dt")
-    
-    # Perform data comparison between source and destination samples
-    source_count = source_sample.count()
-    
-    destination_sample = spark.sql(f"SELECT * FROM {destination_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}' ORDER BY sequence_by LIMIT {source_count}")
-    destination_sample = destination_sample.drop("source_system", "valid_from_dt")
-    
-    if source_sample.subtract(destination_sample).isEmpty() and destination_sample.subtract(source_sample).isEmpty():
-        comparison_results[table_name] = "Data matches"
-    else:
-        comparison_results[table_name] = "Data does not match"
+Due to datatype and count mismatches, none of the tables met the pass criteria during automated test execution.
+Further analysis is in progress.
+The table "si_quote_req_enraw" is missing in the bespoke schema.
+3. Silver Layer Quote:
 
-# Generate a chart to show the progression of completion
-import matplotlib.pyplot as plt
+Initial data load is complete, with around 5% of validation completed.
+Agent ID is not loaded in the "quote_risk_header" table.
+Only web users are present in the quote result table.
+We expect that only three Silver quote tables should be deployed, but all Silver quotes are currently loaded. We need confirmation on this.
+Incremental job workflow for the Silver Layer also failed.
+4. Silver Layer - Release 2 Scope:
 
-labels = comparison_results.keys()
-values = [1 if result == "Data matches" else 0 for result in comparison_results.values()]
+So far, only 2% of the validation is completed.
+User ID details are missing in the broker policy.
+5. Province Code:
 
-plt.bar(labels, values)
-plt.xlabel("Tables")
-plt.ylabel("Completion")
-plt.title("Comparison Progress")
-plt.show()
+The load is completed, but it does not reflect the latest reference details.
+Unfortunately, testing in the preprod environment is currently not possible.
+6. Source Data Issue:
+
+Testing for this issue has not yet begun.
+7. Gold Quote & Policy:
+
+Data load has failed due to the aforementioned Silver data issue and the missing Agent ID.
+8. Gold Reference:
+
+Data load has failed due to connectivity issues with DAVE 1 for the DIM_EMPLOYEE.
+9. DR Jobs:
+
+Testing for DR (Disaster Recovery) jobs has not yet started.
+We recognize that there are several challenges and issues to address based on these results. Please let us know how we can proceed and prioritize our efforts to ensure the stability and reliability of our preprod environment.
+
+Thank you for your attention to these matters, and we look forward to your guidance on the next steps.
+
+Best Regards,
+[Your Name]
