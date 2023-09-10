@@ -1,46 +1,63 @@
 # Import necessary libraries
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+import datetime
 
 # Create a Spark session
 spark = SparkSession.builder.appName("DataComparison").getOrCreate()
 
-# Define source and destination databases
-source_db = "source_database_name"
-dest_db = "destination_database_name"
+# Define the source and destination database connections
+source_database_name = "source_db"
+destination_database_name = "destination_db"
 
-# Get the list of tables in the source and destination databases
-source_tables = spark.catalog.listTables(source_db)
-dest_tables = spark.catalog.listTables(dest_db)
+# Define the date range
+start_date = datetime.datetime(2023, 8, 30, 8, 43, 28, 123000)
+end_date = datetime.datetime(2023, 9, 4, 8, 43, 28, 123000)
 
 # Function to perform data comparison for a table
-def compare_table_data(table_name):
-    try:
-        # Check if the table exists in both databases
-        if table_name in source_tables and table_name in dest_tables:
-            # Exclude columns like 'source_system' and 'valid_from_dt'
-            source_data = spark.sql(f"SELECT * FROM {source_db}.{table_name} WHERE timestamp_column BETWEEN '2023-08-30T08:43:28.123+0000' AND '2023-09-04T08:43:28.123+0000'").select([col(c) for c in source_tables[table_name].schema.fieldNames if c not in ['source_system', 'valid_from_dt']])
-            dest_data = spark.sql(f"SELECT * FROM {dest_db}.{table_name} WHERE timestamp_column BETWEEN '2023-08-30T08:43:28.123+0000' AND '2023-09-04T08:43:28.123+0000'").select([col(c) for c in dest_tables[table_name].schema.fieldNames if c not in ['source_system', 'valid_from_dt']])
+def compare_table(table_name):
+    # Check if the table exists in the destination database
+    if table_name not in spark.catalog.listTables(destination_database_name):
+        return f"Table '{table_name}' missing in destination."
 
-            # Check if the count is greater than 0 in both databases
-            if source_data.count() > 0 and dest_data.count() > 0:
-                # Compare the data
-                if source_data.subtract(dest_data).isEmpty() and dest_data.subtract(source_data).isEmpty():
-                    print(f"Data in table {table_name} is identical in both databases.")
-                else:
-                    print(f"Data in table {table_name} is different between the databases.")
-            else:
-                print(f"Count is 0 in one of the databases for table {table_name}. Skipping comparison.")
-        else:
-            print(f"Table {table_name} is missing in one of the databases.")
-    except Exception as e:
-        print(f"Error comparing table {table_name}: {str(e)}")
+    # Sample records from the source database
+    source_sample = spark.sql(f"""
+        SELECT *
+        FROM {source_database_name}.{table_name}
+        WHERE sequence_by BETWEEN '{start_date}' AND '{end_date}'
+        LIMIT 50
+    """)
 
-# Iterate through the tables and perform data comparison
-for table in source_tables:
-    table_name = table.name
-    if not (table_name.startswith("__apply") or table_name.endswith("__ghg")):
-        compare_table_data(table_name)
+    # Sample records from the destination database
+    destination_sample = spark.sql(f"""
+        SELECT *
+        FROM {destination_database_name}.{table_name}
+        WHERE sequence_by BETWEEN '{start_date}' AND '{end_date}'
+        LIMIT 50
+    """)
 
-# Stop the Spark session
-spark.stop()
+    # Columns to exclude from comparison
+    exclude_columns = ['source_system', 'valid_from_dt']
+
+    # Perform data comparison
+    diff_count = source_sample.exceptAll(destination_sample.select(source_sample.columns)).count()
+    if diff_count > 0:
+        return f"Data mismatch in table '{table_name}': {diff_count} rows differ."
+    else:
+        return f"Data in table '{table_name}' matches."
+
+# Get the list of tables in the source database
+source_tables = spark.catalog.listTables(source_database_name)
+
+# Filter out tables that match the exclusion criteria
+eligible_tables = [table.name for table in source_tables if not (table.name.startswith('__apply') or table.name.endswith('__ghg'))]
+
+# Initialize progress tracker
+progress_tracker = []
+
+# Perform data comparison for each eligible table
+for table_name in eligible_tables:
+    result = compare_table(table_name)
+    progress_tracker.append(result)
+
+# Display progress using Databricks graph
+display(progress_tracker)
