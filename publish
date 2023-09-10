@@ -1,3 +1,118 @@
-As this is a test environment and we don't have real users or agents coming through CDL as in the production system, it has been decided to create manipulated test data in both DIM_EMPLOYEE and DIM_CONTACT_CENTRE_EMP tables. Afterward, we will refresh the Fact tables to ensure they contain some data. It is expected that the fact table refresh will be completed before today. Adelina will confirm this.
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+from pyspark.sql import functions as F
 
-In addition to Mahesh's comment, there is a defect (DCD-38136) related to missing history data in the goldpolicy.dim_employee table. The defect is currently under analysis, and I will provide an update once there is more information available.
+# Create a Spark session
+spark = SparkSession.builder.appName("TableComparison").getOrCreate()
+
+# Define source and destination databases
+source_db = "source_database"
+destination_db = "destination_database"
+
+# Define the timestamp range
+start_timestamp = "2023-08-30T08:43:28.123+0000"
+end_timestamp = "2023-09-04T08:43:28.123+0000"
+
+# Get the list of tables to compare
+source_tables = spark.sql(f"SHOW TABLES IN {source_db}").filter(
+    ~col("tableName").startswith("__apply") &
+    ~col("tableName").endswith("_table") &
+    ~col("tableName").endswith("_prov_codes")
+)
+
+destination_tables = spark.sql(f"SHOW TABLES IN {destination_db}").filter(
+    ~col("tableName").startswith("__apply") &
+    ~col("tableName").endswith("_table") &
+    ~col("tableName").endswith("_prov_codes")
+)
+
+# Initialize a list to store comparison results
+results = []
+
+# Loop through the tables and perform comparisons
+for source_table_row in source_tables.collect():
+    table_name = source_table_row["tableName"]
+    
+    # Check if the table exists in the destination database
+    if destination_tables.filter(col("tableName") == table_name).count() == 0:
+        results.append((table_name, "Table missing in destination", None, None, None, "Table missing in destination"))
+        continue
+    
+    # Get the schema of the source and destination tables
+    source_schema = spark.sql(f"DESCRIBE {source_db}.{table_name}")
+    destination_schema = spark.sql(f"DESCRIBE {destination_db}.{table_name}")
+    
+    # Check if the column counts match
+    if source_schema.count() != destination_schema.count():
+        results.append((table_name, "DDL mismatch", None, None, None, "DDL mismatch"))
+        continue
+    
+    # Check if column data types match
+    source_column_types = [(row['col_name'], row['data_type']) for row in source_schema.collect()]
+    destination_column_types = [(row['col_name'], row['data_type']) for row in destination_schema.collect()]
+    
+    if source_column_types != destination_column_types:
+        results.append((table_name, "Column data type mismatch", None, None, None, "Column data type mismatch"))
+        continue
+    
+    # Filter records based on the timestamp range
+    source_data_sql = f"SELECT * FROM {source_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+    destination_data_sql = f"SELECT * FROM {destination_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+    
+    source_data = spark.sql(source_data_sql)
+    destination_data = spark.sql(destination_data_sql)
+    
+    # Exclude columns like 'source_system' and 'valid_from_dt' from the data comparison
+    columns_to_exclude = ['source_system', 'valid_from_dt']
+    
+    source_columns = [col_name for col_name in source_data.columns if col_name not in columns_to_exclude]
+    destination_columns = [col_name for col_name in destination_data.columns if col_name not in columns_to_exclude]
+    
+    source_data = source_data.select(source_columns)
+    destination_data = destination_data.select(destination_columns)
+    
+    source_count = source_data.count()
+    destination_count = destination_data.count()
+    
+    # Perform data comparison
+    if source_count > 0 and destination_count > 0:
+        if source_data.subtract(destination_data).count() == 0 and destination_data.subtract(source_data).count() == 0:
+            result_status = "Data matches"
+        else:
+            result_status = "Data mismatch"
+    else:
+        result_status = "No data to compare"
+    
+    results.append((table_name, source_count, destination_count, source_data_sql, destination_data_sql, result_status))
+
+# Create a DataFrame from the results list
+result_df = spark.createDataFrame(results, ["tablename", "source_count", "destination_count", "source_data_sql", "destination_data_sql", "result_status"])
+
+# Show the result DataFrame
+result_df.show()
+
+# Create HTML content with colored status indicators
+html_content = """<table border="1"><tr><th>Table Name</th><th>Source Count</th><th>Destination Count</th><th>Result Status</th></tr>"""
+
+for row in result_df.collect():
+    table_name = row["tablename"]
+    source_count = row["source_count"]
+    destination_count = row["destination_count"]
+    result_status = row["result_status"]
+    
+    if result_status == "Data matches":
+        status_color = "green"
+    elif result_status == "Data mismatch" or result_status == "Column data type mismatch":
+        status_color = "red"
+    else:
+        status_color = "yellow"
+    
+    html_content += f"""<tr><td>{table_name}</td><td>{source_count}</td><td>{destination_count}</td><td style="background-color:{status_color}">{result_status}</td></tr>"""
+
+html_content += "</table>"
+
+# Display the HTML content
+displayHTML(html_content)
+
+# Store the result DataFrame in a temporary table
+result_df.createOrReplaceTempView("comparison_result")
