@@ -1,64 +1,43 @@
-# Import necessary libraries
+# Databricks code
 from pyspark.sql import SparkSession
-import databricks.koalas as ks
-from pyspark.sql.functions import col
-import datetime
 
-# Define your source and destination database configurations
-source_database = "your_source_database"
-destination_database = "your_destination_database"
-source_start_date = "2023-08-30T08:43:28.123+0000"
-source_end_date = "2023-09-04T08:43:28.123+0000"
+# Define parameters
+source_database_name = "source_db"
+destination_database_name = "destination_db"
+start_date = "2023-08-30T8:43:28.123+0000"
+end_date = "2023-09-04T8:43:28.123+0000"
+sequence_by_column = "sequence_column"
+exclusion_table_patterns = ["__apply*", "*_table", "*_prov_codes"]
+exclusion_column_names = ["source_system", "valid_from_dt"]
 
-# Initialize a Spark session
+# Create a Spark session
 spark = SparkSession.builder.appName("DataComparison").getOrCreate()
 
-# Get a list of tables to compare, excluding the specified tables and columns
-source_tables = spark.sql(f"SHOW TABLES IN {source_database}").filter(
-    ~col("tableName").like("__apply%") &
-    ~col("tableName").like("%_table") &
-    ~col("tableName").like("%_prov_codes")
-).select("tableName").collect()
-
-# Define a function to compare data between source and destination tables
-def compare_tables(source_table_name, source_start_date, source_end_date):
-    try:
-        # Get sample data from the source table based on sequence_by column and date range
-        source_df = ks.sql(f"""
-            SELECT *
-            FROM {source_database}.{source_table_name}
-            WHERE sequence_by BETWEEN '{source_start_date}' AND '{source_end_date}'
-            LIMIT 50
-        """).to_spark()
-
-        # Check if the table exists in the destination database
-        if spark.catalog.tableExists(f"{destination_database}.{source_table_name}"):
-            destination_df = spark.table(f"{destination_database}.{source_table_name}")
-
-            # Compare data between source and destination
-            if source_df.subtract(destination_df).count() == 0:
-                return f"{source_table_name}: Data matches"
-            else:
-                return f"{source_table_name}: Data does not match"
+# Function to compare tables
+def compare_tables(source_table_name, destination_table_name):
+    # Check if the table exists in the destination database
+    if destination_table_name not in spark.catalog.listTables(destination_database_name):
+        print(f"Table '{destination_table_name}' missing in destination.")
+    else:
+        # Compare column counts
+        source_columns = spark.catalog.listColumns(source_database_name, source_table_name)
+        destination_columns = spark.catalog.listColumns(destination_database_name, destination_table_name)
+        
+        if len(source_columns) != len(destination_columns):
+            print(f"DDL mismatch for '{destination_table_name}': Column counts do not match.")
         else:
-            return f"{source_table_name}: Table missing in destination"
-    except Exception as e:
-        return f"{source_table_name}: Error - {str(e)}"
+            # Perform data comparison
+            # You can implement your data comparison logic here
 
-# Compare tables and show live progress
-results = []
-total_tables = len(source_tables)
-progress = 0
+# Iterate through tables in the source database
+for table_info in spark.catalog.listTables(source_database_name):
+    source_table_name = table_info.name
+    
+    # Check if the table matches exclusion patterns
+    if any(pattern in source_table_name for pattern in exclusion_table_patterns):
+        continue
+    
+    compare_tables(source_table_name, source_table_name)  # Assume same table name in destination
 
-for table_row in source_tables:
-    table_name = table_row["tableName"]
-    result = compare_tables(table_name, source_start_date, source_end_date)
-    results.append(result)
-    progress += 1
-    percentage_complete = (progress / total_tables) * 100
-
-    # Update progress in Databricks graph
-    dbutils.notebook.exit(percentage_complete, f"Progress: {percentage_complete}%")
-
-# Display the results
-results
+# Stop the Spark session
+spark.stop()
