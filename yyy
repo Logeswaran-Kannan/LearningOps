@@ -1,43 +1,46 @@
+# Import necessary libraries
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# Initialize Spark session
-spark = SparkSession.builder \
-    .appName("DataComparison") \
-    .getOrCreate()
+# Create a Spark session
+spark = SparkSession.builder.appName("DataComparison").getOrCreate()
 
-# Define the source and destination databases and tables
-source_database = "source_db"
-destination_database = "destination_db"
-sample_size = 50  # Number of sample records to compare
+# Define source and destination databases
+source_db = "source_database_name"
+dest_db = "destination_database_name"
 
-# List tables in the source database and filter out tables to exclude
-source_tables = spark.sql(f"SHOW TABLES IN {source_database}").filter(
-    ~col("tableName").startswith("__apply") &
-    ~col("tableName").endswith("__ghg")
-)
+# Get the list of tables in the source and destination databases
+source_tables = spark.catalog.listTables(source_db)
+dest_tables = spark.catalog.listTables(dest_db)
 
-for row in source_tables.collect():
-    table_name = row["tableName"]
-
-    # Skip excluded columns
-    source_df = spark.sql(f"SELECT * FROM {source_database}.{table_name}").drop("source_system", "valid_from_dt")
-    
+# Function to perform data comparison for a table
+def compare_table_data(table_name):
     try:
-        # Load the destination table
-        destination_df = spark.sql(f"SELECT * FROM {destination_database}.{table_name}").drop("source_system", "valid_from_dt")
+        # Check if the table exists in both databases
+        if table_name in source_tables and table_name in dest_tables:
+            # Exclude columns like 'source_system' and 'valid_from_dt'
+            source_data = spark.sql(f"SELECT * FROM {source_db}.{table_name} WHERE timestamp_column BETWEEN '2023-08-30T08:43:28.123+0000' AND '2023-09-04T08:43:28.123+0000'").select([col(c) for c in source_tables[table_name].schema.fieldNames if c not in ['source_system', 'valid_from_dt']])
+            dest_data = spark.sql(f"SELECT * FROM {dest_db}.{table_name} WHERE timestamp_column BETWEEN '2023-08-30T08:43:28.123+0000' AND '2023-09-04T08:43:28.123+0000'").select([col(c) for c in dest_tables[table_name].schema.fieldNames if c not in ['source_system', 'valid_from_dt']])
 
-        # Take a sample from both source and destination tables
-        source_sample = source_df.sample(False, sample_size / source_df.count())
-        destination_sample = destination_df.sample(False, sample_size / destination_df.count())
-
-        # Compare the data
-        if source_sample.subtract(destination_sample).count() == 0 and destination_sample.subtract(source_sample).count() == 0:
-            print(f"Table '{table_name}' data matches between source and destination databases.")
+            # Check if the count is greater than 0 in both databases
+            if source_data.count() > 0 and dest_data.count() > 0:
+                # Compare the data
+                if source_data.subtract(dest_data).isEmpty() and dest_data.subtract(source_data).isEmpty():
+                    print(f"Data in table {table_name} is identical in both databases.")
+                else:
+                    print(f"Data in table {table_name} is different between the databases.")
+            else:
+                print(f"Count is 0 in one of the databases for table {table_name}. Skipping comparison.")
         else:
-            print(f"Table '{table_name}' data does not match between source and destination databases.")
-
+            print(f"Table {table_name} is missing in one of the databases.")
     except Exception as e:
-        print(f"Table '{table_name}' missing in destination database. Error: {str(e)}")
+        print(f"Error comparing table {table_name}: {str(e)}")
+
+# Iterate through the tables and perform data comparison
+for table in source_tables:
+    table_name = table.name
+    if not (table_name.startswith("__apply") or table_name.endswith("__ghg")):
+        compare_table_data(table_name)
 
 # Stop the Spark session
 spark.stop()
