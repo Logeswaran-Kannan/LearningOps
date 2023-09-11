@@ -40,43 +40,42 @@ for table_name in tables_to_compare:
     if source_schema.count() != destination_schema.count():
         results.append((table_name, "DDL mismatch", None, None, None, "DDL mismatch"))
         continue
-    
+
     # Check if column data types match
     source_column_types = [(row['col_name'], row['data_type']) for row in source_schema.collect()]
     destination_column_types = [(row['col_name'], row['data_type']) for row in destination_schema.collect()]
-    
+
     if source_column_types != destination_column_types:
-        results.append((table_name, "Column data type mismatch", None, None, None, "Column data type mismatch"))
-        continue
-    
-    # Filter records based on the timestamp range
-    source_data_sql = f"SELECT * FROM {source_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
-    destination_data_sql = f"SELECT * FROM {destination_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
-    
-    source_data = spark.sql(source_data_sql)
-    destination_data = spark.sql(destination_data_sql)
-    
-    # Exclude columns like 'source_system' and 'valid_from_dt' from the data comparison
-    columns_to_exclude = ['source_system', 'valid_from_dt']
-    
-    source_columns = [col_name for col_name in source_data.columns if col_name not in columns_to_exclude]
-    destination_columns = [col_name for col_name in destination_data.columns if col_name not in columns_to_exclude]
-    
-    source_data = source_data.select(source_columns)
-    destination_data = destination_data.select(destination_columns)
-    
-    source_count = source_data.count()
-    destination_count = destination_data.count()
-    
-    # Perform data comparison
-    if source_count > 0 and destination_count > 0:
-        if source_data.subtract(destination_data).count() == 0 and destination_data.subtract(source_data).count() == 0:
-            result_status = "Data matches"
-        else:
-            result_status = "Data mismatch"
+        result_status = "Column data type mismatch"
     else:
-        result_status = "No data to compare"
-    
+        # Filter records based on the timestamp range
+        source_data_sql = f"SELECT * FROM {source_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+        destination_data_sql = f"SELECT * FROM {destination_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+
+        source_data = spark.sql(source_data_sql)
+        destination_data = spark.sql(destination_data_sql)
+
+        # Exclude columns like 'source_system' and 'valid_from_dt' from the data comparison
+        columns_to_exclude = ['source_system', 'valid_from_dt']
+
+        source_columns = [col_name for col_name in source_data.columns if col_name not in columns_to_exclude]
+        destination_columns = [col_name for col_name in destination_data.columns if col_name not in columns_to_exclude]
+
+        source_data = source_data.select(source_columns)
+        destination_data = destination_data.select(destination_columns)
+
+        source_count = source_data.count()
+        destination_count = destination_data.count()
+
+        # Perform data comparison
+        if source_count > 0 and destination_count > 0:
+            if source_data.subtract(destination_data).count() == 0 and destination_data.subtract(source_data).count() == 0:
+                result_status = "Data matches"
+            else:
+                result_status = "Data mismatch"
+        else:
+            result_status = "No data to compare"
+
     results.append((table_name, source_count, destination_count, source_data_sql, destination_data_sql, result_status))
 
 # Create a DataFrame from the results list
