@@ -6,6 +6,9 @@ df = spark.read.format("delta").load(delta_table_path)
 
 # Write the DataFrame as a Delta table
 df.write.format("delta").saveAsTable("mydb.my_delta_table")
+
+columns_to_drop = ["_dropexpt", "_hertop"]
+df = df.drop(*columns_to_drop)
 _________________________________________________
 
 
