@@ -1,60 +1,49 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
-from datetime import datetime
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("DatabaseComparison").getOrCreate()
+# Create a Spark session
+spark = SparkSession.builder.appName("ColumnLengthComparison").getOrCreate()
 
-# Define the database and table names
+# Define the database names and table name
 source_db_name = "source_database"
 target_db_name = "target_database"
 table_name = "your_table_name"
-date_range_start = "2023-08-30T08:43:28.123+0000"
-date_range_end = "2023-09-04T08:43:28.123+0000"
 
-# Define the columns to be excluded
-exclude_columns = ['starttmp', 'dftr']
-
-# Load data from the source and target tables
+# Read data from source and target databases
 source_df = spark.table(f"{source_db_name}.{table_name}")
 target_df = spark.table(f"{target_db_name}.{table_name}")
 
-# Filter records based on the date range
-date_format = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
-start_date = datetime.strptime(date_range_start, date_format)
-end_date = datetime.strptime(date_range_end, date_format)
+# Define columns to be excluded
+excluded_columns = ['starttmp', 'dftr']
 
-source_df = source_df.filter((col("sequence_by") >= start_date) & (col("sequence_by") <= end_date))
-target_df = target_df.filter((col("sequence_by") >= start_date) & (col("sequence_by") <= end_date))
+# Filter records based on the sequence_by column
+start_time = "2023-08-30T8:43:28.123+0000"
+end_time = "2023-09-04T8:43:28.123+0000"
+source_df = source_df.filter((col("sequence_by") >= start_time) & (col("sequence_by") <= end_time))
+target_df = target_df.filter((col("sequence_by") >= start_time) & (col("sequence_by") <= end_time))
 
-# Get the schema information for both dataframes
-source_schema = source_df.schema
-target_schema = target_df.schema
+# Compare column lengths and find mismatches
+mismatch_columns = []
+for column in source_df.columns:
+    if column not in excluded_columns:
+        source_length = source_df.withColumn("source_length", length(col(column))).select("source_length")
+        target_length = target_df.withColumn("target_length", length(col(column))).select("target_length")
+        
+        mismatch_count = source_length.join(target_length, source_length.source_length != target_length.target_length).count()
+        
+        if mismatch_count > 0:
+            mismatch_columns.append((table_name, column, source_length.first().source_length, target_length.first().target_length))
 
-# Compare column lengths and identify mismatches
-mismatched_columns = []
+# Display the results in tabular form
+result_df = spark.createDataFrame(mismatch_columns, ["tablename", "mismatch_column", "source_length", "target_length"])
+result_df.show()
 
-for source_col, target_col in zip(source_schema, target_schema):
-    if source_col.name not in exclude_columns and target_col.name not in exclude_columns:
-        source_length = source_df.select(col(source_col.name).cast("string")).na.fill("").withColumn("length", col(source_col.name).cast("string").cast("int")).agg({"length": "max"}).collect()[0][0]
-        target_length = target_df.select(col(target_col.name).cast("string")).na.fill("").withColumn("length", col(target_col.name).cast("string").cast("int")).agg({"length": "max"}).collect()[0][0]
+# Generate SQL queries with excluded columns
+source_sql = f"SELECT {','.join([col for col in source_df.columns if col not in excluded_columns])} FROM {source_db_name}.{table_name} WHERE sequence_by >= '{start_time}' AND sequence_by <= '{end_time}'"
+target_sql = f"SELECT {','.join([col for col in target_df.columns if col not in excluded_columns])} FROM {target_db_name}.{table_name} WHERE sequence_by >= '{start_time}' AND sequence_by <= '{end_time}'"
 
-        if source_length != target_length:
-            mismatched_columns.append({
-                "Table Name": table_name,
-                "Mismatched Column": source_col.name,
-                "Source Length": source_length,
-                "Target Length": target_length,
-                "Source SQL": source_df.select([col for col in source_schema if col.name not in exclude_columns]).distinct().limit(1).toPandas().to_string(index=False),
-                "Target SQL": target_df.select([col for col in target_schema if col.name not in exclude_columns]).distinct().limit(1).toPandas().to_string(index=False)
-            })
-
-# Display the results in a tabular format
-if len(mismatched_columns) > 0:
-    result_df = spark.createDataFrame(mismatched_columns)
-    result_df.show(truncate=False)
-else:
-    print("No mismatched columns found.")
+print(f"Source SQL Query:\n{source_sql}")
+print(f"Target SQL Query:\n{target_sql}")
 
 # Stop the Spark session
 spark.stop()
