@@ -1,53 +1,112 @@
-Subject: Weekend Support Preprod Test Summary Results
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+from pyspark.sql import functions as F
 
-Dear Team,
+# Create a Spark session
+spark = SparkSession.builder.appName("TableComparison").getOrCreate()
 
-I hope this email finds you well. I wanted to provide you with a detailed summary of the test results from our weekend support activities on the preprod environment. Please see below for a breakdown of the findings:
+# Define source and destination databases
+source_db = "source_database"
+destination_db = "destination_database"
 
-1. Analytical Layer - Core & RTP:
+# Define the timestamp range
+start_timestamp = "2023-08-30T08:43:28.123+0000"
+end_timestamp = "2023-09-04T08:43:28.123+0000"
 
-In the data comparison between spoke and non-custom workflows, only 10% of the tables matched during automated test execution.
-Approximately 26% of the tables exhibited datatype or data mismatches.
-A significant 64% of the tables had no data available for data comparison.
-To address the 64% of tables with no data, we have two potential options:
-Reactivate the non-custom workflow in the preprod environment, which was previously shut down for cost reasons.
-Request exceptional access for the testing team in the prod environment, as they currently lack permission to access it.
-Orchestration for the latest load has also failed.
-2. Analytical Layer - SI & RTP:
+# Define the list of tables to compare
+tables_to_compare = ["table1", "table2", "table3"]
 
-Due to datatype and count mismatches, none of the tables met the pass criteria during automated test execution.
-Further analysis is in progress.
-The table "si_quote_req_enraw" is missing in the bespoke schema.
-3. Silver Layer Quote:
+# Initialize a list to store comparison results
+results = []
 
-Initial data load is complete, with around 5% of validation completed.
-Agent ID is not loaded in the "quote_risk_header" table.
-Only web users are present in the quote result table.
-We expect that only three Silver quote tables should be deployed, but all Silver quotes are currently loaded. We need confirmation on this.
-Incremental job workflow for the Silver Layer also failed.
-4. Silver Layer - Release 2 Scope:
+# Loop through the specified tables and perform comparisons
+for table_name in tables_to_compare:
+    
+    # Check if the table exists in the source database
+    if spark.sql(f"SHOW TABLES IN {source_db}").filter(col("tableName") == table_name).count() == 0:
+        results.append((table_name, "Table missing in source", None, None, None, "Table missing in source"))
+        continue
+    
+    # Check if the table exists in the destination database
+    if spark.sql(f"SHOW TABLES IN {destination_db}").filter(col("tableName") == table_name).count() == 0:
+        results.append((table_name, "Table missing in destination", None, None, None, "Table missing in destination"))
+        continue
+    
+    # Get the schema of the source and destination tables
+    source_schema = spark.sql(f"DESCRIBE {source_db}.{table_name}")
+    destination_schema = spark.sql(f"DESCRIBE {destination_db}.{table_name}")
+    
+    # Check if the column counts match
+    if source_schema.count() != destination_schema.count():
+        results.append((table_name, "DDL mismatch", None, None, None, "DDL mismatch"))
+        continue
+    
+    # Check if column data types match
+    source_column_types = [(row['col_name'], row['data_type']) for row in source_schema.collect()]
+    destination_column_types = [(row['col_name'], row['data_type']) for row in destination_schema.collect()]
+    
+    if source_column_types != destination_column_types:
+        results.append((table_name, "Column data type mismatch", None, None, None, "Column data type mismatch"))
+        continue
+    
+    # Filter records based on the timestamp range
+    source_data_sql = f"SELECT * FROM {source_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+    destination_data_sql = f"SELECT * FROM {destination_db}.{table_name} WHERE sequence_by BETWEEN '{start_timestamp}' AND '{end_timestamp}'"
+    
+    source_data = spark.sql(source_data_sql)
+    destination_data = spark.sql(destination_data_sql)
+    
+    # Exclude columns like 'source_system' and 'valid_from_dt' from the data comparison
+    columns_to_exclude = ['source_system', 'valid_from_dt']
+    
+    source_columns = [col_name for col_name in source_data.columns if col_name not in columns_to_exclude]
+    destination_columns = [col_name for col_name in destination_data.columns if col_name not in columns_to_exclude]
+    
+    source_data = source_data.select(source_columns)
+    destination_data = destination_data.select(destination_columns)
+    
+    source_count = source_data.count()
+    destination_count = destination_data.count()
+    
+    # Perform data comparison
+    if source_count > 0 and destination_count > 0:
+        if source_data.subtract(destination_data).count() == 0 and destination_data.subtract(source_data).count() == 0:
+            result_status = "Data matches"
+        else:
+            result_status = "Data mismatch"
+    else:
+        result_status = "No data to compare"
+    
+    results.append((table_name, source_count, destination_count, source_data_sql, destination_data_sql, result_status))
 
-So far, only 2% of the validation is completed.
-User ID details are missing in the broker policy.
-5. Province Code:
+# Create a DataFrame from the results list
+result_df = spark.createDataFrame(results, ["tablename", "source_count", "destination_count", "source_data_sql", "destination_data_sql", "result_status"])
 
-The load is completed, but it does not reflect the latest reference details.
-Unfortunately, testing in the preprod environment is currently not possible.
-6. Source Data Issue:
+# Show the result DataFrame
+result_df.show()
 
-Testing for this issue has not yet begun.
-7. Gold Quote & Policy:
+# Create HTML content with colored status indicators
+html_content = """<table border="1"><tr><th>Table Name</th><th>Source Count</th><th>Destination Count</th><th>Result Status</th></tr>"""
 
-Data load has failed due to the aforementioned Silver data issue and the missing Agent ID.
-8. Gold Reference:
+for row in result_df.collect():
+    table_name = row["tablename"]
+    source_count = row["source_count"]
+    destination_count = row["destination_count"]
+    result_status = row["result_status"]
+    
+    if result_status == "Data matches":
+        status_color = "green"
+    elif result_status == "Data mismatch" or result_status == "Column data type mismatch":
+        status_color = "red"
+    else:
+        status_color = "yellow"
+    
+    html_content += f"""<tr><td>{table_name}</td><td>{source_count}</td><td>{destination_count}</td><td style="background-color:{status_color}">{result_status}</td></tr>"""
 
-Data load has failed due to connectivity issues with DAVE 1 for the DIM_EMPLOYEE.
-9. DR Jobs:
+html_content += "</table>"
 
-Testing for DR (Disaster Recovery) jobs has not yet started.
-We recognize that there are several challenges and issues to address based on these results. Please let us know how we can proceed and prioritize our efforts to ensure the stability and reliability of our preprod environment.
+# Display the HTML content
+displayHTML(html_content)
 
-Thank you for your attention to these matters, and we look forward to your guidance on the next steps.
-
-Best Regards,
-[Your Name]
+# Store the result DataFrame in a temporary table
+result_df.createOrReplaceTempView("comparison_result")
