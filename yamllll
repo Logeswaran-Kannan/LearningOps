@@ -1,3 +1,16 @@
+# Replace 'mnt_path' with your actual mounted path
+delta_table_path = 'mnt_path/my_delta_table'
+
+# Create a DataFrame
+df = spark.read.format("delta").load(delta_table_path)
+
+# Write the DataFrame as a Delta table
+df.write.format("delta").saveAsTable("mydb.my_delta_table")
+_________________________________________________
+
+
+
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 from pyspark.sql import functions as F
