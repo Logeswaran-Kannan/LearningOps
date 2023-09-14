@@ -1,91 +1,47 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when
-
-# Initialize SparkSession
-spark = SparkSession.builder.appName("PatternAnalysis").getOrCreate()
-
-# Define the Delta table name (you can pass this as an input)
-table_name = "your_delta_table_name"
-
-# Read the Delta table into a DataFrame
-df = spark.read.format("delta").table(table_name)
-
-# Define a list of columns to analyze (you can customize this)
-columns_to_analyze = df.columns
-
-# Create a DataFrame to store results
-results = []
-
-# Loop through each column and perform pattern analysis
-for column in columns_to_analyze:
-    # Calculate some basic statistics and patterns for each column
-    column_analysis = df.select(
-        col(column),
-        when(col(column).isNull(), 1).otherwise(0).alias("is_null"),
-        when(col(column).isNotNull() & col(column).cast("string").rlike("^\\d+$"), 1).otherwise(0).alias("is_numeric"),
-        when(col(column).isNotNull() & col(column).cast("string").rlike("^[A-Za-z]+$"), 1).otherwise(0).alias("is_alpha"),
-        when(col(column).isNotNull() & col(column).cast("string").rlike("^[A-Za-z0-9]+$"), 1).otherwise(0).alias("is_alphanumeric"),
-    ).groupBy().sum().collect()[0]
-
-    # Append the results to the list
-    results.append({
-        "Column": column,
-        "Null_Count": column_analysis["is_null"],
-        "Numeric_Pattern_Count": column_analysis["is_numeric"],
-        "Alpha_Pattern_Count": column_analysis["is_alpha"],
-        "Alphanumeric_Pattern_Count": column_analysis["is_alphanumeric"],
-    })
-
-# Create a DataFrame from the results list
-results_df = spark.createDataFrame(results)
-
-# Display the pattern analysis results
-results_df.show()
----------------------------------------
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
-from pyspark.sql.window import Window
-from pyspark.sql import functions as F
-import pandas as pd
+from pyspark.sql.functions import col, count, when
+from pyspark.sql.types import StringType
 
 # Initialize a Spark session
 spark = SparkSession.builder.appName("ValuePatternAnalysis").getOrCreate()
 
-# Function to perform Z-score anomaly detection on numerical columns
-def z_score_anomaly_detection(df, column_name):
-    window_spec = Window.orderBy(F.monotonically_increasing_id())
+# Replace with your database and table names
+database_name = "your_database_name"
+table_name = "your_table_name"
 
-    # Calculate mean and standard deviation
-    mean_std_df = df.withColumn("mean", F.avg(col(column_name)).over(window_spec)) \
-                    .withColumn("stddev", F.stddev(col(column_name)).over(window_spec))
+# Read data from the specified table
+table_df = spark.table(f"{database_name}.{table_name}")
 
-    # Calculate Z-score
-    z_score_df = mean_std_df.withColumn("z_score", (col(column_name) - col("mean")) / col("stddev"))
+# Define a function to perform pattern analysis for a column
+def analyze_column(column_name):
+    # Calculate the count of distinct values for the column
+    distinct_count = table_df.select(column_name).distinct().count()
 
-    # Define a threshold for anomaly detection (e.g., z_score > 3)
-    threshold = 3
+    # Calculate the total count of values in the column
+    total_count = table_df.select(column_name).count()
 
-    # Identify anomalies
-    anomalies_df = z_score_df.filter(col("z_score") > threshold)
+    # Calculate the ratio of distinct values to total values
+    distinct_ratio = distinct_count / total_count
 
-    return anomalies_df
+    # Define a threshold for anomaly detection (you can adjust this threshold)
+    anomaly_threshold = 0.05  # For example, 5% distinct values could be considered an anomaly
 
-# Input table name
-table_name = "your_delta_table_name"
+    # Determine if the column has an anomaly based on the threshold
+    is_anomaly = when(distinct_ratio < anomaly_threshold, "Anomaly").otherwise("Normal")
 
-# Read data from the Delta table
-delta_df = spark.read.format("delta").table(table_name)
+    return distinct_count, total_count, is_anomaly
 
-# Perform anomaly detection on numerical columns
-numerical_columns = [col_name for col_name, col_type in delta_df.dtypes if col_type in ["double", "float", "int"]]
-anomalies = {}
+# Perform pattern analysis for each column in the table
+column_analyses = []
+for column in table_df.columns:
+    distinct_count, total_count, is_anomaly = analyze_column(column)
+    column_analyses.append((column, distinct_count, total_count, is_anomaly))
 
-for column in numerical_columns:
-    anomalies[column] = z_score_anomaly_detection(delta_df, column)
+# Create a DataFrame with the results
+result_df = spark.createDataFrame(column_analyses, ["Column", "DistinctCount", "TotalCount", "AnomalyStatus"])
 
-# Convert results to Pandas DataFrame for further analysis or visualization
-anomalies_df = pd.concat(anomalies.values(), ignore_index=True)
+# Show the results
+result_df.show()
 
-# Display or save the anomalies DataFrame as needed
-anomalies_df.show()
+# Stop the Spark session
+spark.stop()
