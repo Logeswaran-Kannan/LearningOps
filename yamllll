@@ -1,35 +1,40 @@
 # Import necessary libraries
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 import pandas as pd
-from sklearn.ensemble import IsolationForest
+import matplotlib.pyplot as plt
 
-# Function to perform advanced pattern analysis
-def analyze_table_anomalies(database_name, table_name):
-    # Read data from the specified table
-    query = f"SELECT * FROM {database_name}.{table_name}"
-    df = spark.sql(query).toPandas()
+# Initialize a Spark session
+spark = SparkSession.builder.appName("DataPatternAnalysis").getOrCreate()
 
-    # Loop through columns and perform anomaly detection
-    anomalies = {}
-    for column in df.columns:
-        # Skip non-numeric columns (you can customize this)
-        if not pd.api.types.is_numeric_dtype(df[column]):
-            continue
+# Define a function to analyze data patterns for a given table
+def analyze_data_patterns(database_name, table_name):
+    # Read the table into a DataFrame
+    df = spark.table(f"{database_name}.{table_name}")
 
-        # Perform anomaly detection using Isolation Forest
-        clf = IsolationForest(contamination=0.05)  # Adjust contamination based on your data
-        X = df[[column]].values
-        clf.fit(X)
-        df[column + '_anomaly'] = clf.predict(X)
-        anomalies[column] = df[df[column + '_anomaly'] == -1]
+    # Iterate through each column
+    for column_name in df.columns:
+        # Check data type of the column
+        data_type = str(df.schema[column_name].dataType)
 
-    return anomalies
+        # Perform data analysis based on data type
+        if "string" in data_type:
+            # Example: Check for unique values or value counts
+            unique_values_count = df.select(column_name).distinct().count()
+            print(f"Column '{column_name}' has {unique_values_count} unique values.")
 
-# Example usage
-database_name = "your_database_name"
-table_name = "your_table_name"
-result = analyze_table_anomalies(database_name, table_name)
+        elif "integer" in data_type or "double" in data_type:
+            # Example: Calculate basic statistics
+            summary_stats = df.select(column_name).summary()
+            summary_stats.show()
 
-# Display the results
-for column, anomaly_df in result.items():
-    print(f"Anomalies in {column}:")
-    print(anomaly_df)
+            # Example: Visualize data distribution
+            data = df.select(column_name).toPandas()
+            plt.hist(data[column_name], bins=20)
+            plt.title(f"Distribution of '{column_name}'")
+            plt.show()
+
+        # Add more data type-specific analysis as needed
+
+# Call the function with your database and table name
+analyze_data_patterns("your_database_name", "your_table_name")
