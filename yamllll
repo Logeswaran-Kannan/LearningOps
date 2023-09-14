@@ -1,1 +1,43 @@
-=IF(B1="", NETWORKDAYS(A1, TODAY()), NETWORKDAYS(A1, B1))
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when
+
+# Initialize SparkSession
+spark = SparkSession.builder.appName("PatternAnalysis").getOrCreate()
+
+# Define the Delta table name (you can pass this as an input)
+table_name = "your_delta_table_name"
+
+# Read the Delta table into a DataFrame
+df = spark.read.format("delta").table(table_name)
+
+# Define a list of columns to analyze (you can customize this)
+columns_to_analyze = df.columns
+
+# Create a DataFrame to store results
+results = []
+
+# Loop through each column and perform pattern analysis
+for column in columns_to_analyze:
+    # Calculate some basic statistics and patterns for each column
+    column_analysis = df.select(
+        col(column),
+        when(col(column).isNull(), 1).otherwise(0).alias("is_null"),
+        when(col(column).isNotNull() & col(column).cast("string").rlike("^\\d+$"), 1).otherwise(0).alias("is_numeric"),
+        when(col(column).isNotNull() & col(column).cast("string").rlike("^[A-Za-z]+$"), 1).otherwise(0).alias("is_alpha"),
+        when(col(column).isNotNull() & col(column).cast("string").rlike("^[A-Za-z0-9]+$"), 1).otherwise(0).alias("is_alphanumeric"),
+    ).groupBy().sum().collect()[0]
+
+    # Append the results to the list
+    results.append({
+        "Column": column,
+        "Null_Count": column_analysis["is_null"],
+        "Numeric_Pattern_Count": column_analysis["is_numeric"],
+        "Alpha_Pattern_Count": column_analysis["is_alpha"],
+        "Alphanumeric_Pattern_Count": column_analysis["is_alphanumeric"],
+    })
+
+# Create a DataFrame from the results list
+results_df = spark.createDataFrame(results)
+
+# Display the pattern analysis results
+results_df.show()
