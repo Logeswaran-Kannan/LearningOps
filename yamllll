@@ -1,47 +1,59 @@
+# Import necessary libraries
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, count, when
-from pyspark.sql.types import StringType
+from pyspark.sql.functions import col
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.clustering import KMeans
+from pyspark.ml import Pipeline
+
+# Define the database and table names
+database_name = "your_database_name"
+table_name = "your_table_name"
 
 # Initialize a Spark session
 spark = SparkSession.builder.appName("ValuePatternAnalysis").getOrCreate()
 
-# Replace with your database and table names
-database_name = "your_database_name"
-table_name = "your_table_name"
-
 # Read data from the specified table
-table_df = spark.table(f"{database_name}.{table_name}")
+data = spark.sql(f"SELECT * FROM {database_name}.{table_name}")
 
-# Define a function to perform pattern analysis for a column
-def analyze_column(column_name):
-    # Calculate the count of distinct values for the column
-    distinct_count = table_df.select(column_name).distinct().count()
+# Define a list of column names for analysis
+columns_to_analyze = data.columns
 
-    # Calculate the total count of values in the column
-    total_count = table_df.select(column_name).count()
+# Create a list to store anomaly results for each column
+anomaly_results = []
 
-    # Calculate the ratio of distinct values to total values
-    distinct_ratio = distinct_count / total_count
+# Loop through each column and perform analysis
+for column in columns_to_analyze:
+    # Select the column for analysis
+    selected_data = data.select(col(column).cast("double").alias("features"))
+    
+    # Create a vector assembler
+    assembler = VectorAssembler(inputCols=["features"], outputCol="feature_vector")
+    
+    # Create a KMeans model for anomaly detection (you can choose another algorithm if needed)
+    kmeans = KMeans().setK(2).setSeed(1)  # Assuming 2 clusters for simplicity
+    
+    # Create a pipeline for the analysis
+    pipeline = Pipeline(stages=[assembler, kmeans])
+    
+    # Fit the pipeline to the data
+    model = pipeline.fit(selected_data)
+    
+    # Get the cluster centers
+    cluster_centers = model.stages[-1].clusterCenters()
+    
+    # Calculate anomaly score for each data point
+    anomalies = model.transform(selected_data).withColumn(
+        "anomaly_score", 
+        ((col("feature_vector")[0] - cluster_centers[0][0]) ** 2 + (col("feature_vector")[1] - cluster_centers[1][0]) ** 2) ** 0.5
+    )
+    
+    # Append the results to the anomaly_results list
+    anomaly_results.append((column, anomalies))
 
-    # Define a threshold for anomaly detection (you can adjust this threshold)
-    anomaly_threshold = 0.05  # For example, 5% distinct values could be considered an anomaly
-
-    # Determine if the column has an anomaly based on the threshold
-    is_anomaly = when(distinct_ratio < anomaly_threshold, "Anomaly").otherwise("Normal")
-
-    return distinct_count, total_count, is_anomaly
-
-# Perform pattern analysis for each column in the table
-column_analyses = []
-for column in table_df.columns:
-    distinct_count, total_count, is_anomaly = analyze_column(column)
-    column_analyses.append((column, distinct_count, total_count, is_anomaly))
-
-# Create a DataFrame with the results
-result_df = spark.createDataFrame(column_analyses, ["Column", "DistinctCount", "TotalCount", "AnomalyStatus"])
-
-# Show the results
-result_df.show()
+# Print or save the anomaly results as needed
+for column, anomalies in anomaly_results:
+    print(f"Anomaly analysis for column: {column}")
+    anomalies.show()
 
 # Stop the Spark session
 spark.stop()
