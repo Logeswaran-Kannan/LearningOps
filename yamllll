@@ -1,1 +1,1 @@
-To optimize Databricks compute costs for current production STRATA analytical workflows, high-level regression validation is performed on STRATA CORE, SI, and RTP tables.
+The initial scope of 18 silver tables has been narrowed down to 3, determined by their utilization in the final B2A report. Only these 3 tables are included in the testing scope, while the remaining tables are being migrated to production but are not part of the testing scope for release 1.
