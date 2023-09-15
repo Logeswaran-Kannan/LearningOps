@@ -1,1 +1,5 @@
-Thank you for your assistance, Hardeep. We have reserved a few minutes in your calendar to review the information. On Monday, Mitul will send out invitations to everyone for a cost analysis walkthrough.
+"We require two analyses:
+
+Compute Cost Comparison: We need to compare the compute costs between custom and non-custom Databricks clusters on a per-layer basis for each day. This analysis should include the number of runs and the total data loaded into the bronze layer. While the primary focus is on the analytical layer, we should also cover the other layers.
+
+Storage Cost Overview: We need a high-level overview of storage costs between the production and pre-production environments. This analysis doesn't require granularity at the project level."
