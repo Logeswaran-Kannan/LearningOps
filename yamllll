@@ -1,5 +1,1 @@
-"We require two analyses:
-
-Compute Cost Comparison: We need to compare the compute costs between custom and non-custom Databricks clusters on a per-layer basis for each day. This analysis should include the number of runs and the total data loaded into the bronze layer. While the primary focus is on the analytical layer, we should also cover the other layers.
-
-Storage Cost Overview: We need a high-level overview of storage costs between the production and pre-production environments. This analysis doesn't require granularity at the project level."
+To optimize Databricks compute costs for current production STRATA analytical workflows, high-level regression validation is performed on STRATA CORE, SI, and RTP tables.
