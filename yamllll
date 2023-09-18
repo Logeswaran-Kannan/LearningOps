@@ -1,9 +1,1 @@
-Source Data Issues Excluded: Source data issues, categorized as open defects, are excluded from TS02 Release 1 testing due to their resolution timeline being beyond project control. Known source data issues have impacted silver table granularity, potentially requiring post-release code changes.
-
-Limited Validation Period: Validation restricted to data from July 1st due to a high message volume. Of the 141 tables, 33 lack data for validation. Priority-listed tables were validated, reducing test coverage in favor of risk-based testing per project team acceptance.
-
-Resource Constraints in Lower Environments: Lower environment's resource and memory limitations prevented full orchestration validation. Although this issue persisted in preprod, the development team is confident it won't occur in production with greater capacity.
-
-Data Missing in Silver Layer: Data gaps observed in the lower test environment's silver layer final table due to CDL data lag, resolved in DAVE preprod by adjusting driver and non-driver table synchronization. While not occurring in the current preprod with less data, the risk remains for production.
-
-Historical Data UTC Fix: Historical data UTC fix not tested in preprod due to resource and memory constraints. This critical task is slated for execution during the production release.
+we are not currently executing any code against Sonar Cloud. All our automation frameworks exclusively operate within DevOps and target Databricks.
