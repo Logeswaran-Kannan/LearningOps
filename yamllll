@@ -1,4 +1,11 @@
 I've asked for some extra testing help from another project, and they currently have the bandwidth to support us. The best part is, they won't charge it to the Aurora project. Prijo and Nishant are onboard to assist with UAT. Prijo's got experience with B2A, so I believe it'll lighten our workload. Hope that works for you
 
 
-"Hello everyone, I've shared the comprehensive defect list along with their latest comments following our defect triage discussion. Please take a moment to update the ETA for each defect. This will be crucial for our release readiness planning next week. Note that this list excludes report issues, as they are currently in the SIT and UAT testing phase. Jeelani, could you also update us on the progress of test execution completion? This will help us calculate the high-level defect arrival ratio for the remaining pending test cases."
+Jeelani, I've noticed that some of the updates I specifically requested are missing from the status report. Could we make the test execution details more specific, rather than providing a very high-level overview? Specifically, I'd like to see:
+
+The overall test execution completion percentage for each entity without breaking it down into functional and business scenarios.
+Clarification on the discrepancies in defect counts between actual and the numbers provided here.
+Confirmation that the percentage of work remaining aligns appropriately with the severity of defects.
+Details on the percentage of work that's currently blocked and what can proceed.
+Most importantly, the estimated time required to complete the remaining percentage of unexecuted tasks.
+Having this data will significantly assist in coordinating with the project manager. Starting from Monday and until the release, could you please plan to review and include this information in your status reports before signing off for the day?
