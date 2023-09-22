@@ -1,1 +1,4 @@
 I've asked for some extra testing help from another project, and they currently have the bandwidth to support us. The best part is, they won't charge it to the Aurora project. Prijo and Nishant are onboard to assist with UAT. Prijo's got experience with B2A, so I believe it'll lighten our workload. Hope that works for you
+
+
+"Hello everyone, I've shared the comprehensive defect list along with their latest comments following our defect triage discussion. Please take a moment to update the ETA for each defect. This will be crucial for our release readiness planning next week. Note that this list excludes report issues, as they are currently in the SIT and UAT testing phase. Jeelani, could you also update us on the progress of test execution completion? This will help us calculate the high-level defect arrival ratio for the remaining pending test cases."
