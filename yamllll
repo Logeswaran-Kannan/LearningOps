@@ -1,3 +1,13 @@
-Just a quick heads-up – we've lined up a call between 1:30 PM and 2:00 PM to talk with Daniel about all the report observations, including UAT and SIT.
+Here's a quick rundown of the action items following our recent catch-up:
 
-Guy and Mahesh, I believe this time slot fits into your schedules?
+Guy clarified that everything is indeed working as expected. During our initial discussion, we all agreed that the requirement to split calls based on the source system falls outside the scope of the Aurora release.
+
+For Observations 2 and 3, Mahesh will touch base with Vinod to get insights into how quotes have been assigned to agents between the legacy and Echelon systems.
+
+Guy will take a closer look to uncover why something seems to be missing.
+
+There's a possibility that the missing element is related to a known production incident. In addition to this, 'Guy' will make the switch to the dataset to start fetching motor sales details from DAVE2 instead of the current DAVE1. Mahesh confirmed that the DAVE1 handshake will be removed as part of this release. Moving forward, both Home and Motor sales details will be sourced from DAVE 2. 'Guy' will make this change in preprod and conduct unit testing before rolling it out for UAT and SIT.
+
+Thanks for your attention to these items, and let's keep the momentum going!
+
+Cheers,
