@@ -9,3 +9,11 @@ Implement a time-travel mechanism.
 Consider having an analytical production copy in the preprod environment for post-release code comparison.
 Ensure that the POMI user validates post-release data as part of the UAT signoff.
 Looking ahead to future releases, we recognize the importance of data cleanup in lower environments and the need to maintain a single true schema in preprod to prevent data synchronization issues.
+
+
+-----
+
+
+We've divided this problem into two aspects: one concerning duplicates and the other related to data discrepancies. The duplicate problem has been successfully resolved in the lower test environment; we have verified that there are no duplicates. However, regarding the data issue, we've noticed some gaps in the years loaded, and this doesn't align with our current production data. Further investigation is needed in this area.
+
+Since the primary concern, which is the duplicates, has been addressed and resolved, we are categorizing this issue as a defect in S3. It has been assigned to the designer for in-depth analysis regarding the data aspect.
