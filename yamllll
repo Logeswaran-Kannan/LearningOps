@@ -1,11 +1,21 @@
-So, we're facing a bit of a challenge in preprod – our data isn't as clean as we need it to be. Both our bespoke and base schemas aren't showing the complete data set like they do in production. Here's what we've brainstormed so far:
+After the fix, revalidation showed a reduction in impact from 37 to 9 columns. The designer is further investigating these remaining 8 columns.
 
-Option 1: We could merge both bronze data sources into one, calling it Aurora bronze, and then process it into the analytical layer. It might take a few days to process, and even then, we're not entirely sure if it'll cover everything we need. We should cross-verify this against production.
+We are waiting for a fix in the lower environment due to missing data in preprod. Once the lower environment is fixed, we can validate in the test environment.
 
-Option 2: Another idea is to request a full refresh from CDL and run a clean setup in preprod with a single, true schema. This sounds ideal and would definitely reduce data sync-up problems. But, it would impact our production release and might take a few days to complete.
+None of the schemas in preprod contain a complete dataset like in production due to a checkpoint issue, posing a blocker for testing in preprod. Data cleanup is required.
 
-Option 3: Alternatively, we could copy the current production bronze data into preprod and set up a clean run using the base schema. This should reduce the missing data issue, although we're not entirely certain if copying data from production to preprod is the best approach.
+This issue was raised during report validation, indicating problems in Addon-related KPIs due to other open issues in underlying fact tables.
 
-Option 4: Given that preprod isn't the most stable right now, we might consider continuing our testing in the test environment. We can validate with minimal test data, but report testing will be impacted since it won't have all the agent details we see in production.
+This ticket pertains to workflow failures in the lower environment. We've managed to verify E2E runs, but challenges like low resource constraints and workflow failures are impacting our cost analysis.
 
-All these options have their pros and cons. We're on a tight schedule, so we really need to figure out the best way forward. If you guys have any other ideas, please feel free to pitch in. Let's work together to find the most practical solution.
+These defects are categorized as data missing issues related to DCD-45306.
+
+We are awaiting deployment for resolution.
+
+A discussion with the designer revealed a sample mismatch between DAVE1 and DAVE2. Investigation is ongoing.
+
+There is a data load issue between silver and gold. We are awaiting deployment for resolution.
+
+Revalidation is in progress at the source level, but it's also impacted by DCD-45306.
+
+We are currently waiting for deployments and continuing our investigations to resolve these issues promptly.
