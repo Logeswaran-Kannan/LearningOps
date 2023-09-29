@@ -1,3 +1,11 @@
-Yeah, so I've been tackling some other quote-related stuff, and I've asked them to double-check. But here's the deal: I haven't spotted any emails about this in my inbox yet. So, I've reached out to Jeelani and Akshay to see if they've got anything from either Eduard or Adelina since they were working on those tables.
+Based on our preprod validation, we've identified an issue in the Aurora Schema where some records appear to be missing. This discrepancy may be attributed to a checkpoint problem during the data processing from Event Hub. It's possible that data was read from the same Event Hub into various bronze layers, resulting in the loss of records that were already processed. To address this, we need to perform schema cleanup and reload data in the preprod environment.
 
-And for the second issue, Sutapa's on the case to figure out if those null agent IDs are popping up from the analytical layer."
+It's important to note that our preprod environment doesn't fully mirror production in terms of performance, data volume, and functionality. Therefore, we've made the decision to proceed with the planned production release on September 28th, with the approval of associated risks and a backup plan in place. We are confident that this issue will not occur in the production environment. However, it's worth mentioning that this issue will have an impact on downstream testing activities for the next release.
+
+For the current release, we have decided to implement the following recommendations:
+
+Maintain a local production current version code copy.
+Implement a time-travel mechanism.
+Consider having an analytical production copy in the preprod environment for post-release code comparison.
+Ensure that the POMI user validates post-release data as part of the UAT signoff.
+Looking ahead to future releases, we recognize the importance of data cleanup in lower environments and the need to maintain a single true schema in preprod to prevent data synchronization issues.
