@@ -1,3 +1,11 @@
-from pyspark.sql.functions import regexp_replace
+from pyspark.sql import SparkSession
 
-df = df.withColumn("column_name", regexp_replace("column_name", "\\?", "£"))
+spark = SparkSession.builder \
+    .appName("YourAppName") \
+    .getOrCreate()
+
+# Read DataFrame with UTF-8 encoding
+df = spark.read.option("encoding", "UTF-8").csv("your_file.csv")
+
+# Show the DataFrame to verify the encoding
+df.show()
