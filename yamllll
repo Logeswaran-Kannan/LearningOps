@@ -1,13 +1,3 @@
-from pyspark.sql import SparkSession
-
-# Create a SparkSession
-spark = SparkSession.builder.appName("Read CSV").getOrCreate()
-
-# Define the DBFS path to your CSV file
-dbfs_path = "dbfs:/path/to/your/csv/file.csv"
-
-# Read the CSV file with proper encoding
-df = spark.read.option("encoding", "utf-8").csv(dbfs_path, header=True, inferSchema=True)
-
-# Show the dataframe to verify the data
-df.show()
+UPDATE your_table
+SET text_column = REPLACE(text_column, CHAR(65533), '£')
+WHERE text_column LIKE '%' + CHAR(65533) + '%';
