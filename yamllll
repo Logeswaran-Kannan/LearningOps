@@ -9,3 +9,7 @@ df = spark.read.option("encoding", "UTF-8").csv("your_file.csv")
 
 # Show the DataFrame to verify the encoding
 df.show()
+-----------------
+
+import pandas as pd
+dararicks_dataframe = pd.read_csv('your_file.csv', encoding='utf-8')
