@@ -1,1 +1,19 @@
-ood morning, make sure to rest well and prioritize your health.
+from pyspark.sql import SparkSession
+
+# Initialize a SparkSession
+spark = SparkSession.builder.appName("Read CSV with Pound Sign").getOrCreate()
+
+# Define the path to your CSV file
+csv_file_path = "path/to/your/csv_file.csv"
+
+# Define the delimiter used in the CSV file (e.g., comma, tab, etc.)
+delimiter = ","
+
+# Define the character encoding used in the CSV file (e.g., utf-8)
+encoding = "utf-8"
+
+# Read the CSV file into a Spark DataFrame
+df = spark.read.option("delimiter", delimiter).option("encoding", encoding).csv(csv_file_path, header=True, inferSchema=True)
+
+# Show the DataFrame
+df.show()
