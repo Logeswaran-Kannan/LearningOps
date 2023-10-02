@@ -1,15 +1,13 @@
 from pyspark.sql import SparkSession
 
-spark = SparkSession.builder \
-    .appName("YourAppName") \
-    .getOrCreate()
+# Create a SparkSession
+spark = SparkSession.builder.appName("Read CSV").getOrCreate()
 
-# Read DataFrame with UTF-8 encoding
-df = spark.read.option("encoding", "UTF-8").csv("your_file.csv")
+# Define the DBFS path to your CSV file
+dbfs_path = "dbfs:/path/to/your/csv/file.csv"
 
-# Show the DataFrame to verify the encoding
+# Read the CSV file with proper encoding
+df = spark.read.option("encoding", "utf-8").csv(dbfs_path, header=True, inferSchema=True)
+
+# Show the dataframe to verify the data
 df.show()
------------------
-
-import pandas as pd
-dararicks_dataframe = pd.read_csv('your_file.csv', encoding='utf-8')
