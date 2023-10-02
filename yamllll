@@ -1,3 +1,1 @@
-UPDATE your_table
-SET text_column = REPLACE(text_column, CHAR(65533), '£')
-WHERE text_column LIKE '%' + CHAR(65533) + '%';
+df_replaced = df.withColumn("column_name", regexp_replace("column_name", "�", "£"))
