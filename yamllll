@@ -1,3 +1,2 @@
-Could you please clarify why we haven't received the defect status for today? I specifically mentioned to send the daily status, looping in the hub owner, and even followed up on the Teams channel. Additionally, can we arrange a walkthrough to understand the business scenarios that have been validated so far? Have we received signoff from the design team on the results of the business scenario tests?
-
-I want to emphasize the importance of preventing defect leakage. It's becoming increasingly challenging to review each and every item, especially given your experience with this data over the last three releases. I don't expect designers to find defects just before the release. I urge you to enhance your skills in data analysis. Considering the time constraints, please immediately voice any issues you encounter and keep us updated on the progress.
+DELETE FROM your_table_name
+WHERE code = '038' AND provdesc = 'ONLINEPROMOTION';
