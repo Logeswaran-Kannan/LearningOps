@@ -1,3 +1,28 @@
-Due to limitations in the pre-production environment not being correctly synchronized with the production data and an issue with the checkpoint, we were unable to perform the reconciliation. Following discussions with the data owner, Jason, this situation is acknowledged as a risk to quality assurance. It has been decided to carry this risk into production, especially considering the existing impact on the B2A report flow due to the previous release. Post-release, this reconciliation will be conducted by business users in collaboration with the SIT testing team. The acceptance of this risk is based on the understanding that any deviation exceeding 5% will be treated as a significant risk, requiring an immediate fix.
+Detailed Test Summary: Risks Highlighted for Production Release:
 
-Upon revalidation, it was discovered that most of the columns have been fixed. However, a code fix for a column named "TENURE UNDERWRITER" was found to be missing, as indicated in the comment below. Consequently, the severity has been downgraded to S2.
+Risk-Based Testing:
+Due to various limitations related to source data quality and environmental constraints, we have recommended and approved the use of risk-based testing. This approach limits our test coverage to critical business attributes only. Items outside this coverage may carry the risk of defects leaking into production.
+
+Reference File:
+The provenance reference file should always be kept up to date. Since there is no defined process for this, we noticed during the SIT phase that the file does not reflect the latest data. Post-production release processes need to be established to ensure that this file is consistently updated to provide the latest data to DAVE.
+
+Orchestration and Incremental Validation:
+Due to resource constraints and low memory configuration, we are unable to perform full-fledged incremental validation. This limitation was highlighted in all lower environments. The risk here is that if incremental validation is not fully achievable due to the mentioned limitations, it will also limit our ability to validate policy and quote flow. Currently, incremental load has failed in the test environment, and developers are working to address this issue. Before the production release, this needs to be fixed and validated without any issues. A failure will be considered an S1 defect blocking the production release. Even in case of a successful run, there is a possibility of SCD logic failure, as the flow is manual and does not replicate production-like orchestration. Risks have been approved, and any issues identified post-release need to be addressed immediately to minimize the impact on business users.
+
+Report and UAT Validation:
+We were only able to obtain partial UAT sign-off due to environment data synchronization issues. This limitation affects our data quality assurance for B2A reports and dataset validation. The risk has been approved, and any deviation of more than 5% in reconciliation testing for motor and home KPIs post-release will be considered a critical production defect requiring immediate resolution.
+
+Open S2 and S3 Defects:
+Due to the high number of open defects, it is recommended by the SIT team that data and code quality have not met the expected benchmark. Risks have been accepted, and all open S2 and S3 defects need to undergo a business impact analysis by the design team. A fix-forward plan should be provided in the next immediate release or during the warranty period.
+
+DAVE1 & Handshake:
+No testing has been conducted in the DAVE1 platform due to the unavailability of a DAVE1 preprod environment, and the test environment codebase is not in sync with production. However, this is considered an acceptable risk since there have been no code changes or datatype changes in existing workflows. Additionally, historical data fix is not possible due to the sunset of the handshake for the existing TS01 workflow.
+
+Workflow Latency:
+During SIT validation, data latency issues were observed between driver and non-driver tables. Workflow scheduling is being adjusted to mitigate this latency issue. Currently, there is a 3-hour latency gap, which may increase post-production release. The risk has been approved, and monitoring will be carried out post-release.
+
+Reconciliation:
+Reconciliation between TS01 vs. TS02 motor data and TS02 vs. TIARA data is not in scope for testing due to data and environment constraints.
+
+Cost Analysis:
+While cost analysis for the silver and gold layers has been high-level verified by the platform lead in the preprod environment and risks have been approved.
