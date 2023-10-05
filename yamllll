@@ -1,2 +1,5 @@
-DELETE FROM your_table_name
-WHERE code = '038' AND provdesc = 'ONLINEPROMOTION';
+n this release, the process scope covers CDL broker policy data and provenance reference data up to the silver layer. This involves phasing out the existing TS01 release motor handshake. However, it's important to note that the sunset of the handshake isn't part of the testing scope due to limitations in the DAVE 1 preprod environment. Additionally, the test environment code isn't up to date and in sync with the production environment.
+
+Furthermore, in this release, the process scope encompasses CDL motor and home policy, quote, and reference data up to the Gold Layer. This includes the handling of 4 fact tables and 14 reference tables.
+
+Additionally, the release covers scoped changes in datasets and reports to incorporate both motor and home sales details from the DAVE 2 gold layer. Previously, motor data was processed from DAVE 2 to DAVE 1 Synapse mart. However, it's important to clarify that the reconciliation of motor data between TS01 and TS02 is not within the scope of system testing.
