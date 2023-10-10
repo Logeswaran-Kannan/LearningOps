@@ -1,3 +1,14 @@
-Just a quick update on the sanity check: the testing team wrapped up the check in production, thanks to the support from the Run team. We found 4 open S2 defects in the process. Two of these defects need fixing in the quote tables; they're specific to SI records during the initial load, which occurred only in the production environment. Incremental changes seem fine, and Ben is currently investigating the situation.
+I wanted to provide you with an update on our sanity check. The testing team has successfully completed the sanity check in the production environment, and we greatly appreciate the support we received from the Run team during this process.
 
-The other 2 issues were raised by business users during UAT, related to reporting. The designer is looking into these. Right now, the business is alright with living with these issues.
+However, we did encounter 4 open S2 defects along the way.
+
+Two of these defects relate to specific quote tables and are tied to the SI records' initial load, which occurred exclusively in the production environment. Fortunately, the incremental aspects appear to be in good shape, and Ben is actively investigating these two issues.
+
+The remaining two defects came to light during UAT when business users reported issues with the reporting functionality. Our initial investigation suggests that these issues may be related to data latency. The designer is currently examining this matter, and for the time being, the business has given the green light to proceed with these known issues.
+
+I want to express my gratitude for your dedication and hard work throughout this process. Your efforts have been instrumental in ensuring a smooth testing experience.
+
+Thank you for your commitment to our project's success.
+
+Best regards,
+[Your Name]
