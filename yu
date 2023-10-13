@@ -1,14 +1,11 @@
-I wanted to provide you with an update on our sanity check. The testing team has successfully completed the sanity check in the production environment, and we greatly appreciate the support we received from the Run team during this process.
+Unexpected Leave Today
 
-However, we did encounter 4 open S2 defects along the way.
+Hi [Manager's Name],
 
-Two of these defects relate to specific quote tables and are tied to the SI records' initial load, which occurred exclusively in the production environment. Fortunately, the incremental aspects appear to be in good shape, and Ben is actively investigating these two issues.
+I hope this email finds you well. Unfortunately, I won't be able to make it to work today due to an emergency situation. My neighbour forgot to close a tap, and my property suffered water damage. A plumber is scheduled to visit today, and I need to be here to sort things out.
 
-The remaining two defects came to light during UAT when business users reported issues with the reporting functionality. Our initial investigation suggests that these issues may be related to data latency. The designer is currently examining this matter, and for the time being, the business has given the green light to proceed with these known issues.
-
-I want to express my gratitude for your dedication and hard work throughout this process. Your efforts have been instrumental in ensuring a smooth testing experience.
-
-Thank you for your commitment to our project's success.
+I'll do my best to resolve the issue and aim to join work in the late afternoon if everything gets sorted. I apologize for any inconvenience this may cause and appreciate your understanding.
 
 Best regards,
+
 [Your Name]
