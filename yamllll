@@ -1,66 +1,29 @@
-Subject: Meeting to Discuss Offshore Team Concerns and Roles & Responsibilities
+Subject: Azure Cost Analysis Challenges and Clarity on Preproduction Cost Estimates
 
-Hi Team,
+Hey there,
 
-I hope this email finds you well.
+We're in the midst of tackling some key challenges related to Azure cost analysis for our preproduction phase. In our quest for clarity on cost estimates, we're considering three distinct approaches:
 
-I'd like to invite you to a meeting to discuss some important matters based on my recent conversations with our offshore team. Here's what we'll cover:
+Option 1: Utilizing Test Environment Data for Cost Analysis
+Our first option involves conducting a cost analysis by leveraging the compute and storage resources in our lower test environment over a 2-3 day period, focusing on the latest code version. However, a few roadblocks stand in our way:
 
-Resolving Conflicts: Addressing conflicts between offshore team members and finding constructive solutions.
+The data volume in our test environment doesn't align with that of preproduction, which might affect the accuracy of our cost analysis.
+For a more precise estimate, we'd ideally require actual and projected data on reads, writes, and volume in both environments. This would help us arrive at a closer approximation of preproduction costs.
+In our test environment, tracking compute costs proves challenging, given that job runs are initiated manually rather than through an analytical layer workflow. Consequently, we lack insight into the frequency of these manual triggers.
+In the test environment, we face difficulties in isolating storage costs for Aurora in the cost analysis portal due to a lack of project-level segregation.
+Option 2: Estimating Costs Based on Previous Preproduction Runs
+Our second option explores the possibility of estimating costs based on past runs in the preproduction environment. But this path isn't without its obstacles:
 
-Roles and Responsibilities: Clarifying roles and responsibilities to ensure everyone is on the same page about their tasks.
+We're hesitant to rely on this method due to historical data ingestion practices that involved multiple schemas running in parallel, which caused some unexpected spikes. Even if we were to focus solely on compute costs for specific components (like gold quotas), it wouldn't provide a comprehensive estimated cost.
+This option also introduces uncertainty since we're planning to copy data from production to the analytical layer this time around, which could alter the cost estimate dynamics.
+Option 3: Adapting the Microsoft Pricing Calculator
+Option three involves adopting the Microsoft Pricing Calculator, a native tool. However, embracing this approach hinges on obtaining the following information upfront:
 
-Reducing Onshore Dependency: Exploring ways to reduce our dependency on the onshore team for smoother operations.
+Preproduction projections for reads, writes, data scans, data returns, and expected DBU utilization. These are integral to kicking off the adaptation process.
+If someone within our team has previous experience with this method, we'll gladly follow in their footsteps.
+Option 4: Benchmarking Against Production Costs
+Our final option proposes benchmarking preproduction costs against the existing production environment. We're planning to introduce a new fact table and five reference tables. The foundation for this estimate will be production costs at the silver and gold levels, with a modest addition of 2-3% for an estimated cost that aligns more closely with reality.
 
-Upskilling for the Project: Identifying the skills our project needs and planning for necessary upskilling sessions.
+It's important to note that none of these options have been finalized, and we're open to your thoughts and suggestions as we collectively work towards a solution. Your feedback is incredibly valuable in helping us navigate these challenges and make informed decisions.
 
-Resource Shifts: Discussing potential shifts within projects to optimize our resources effectively.
-
-Productivity Hours vs Clocked Hours: Understanding the balance between productive work hours and hours logged, ensuring efficiency without burnout.
-
-WFH vs WFO Productivity: Addressing concerns related to productivity while working from home versus working from the office.
-
-Your input and ideas will be invaluable in shaping our strategies moving forward. Let's meet and brainstorm on these topics. I believe your insights will be crucial to finding the best solutions.
-
-Meeting Details:
-Date: [Proposed Date]
-Time: [Proposed Time]
-Location: [Meeting Room/Online Link]
-
-Looking forward to our discussion.
-
-Best regards,
-
-[Your Name]
-
----------------------------------------------------------------------------------------------
-
-Subject: Tomorrow's Priority Tasks and Clarification
-
-Hello Team,
-
-I wanted to outline our priorities for tomorrow:
-
-UAT Observations in Production:
-Please collaborate with the run team during offshore hours to check UAT observations in the production environment. Provide your signoff on the production sanity check and thoroughly document the test results. The run team will be available to assist you.
-
-Panel Change Release:
-I've handed over the test scripts, and defect refinement is complete. Sungjin will be available during offshore hours. Please verify the changes based on the reload.
-
-Open Defects on Aurora:
-Review all open defects on Aurora with the support of the run team in production. Update the status of these defects accordingly. There are no dependencies in this task.
-
-Test Design for Extract to Panel and GIPP Design Delivered Tables:
-Begin the test design process for the Extract to Panel and GIPP design delivered tables.
-
-Additionally, I want to assure you that your concerns, as discussed with me, will be thoroughly addressed. Following my conversation today with Amber and Sujatha, necessary actions will be taken.
-
-Feel free to reach out if you need further clarification or assistance with anything.
-
-Best regards,
-[Your Position]
-
-
-
-
-
+Cheers,
