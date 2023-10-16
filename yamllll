@@ -1,29 +1,28 @@
-Subject: Azure Cost Analysis Challenges and Clarity on Preproduction Cost Estimates
+Subject: Exploring Azure Cost Analysis Challenges and Estimated Preprod Costs
 
-Hey there,
+Hi Team,
 
-We're in the midst of tackling some key challenges related to Azure cost analysis for our preproduction phase. In our quest for clarity on cost estimates, we're considering three distinct approaches:
+I wanted to delve into the complexities of our Azure cost analysis for pre-production approval and share insights on three different options we're considering. Let's break down these options and the hurdles we face:
 
-Option 1: Utilizing Test Environment Data for Cost Analysis
-Our first option involves conducting a cost analysis by leveraging the compute and storage resources in our lower test environment over a 2-3 day period, focusing on the latest code version. However, a few roadblocks stand in our way:
+Option 1: Analyzing Test Environment Costs
+In this approach, we'd carry out a cost analysis by utilizing compute and storage resources in our lower test environment for a span of 2-3 days. We'd base our approximate pre-production cost on this data. However, here are the challenges:
 
-The data volume in our test environment doesn't align with that of preproduction, which might affect the accuracy of our cost analysis.
-For a more precise estimate, we'd ideally require actual and projected data on reads, writes, and volume in both environments. This would help us arrive at a closer approximation of preproduction costs.
-In our test environment, tracking compute costs proves challenging, given that job runs are initiated manually rather than through an analytical layer workflow. Consequently, we lack insight into the frequency of these manual triggers.
-In the test environment, we face difficulties in isolating storage costs for Aurora in the cost analysis portal due to a lack of project-level segregation.
-Option 2: Estimating Costs Based on Previous Preproduction Runs
-Our second option explores the possibility of estimating costs based on past runs in the preproduction environment. But this path isn't without its obstacles:
+Test environment data volumes don't align with pre-production volumes, potentially leading to inaccurate cost estimations.
+To achieve a more accurate pre-production cost estimate, we'd need actual and expected read, write, and volume details from the test environment.
+Compute cost estimation in the test environment is hindered because job runs are triggered manually instead of being managed via a workflow for the analytical layer, making it challenging to determine their frequency.
+Test environment storage costs are complex due to the lack of segregation at the project level, especially for Aurora.
+Option 2: Estimation Based on Previous Preprod Runs
+The second option involves estimating costs based on previous runs in the pre-production environment. However, there are significant hurdles:
 
-We're hesitant to rely on this method due to historical data ingestion practices that involved multiple schemas running in parallel, which caused some unexpected spikes. Even if we were to focus solely on compute costs for specific components (like gold quotas), it wouldn't provide a comprehensive estimated cost.
-This option also introduces uncertainty since we're planning to copy data from production to the analytical layer this time around, which could alter the cost estimate dynamics.
-Option 3: Adapting the Microsoft Pricing Calculator
-Option three involves adopting the Microsoft Pricing Calculator, a native tool. However, embracing this approach hinges on obtaining the following information upfront:
+Historical data ingestion in multiple parallel schemas complicates this method and may lead to inaccurate estimates. It's challenging to derive an overall cost estimate, even if we can obtain compute costs for specific components.
+Moreover, if we opt for this approach, the plan to copy data from production to the analytical layer this time around adds further uncertainty to our cost estimates.
+Option 3: Leveraging the Microsoft Pricing Calculator
+Our third option is to embrace the Microsoft Pricing Calculator, a native tool for estimating costs. However, there are some challenges:
 
-Preproduction projections for reads, writes, data scans, data returns, and expected DBU utilization. These are integral to kicking off the adaptation process.
-If someone within our team has previous experience with this method, we'll gladly follow in their footsteps.
+Adapting this calculator requires detailed information upfront, such as expected pre-production read, write, data scan volume, data return volume, and expected DBU utilization. The testing team needs this data to start adapting to this approach. If anyone has used this method previously, we can follow their lead.
 Option 4: Benchmarking Against Production Costs
-Our final option proposes benchmarking preproduction costs against the existing production environment. We're planning to introduce a new fact table and five reference tables. The foundation for this estimate will be production costs at the silver and gold levels, with a modest addition of 2-3% for an estimated cost that aligns more closely with reality.
+In our final option, we're looking to benchmark pre-production costs against the existing production environment. We intend to add one fact table and five reference tables. Here, the baseline will be the production cost for the silver and gold levels, with a modest 2-3% added on top to provide a near-realistic estimate.
 
-It's important to note that none of these options have been finalized, and we're open to your thoughts and suggestions as we collectively work towards a solution. Your feedback is incredibly valuable in helping us navigate these challenges and make informed decisions.
+These options are all under consideration, and no decisions have been made yet. We understand that each one has its unique set of challenges and variables. Your input is essential as we work together to find the most effective way to arrive at a reliable and accurate pre-production cost estimate.
 
-Cheers,
+Feel free to share your thoughts, and let's collaborate to ensure we make the best-informed decision.
