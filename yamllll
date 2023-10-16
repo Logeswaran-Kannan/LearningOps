@@ -1,28 +1,19 @@
-Subject: Exploring Azure Cost Analysis Challenges and Estimated Preprod Costs
+Subject: Key Outstanding Items Required for SIT Closure
 
-Hi Team,
+Hi there,
 
-I wanted to delve into the complexities of our Azure cost analysis for pre-production approval and share insights on three different options we're considering. Let's break down these options and the hurdles we face:
+To move forward and bring System Integration Testing (SIT) to a successful close, we have a few essential items that need your attention. Currently, these aspects must be addressed to keep the SIT process on track:
 
-Option 1: Analyzing Test Environment Costs
-In this approach, we'd carry out a cost analysis by utilizing compute and storage resources in our lower test environment for a span of 2-3 days. We'd base our approximate pre-production cost on this data. However, here are the challenges:
+LLD Update: We require an updated Low-Level Design (LLD) reflecting the latest code version. It's crucial to ensure that our testing practices are aligned correctly, as depending on the development code base for our test SQL is not ideal and could result in potential defects leaking into the production environment. An updated LLD is essential to continue our test execution.
 
-Test environment data volumes don't align with pre-production volumes, potentially leading to inaccurate cost estimations.
-To achieve a more accurate pre-production cost estimate, we'd need actual and expected read, write, and volume details from the test environment.
-Compute cost estimation in the test environment is hindered because job runs are triggered manually instead of being managed via a workflow for the analytical layer, making it challenging to determine their frequency.
-Test environment storage costs are complex due to the lack of segregation at the project level, especially for Aurora.
-Option 2: Estimation Based on Previous Preprod Runs
-The second option involves estimating costs based on previous runs in the pre-production environment. However, there are significant hurdles:
+Open Report Issues: Several open issues in the reports are causing calculation changes. These need to be resolved to maintain the accuracy and reliability of our reports.
 
-Historical data ingestion in multiple parallel schemas complicates this method and may lead to inaccurate estimates. It's challenging to derive an overall cost estimate, even if we can obtain compute costs for specific components.
-Moreover, if we opt for this approach, the plan to copy data from production to the analytical layer this time around adds further uncertainty to our cost estimates.
-Option 3: Leveraging the Microsoft Pricing Calculator
-Our third option is to embrace the Microsoft Pricing Calculator, a native tool for estimating costs. However, there are some challenges:
+Open Defects in Source Data and Code: There are open defects in both source data and code that require your attention. Addressing these defects is vital for the overall integrity of the system.
 
-Adapting this calculator requires detailed information upfront, such as expected pre-production read, write, data scan volume, data return volume, and expected DBU utilization. The testing team needs this data to start adapting to this approach. If anyone has used this method previously, we can follow their lead.
-Option 4: Benchmarking Against Production Costs
-In our final option, we're looking to benchmark pre-production costs against the existing production environment. We intend to add one fact table and five reference tables. Here, the baseline will be the production cost for the silver and gold levels, with a modest 2-3% added on top to provide a near-realistic estimate.
+Orchestration and Incremental Load: The orchestration and incremental load processes need to be reviewed and addressed. Ensuring their proper functioning is essential to move the report to the User Acceptance Testing (UAT) phase and ensure TSR readiness.
 
-These options are all under consideration, and no decisions have been made yet. We understand that each one has its unique set of challenges and variables. Your input is essential as we work together to find the most effective way to arrive at a reliable and accurate pre-production cost estimate.
+Addressing these outstanding items is crucial for the smooth progression of our testing process and the eventual transition to the UAT phase. Your prompt attention to these matters is greatly appreciated.
 
-Feel free to share your thoughts, and let's collaborate to ensure we make the best-informed decision.
+Best regards,
+
+[Your Name]
