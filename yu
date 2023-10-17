@@ -1,1 +1,6 @@
-It appears that Mitul has secured approval for the estimated preproduction cost. Could you kindly arrange the setup of a mount point, connecting the production environment to the preproduction environment for the analytical layer?
+Thanks, Akshay, for the update. I'm hopeful that the remaining business scenario validation will be completed before our daily standup tomorrow. Jeelani, did you manage to gain clarity on the question I raised? If everything's okay, could you provide a signoff for the report validation so that we can proceed with the release to UAT? I hope you've documented the explanations provided for the clarifications.
+
+In other news, here are some additional updates:
+
+We've secured the estimated preprod approval, and preprod setup is currently in progress. I've shared the list of essential tables in the analytical layer with Vinod for confirmation. In parallel, Hardeep is working on the mount creation, which is already completed, and table registration is currently in progress.
+We're still on track for the release next week. The only blocker is the incremental aspect, which we're hopeful will be resolved by tomorrow. There have been some discussions regarding a potential code freeze next week, but we haven't received confirmation on that yet.
