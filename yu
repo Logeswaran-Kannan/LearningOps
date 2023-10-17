@@ -1,11 +1,8 @@
-Unexpected Leave Today
+Hey Team,
 
-Hi [Manager's Name],
+Just a quick update - we've calculated the estimated preprod cost for the Panel Change release following our discussion over the call. We generated two estimates based on the data-ready UAT option. Since this cost is derived from our current production expenses, it should ideally closely mirror the actual estimated cost.
 
-I hope this email finds you well. Unfortunately, I won't be able to make it to work today due to an emergency situation. My neighbour forgot to close a tap, and my property suffered water damage. A plumber is scheduled to visit today, and I need to be here to sort things out.
+However, we'll be closely monitoring this during our first load in preprod on day 1. If it surpasses 50% of the estimated cost, we'll pause and discuss additional steps to refine our estimation with more parameters.
 
-I'll do my best to resolve the issue and aim to join work in the late afternoon if everything gets sorted. I apologize for any inconvenience this may cause and appreciate your understanding.
-
-Best regards,
-
+Best,
 [Your Name]
