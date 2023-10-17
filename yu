@@ -1,8 +1,1 @@
-Hey Team,
-
-Just a quick update - we've calculated the estimated preprod cost for the Panel Change release following our discussion over the call. We generated two estimates based on the data-ready UAT option. Since this cost is derived from our current production expenses, it should ideally closely mirror the actual estimated cost.
-
-However, we'll be closely monitoring this during our first load in preprod on day 1. If it surpasses 50% of the estimated cost, we'll pause and discuss additional steps to refine our estimation with more parameters.
-
-Best,
-[Your Name]
+It appears that Mitul has secured approval for the estimated preproduction cost. Could you kindly arrange the setup of a mount point, connecting the production environment to the preproduction environment for the analytical layer?
