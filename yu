@@ -1,9 +1,1 @@
-We just wrapped up a Show and Tell session with our UAT users, and here's what we covered:
-
-We conducted a thorough walkthrough of the open defects, and as a result, we managed to close two of them successfully. Great progress!
-
-There are two remaining defects that UAT users will look into with their team. These relate to the previous month's date slider and color coding. We're confident they'll provide valuable input.
-
-We made it clear that the data in the UAT environment is for testing purposes only and doesn't represent real live scenarios. Additionally, there's no Preprod data available for them to test.
-
-Overall, it was a productive session, and we're moving forward with resolving these issues.
+Usually, for all the key columns, if there are no values present, it should be treated as -1, right? For instance, in other fact tables like 'fact broker policy', we treat 'Agent_Key' as -1 if there's no match. However, in the insurer scheme key, it's just left as null if there's no match in the reference table. This seems to be the case for all key columns. It's working as designed, but I think we need some clarification on this general approach.
