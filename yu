@@ -1,1 +1,11 @@
-Usually, for all the key columns, if there are no values present, it should be treated as -1, right? For instance, in other fact tables like 'fact broker policy', we treat 'Agent_Key' as -1 if there's no match. However, in the insurer scheme key, it's just left as null if there's no match in the reference table. This seems to be the case for all key columns. It's working as designed, but I think we need some clarification on this general approach.
+Following discussions in various meetings, we've prioritized four defects for this release:
+
+We're experiencing an unexpected behavior where, for both SI and CORE analytical tables, we're getting two insert logs for the same RTPLOG ID from the source. One record contains all the information, while the other doesn't. Ben has emailed John for further investigation on this matter. (Defect 1)
+
+There are issues with Web Reference and Policy Reference joins between silver tables, leading to data loss in the fact table. This issue is identified with defect ID DCD-45461 and is being addressed by Sungjin. (Defect 2)
+
+We have identified logic changes related to defects DCD-001 and DCD-002, which are being handled by Sungjin. (Defect 3)
+
+The fourth defect is related to reference data, including the property columns, with defect ID DCD-45459. This issue is being looked into by Vinod and Mahesh. (Defect 4)
+
+These are the defects that have been prioritized for the release based on our discussions.
