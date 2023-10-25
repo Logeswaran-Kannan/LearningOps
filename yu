@@ -1,11 +1,1 @@
-Following discussions in various meetings, we've prioritized four defects for this release:
-
-We're experiencing an unexpected behavior where, for both SI and CORE analytical tables, we're getting two insert logs for the same RTPLOG ID from the source. One record contains all the information, while the other doesn't. Ben has emailed John for further investigation on this matter. (Defect 1)
-
-There are issues with Web Reference and Policy Reference joins between silver tables, leading to data loss in the fact table. This issue is identified with defect ID DCD-45461 and is being addressed by Sungjin. (Defect 2)
-
-We have identified logic changes related to defects DCD-001 and DCD-002, which are being handled by Sungjin. (Defect 3)
-
-The fourth defect is related to reference data, including the property columns, with defect ID DCD-45459. This issue is being looked into by Vinod and Mahesh. (Defect 4)
-
-These are the defects that have been prioritized for the release based on our discussions.
+This is a live issue concerning the validity of records for RTPLOG_ID that are end-dated. In our discussion, the initial action item is for Ben to quantify the impact in production for the four tables shared by Vinod. After that, he will compare the pre and post-code change to assess the differences made in the code.
