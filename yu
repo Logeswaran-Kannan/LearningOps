@@ -1,1 +1,16 @@
-As we discussed during our call, the specified operator's busevent ID is not linked to any policy event history in the analytical layer. This indicates that there are no sales associated with this party ID. To proceed with further analysis on the source side, it's recommended to gather more information from the business user regarding the specific sales transactions in CDL. Any sample policy number, policy ID, or web reference related to the products they've sold would be highly beneficial. Currently, the data in the analytical layer aligns with our expectations based on the available information.
+Test Summary Report:
+
+In this release, the testing scope involved adding additional data items for Provenance Codes tables. This included ingesting a new reference file received from the business and processing it into the analytical, silver, and gold layers within the DAVE 2.0 environment. The testing coverage focused on validating counts and ensuring data accuracy between the file received from the business and the corresponding target reference table in each layer.
+
+The testing results confirm that data, counts, and Data Definition Language (DDL) structures match as per the Low-Level Design (LLD) specifications, based on the following assumptions and considerations:
+
+Assumptions:
+
+Only the initial load was validated, as incremental updates were not received from the business for new provenance codes. Incremental validation was not performed.
+Since this was an individual short release and not part of a major release, referential integrity was not verified. This decision was made because the existing columns were not impacted, and only new columns were added as part of this release.
+Risks Identified:
+
+Workflow failure occurred in the test environment at the ingestion layer. Although the development team manually ran the workflow, ensuring the tables were loaded in the test environment, orchestration testing could not be completed. However, the development team assured that this issue is specific to the lower environment and will not occur in production.
+It is crucial for the business to maintain the reference file every time new provenance codes are introduced; failure to do so may result in null values in the fact tables.
+Overall, the testing process successfully validated the new data items, ensuring alignment with the specified requirements and expectations.
+
