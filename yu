@@ -1,16 +1,5 @@
-Test Summary Report:
+Thank you for obtaining the policy details from the affected user. Based on our initial investigation, it appears that this issue is related to the CDL source data, specifically concerning the operator responsible for the sales. I can confirm that DAVE is functioning correctly.
 
-In this release, the testing scope involved adding additional data items for Provenance Codes tables. This included ingesting a new reference file received from the business and processing it into the analytical, silver, and gold layers within the DAVE 2.0 environment. The testing coverage focused on validating counts and ensuring data accuracy between the file received from the business and the corresponding target reference table in each layer.
+In the next steps, I can provide the scenario that is causing this problem on the source side. I recommend consulting with Vinod to determine the appropriate contact on the source side.
 
-The testing results confirm that data, counts, and Data Definition Language (DDL) structures match as per the Low-Level Design (LLD) specifications, based on the following assumptions and considerations:
-
-Assumptions:
-
-Only the initial load was validated, as incremental updates were not received from the business for new provenance codes. Incremental validation was not performed.
-Since this was an individual short release and not part of a major release, referential integrity was not verified. This decision was made because the existing columns were not impacted, and only new columns were added as part of this release.
-Risks Identified:
-
-Workflow failure occurred in the test environment at the ingestion layer. Although the development team manually ran the workflow, ensuring the tables were loaded in the test environment, orchestration testing could not be completed. However, the development team assured that this issue is specific to the lower environment and will not occur in production.
-It is crucial for the business to maintain the reference file every time new provenance codes are introduced; failure to do so may result in null values in the fact tables.
-Overall, the testing process successfully validated the new data items, ensuring alignment with the specified requirements and expectations.
-
+Scenario: The policies shared by Pavan in this email chain, claimed by Paul Hardy with LOGINNAME - 04808 and associated with the Isell cost centre, are being incorrectly tagged under another individual, also named Paul Hardy with LOGINNAME - 84417, belonging to the Marketing cost centre in CDL. DAVE's reporting filters this record in the B2A report because LOGINNAME - 84417 is linked to the Marketing cost centre. It appears that CDL initially tagged the sales to LOGINNAME - 84417 instead of LOGINNAME - 04808, leading to this misclassification. Please advise Pavan from the CDL end to address this issue.
