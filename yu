@@ -1,1 +1,3 @@
-The policies are already incorporated in the fact table and are accurately reflected in the reporting SQL, aligning with the date specified by the user. There is no action required from the DAVE 2 build team at this time.
+The policies are currently reflected in the fact table and appear correctly in the reporting SQL, aligning with the date specified by the user. There is no action required from the DAVE 2 build team. The run team should clarify with the business users that the missing policies are included in the sales measure. I don't see any problem with the provided sample. If issues persist, the run team should obtain more samples or precise information about the problem they are facing.
+
+This policy is present in the analytical layer but is missing in the silver layer. Further analysis is needed from the DAVE 2 build team, as it seems to be related to a data refresh issue. The next action item is for the DAVE 2 Build team to investigate this specific sample.
