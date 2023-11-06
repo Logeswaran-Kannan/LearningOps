@@ -1,12 +1,1 @@
-Subject: Let's Keep the Momentum Going!
-
-Hey Team,
-
-I wanted to drop a quick note to express my appreciation for the fantastic work you all have been doing. The incremental runs for Provo code changes are running smoothly, which is a clear indicator of the success of our last week's release. Great job, everyone!
-
-Looking ahead, we have three crucial releases lined up for the next week, involving panel changes, extract to panel, GIPP pricing remedy, and production defect fixes. These updates are vital for our business, so I urge everyone to stay focused and give these tasks your best effort.
-
-Success in these releases is not just a goal; it's a necessity as we approach the year-end. Let's work together to ensure these projects are a hit, and we'll celebrate our achievements with a well-deserved party at the end of the year.
-
-Thanks for your dedication and hard work. Let's keep the momentum going and end this year on a high note!
-
+The policies provided by the user were inaccurately linked to a different operator with a similar name in the CDL. No action is needed from DAVE 2 in this regard. The problem has been resolved by the CDL team, and we have confirmed that it now appears correctly in the analytical layer for the incremental data. However, a historical data fix is required for the data in the silver and gold layers to ensure it is accurately reflected in the report. The next action item is for the run team to address this historical data issue.
