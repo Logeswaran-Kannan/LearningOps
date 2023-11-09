@@ -1,27 +1,5 @@
-Problem Statement:
+The initial plan did not involve processing 4 weeks' worth of data from the bronze to analytical stages. Instead, it focused on maintaining and copying data from production to pre-production and processing only the silver and gold stages. This is why the estimated cost was £20, covering the copying process overall.
 
-In today's data-driven world, organizations rely heavily on cloud-based platforms like Databricks to store vast amounts of data for various purposes, including testing and development. However, a common challenge arises as unused and untouched testing-related files accumulate in Databricks DBFS over time, occupying valuable storage space and increasing cloud storage costs. Identifying these redundant files manually is a time-consuming and inefficient process, leading to suboptimal resource utilization and hampering the return on investment for client organizations. To address this problem, there is a critical need for a fully automated solution that not only identifies these files but also provides intelligent recommendations for their deletion, ensuring efficient use of cloud resources.
+However, a production incident related to duplicates fix in the analytical layer, raised by POMI business users, prompted a change in the plan a couple of days ago. It was decided to process data from the bronze to analytical stages for the past 4 weeks to ensure that the fix wouldn't disrupt anything in the production analytical environment. This decision was made collaboratively within our team and communicated by Sungjin. Additionally, it was agreed to monitor the associated costs by the end of the first day's run. Sungjin initiated the data loading process yesterday.
 
-Solution:
-
-Introducing the "Databricks AutoCleaner" – an advanced tool developed using Databricks, Python, and Spark technologies. This cutting-edge solution is specifically designed to tackle the challenge of managing untouched and redundant testing-related files in Databricks DBFS. The Databricks AutoCleaner is a highly configurable and fully automated tool capable of identifying files that have remained unused for more than 60 days. The tool allows users to parameterize the cleaning criteria and schedule the cleanup process on a monthly, weekly, or daily basis, providing unmatched flexibility to match the organization's specific needs.
-
-One of the key features of the Databricks AutoCleaner is its intelligent recommendation system. Before any file is deleted, the tool thoroughly analyzes the file's relevance, ensuring that critical data is not accidentally removed. This automated recommendation mechanism empowers organizations to make informed decisions about file deletion, mitigating the risk of data loss and ensuring data integrity. Additionally, the tool offers detailed insights into the identified files, aiding organizations in understanding their data landscape better.
-
-Benefits to Client Organization:
-
-The Databricks AutoCleaner offers a myriad of benefits to client organizations, revolutionizing their approach to data management and storage optimization:
-
-Cost Reduction: By automatically identifying and removing untouched files, the tool significantly reduces cloud storage costs. By efficiently utilizing storage resources, client organizations can optimize their cloud spending, leading to substantial cost savings over time.
-
-Enhanced Return on Investment (ROI): The Databricks AutoCleaner ensures that the client organization's investment in cloud storage is maximized. By eliminating unnecessary data, the organization can utilize its cloud resources more efficiently, amplifying the ROI on their cloud infrastructure investment.
-
-Efficiency and Productivity: The tool's automation capabilities eliminate the need for manual intervention, saving valuable time and resources. This increased efficiency allows the organization's personnel to focus on more strategic tasks, enhancing overall productivity.
-
-Data Integrity and Compliance: By providing intelligent recommendations before file deletion, the Databricks AutoCleaner safeguards data integrity. It ensures that critical information is preserved while redundant files are removed, aligning with data compliance standards and regulations.
-
-Faster Decision-Making: The tool offers detailed insights and visualizations, empowering organizations to make faster and more informed decisions about their data landscape. By understanding their data better, organizations can strategize effectively and make data-driven decisions with confidence.
-
-Scalability: The Databricks AutoCleaner is highly scalable, capable of handling large volumes of data across multiple schemas effortlessly. Whether the organization's data storage needs grow or shrink, the tool adapts seamlessly, ensuring consistent performance and reliability.
-
-In conclusion, the Databricks AutoCleaner is a game-changing solution for client organizations seeking to optimize their cloud storage, reduce costs, and enhance their overall operational efficiency. By leveraging the power of automation, intelligent recommendations, and advanced analytics, the tool transforms the way organizations manage their data, ensuring a sustainable and cost-effective approach to cloud storage management.
+Due to this production incident, the scope of the release was expanded, moving from a copying-focused plan to a processing-focused one.
