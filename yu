@@ -1,5 +1,1 @@
-The initial plan did not involve processing 4 weeks' worth of data from the bronze to analytical stages. Instead, it focused on maintaining and copying data from production to pre-production and processing only the silver and gold stages. This is why the estimated cost was £20, covering the copying process overall.
-
-However, a production incident related to duplicates fix in the analytical layer, raised by POMI business users, prompted a change in the plan a couple of days ago. It was decided to process data from the bronze to analytical stages for the past 4 weeks to ensure that the fix wouldn't disrupt anything in the production analytical environment. This decision was made collaboratively within our team and communicated by Sungjin. Additionally, it was agreed to monitor the associated costs by the end of the first day's run. Sungjin initiated the data loading process yesterday.
-
-Due to this production incident, the scope of the release was expanded, moving from a copying-focused plan to a processing-focused one.
+filtered_df = df[~df[col_name].isin(exclude_list)]
