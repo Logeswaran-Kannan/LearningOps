@@ -1,1 +1,9 @@
-filtered_df = df[~df[col_name].isin(exclude_list)]
+The initial load, encompassing data processing from the bronze to gold layer for both quote and silver, has been successfully executed.
+
+The preliminary testing for duplicate issues related to MV_SI_SEARCH is concluded, and we have confirmed the resolution of null duplicate issues within the selected timeframe. Additionally, it has been observed that the 'Sequence_by' column in the production data defaults to Unix, while in the preprod environment, it populates based on Audit_date. However, other observations related to 'Sequence_by' do not align with production data for the same set of records.
+
+The reference data load, inclusive of Master profile reference data, has been completed, along with the loading of necessary dependent reference tables.
+
+We have documented the current production silver and gold workflow costs as a pre-benchmark, which will be compared against the post-costs incurred for silver and gold workflows in the preprod environment. It's important to note that only compute costs are captured, as there is no segregation for storage costs at the project level. Additionally, the gold quote workflow is not active in the current production, making it unfeasible to benchmark.
+
+While the initial data load has been accomplished, scheduling for incremental loads remains pending, requiring the development team to facilitate the scheduling for incremental loading.
