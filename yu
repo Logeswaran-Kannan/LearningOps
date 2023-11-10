@@ -1,9 +1,11 @@
-The initial load, encompassing data processing from the bronze to gold layer for both quote and silver, has been successfully executed.
+Subject: Preprod Computing Cost Overview for Initial Load
 
-The preliminary testing for duplicate issues related to MV_SI_SEARCH is concluded, and we have confirmed the resolution of null duplicate issues within the selected timeframe. Additionally, it has been observed that the 'Sequence_by' column in the production data defaults to Unix, while in the preprod environment, it populates based on Audit_date. However, other observations related to 'Sequence_by' do not align with production data for the same set of records.
+Dear [Recipient's Name],
 
-The reference data load, inclusive of Master profile reference data, has been completed, along with the loading of necessary dependent reference tables.
+I trust this message finds you well. I wanted to share the details of the computing costs incurred in our preprod environment during the processing of the initial 4-week data load in the silver and gold layers for both quote and policy.
 
-We have documented the current production silver and gold workflow costs as a pre-benchmark, which will be compared against the post-costs incurred for silver and gold workflows in the preprod environment. It's important to note that only compute costs are captured, as there is no segregation for storage costs at the project level. Additionally, the gold quote workflow is not active in the current production, making it unfeasible to benchmark.
+The provided cost comparison is based on preprod data processed against production one-day data for reference. It's important to note that this comparison serves as informational at this stage. The actual comparison, considering incremental loads in preprod, is scheduled for Monday. This will allow us to assess and compare one-day costs between production and preprod more accurately.
 
-While the initial data load has been accomplished, scheduling for incremental loads remains pending, requiring the development team to facilitate the scheduling for incremental loading.
+Please be aware that, currently, silver and gold quotes are not running in production. To address this, we have estimated £9 based on the cost incurred during the initial load in production. Unfortunately, we are unable to provide precise incurred costs for silver and gold quotes due to the mentioned reason. Additionally, storage costs cannot be determined as we lack project-wise segregation in the production environment.
+
+Thank you for your attention to this matter. If you have any questions or require further clarification, please feel free to reach out.
