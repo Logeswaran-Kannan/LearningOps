@@ -1,11 +1,14 @@
-Subject: Preprod Computing Cost Overview for Initial Load
 
-Dear [Recipient's Name],
+Subject: Clarification on Feedback and Updates on Preprod Utilization
 
-I trust this message finds you well. I wanted to share the details of the computing costs incurred in our preprod environment during the processing of the initial 4-week data load in the silver and gold layers for both quote and policy.
+Hi [Recipient's Name],
 
-The provided cost comparison is based on preprod data processed against production one-day data for reference. It's important to note that this comparison serves as informational at this stage. The actual comparison, considering incremental loads in preprod, is scheduled for Monday. This will allow us to assess and compare one-day costs between production and preprod more accurately.
+Thanks for the feedback. I've reviewed points 1 and 2, and it appears that they are interconnected. The development team has confirmed that no jobs were manually scheduled or triggered on November 11th. Regarding the cost discrepancies, especially the £4 for silver_gold_quote, it seems this might be attributed to the previous day's run, not reflecting immediately in the Azure portal.
 
-Please be aware that, currently, silver and gold quotes are not running in production. To address this, we have estimated £9 based on the cost incurred during the initial load in production. Unfortunately, we are unable to provide precise incurred costs for silver and gold quotes due to the mentioned reason. Additionally, storage costs cannot be determined as we lack project-wise segregation in the production environment.
+We've double-checked and ensured that none of the workflows were set to run over the weekends. It seems there might be a time gap in how the Azure portal captures cost details for November 11th, possibly originating from the activities on November 10th. Is there a recommended waiting period for all costs to reflect in the Azure portal post workflow completion?
 
-Thank you for your attention to this matter. If you have any questions or require further clarification, please feel free to reach out.
+On the data deletion front, our test plan includes steps to pause all workflows post-validation completion and notify the platform team. However, the actual data deletion process is under discussion, and Ben will be coordinating with Hardeep in the Leads Engineering meeting tomorrow to devise the best deletion process.
+
+To summarize, we're providing an overview of the utilization so far in preprod for the initial 4-week data load for the production incident-related defect fix. Today's plan includes loading 1 day's worth of incremental data to compare costs with the production silver and gold layers, aiming to calculate the post-code change for panel extraction in preprod.
+
+Thanks again for your attention to these details. If you have any further suggestions or insights, feel free to share.
