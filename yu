@@ -1,1 +1,29 @@
-Designed and implemented a Databricks-based automated regression framework for the analytical layer, enabling multiple cycles of testing in less time. Identified 160+ defects and achieved significant time savings. The reusable framework spans all domain lines. Trained team members to use the tool effectively, reducing validation time for projects with extensive data and enabling validation across databases, streaming sources, and files.
+# Import necessary libraries
+import matplotlib.pyplot as plt
+import pandas as pd
+from pyspark.sql import SparkSession
+
+# Create a Spark session
+spark = SparkSession.builder.appName("TestSummary").getOrCreate()
+
+# Assuming you have a DataFrame named 'test_results' with columns 'result_status'
+# Query to get the data from the default schema table
+test_results = spark.sql("SELECT * FROM default.your_table_name")
+
+# Convert Spark DataFrame to Pandas DataFrame for visualization
+result_df = test_results.toPandas()
+
+# Pie Chart
+pie_data = result_df['result_status'].value_counts()
+plt.figure(figsize=(8, 8))
+plt.pie(pie_data, labels=pie_data.index, autopct='%1.1f%%', startangle=90)
+plt.title('Test Result Status Distribution')
+plt.show()
+
+# Bar Chart
+bar_data = result_df['result_status'].value_counts()
+bar_data.plot(kind='bar', color='skyblue')
+plt.title('Test Result Status Distribution')
+plt.xlabel('Result Status')
+plt.ylabel('Count')
+plt.show()
