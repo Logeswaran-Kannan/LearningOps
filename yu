@@ -1,1 +1,5 @@
-The expenses associated with processing the policy and quote workflows for both the silver and gold tiers have risen by 75% and 120%, respectively, necessitating data and code optimization. As part of development optimization, we propose transferring unused data to cold storage and introducing a liquid cluster along with photo functionality.
+Risk 1: Addressing the historical data fix issue for duplicates in MV_SI_SEARCH has been limited to a one-month period. This constraint arises from limitations in the pre-production environment concerning resources, costs, and memory. Nevertheless, the functionality has undergone testing in lower environments.
+
+Risk 2: Cost Analysis - While cost analysis and performance tuning are not within the testing scope, collected metrics indicate that the initial data fix for incidents is expected to incur a cost of approximately £3,000. Additionally, the ongoing cost per day for the newly added functionality is anticipated to be around £150, inclusive of storage and compute costs.
+
+Risk 3: The test data available in the test environment may not accurately reflect production-like scenarios, and there are known production issues related to source data. This introduces the possibility that new scenarios introduced in production may cause defects.
