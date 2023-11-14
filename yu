@@ -1,8 +1,1 @@
-Agenda:
-
-Scope for this Release and Business Benefit.
-Comparison of Compute Costs: Analyzing the Processing of 1 Day Data Before and After the Addition of New Functionalities.
-Comparison of Storage Costs: Examining the Processing of 1 Day Data Before and After the Addition of New Functionalities.
-Anticipated Deployment Costs: Addressing Scope Items Related to Production Incident Fix.
-QA Recommendations and Development Optimization Plan in the Pipeline.
-Readiness for the GO/NO-GO Decision.
+An incident has been reported in production concerning duplicated data in the source, affecting POMI pricing users. A solution has been identified and is to be addressed within the analytical layer.
