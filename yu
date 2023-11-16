@@ -1,73 +1,48 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# Create a Spark session
-spark = SparkSession.builder.appName("TableCountScript").getOrCreate()
+def count_tables(spark, database_name):
+    # Switch to the specified database
+    spark.sql(f"USE {database_name}")
 
-# Function to get the count of a table and comments
-def get_table_count_and_comments(database, table):
-    # Assuming your table names are in the format: database.table
-    full_table_name = f"{database}.{table}"
+    # Get the list of tables in the current database
+    tables = spark.sql("SHOW TABLES").select("tableName").rdd.flatMap(lambda x: x).collect()
 
-    # Check if the table name meets the conditions
-    if not table.startswith('--') and not table.endswith('temp'):
-        # Get the count of rows in the table
-        count = spark.sql(f"SELECT COUNT(*) FROM {full_table_name}").collect()[0][0]
+    # Filter tables based on criteria (exclude table names)
+    filtered_tables = [table for table in tables if not table.startswith('--') and not table.endswith('temp') and not table.startswith('aren')]
 
-        # Check if the count is zero
-        if count == 0:
-            # Get comments for the table
-            comments = spark.sql(f"DESCRIBE EXTENDED {full_table_name}").collect()
+    # Initialize an empty list to store results
+    results = []
 
-            # Extracting relevant information from comments
-            for comment in comments:
-                if "No data" in comment[0]:
-                    return {
-                        "database": database,
-                        "table": table,
-                        "count": count,
-                        "comments": comment[1]
-                    }
+    # Iterate through the filtered tables and count the rows
+    for table in filtered_tables:
+        count = spark.sql(f"SELECT COUNT(*) as count FROM {table}").first()["count"]
+        comments = spark.sql(f"DESCRIBE EXTENDED {table}").filter("col_name = 'Comment'").select("data_type").first()["data_type"]
+        results.append((database_name, table, count, comments))
 
-    # Return None if the table did not meet the conditions or had non-zero count
-    return None
+    return results
 
-# Function to generate HTML output
-def generate_html_output(results):
-    html_output = "<html><body><table border='1'><tr><th>Database</th><th>Table</th><th>Count</th><th>Comments</th></tr>"
+if __name__ == "__main__":
+    # Initialize Spark session
+    spark = SparkSession.builder.appName("TableCounter").getOrCreate()
 
-    for result in results:
-        html_output += (
-            f"<tr><td>{result['database']}</td><td>{result['table']}</td>"
-            f"<td>{result['count']}</td><td>{result['comments']}</td></tr>"
-        )
+    # Specify the list of databases
+    databases = ["database1", "database2"]  # Add your database names here
 
-    html_output += "</table></body></html>"
-    return html_output
+    # Initialize an empty list to store overall results
+    all_results = []
 
-# List of databases (replace with your actual list)
-databases = ["database1", "database2"]
+    # Iterate through each database and count tables
+    for database in databases:
+        results = count_tables(spark, database)
+        all_results.extend(results)
 
-# Placeholder for results
-results = []
+    # Create a DataFrame from the results
+    schema = ["Database", "TableName", "Count", "Comments"]
+    df = spark.createDataFrame(all_results, schema=schema)
 
-# Iterate through each database and its tables
-for database in databases:
-    # Get the list of tables in the database
-    tables = spark.sql(f"SHOW TABLES IN {database}").collect()
+    # Write the results to the default database as countbck
+    df.write.mode("overwrite").saveAsTable("countbck")
 
-    for table in tables:
-        # Extract the table name from the result
-        table_name = table["tableName"]
-
-        # Get the count and comments for the table
-        result = get_table_count_and_comments(database, table_name)
-
-        # Append the result to the list if it is not None
-        if result is not None:
-            results.append(result)
-
-# Generate HTML output
-html_output = generate_html_output(results)
-
-# Display HTML output
-displayHTML(html_output)
+    # Stop the Spark session
+    spark.stop()
