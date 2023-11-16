@@ -1,5 +1,6 @@
 # Import necessary libraries
 import pandas as pd
+import plotly.express as px
 from pyspark.sql import SparkSession
 
 # Define function to copy tables from source database to target database
@@ -48,10 +49,14 @@ copy_results = copy_tables(source_database_input, target_database_input, table_n
 # Convert results to a Pandas DataFrame
 result_df = pd.DataFrame(copy_results, columns=["Source Database", "Source Table", "Target Database", "Target Table", "Status"])
 
-# Generate HTML report
-html_report = result_df.to_html(index=False)
+# Create a bar chart
+fig = px.bar(result_df, x="Source Table", y="Status", color="Status", title="Table Copy Status", labels={"Source Table": "Table Name"})
+
+# Generate HTML report with chart
+html_report = f"{result_df.to_html(index=False)}\n\n{fig.to_html(full_html=False)}"
 
 # Display or save the HTML report
 print(html_report)
 # Optionally, you can save the HTML report to a file
-# result_df.to_html("copy_tables_report.html", index=False)
+# with open("copy_tables_report.html", "w") as f:
+#     f.write(html_report)
