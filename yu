@@ -1,60 +1,35 @@
-# Import necessary libraries
-import pandas as pd
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# Define function to copy tables from source database to target database
-def copy_tables(source_database, target_database, table_names):
-    # Initialize Spark session
-    spark = SparkSession.builder.appName("CopyTables").getOrCreate()
+def get_table_counts(database_name):
+    # Assuming 'spark' is your SparkSession
+    # Replace 'your_table' with the actual table name
+    table_counts = spark.sql(f"SELECT COUNT(*) AS count FROM {database_name}.your_table")
+    return table_counts
 
-    # Initialize an empty list to store results
-    results = []
+def filter_tables_with_conditions(database_name):
+    # Assuming 'spark' is your SparkSession
+    # Replace 'your_table' with the actual table name
+    tables = spark.sql(f"SHOW TABLES IN {database_name}").filter(~col("tableName").startswith("--") & ~col("tableName").endswith("temp"))
+    return tables
 
-    try:
-        # Iterate through the table names
-        for table_name in table_names:
-            # Read data from the source table
-            source_df = spark.sql(f"SELECT RTPLOG_ID FROM {source_database}.{table_name}")
+def main(database_list):
+    for database_name in database_list:
+        tables = filter_tables_with_conditions(database_name)
+        
+        for table_row in tables.collect():
+            table_name = table_row['tableName']
+            
+            table_counts = get_table_counts(f"{database_name}.{table_name}")
+            count = table_counts.collect()[0]['count']
+            
+            # Assuming 'comments' is the column in the table with comments
+            comments = spark.sql(f"DESCRIBE {database_name}.{table_name} comments").collect()[0]['comments']
+            
+            if count > 0 or comments != "no data":
+                # Print or store the output in your preferred format (HTML in this case)
+                print(f"<tr><td>{database_name}</td><td>{table_name}</td><td>{count}</td><td>{comments}</td></tr>")
 
-            # Create a new table name with 'bck' suffix
-            target_table_name = f"{table_name}_bck"
-
-            # Write data to the target table in the target database
-            source_df.write.mode("overwrite").saveAsTable(f"{target_database}.{target_table_name}")
-
-            # Get the count of records in the backup table
-            target_table_count = spark.sql(f"SELECT COUNT(*) FROM {target_database}.{target_table_name}").first()[0]
-
-            # Append result to the list
-            results.append([source_database, table_name, target_database, target_table_name, target_table_count, "Complete"])
-
-    except Exception as e:
-        # Append failure result to the list in case of an exception
-        results.append([source_database, table_name, target_database, target_table_name, None, f"Failure: {str(e)}"])
-
-    finally:
-        # Stop the Spark session
-        spark.stop()
-
-    return results
-
-# Example: Get table names from the source database
-source_database_input = "source_database_name"
-table_names_input = ["table1", "table2"]  # Add the names of the tables you want to copy
-
-# Specify the target database
-target_database_input = "target_database_name"
-
-# Copy tables and get results
-copy_results = copy_tables(source_database_input, target_database_input, table_names_input)
-
-# Convert results to a Pandas DataFrame
-result_df = pd.DataFrame(copy_results, columns=["Source Database", "Source Table", "Target Database", "Target Table", "Target Table Count", "Status"])
-
-# Generate HTML report
-html_report = result_df.to_html(index=False)
-
-# Display or save the HTML report
-print(html_report)
-# Optionally, you can save the HTML report to a file
-# result_df.to_html("copy_tables_report.html", index=False)
+# Example usage
+database_list = ['database1', 'database2']
+main(database_list)
