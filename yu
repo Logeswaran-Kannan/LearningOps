@@ -1,26 +1,46 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
 
 def count_tables(spark, database_name):
     # Switch to the specified database
     spark.sql(f"USE {database_name}")
 
     # Get the list of tables in the current database
-    tables = spark.sql("SHOW TABLES").select("tableName").rdd.flatMap(lambda x: x).collect()
+    tables_result = spark.sql("SHOW TABLES")
+    
+    if tables_result is not None and tables_result.count() > 0:
+        # Extract table names from the result
+        tables = tables_result.select("tableName").rdd.flatMap(lambda x: x).collect()
 
-    # Filter tables based on criteria (exclude table names)
-    filtered_tables = [table for table in tables if not table.startswith('--') and not table.endswith('temp') and not table.startswith('aren')]
+        # Filter tables based on criteria (exclude table names)
+        filtered_tables = [table for table in tables if not table.startswith('--') and not table.endswith('temp') and not table.startswith('aren')]
 
-    # Initialize an empty list to store results
-    results = []
+        # Initialize an empty list to store results
+        results = []
 
-    # Iterate through the filtered tables and count the rows
-    for table in filtered_tables:
-        count = spark.sql(f"SELECT COUNT(*) as count FROM {table}").first()["count"]
-        comments = spark.sql(f"DESCRIBE EXTENDED {table}").filter("col_name = 'Comment'").select("data_type").first()["data_type"]
-        results.append((database_name, table, count, comments))
+        # Iterate through the filtered tables and count the rows
+        for table in filtered_tables:
+            count_result = spark.sql(f"SELECT COUNT(*) as count FROM {table}")
 
-    return results
+            # Check if the count_result is not None and not empty
+            if count_result is not None and count_result.count() > 0:
+                count = count_result.first()["count"]
+            else:
+                count = 0
+
+            comments_result = spark.sql(f"DESCRIBE EXTENDED {table}").filter("col_name = 'Comment'")
+
+            # Check if the comments_result is not None and not empty
+            if comments_result is not None and comments_result.count() > 0:
+                comments = comments_result.select("data_type").first()["data_type"]
+            else:
+                comments = "N/A"
+
+            results.append((database_name, table, count, comments))
+
+        return results
+    else:
+        print(f"No tables found in database: {database_name}")
+        return []
 
 if __name__ == "__main__":
     # Initialize Spark session
