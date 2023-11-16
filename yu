@@ -1,51 +1,47 @@
+# Import necessary libraries
+import pandas as pd
 from pyspark.sql import SparkSession
 
-# Create a Spark session
-spark = SparkSession.builder.appName("TableCountAnalysis").getOrCreate()
+# Define function to get table count for a given database
+def get_table_count(database_name):
+    # Initialize Spark session
+    spark = SparkSession.builder.appName("TableCount").getOrCreate()
 
-# Specify your database and schema
-database_name = "your_database"
-schema_name = "your_schema"
+    # Get the list of tables in the specified database
+    tables = spark.sql(f"SHOW TABLES IN {database_name}").toPandas()
 
-# Get the list of tables in the specified database and schema
-tables = spark.sql(f"SHOW TABLES IN {database_name}.{schema_name}").collect()
+    # Initialize an empty list to store results
+    results = []
 
-# Define a function to filter out tables based on the provided conditions
-def filter_tables(table_name):
-    return not (table_name.startswith("--") or table_name.endswith("temp"))
+    # Iterate through the tables
+    for _, table_row in tables.iterrows():
+        table_name = table_row["tableName"]
+        count = spark.sql(f"SELECT COUNT(*) FROM {database_name}.{table_name}").first()[0]
 
-# Initialize an empty list to store the results
-results = []
+        # Exclude tables based on specified conditions
+        if not (table_name.startswith("--") or table_name.endswith("temp") or table_name.startswith("aren")):
+            comment = spark.sql(f"DESCRIBE EXTENDED {database_name}.{table_name}").filter("col_name = 'Comment'").collect()[0][1]
+            results.append([database_name, table_name, count, comment])
 
-# Loop through each table and get the count
-for table in tables:
-    table_name = table["tableName"]
-    if filter_tables(table_name):
-        try:
-            count = spark.sql(f"SELECT COUNT(*) FROM {database_name}.{schema_name}.{table_name}").collect()[0][0]
-            comment = spark.sql(f"DESCRIBE EXTENDED {database_name}.{schema_name}.{table_name}").filter("col_name = 'Comment'").collect()[0][1]
-        except Exception as e:
-            count = 0
-            comment = f"Error: {str(e)}"
+    # Stop the Spark session
+    spark.stop()
 
-        # If count is 0, continue to the next table
-        if count == 0:
-            continue
+    return results
 
-        # Add the result to the list
-        results.append({
-            "TableName": table_name,
-            "SchemaName": schema_name,
-            "Count": count,
-            "Comment": comment
-        })
+# Get table count for a specific database
+database_name_input = "your_database_name"
+table_counts = get_table_count(database_name_input)
 
-# Display the results in HTML format
-html_output = "<html><head><title>Table Count Analysis</title></head><body><table border='1'><tr><th>TableName</th><th>SchemaName</th><th>Count</th><th>Comment</th></tr>"
+# Convert results to a Pandas DataFrame
+result_df = pd.DataFrame(table_counts, columns=["Database", "Table", "Count", "Comment"])
 
-for result in results:
-    html_output += f"<tr><td>{result['TableName']}</td><td>{result['SchemaName']}</td><td>{result['Count']}</td><td>{result['Comment']}</td></tr>"
+# Filter tables with count > 0 or with specified comments
+result_df_filtered = result_df[result_df["Count"] > 0 | (result_df["Count"] == 0 & result_df["Comment"].str.contains("no data"))]
 
-html_output += "</table></body></html>"
+# Generate HTML report
+html_report = result_df_filtered.to_html(index=False)
 
-print(html_output)
+# Display or save the HTML report
+print(html_report)
+# Optionally, you can save the HTML report to a file
+# result_df_filtered.to_html("table_counts_report.html", index=False)
