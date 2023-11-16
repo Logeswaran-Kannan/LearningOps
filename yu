@@ -1,47 +1,36 @@
-# Import necessary libraries
-import pandas as pd
 from pyspark.sql import SparkSession
 
-# Define function to get table count for a given database
-def get_table_count(database_name):
+def create_tables(source_database, target_database, table_names):
     # Initialize Spark session
-    spark = SparkSession.builder.appName("TableCount").getOrCreate()
+    spark = SparkSession.builder.appName("CreateTables").getOrCreate()
 
-    # Get the list of tables in the specified database
-    tables = spark.sql(f"SHOW TABLES IN {database_name}").toPandas()
+    # Iterate through the specified table names
+    for table_name in table_names:
+        # Read data from the source table
+        source_table = spark.table(f"{source_database}.{table_name}")
 
-    # Initialize an empty list to store results
-    results = []
+        # Get the column name to extract values
+        column_name = source_table.columns[0]
 
-    # Iterate through the tables
-    for _, table_row in tables.iterrows():
-        table_name = table_row["tableName"]
-        count = spark.sql(f"SELECT COUNT(*) FROM {database_name}.{table_name}").first()[0]
+        # Extract values from the specified column
+        values = source_table.select(column_name).distinct()
 
-        # Exclude tables based on specified conditions
-        if not (table_name.startswith("--") or table_name.endswith("temp") or table_name.startswith("aren")):
-            comment = spark.sql(f"DESCRIBE EXTENDED {database_name}.{table_name}").filter("col_name = 'Comment'").collect()[0][1]
-            results.append([database_name, table_name, count, comment])
+        # Create a new DataFrame with the extracted values
+        new_table = spark.createDataFrame(values.rdd, source_table.schema)
+
+        # Create the target table name with "bck" added
+        target_table_name = f"{table_name}_bck"
+
+        # Save the new table to the target database
+        new_table.write.saveAsTable(f"{target_database}.{target_table_name}")
 
     # Stop the Spark session
     spark.stop()
 
-    return results
+# Example usage:
+source_db_name = "source_database"
+target_db_name = "target_database"
+table_names_input = ["table1", "table2", "table3"]
 
-# Get table count for a specific database
-database_name_input = "your_database_name"
-table_counts = get_table_count(database_name_input)
-
-# Convert results to a Pandas DataFrame
-result_df = pd.DataFrame(table_counts, columns=["Database", "Table", "Count", "Comment"])
-
-# Filter tables with count > 0 or with specified comments
-result_df_filtered = result_df[result_df["Count"] > 0 | (result_df["Count"] == 0 & result_df["Comment"].str.contains("no data"))]
-
-# Generate HTML report
-html_report = result_df_filtered.to_html(index=False)
-
-# Display or save the HTML report
-print(html_report)
-# Optionally, you can save the HTML report to a file
-# result_df_filtered.to_html("table_counts_report.html", index=False)
+# Call the function to create tables in the target database
+create_tables(source_db_name, target_db_name, table_names_input)
