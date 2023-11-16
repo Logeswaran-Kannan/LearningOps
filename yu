@@ -1,5 +1,51 @@
-Risk 1: Addressing the historical data fix issue for duplicates in MV_SI_SEARCH has been limited to a one-month period. This constraint arises from limitations in the pre-production environment concerning resources, costs, and memory. Nevertheless, the functionality has undergone testing in lower environments.
+from pyspark.sql import SparkSession
 
-Risk 2: Cost Analysis - While cost analysis and performance tuning are not within the testing scope, collected metrics indicate that the initial data fix for incidents is expected to incur a cost of approximately £3,000. Additionally, the ongoing cost per day for the newly added functionality is anticipated to be around £150, inclusive of storage and compute costs.
+# Create a Spark session
+spark = SparkSession.builder.appName("TableCountAnalysis").getOrCreate()
 
-Risk 3: The test data available in the test environment may not accurately reflect production-like scenarios, and there are known production issues related to source data. This introduces the possibility that new scenarios introduced in production may cause defects.
+# Specify your database and schema
+database_name = "your_database"
+schema_name = "your_schema"
+
+# Get the list of tables in the specified database and schema
+tables = spark.sql(f"SHOW TABLES IN {database_name}.{schema_name}").collect()
+
+# Define a function to filter out tables based on the provided conditions
+def filter_tables(table_name):
+    return not (table_name.startswith("--") or table_name.endswith("temp"))
+
+# Initialize an empty list to store the results
+results = []
+
+# Loop through each table and get the count
+for table in tables:
+    table_name = table["tableName"]
+    if filter_tables(table_name):
+        try:
+            count = spark.sql(f"SELECT COUNT(*) FROM {database_name}.{schema_name}.{table_name}").collect()[0][0]
+            comment = spark.sql(f"DESCRIBE EXTENDED {database_name}.{schema_name}.{table_name}").filter("col_name = 'Comment'").collect()[0][1]
+        except Exception as e:
+            count = 0
+            comment = f"Error: {str(e)}"
+
+        # If count is 0, continue to the next table
+        if count == 0:
+            continue
+
+        # Add the result to the list
+        results.append({
+            "TableName": table_name,
+            "SchemaName": schema_name,
+            "Count": count,
+            "Comment": comment
+        })
+
+# Display the results in HTML format
+html_output = "<html><head><title>Table Count Analysis</title></head><body><table border='1'><tr><th>TableName</th><th>SchemaName</th><th>Count</th><th>Comment</th></tr>"
+
+for result in results:
+    html_output += f"<tr><td>{result['TableName']}</td><td>{result['SchemaName']}</td><td>{result['Count']}</td><td>{result['Comment']}</td></tr>"
+
+html_output += "</table></body></html>"
+
+print(html_output)
