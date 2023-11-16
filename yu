@@ -1,36 +1,57 @@
+# Import necessary libraries
+import pandas as pd
 from pyspark.sql import SparkSession
 
-def create_tables(source_database, target_database, table_names):
+# Define function to copy tables from source database to target database
+def copy_tables(source_database, target_database, table_names):
     # Initialize Spark session
-    spark = SparkSession.builder.appName("CreateTables").getOrCreate()
+    spark = SparkSession.builder.appName("CopyTables").getOrCreate()
 
-    # Iterate through the specified table names
-    for table_name in table_names:
-        # Read data from the source table
-        source_table = spark.table(f"{source_database}.{table_name}")
+    # Initialize an empty list to store results
+    results = []
 
-        # Get the column name to extract values
-        column_name = source_table.columns[0]
+    try:
+        # Iterate through the table names
+        for table_name in table_names:
+            # Read data from the source table
+            source_df = spark.sql(f"SELECT RTPLOG_ID FROM {source_database}.{table_name}")
 
-        # Extract values from the specified column
-        values = source_table.select(column_name).distinct()
+            # Create a new table name with 'bck' suffix
+            target_table_name = f"{table_name}_bck"
 
-        # Create a new DataFrame with the extracted values
-        new_table = spark.createDataFrame(values.rdd, source_table.schema)
+            # Write data to the target table in the target database
+            source_df.write.mode("overwrite").saveAsTable(f"{target_database}.{target_table_name}")
 
-        # Create the target table name with "bck" added
-        target_table_name = f"{table_name}_bck"
+            # Append result to the list
+            results.append([source_database, table_name, target_database, target_table_name, "Complete"])
 
-        # Save the new table to the target database
-        new_table.write.saveAsTable(f"{target_database}.{target_table_name}")
+    except Exception as e:
+        # Append failure result to the list in case of an exception
+        results.append([source_database, table_name, target_database, target_table_name, f"Failure: {str(e)}"])
 
-    # Stop the Spark session
-    spark.stop()
+    finally:
+        # Stop the Spark session
+        spark.stop()
 
-# Example usage:
-source_db_name = "source_database"
-target_db_name = "target_database"
-table_names_input = ["table1", "table2", "table3"]
+    return results
 
-# Call the function to create tables in the target database
-create_tables(source_db_name, target_db_name, table_names_input)
+# Example: Get table names from the source database
+source_database_input = "source_database_name"
+table_names_input = ["table1", "table2"]  # Add the names of the tables you want to copy
+
+# Specify the target database
+target_database_input = "target_database_name"
+
+# Copy tables and get results
+copy_results = copy_tables(source_database_input, target_database_input, table_names_input)
+
+# Convert results to a Pandas DataFrame
+result_df = pd.DataFrame(copy_results, columns=["Source Database", "Source Table", "Target Database", "Target Table", "Status"])
+
+# Generate HTML report
+html_report = result_df.to_html(index=False)
+
+# Display or save the HTML report
+print(html_report)
+# Optionally, you can save the HTML report to a file
+# result_df.to_html("copy_tables_report.html", index=False)
