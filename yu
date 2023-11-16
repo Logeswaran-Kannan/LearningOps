@@ -1,35 +1,73 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
 
-def get_table_counts(database_name):
-    # Assuming 'spark' is your SparkSession
-    # Replace 'your_table' with the actual table name
-    table_counts = spark.sql(f"SELECT COUNT(*) AS count FROM {database_name}.your_table")
-    return table_counts
+# Create a Spark session
+spark = SparkSession.builder.appName("TableCountScript").getOrCreate()
 
-def filter_tables_with_conditions(database_name):
-    # Assuming 'spark' is your SparkSession
-    # Replace 'your_table' with the actual table name
-    tables = spark.sql(f"SHOW TABLES IN {database_name}").filter(~col("tableName").startswith("--") & ~col("tableName").endswith("temp"))
-    return tables
+# Function to get the count of a table and comments
+def get_table_count_and_comments(database, table):
+    # Assuming your table names are in the format: database.table
+    full_table_name = f"{database}.{table}"
 
-def main(database_list):
-    for database_name in database_list:
-        tables = filter_tables_with_conditions(database_name)
-        
-        for table_row in tables.collect():
-            table_name = table_row['tableName']
-            
-            table_counts = get_table_counts(f"{database_name}.{table_name}")
-            count = table_counts.collect()[0]['count']
-            
-            # Assuming 'comments' is the column in the table with comments
-            comments = spark.sql(f"DESCRIBE {database_name}.{table_name} comments").collect()[0]['comments']
-            
-            if count > 0 or comments != "no data":
-                # Print or store the output in your preferred format (HTML in this case)
-                print(f"<tr><td>{database_name}</td><td>{table_name}</td><td>{count}</td><td>{comments}</td></tr>")
+    # Check if the table name meets the conditions
+    if not table.startswith('--') and not table.endswith('temp'):
+        # Get the count of rows in the table
+        count = spark.sql(f"SELECT COUNT(*) FROM {full_table_name}").collect()[0][0]
 
-# Example usage
-database_list = ['database1', 'database2']
-main(database_list)
+        # Check if the count is zero
+        if count == 0:
+            # Get comments for the table
+            comments = spark.sql(f"DESCRIBE EXTENDED {full_table_name}").collect()
+
+            # Extracting relevant information from comments
+            for comment in comments:
+                if "No data" in comment[0]:
+                    return {
+                        "database": database,
+                        "table": table,
+                        "count": count,
+                        "comments": comment[1]
+                    }
+
+    # Return None if the table did not meet the conditions or had non-zero count
+    return None
+
+# Function to generate HTML output
+def generate_html_output(results):
+    html_output = "<html><body><table border='1'><tr><th>Database</th><th>Table</th><th>Count</th><th>Comments</th></tr>"
+
+    for result in results:
+        html_output += (
+            f"<tr><td>{result['database']}</td><td>{result['table']}</td>"
+            f"<td>{result['count']}</td><td>{result['comments']}</td></tr>"
+        )
+
+    html_output += "</table></body></html>"
+    return html_output
+
+# List of databases (replace with your actual list)
+databases = ["database1", "database2"]
+
+# Placeholder for results
+results = []
+
+# Iterate through each database and its tables
+for database in databases:
+    # Get the list of tables in the database
+    tables = spark.sql(f"SHOW TABLES IN {database}").collect()
+
+    for table in tables:
+        # Extract the table name from the result
+        table_name = table["tableName"]
+
+        # Get the count and comments for the table
+        result = get_table_count_and_comments(database, table_name)
+
+        # Append the result to the list if it is not None
+        if result is not None:
+            results.append(result)
+
+# Generate HTML output
+html_output = generate_html_output(results)
+
+# Display HTML output
+displayHTML(html_output)
