@@ -1,68 +1,13 @@
-from pyspark.sql import SparkSession
+# Assuming you have a mount point named 'myMountPoint' configured in Databricks
+mount_point = "/mnt/myMountPoint"
 
-def count_tables(spark, database_name):
-    # Switch to the specified database
-    spark.sql(f"USE {database_name}")
+# Define the file format and path within the mount point
+file_format = "parquet"  # You can adjust this based on your file format
+file_path = f"{mount_point}/your_data_folder/your_data_file.{file_format}"
 
-    # Get the list of tables in the current database
-    tables_result = spark.sql("SHOW TABLES")
-    
-    if tables_result is not None and tables_result.count() > 0:
-        # Extract table names from the result
-        tables = tables_result.select("tableName").rdd.flatMap(lambda x: x).collect()
+# Read data into a DataFrame
+df = spark.read.format(file_format).load(file_path)
 
-        # Filter tables based on criteria (exclude table names)
-        filtered_tables = [table for table in tables if not table.startswith('--') and not table.endswith('temp') and not table.startswith('aren')]
-
-        # Initialize an empty list to store results
-        results = []
-
-        # Iterate through the filtered tables and count the rows
-        for table in filtered_tables:
-            count_result = spark.sql(f"SELECT COUNT(*) as count FROM {table}")
-
-            # Check if the count_result is not None and not empty
-            if count_result is not None and count_result.count() > 0:
-                count = count_result.first()["count"]
-            else:
-                count = 0
-
-            comments_result = spark.sql(f"DESCRIBE EXTENDED {table}").filter("col_name = 'Comment'")
-
-            # Check if the comments_result is not None and not empty
-            if comments_result is not None and comments_result.count() > 0:
-                comments = comments_result.select("data_type").first()["data_type"]
-            else:
-                comments = "N/A"
-
-            results.append((database_name, table, count, comments))
-
-        return results
-    else:
-        print(f"No tables found in database: {database_name}")
-        return []
-
-if __name__ == "__main__":
-    # Initialize Spark session
-    spark = SparkSession.builder.appName("TableCounter").getOrCreate()
-
-    # Specify the list of databases
-    databases = ["database1", "database2"]  # Add your database names here
-
-    # Initialize an empty list to store overall results
-    all_results = []
-
-    # Iterate through each database and count tables
-    for database in databases:
-        results = count_tables(spark, database)
-        all_results.extend(results)
-
-    # Create a DataFrame from the results
-    schema = ["Database", "TableName", "Count", "Comments"]
-    df = spark.createDataFrame(all_results, schema=schema)
-
-    # Write the results to the default database as countbck
-    df.write.mode("overwrite").saveAsTable("countbck")
-
-    # Stop the Spark session
-    spark.stop()
+# Display the count
+count = df.count()
+print(f"Number of rows in the DataFrame: {count}")
