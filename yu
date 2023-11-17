@@ -1,3 +1,4 @@
+# Define the Databricks mount path
 mount_path = "/mnt/your_mount_path"  # Replace with your actual mount path
 
 # Get the list of folders in the mount path
@@ -19,5 +20,6 @@ for folder in folders:
     # Append the results to the list
     results.append((folder_path, record_count))
 
-# Display the results
-display(results)
+# Display the results with title
+displayTitle = "Path and Record Count"
+display(results, display_id=displayTitle)
