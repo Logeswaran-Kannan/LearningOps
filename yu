@@ -1,22 +1,3 @@
-from pyspark.sql import SparkSession
+For these two agents, the initial problem with missing sales in the B2A report has been resolved. Now, their sales are showing up in the report. The issue was fixed on the CDL end because their operator IDs were initially mapped incorrectly. This has been corrected.
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("JsonViewer").getOrCreate()
-
-# Replace 'your_table' and 'column_name' with the actual table and column names
-table_name = 'your_table'
-column_name = 'column_name'
-
-# Read the existing table
-existing_df = spark.table(table_name)
-
-# Show the first 10 rows of the JSON column without truncation
-existing_df.select(column_name).show(10, truncate=False)
-
-# Write the full JSON data to a new table
-# Replace 'new_table' with the desired name for the new table
-new_table_name = 'new_table'
-existing_df.write.mode('overwrite').saveAsTable(new_table_name)
-
-# Stop the Spark session
-spark.stop()
+However, there's a point to note. The fix was implemented on November 11th at the CDL end. Due to this change, the sales made by these agents before that date are now categorized under October in the system. The system considers these changes as new business events for the respective policies. The good news is that they can now see their sales count accurately from November onwards. Any sales they made before the fix date in October will still be included in the October sales count. This ensures that we don't miss any sales they made before the October fix date from the CDL system. I believe this explanation is clear for the business.
