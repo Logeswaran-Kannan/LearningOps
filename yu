@@ -1,3 +1,9 @@
-For these two agents, the initial problem with missing sales in the B2A report has been resolved. Now, their sales are showing up in the report. The issue was fixed on the CDL end because their operator IDs were initially mapped incorrectly. This has been corrected.
+Hello Sarah!
 
-However, there's a point to note. The fix was implemented on November 11th at the CDL end. Due to this change, the sales made by these agents before that date are now categorized under October in the system. The system considers these changes as new business events for the respective policies. The good news is that they can now see their sales count accurately from November onwards. Any sales they made before the fix date in October will still be included in the October sales count. This ensures that we don't miss any sales they made before the October fix date from the CDL system. I believe this explanation is clear for the business.
+As you pointed out, there has been a change related to the operator ID from the Echelon side. The issue with the missing sales in the B2A report for these two agents has been resolved, and they are now appearing in the report.
+
+The fix was applied at the CDL end because their operator IDs were incorrectly mapped in the CDL system. This issue has been rectified. However, the changes that took place in November at the CDL end mean that sales made by these agents before that date are now categorized under a different reporting date. The system treats these changes as new business events for the respective policies, as the fix was implemented at the source side.
+
+The good news is that they can now see the accurate sales count from November onwards. Any sales they made before this date will be considered in October sales to ensure that we capture all their sales prior to the fix applied in November from CDL.
+
+I hope this clarifies the behavior of the sales data before November 5th.
