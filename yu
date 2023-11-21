@@ -1,29 +1,13 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json
-from pyspark.sql.types import StructType, StructField, StringType
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("JSONParsing").getOrCreate()
+spark = SparkSession.builder.appName("JsonViewer").getOrCreate()
 
-# Define your JSON schema - adjust it based on your actual JSON structure
-json_schema = StructType([
-    StructField("field1", StringType(), True),
-    StructField("field2", StringType(), True),
-    # Add more fields as needed
-])
+# Assuming 'your_table' is your table and 'column_name' is the column containing JSON data
+df = spark.sql("SELECT column_name FROM your_table")
 
-# Read your table with a column named 'body' containing JSON data
-df = spark.sql("SELECT * FROM your_table")
+# Convert PySpark DataFrame to Pandas DataFrame
+pandas_df = df.toPandas()
 
-# Parse the JSON column
-parsed_df = df.withColumn("parsed_body", from_json(col("body"), json_schema))
-
-# Extract individual fields from the parsed JSON
-final_df = parsed_df.select(
-    "parsed_body.field1",
-    "parsed_body.field2",
-    # Add more fields as needed
-)
-
-# Show the resulting DataFrame
-final_df.show(truncate=False)
+# Display the Pandas DataFrame
+print(pandas_df)
