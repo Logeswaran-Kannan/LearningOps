@@ -1,33 +1,33 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import explode_outer, col
+from pyspark.sql.functions import col
 
 # Initialize Spark session
 spark = SparkSession.builder.appName("JSONProcessor").getOrCreate()
 
 # Sample DataFrame with nested JSON in the 'body' column
 data = [
-    (1, '{"id":1, "name":"Parent", "children":[{"id":11, "name":"Child1","grandchildren":[{"id":111, "name":"Grandchild1"},{"id":112, "name":"Grandchild2"}]},{"id":12, "name":"Child2","grandchildren":[{"id":121, "name":"Grandchild3"}]}]}'),
+    (1, '{"id":1, "name":"Parent", "children":[{"id":11, "name":"Child1"},{"id":12, "name":"Child2"}]}'),
     # Add more rows as needed
 ]
 
 schema = ["id", "body"]
 df = spark.createDataFrame(data, schema=schema)
 
-# Explode the 'children' array to create a table for children
-children_df = df.select("id", col("body").getField("children").alias("children")).select("id", explode_outer("children").alias("child"))
+# Extract the 'children' array using getField
+children_df = df.select("id", col("body").getField("children").alias("children"))
 
-# Explode the 'grandchildren' array to create a table for grandchildren
-grandchildren_df = children_df.select("id", "child.id", col("child").getField("name").alias("grandchild_name"))
+# Explode the 'children' array to create separate rows for each child
+children_df = children_df.select("id", explode_outer("children").alias("child"))
 
-# Create tables for 'parent', 'children', and 'grandchildren'
-df.createOrReplaceTempView("parent_table")
-children_df.createOrReplaceTempView("children_table")
-grandchildren_df.createOrReplaceTempView("grandchildren_table")
+# Extract specific fields from the 'children' structure
+children_df = children_df.select(
+    "id",
+    "child.id".alias("child_id"),
+    "child.name".alias("child_name")
+)
 
-# Show the content of the tables
-spark.sql("SELECT * FROM parent_table").show(truncate=False)
-spark.sql("SELECT * FROM children_table").show(truncate=False)
-spark.sql("SELECT * FROM grandchildren_table").show(truncate=False)
+# Show the content of the 'children' DataFrame
+children_df.show(truncate=False)
 
 # Stop the Spark session
 spark.stop()
