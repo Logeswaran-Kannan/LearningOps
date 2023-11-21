@@ -1,33 +1,44 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, explode
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("JSONProcessor").getOrCreate()
+spark = SparkSession.builder.appName("JSONFlattener").getOrCreate()
 
-# Sample DataFrame with nested JSON in the 'body' column
+# Sample data with a column named 'body' containing nested JSON
 data = [
-    (1, '{"id":1, "name":"Parent", "children":[{"id":11, "name":"Child1"},{"id":12, "name":"Child2"}]}'),
-    # Add more rows as needed
+    (1, '{"id": 1, "name": "Parent", "children": [{"id": 11, "name": "Child1", "grandchildren": [{"id": 111, "name": "Grandchild1"}, {"id": 112, "name": "Grandchild2"}]}, {"id": 12, "name": "Child2"}]}'),
+    (2, '{"id": 2, "name": "AnotherParent", "children": [{"id": 21, "name": "AnotherChild1"}]}')
 ]
 
-schema = ["id", "body"]
+# Define schema
+schema = ["parent_id", "body"]
+
+# Create DataFrame
 df = spark.createDataFrame(data, schema=schema)
 
-# Extract the 'children' array using getField
-children_df = df.select("id", col("body").getField("children").alias("children"))
+# Explode the 'children' array to create a new row for each child
+exploded_df = df.select("parent_id", explode(col("body.children")).alias("child"))
 
-# Explode the 'children' array to create separate rows for each child
-children_df = children_df.select("id", explode_outer("children").alias("child"))
-
-# Extract specific fields from the 'children' structure
-children_df = children_df.select(
-    "id",
-    "child.id".alias("child_id"),
-    "child.name".alias("child_name")
+# Extract values from the nested JSON structure
+result_df = exploded_df.select(
+    "parent_id",
+    col("child.id").alias("child_id"),
+    col("child.name").alias("child_name"),
+    explode(col("child.grandchildren")).alias("grandchild")
+).select(
+    "parent_id",
+    "child_id",
+    "child_name",
+    col("grandchild.id").alias("grandchild_id"),
+    col("grandchild.name").alias("grandchild_name")
 )
 
-# Show the content of the 'children' DataFrame
-children_df.show(truncate=False)
+# Show the result DataFrame
+result_df.show(truncate=False)
+
+# Optionally, you can write the result DataFrame to an output table
+output_table_name = "output_table"
+result_df.write.mode("overwrite").saveAsTable(output_table_name)
 
 # Stop the Spark session
 spark.stop()
