@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import from_json, col
 
 # Initialize Spark session
 spark = SparkSession.builder.appName("JSONProcessing").getOrCreate()
@@ -11,12 +11,16 @@ source_column_name = "body"
 # Read the JSON data into a Spark DataFrame
 json_data = spark.sql(f"SELECT * FROM {source_table_name}")
 
-# Extract fields from the nested JSON structure
-result_df = json_data.select(
-    col(source_column_name + ".field1").alias("Field1"),
-    col(source_column_name + ".field2").alias("Field2"),
-    col(source_column_name + ".field3.nestedField").alias("NestedField"),
-    col(source_column_name + ".field3.anotherNestedField").alias("AnotherNestedField")
+# Parse the JSON string in the body column
+json_schema = spark.read.json(json_data.rdd.map(lambda row: row.body)).schema
+parsed_json_data = json_data.withColumn("parsed_body", from_json(col(source_column_name), json_schema))
+
+# Extract fields from the parsed JSON structure
+result_df = parsed_json_data.select(
+    col("parsed_body.field1").alias("Field1"),
+    col("parsed_body.field2").alias("Field2"),
+    col("parsed_body.field3.nestedField").alias("NestedField"),
+    col("parsed_body.field3.anotherNestedField").alias("AnotherNestedField")
 )
 
 # Show the result DataFrame
