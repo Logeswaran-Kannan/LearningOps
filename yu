@@ -1,29 +1,33 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, explode, col
+from pyspark.sql.functions import explode_outer, col
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("NestedJSONProcessor").getOrCreate()
+spark = SparkSession.builder.appName("JSONProcessor").getOrCreate()
 
-# Sample data with a parent-child relationship in the 'body' column
+# Sample DataFrame with nested JSON in the 'body' column
 data = [
-    (1, '{"id": 1, "name": "Parent", "children": [{"id": 101, "name": "Child1"}, {"id": 102, "name": "Child2"}]}'),
-    (2, '{"id": 2, "name": "AnotherParent", "children": [{"id": 201, "name": "Child3"}]}')
+    (1, '{"id":1, "name":"Parent", "children":[{"id":11, "name":"Child1","grandchildren":[{"id":111, "name":"Grandchild1"},{"id":112, "name":"Grandchild2"}]},{"id":12, "name":"Child2","grandchildren":[{"id":121, "name":"Grandchild3"}]}]}'),
+    # Add more rows as needed
 ]
 
-# Create a DataFrame with sample data
 schema = ["id", "body"]
 df = spark.createDataFrame(data, schema=schema)
 
-# Extract all fields from the JSON structure
-processed_df = df.select("id", from_json("body", "{id: int, name: string, children: array<struct<id:int,name:string>>>}").alias("json_data")) \
-                 .select("id", "json_data.*", explode("json_data.children").alias("child"))
+# Explode the 'children' array to create a table for children
+children_df = df.select("id", col("body").getField("children").alias("children")).select("id", explode_outer("children").alias("child"))
 
-# Show the result DataFrame
-processed_df.show(truncate=False)
+# Explode the 'grandchildren' array to create a table for grandchildren
+grandchildren_df = children_df.select("id", "child.id", col("child").getField("name").alias("grandchild_name"))
 
-# Optionally, you can write the result DataFrame to an output table
-output_table_name = "output_table"
-processed_df.write.mode("overwrite").saveAsTable(output_table_name)
+# Create tables for 'parent', 'children', and 'grandchildren'
+df.createOrReplaceTempView("parent_table")
+children_df.createOrReplaceTempView("children_table")
+grandchildren_df.createOrReplaceTempView("grandchildren_table")
+
+# Show the content of the tables
+spark.sql("SELECT * FROM parent_table").show(truncate=False)
+spark.sql("SELECT * FROM children_table").show(truncate=False)
+spark.sql("SELECT * FROM grandchildren_table").show(truncate=False)
 
 # Stop the Spark session
 spark.stop()
