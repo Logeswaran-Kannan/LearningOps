@@ -1,34 +1,33 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col
+from pyspark.sql.functions import expr
 
-# Initialize Spark session
+# Initialize a Spark session
 spark = SparkSession.builder.appName("JSONProcessing").getOrCreate()
 
-# Specify your table and column names
-source_table_name = "your_source_table"
-source_column_name = "body"
+# Read JSON data into a DataFrame
+json_data = spark.read.json("/path/to/your/json/file.json")
 
-# Read the JSON data into a Spark DataFrame
-json_data = spark.sql(f"SELECT * FROM {source_table_name}")
-
-# Parse the JSON string in the body column
-json_schema = spark.read.json(json_data.rdd.map(lambda row: row.body)).schema
-parsed_json_data = json_data.withColumn("parsed_body", from_json(col(source_column_name), json_schema))
-
-# Extract fields from the parsed JSON structure
-result_df = parsed_json_data.select(
-    col("parsed_body.field1").alias("Field1"),
-    col("parsed_body.field2").alias("Field2"),
-    col("parsed_body.field3.nestedField").alias("NestedField"),
-    col("parsed_body.field3.anotherNestedField").alias("AnotherNestedField")
+# Flatten the nested structure
+flattened_data = json_data.select(
+    "id",
+    "name",
+    expr("child1.id").alias("child1_id"),
+    expr("child1.name").alias("child1_name"),
+    expr("child1.grandchild1.id").alias("grandchild1_id"),
+    expr("child1.grandchild1.name").alias("grandchild1_name"),
+    expr("child1.grandchild2.id").alias("grandchild2_id"),
+    expr("child1.grandchild2.name").alias("grandchild2_name"),
+    expr("child2.id").alias("child2_id"),
+    expr("child2.name").alias("child2_name"),
+    expr("child2.grandchild3.id").alias("grandchild3_id"),
+    expr("child2.grandchild3.name").alias("grandchild3_name")
 )
 
-# Show the result DataFrame
-result_df.show(truncate=False)
+# Display the flattened data
+flattened_data.show()
 
-# Write the result DataFrame to a new table
-result_table_name = "result_table"
-result_df.write.mode("overwrite").saveAsTable(result_table_name)
+# Save the flattened data to a table
+flattened_data.write.saveAsTable("your_database.your_table_name", mode="overwrite")
 
 # Stop the Spark session
 spark.stop()
