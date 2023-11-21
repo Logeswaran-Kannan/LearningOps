@@ -1,48 +1,29 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import from_json, explode, col
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("JSONExtractor").getOrCreate()
+spark = SparkSession.builder.appName("NestedJSONProcessor").getOrCreate()
 
-# Example JSON data with parent and child structure
-json_data = '''
-[
-  {
-    "id": 1,
-    "name": "Parent1",
-    "details": {
-      "child_id": 101,
-      "child_name": "Child1"
-    }
-  },
-  {
-    "id": 2,
-    "name": "Parent2",
-    "details": {
-      "child_id": 102,
-      "child_name": "Child2"
-    }
-  }
+# Sample data with a parent-child relationship in the 'body' column
+data = [
+    (1, '{"id": 1, "name": "Parent", "children": [{"id": 101, "name": "Child1"}, {"id": 102, "name": "Child2"}]}'),
+    (2, '{"id": 2, "name": "AnotherParent", "children": [{"id": 201, "name": "Child3"}]}')
 ]
-'''
 
-# Read the JSON data into a Spark DataFrame
-df = spark.read.json(spark.sparkContext.parallelize([json_data]))
+# Create a DataFrame with sample data
+schema = ["id", "body"]
+df = spark.createDataFrame(data, schema=schema)
 
-# Extract all fields from JSON into separate columns
-result_df = df.select(
-    col("id").alias("parent_id"),
-    col("name").alias("parent_name"),
-    col("details.child_id").alias("child_id"),
-    col("details.child_name").alias("child_name")
-)
+# Extract all fields from the JSON structure
+processed_df = df.select("id", from_json("body", "{id: int, name: string, children: array<struct<id:int,name:string>>>}").alias("json_data")) \
+                 .select("id", "json_data.*", explode("json_data.children").alias("child"))
 
 # Show the result DataFrame
-result_df.show(truncate=False)
+processed_df.show(truncate=False)
 
 # Optionally, you can write the result DataFrame to an output table
 output_table_name = "output_table"
-result_df.write.mode("overwrite").saveAsTable(output_table_name)
+processed_df.write.mode("overwrite").saveAsTable(output_table_name)
 
 # Stop the Spark session
 spark.stop()
