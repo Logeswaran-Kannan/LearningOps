@@ -1,25 +1,29 @@
-# Define the Databricks mount path
-mount_path = "/mnt/your_mount_path"  # Replace with your actual mount path
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, from_json
+from pyspark.sql.types import StructType, StructField, StringType
 
-# Get the list of folders in the mount path
-folders = dbutils.fs.ls(mount_path)
+# Initialize Spark session
+spark = SparkSession.builder.appName("JSONParsing").getOrCreate()
 
-# Initialize an empty list to store results
-results = []
+# Define your JSON schema - adjust it based on your actual JSON structure
+json_schema = StructType([
+    StructField("field1", StringType(), True),
+    StructField("field2", StringType(), True),
+    # Add more fields as needed
+])
 
-# Iterate through each folder
-for folder in folders:
-    folder_path = folder.path
+# Read your table with a column named 'body' containing JSON data
+df = spark.sql("SELECT * FROM your_table")
 
-    # Read Delta files in the folder
-    delta_df = spark.read.format("delta").load(folder_path)
+# Parse the JSON column
+parsed_df = df.withColumn("parsed_body", from_json(col("body"), json_schema))
 
-    # Get the record count
-    record_count = delta_df.count()
+# Extract individual fields from the parsed JSON
+final_df = parsed_df.select(
+    "parsed_body.field1",
+    "parsed_body.field2",
+    # Add more fields as needed
+)
 
-    # Append the results to the list
-    results.append((folder_path, record_count))
-
-# Display the results with title
-displayTitle = "Path and Record Count"
-display(results, display_id=displayTitle)
+# Show the resulting DataFrame
+final_df.show(truncate=False)
