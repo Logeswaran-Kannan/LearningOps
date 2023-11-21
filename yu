@@ -4,18 +4,37 @@ from pyspark.sql.functions import col
 # Initialize Spark session
 spark = SparkSession.builder.appName("JSONExtractor").getOrCreate()
 
-# Specify your table and column names
-table_name = "your_table"
-column_name = "your_json_column"
+# Example JSON data with parent and child structure
+json_data = '''
+[
+  {
+    "id": 1,
+    "name": "Parent1",
+    "details": {
+      "child_id": 101,
+      "child_name": "Child1"
+    }
+  },
+  {
+    "id": 2,
+    "name": "Parent2",
+    "details": {
+      "child_id": 102,
+      "child_name": "Child2"
+    }
+  }
+]
+'''
 
 # Read the JSON data into a Spark DataFrame
-json_data = spark.sql(f"SELECT {column_name} FROM {table_name} LIMIT 10")
+df = spark.read.json(spark.sparkContext.parallelize([json_data]))
 
-# Extract specific values from the JSON structure
-result_df = json_data.select(
-    col(column_name + ".field1").alias("Field1"),
-    col(column_name + ".nested.field2").alias("Field2"),
-    col(column_name + ".anotherNested.field3").alias("Field3")
+# Extract all fields from JSON into separate columns
+result_df = df.select(
+    col("id").alias("parent_id"),
+    col("name").alias("parent_name"),
+    col("details.child_id").alias("child_id"),
+    col("details.child_name").alias("child_name")
 )
 
 # Show the result DataFrame
