@@ -1,20 +1,30 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+from pyspark.sql.types import StringType
 
 # Initialize a Spark session
 spark = SparkSession.builder.appName("CreateTempTable").getOrCreate()
 
-# Define the directory path
-directory_path = "/mnt/your_directory"
+# Define the directory path where your files are stored
+directory_path = "/mnt/your_mount_point/your_directory_path"
 
-# Read files with names containing "20230822" into a DataFrame
-df = spark.read.option("basePath", directory_path).parquet(f"{directory_path}/*20230822*")
+# Read JSON files with filenames containing "20230822" into a DataFrame
+df = spark.read.option("multiline", "true").json(directory_path + "/*20230822*")
 
-# Create a temporary table
+# Check if the DataFrame has the expected structure
+df.printSchema()
+
+# Display the DataFrame
+df.show()
+
+# Create a temporary table from the DataFrame
 temp_table_name = "temp_table_20230822"
 df.createOrReplaceTempView(temp_table_name)
 
-# Display the data in the temporary table
-spark.sql(f"SELECT * FROM {temp_table_name}").show()
+# Query the temporary table
+result = spark.sql(f"SELECT * FROM {temp_table_name}")
+result.show()
 
 # Stop the Spark session
 spark.stop()
+
