@@ -1,24 +1,22 @@
 from pyspark.sql import SparkSession
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("LargeJSONViewer").getOrCreate()
+spark = SparkSession.builder.appName("JsonViewer").getOrCreate()
 
-# Set the desired configuration to avoid truncation
-spark.conf.set("spark.sql.repl.eagerEval.enabled", True)
-spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", 2000)
+# Replace 'your_table' and 'column_name' with the actual table and column names
+table_name = 'your_table'
+column_name = 'column_name'
 
-# Replace 'your_table' and 'column_name' with your actual table and column names
-table_name = "your_table"
-column_name = "column_name"
+# Read the existing table
+existing_df = spark.table(table_name)
 
-# Read the data from the table
-data = spark.sql(f"SELECT {column_name} FROM {table_name}")
+# Show the first 10 rows of the JSON column without truncation
+existing_df.select(column_name).show(10, truncate=False)
 
-# Convert the column to Pandas DataFrame
-df = data.select(column_name).toPandas()
-
-# Display the Pandas DataFrame
-print(df)
+# Write the full JSON data to a new table
+# Replace 'new_table' with the desired name for the new table
+new_table_name = 'new_table'
+existing_df.write.mode('overwrite').saveAsTable(new_table_name)
 
 # Stop the Spark session
 spark.stop()
