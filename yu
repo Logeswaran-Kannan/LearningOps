@@ -1,2 +1,29 @@
+from pyspark.sql import SparkSession
+from pyspark.sql import SQLContext
+import pandas as pd
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("LargeJSONViewer").getOrCreate()
+
+# Specify your table and column names
+table_name = "your_table"
+column_name = "your_json_column"
+
+# Retrieve a limited number of rows (adjust the limit as needed)
+limited_data = spark.sql(f"SELECT {column_name} FROM {table_name} LIMIT 10")
+
+# Convert to Pandas DataFrame to view the full JSON content
+pandas_df = limited_data.toPandas()
+
+# Display the Pandas DataFrame
+print(pandas_df)
+
+# Convert Pandas DataFrame back to Spark DataFrame
+spark_df = spark.createDataFrame(pandas_df)
+
+# Optionally, you can write the Spark DataFrame to an output table
 output_table_name = "output_table"
-pandas_df.to_sql(output_table_name, spark.sqlContext.sql, if_exists="overwrite")
+spark_df.write.mode("overwrite").saveAsTable(output_table_name)
+
+# Stop the Spark session
+spark.stop()
