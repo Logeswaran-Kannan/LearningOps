@@ -1,33 +1,11 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import expr
-
-# Initialize a Spark session
-spark = SparkSession.builder.appName("JSONProcessing").getOrCreate()
-
-# Read JSON data into a DataFrame
-json_data = spark.read.json("/path/to/your/json/file.json")
+# Read data from your table
+table_name = "your_database.your_table_name"
+json_data = spark.table(table_name)
 
 # Flatten the nested structure
 flattened_data = json_data.select(
     "id",
     "name",
-    expr("child1.id").alias("child1_id"),
-    expr("child1.name").alias("child1_name"),
-    expr("child1.grandchild1.id").alias("grandchild1_id"),
-    expr("child1.grandchild1.name").alias("grandchild1_name"),
-    expr("child1.grandchild2.id").alias("grandchild2_id"),
-    expr("child1.grandchild2.name").alias("grandchild2_name"),
-    expr("child2.id").alias("child2_id"),
-    expr("child2.name").alias("child2_name"),
-    expr("child2.grandchild3.id").alias("grandchild3_id"),
-    expr("child2.grandchild3.name").alias("grandchild3_name")
-)
-
-# Display the flattened data
-flattened_data.show()
-
-# Save the flattened data to a table
-flattened_data.write.saveAsTable("your_database.your_table_name", mode="overwrite")
-
-# Stop the Spark session
-spark.stop()
+    expr("get_json_object(json_column, '$.child1.id')").alias("child1_id"),
+    expr("get_json_object(json_column, '$.child1.name')").alias("child1_name"),
+ 
