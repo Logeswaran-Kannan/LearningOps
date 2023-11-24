@@ -1,135 +1,24 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import explode, col
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("JSONFlattening").getOrCreate()
+Subject: Summary of Action Items Before TSR Release on Dec 6th
 
-# Sample JSON data stored in a column called "body"
-json_data = """
-[
-    {
-        "registration": "ZZ99ABC",
-        "make": "FORD",
-        "model": "FOCUS",
-        "firstUsedDate": "2010.11.13",
-        "fuelType": "Petrol",
-        "primaryColour": "Yellow",
-        "vehicleId": "4Tq319nVKLz+25IRaUo79w==",
-        "registrationDate": "2010.11.13",
-        "manufactureDate": "2010.11.13",
-        "engineSize": "1800",
-        "motTests":[
-            {
-                "completedDate": "2013.11.03 09:33:08",
-                "testResult": "PASSED",
-                "expiryDate": "2014.11.02",
-                "odometerValue": "47125",
-                "odometerUnit": "mi",
-                "odometerResultType": "READ",
-                "motTestNumber": "914655760009",
-                "rfrAndComments": []
-            },
-            {
-                "completedDate": "2013.11.01 11:28:34",
-                "testResult": "FAILED",
-                "odometerValue": "47118",
-                "odometerUnit": "mi",
-                "odometerResultType": "READ",
-                "motTestNumber": "841470560098",
-                "rfrAndComments":[
-                    {
-                        "text": "Front brake disc excessively pitted (3.5.1h)",
-                        "type": "FAIL",
-                        "dangerous": true
-                    },
-                    {
-                        "text": "Nearside Rear wheel bearing has slight play (2.6.2)",
-                        "type": "ADVISORY",
-                        "dangerous": false
-                    }
-                ]
-            },
-            {
-                "completedDate": "2018.05.20 11:28:34",
-                "testResult": "FAILED",
-                "odometerValue": "57318",
-                "odometerUnit": "mi",
-                "odometerResultType": "READ",
-                "motTestNumber": "741489560458",
-                "rfrAndComments":[
-                    {
-                        "text": "Nearside Parking brake efficiency below requirements (1.4.2 (a) (i))",
-                        "type": "MAJOR",
-                        "dangerous": false
-                    },
-                    {
-                        "text": "Front brake disc excessively pitted (3.5.1h)",
-                        "type": "DANGEROUS",
-                        "dangerous": false
-                    },
-                    {
-                        "text": "tyres wearing unevenly",
-                        "type": "USER ENTERED",
-                        "dangerous": true
-                    }
-                ]
-            }
-        ]
-    },
-    {
-        "registration": "YY09DEF",
-        "make": "BMW",
-        "model": "Z4",
-        "firstUsedDate": "2009.01.25",
-        "fuelType": "Petrol",
-        "primaryColour": "Green",
-        "vehicleId": "3Fv916dPLGx=43PRaKa45e++",
-        "registrationDate": "2009.01.25",
-        "manufactureDate": "2009.01.25",
-        "engineSize": "1800",
-        "motTests":[
-            {
-                "completedDate": "2012.01.10 10:27:56",
-                "testResult": "PASSED",
-                "expiryDate": "2013.01.09",
-                "odometerValue": "12345",
-                "odometerUnit": "mi",
-                "odometerResultType": "READ",
-                "motTestNumber": "345655760009",
-                "rfrAndComments": []
-            }
-        ]
-    }
-]
-"""
+Hello Team,
 
-# Load JSON data into a DataFrame with a column named "body"
-df = spark.read.json(spark.sparkContext.parallelize([(json_data,)]), schema="body STRING")
+Ahead of our daily stand-up, I've compiled the key observations that need attention before our TSR release on December 6th. Here's a summary:
 
-# Flatten the nested structure
-flat_df = df.select(
-    "body",
-    explode(col("body.motTests")).alias("motTest")
-).select(
-    "body.registration",
-    "body.make",
-    "body.model",
-    "body.firstUsedDate",
-    "body.fuelType",
-    "body.primaryColour",
-    "body.vehicleId",
-    "body.registrationDate",
-    "body.manufactureDate",
-    "body.engineSize",
-    "motTest.completedDate",
-    "motTest.testResult",
-    "motTest.expiryDate",
-    "motTest.odometerValue",
-    "motTest.odometerUnit",
-    "motTest.odometerResultType",
-    "motTest.motTestNumber",
-    "motTest.rfrAndComments"
-)
+Final summary data sent to Sagacity contains duplicates due to a malfunction in the END_AT logic, stemming from a data issue (DCD-45905). We need a resolution to address this duplication.
 
-# Show the result
-flat_df.show(truncate=False)
+The design for the Failed test scenario has been updated, and the next action item involves development.
+
+Classified as a data issue, the missing data in the JSON itself is impacting the SCD logic, resulting in duplicates in the final summary extract.
+
+Severity has been reduced to S3 for a table not included in the final extract sent to Sagacity. However, these issues still need attention during the warranty period.
+
+A business decision is needed on whether to process both test results occurring at the exact timestamp or only process the Pass test. Currently, this is happening randomly, and a confirmed decision is necessary. The marketing team is particularly interested in failure and expired MOT details.
+
+Severity for another issue has been reduced to S3, as the table is not part of the final extract sent to Sagacity. Nevertheless, these issues require addressing during the warranty period.
+
+The Vehicle ID column, not included in the final extract, has had its severity reduced. However, inconsistencies in populating this Vehicle ID need fixing during the warranty period.
+
+A Low-Level Design (LLD) update is required for this item.
+
+Let's discuss these points further during our stand-up for timely resolution.
