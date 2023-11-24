@@ -1,24 +1,50 @@
+# Import necessary libraries
+import pandas as pd
+import numpy as np
+from pyspark.sql import SparkSession
+import matplotlib.pyplot as plt
+from io import BytesIO
+from IPython.display import HTML
 
-Subject: Summary of Action Items Before TSR Release on Dec 6th
+# Read CSV file
+csv_path = "/dbfs/FileStore/tables/input.csv"  # Update with your actual path
+df = pd.read_csv(csv_path)
 
-Hello Team,
+# Initialize Spark session
+spark = SparkSession.builder.appName("DataValidation").getOrCreate()
 
-Ahead of our daily stand-up, I've compiled the key observations that need attention before our TSR release on December 6th. Here's a summary:
+# Function for data validation
+def perform_data_validation(table_name, source_sql, target_sql):
+    source_df = spark.sql(source_sql)
+    target_df = spark.sql(target_sql)
 
-Final summary data sent to Sagacity contains duplicates due to a malfunction in the END_AT logic, stemming from a data issue (DCD-45905). We need a resolution to address this duplication.
+    # Calculate counts
+    source_count = source_df.count()
+    target_count = target_df.count()
+    source_minus_target_count = source_df.subtract(target_df).count()
+    target_minus_source_count = target_df.subtract(source_df).count()
 
-The design for the Failed test scenario has been updated, and the next action item involves development.
+    # Determine status
+    status = "Pass" if source_minus_target_count == 0 and target_minus_source_count == 0 else "Fail"
 
-Classified as a data issue, the missing data in the JSON itself is impacting the SCD logic, resulting in duplicates in the final summary extract.
+    return table_name, source_count, target_count, source_minus_target_count, target_minus_source_count, status
 
-Severity has been reduced to S3 for a table not included in the final extract sent to Sagacity. However, these issues still need attention during the warranty period.
+# Apply data validation for each row in the CSV
+validation_results = [perform_data_validation(row['TableName'], row['SourceSQL'], row['TargetSQL']) for _, row in df.iterrows()]
 
-A business decision is needed on whether to process both test results occurring at the exact timestamp or only process the Pass test. Currently, this is happening randomly, and a confirmed decision is necessary. The marketing team is particularly interested in failure and expired MOT details.
+# Create a DataFrame from the validation results
+result_df = pd.DataFrame(validation_results, columns=['TableName', 'SourceCount', 'TargetCount', 'SourceMinusTarget', 'TargetMinusSource', 'Status'])
 
-Severity for another issue has been reduced to S3, as the table is not part of the final extract sent to Sagacity. Nevertheless, these issues require addressing during the warranty period.
+# Generate HTML report
+fig, ax = plt.subplots()
+result_df.plot(kind='bar', x='TableName', y=['SourceCount', 'TargetCount'], ax=ax, stacked=True, title='Count Comparison')
+plt.legend(loc='upper right')
 
-The Vehicle ID column, not included in the final extract, has had its severity reduced. However, inconsistencies in populating this Vehicle ID need fixing during the warranty period.
+# Convert the plot to HTML
+html_output = BytesIO()
+plt.savefig(html_output, format='png')
+plt.close()
+html_content = '<img src="data:image/png;base64,{}"/>'.format(html_output.getvalue().encode('base64').decode())
 
-A Low-Level Design (LLD) update is required for this item.
-
-Let's discuss these points further during our stand-up for timely resolution.
+# Display results and chart
+display(HTML(result_df.to_html() + html_content))
