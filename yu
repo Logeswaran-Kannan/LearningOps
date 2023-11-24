@@ -4,6 +4,7 @@ import numpy as np
 from pyspark.sql import SparkSession
 import matplotlib.pyplot as plt
 from io import BytesIO
+import base64
 from IPython.display import HTML
 
 # Read CSV file
@@ -44,7 +45,9 @@ plt.legend(loc='upper right')
 html_output = BytesIO()
 plt.savefig(html_output, format='png')
 plt.close()
-html_content = '<img src="data:image/png;base64,{}"/>'.format(html_output.getvalue().encode('base64').decode())
+
+# Encode the image to base64
+html_content = '<img src="data:image/png;base64,{}"/>'.format(base64.b64encode(html_output.getvalue()).decode())
 
 # Display results and chart
 display(HTML(result_df.to_html() + html_content))
