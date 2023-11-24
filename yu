@@ -1,3 +1,12 @@
+Sample CSV Format (input.csv):
+csv
+Copy code
+TableName,SourceSQL,TargetSQL
+Table1,SELECT * FROM source_table1,SELECT * FROM target_table1
+Table2,SELECT * FROM source_table2,SELECT * FROM target_table2
+
+
+
 # Import necessary libraries
 import pandas as pd
 import numpy as np
