@@ -36,10 +36,16 @@ validation_results = [perform_data_validation(row['TableName'], row['SourceSQL']
 # Create a DataFrame from the validation results
 result_df = pd.DataFrame(validation_results, columns=['TableName', 'SourceCount', 'TargetCount', 'SourceMinusTarget', 'TargetMinusSource', 'Status'])
 
-# Generate HTML report
-fig, ax = plt.subplots()
-result_df.plot(kind='bar', x='TableName', y=['SourceCount', 'TargetCount'], ax=ax, stacked=True, title='Count Comparison')
-plt.legend(loc='upper right')
+# Color code for Pass (green) and Fail (red)
+status_colors = {'Pass': 'green', 'Fail': 'red'}
+result_df['StatusColor'] = result_df['Status'].map(status_colors)
+
+# Generate HTML report with color-coded status
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+result_df.plot(kind='bar', x='TableName', y=['SourceCount', 'TargetCount'], ax=ax1, stacked=True, title='Count Comparison', color=['blue', 'orange'])
+result_df.plot(kind='bar', x='TableName', y='Status', ax=ax2, color=result_df['StatusColor'], legend=False)
+ax2.set_title('Pass vs Fail')
+ax2.set_xlabel('TableName')
 
 # Convert the plot to HTML
 html_output = BytesIO()
@@ -49,5 +55,5 @@ plt.close()
 # Encode the image to base64
 html_content = '<img src="data:image/png;base64,{}"/>'.format(base64.b64encode(html_output.getvalue()).decode())
 
-# Display results and chart
+# Display results and charts
 display(HTML(result_df.to_html() + html_content))
