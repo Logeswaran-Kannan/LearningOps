@@ -39,11 +39,12 @@ result_df = pd.DataFrame(validation_results, columns=['TableName', 'SourceCount'
 # Color code for Pass (green) and Fail (red)
 status_colors = {'Pass': 'green', 'Fail': 'red'}
 result_df['StatusColor'] = result_df['Status'].map(status_colors)
+result_df['StatusNumeric'] = np.where(result_df['Status'] == 'Pass', 1, 0)
 
 # Generate HTML report with color-coded status
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
 result_df.plot(kind='bar', x='TableName', y=['SourceCount', 'TargetCount'], ax=ax1, stacked=True, title='Count Comparison', color=['blue', 'orange'])
-result_df.plot(kind='bar', x='TableName', y='Status', ax=ax2, color=result_df['StatusColor'], legend=False)
+result_df.plot(kind='bar', x='TableName', y='StatusNumeric', ax=ax2, color=result_df['StatusColor'], legend=False)
 ax2.set_title('Pass vs Fail')
 ax2.set_xlabel('TableName')
 
