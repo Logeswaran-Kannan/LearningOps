@@ -1,60 +1,10 @@
-# Import necessary libraries
-import pandas as pd
-import numpy as np
-from pyspark.sql import SparkSession
-import matplotlib.pyplot as plt
-from io import BytesIO
-import base64
-from IPython.display import HTML
 
-# Read CSV file
-csv_path = "/dbfs/FileStore/tables/input.csv"  # Update with your actual path
-df = pd.read_csv(csv_path)
+The minimum test evidence necessitates the submission of the following details:
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("DataValidation").getOrCreate()
-
-# Function for data validation
-def perform_data_validation(table_name, source_sql, target_sql):
-    source_df = spark.sql(source_sql)
-    target_df = spark.sql(target_sql)
-
-    # Calculate counts
-    source_count = source_df.count()
-    target_count = target_df.count()
-    source_minus_target_count = source_df.subtract(target_df).count()
-    target_minus_source_count = target_df.subtract(source_df).count()
-
-    # Determine status
-    status = "Pass" if source_minus_target_count == 0 and target_minus_source_count == 0 else "Fail"
-
-    return table_name, source_count, target_count, source_minus_target_count, target_minus_source_count, status
-
-# Apply data validation for each row in the CSV
-validation_results = [perform_data_validation(row['TableName'], row['SourceSQL'], row['TargetSQL']) for _, row in df.iterrows()]
-
-# Create a DataFrame from the validation results
-result_df = pd.DataFrame(validation_results, columns=['TableName', 'SourceCount', 'TargetCount', 'SourceMinusTarget', 'TargetMinusSource', 'Status'])
-
-# Color code for Pass (green) and Fail (red)
-status_colors = {'Pass': 'green', 'Fail': 'red'}
-result_df['StatusColor'] = result_df['Status'].map(status_colors)
-result_df['StatusNumeric'] = np.where(result_df['Status'] == 'Pass', 1, 0)
-
-# Generate HTML report with color-coded status
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-result_df.plot(kind='bar', x='TableName', y=['SourceCount', 'TargetCount'], ax=ax1, stacked=True, title='Count Comparison', color=['blue', 'orange'])
-result_df.plot(kind='bar', x='TableName', y='StatusNumeric', ax=ax2, color=result_df['StatusColor'], legend=False)
-ax2.set_title('Pass vs Fail')
-ax2.set_xlabel('TableName')
-
-# Convert the plot to HTML
-html_output = BytesIO()
-plt.savefig(html_output, format='png')
-plt.close()
-
-# Encode the image to base64
-html_content = '<img src="data:image/png;base64,{}"/>'.format(base64.b64encode(html_output.getvalue()).decode())
-
-# Display results and charts
-display(HTML(result_df.to_html() + html_content))
+Problem Statement
+Root Cause - Identification Methodology
+Business and Process Impacts
+Proposed Solution
+Testing Conducted in Lower Environment - Including Supporting Evidence
+Test Conclusion and Identification of Any Risks
+Sign-off
