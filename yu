@@ -1,4 +1,1 @@
-SELECT *
-FROM your_table
-WHERE expirydate BETWEEN CURRENT_DATE AND DATE_ADD(CURRENT_DATE, INTERVAL 12 MONTH)
-    AND status = 'PASSED';
+DATE_FORMAT(timestamp_column, 'yyyy-MM-dd HH:mm:ss') AS formatted_timestamp
