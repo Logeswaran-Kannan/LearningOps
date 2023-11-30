@@ -1,3 +1,27 @@
-This problem falls under the category of a source data issue. The project team, in agreement with business users, has decided not to perform any data cleansing for this release. These scenarios will be accepted as they are. Additionally, a design change has been implemented to filter only the "Pass" status in the extract sent to the outbound feed. Any further refinement of requirements may be considered after the go-live if necessary.
+from pyspark.sql import SparkSession
 
+# Create a Spark session
+spark = SparkSession.builder.appName("example").getOrCreate()
 
+# Define the path to your pipe-delimited text file
+file_path = "/path/to/your/file.txt"
+
+# Define the schema based on your data structure
+# Replace 'column1', 'column2', etc. with your actual column names and types
+schema = "column1 STRING, column2 INT, column3 DOUBLE, ..."
+
+# Read the text file into a DataFrame with the specified schema and options
+df = spark.read.option("header", "true").option("delimiter", "|").schema(schema).csv(file_path)
+
+# Create a temporary table
+table_name = "temp_table"
+df.createOrReplaceTempView(table_name)
+
+# Show the contents of the temporary table
+spark.sql(f"SELECT * FROM {table_name}").show()
+
+# Optionally, you can persist the DataFrame to improve performance for subsequent queries
+# df.persist()
+
+# Stop the Spark session (this is usually done at the end of your script)
+spark.stop()
