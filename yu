@@ -1,27 +1,4 @@
-from pyspark.sql import SparkSession
-
-# Create a Spark session
-spark = SparkSession.builder.appName("example").getOrCreate()
-
-# Define the path to your pipe-delimited text file
-file_path = "/path/to/your/file.txt"
-
-# Define the schema based on your data structure
-# Replace 'column1', 'column2', etc. with your actual column names and types
-schema = "column1 STRING, column2 INT, column3 DOUBLE, ..."
-
-# Read the text file into a DataFrame with the specified schema and options
-df = spark.read.option("header", "true").option("delimiter", "|").schema(schema).csv(file_path)
-
-# Create a temporary table
-table_name = "temp_table"
-df.createOrReplaceTempView(table_name)
-
-# Show the contents of the temporary table
-spark.sql(f"SELECT * FROM {table_name}").show()
-
-# Optionally, you can persist the DataFrame to improve performance for subsequent queries
-# df.persist()
-
-# Stop the Spark session (this is usually done at the end of your script)
-spark.stop()
+SELECT *
+FROM your_table
+WHERE expirydate BETWEEN CURRENT_DATE AND DATE_ADD(CURRENT_DATE, INTERVAL 12 MONTH)
+    AND status = 'PASSED';
