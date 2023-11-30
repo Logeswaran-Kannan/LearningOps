@@ -1,1 +1,1 @@
-DATE_FORMAT(timestamp_column, 'yyyy-MM-dd HH:mm:ss') AS formatted_timestamp
+ROUND(distance_in_km * 0.621371) AS distance_in_miles
