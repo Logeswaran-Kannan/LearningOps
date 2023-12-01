@@ -28,3 +28,13 @@ result.show(truncate=False)
 
 # Stop the Spark session
 spark.stop()
+
+
+
+
+Hello everyone,
+
+I've outlined the plan for deploying the MOT ingestion to the pre-production environment. Julian, we're seeking your assistance in transferring the raw MOT DVSA files from the development (DEV) environment to pre-production (Pre-Prod). Initially, there are 700 files in the history folder that need to be moved to the corresponding history folder in pre-production. After this transfer, Venu will handle the processing of this data, progressing it from the bronze stage through analytical processes until it reaches the enrichment store.
+
+Following this initial phase, Venu will notify you to proceed with moving the incremental files, which amount to 2,000 files. These estimates are based on the processing of 2,700 files in the lower environment. Your collaboration on this deployment is greatly appreciated.
+
