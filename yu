@@ -1,23 +1,30 @@
+from pyspark.sql import SparkSession
 import os
 
-def get_file_size(path):
-    # Get the size of a file in MB
-    return os.path.getsize(path) / (1024 * 1024)
+# Create a Spark session
+spark = SparkSession.builder.appName("FileSize").getOrCreate()
 
-def get_folder_size(folder_path):
-    total_size = 0
-    # Traverse the folder and calculate the total size
-    for root, dirs, files in dbutils.fs.ls(folder_path):
-        for file_info in files:
-            file_path = file_info.path
-            file_size = get_file_size(file_path)
-            total_size += file_size
-    return total_size
+# Define the base folder path
+base_folder_path = "/mnt/your_folder_path"  # Replace with your actual folder path
 
-# Specify your Databricks mnt path
-mnt_path = "/mnt/your_mount_point"
+# Function to get file size in MB
+def get_file_size(file_path):
+    return os.path.getsize(file_path) / (1024 * 1024)  # Convert bytes to megabytes
 
-# Get the size of each file and subfolder in MB
-folder_size = get_folder_size(mnt_path)
+# Get a list of all files in the folder and its subfolders
+file_paths = [os.path.join(root, file) for root, dirs, files in os.walk(base_folder_path) for file in files]
 
-print(f"Total size of {mnt_path}: {folder_size:.2f} MB")
+# Create a Spark DataFrame with file paths
+df = spark.createDataFrame(file_paths, "path STRING")
+
+# Register a user-defined function (UDF) to calculate file size
+spark.udf.register("get_file_size", get_file_size)
+
+# Calculate file size for each file using the UDF
+result = spark.sql("SELECT path, get_file_size(path) AS size_MB FROM __TABLE__")
+
+# Show the result
+result.show(truncate=False)
+
+# Stop the Spark session
+spark.stop()
