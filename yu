@@ -1,14 +1,9 @@
 CREATE TABLE B AS
-SELECT * FROM A WHERE quoteid IN (
-    SELECT quoteid
+WITH RankedData AS (
+    SELECT
+        *,
+        ROW_NUMBER() OVER (PARTITION BY quoteid ORDER BY sysd DESC) AS sysd_rank
     FROM A
-    GROUP BY quoteid
-    HAVING COUNT(DISTINCT sysd) = 1 AND MAX(sysd) = 'Y'
 )
-UNION
-SELECT * FROM A WHERE quoteid IN (
-    SELECT quoteid
-    FROM A
-    GROUP BY quoteid
-    HAVING COUNT(DISTINCT sysd) = 1
-);
+SELECT * FROM RankedData
+WHERE (sysd_rank = 1 AND sysd = 'Y') OR (sysd_rank = 1 AND sysd = 'N');
