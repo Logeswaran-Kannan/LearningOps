@@ -1,21 +1,39 @@
 import os
 
-def get_size(path):
-    total_size = 0
-    for dirpath, dirnames, filenames in os.walk(path):
-        for filename in filenames:
-            filepath = os.path.join(dirpath, filename)
-            total_size += os.path.getsize(filepath)
-    return total_size / (1024 * 1024)  # Convert bytes to megabytes
+def get_size(file_path):
+    """
+    Get the size of a file or directory recursively.
+    """
+    if os.path.isfile(file_path):
+        return os.path.getsize(file_path)
+    elif os.path.isdir(file_path):
+        total_size = 0
+        for root, dirs, files in os.walk(file_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                total_size += os.path.getsize(file_path)
+        return total_size
+    else:
+        return 0
 
-mnt_path = '/mnt'
+def get_files_and_sizes(base_path):
+    """
+    Get a list of files and their sizes in a directory.
+    """
+    files_and_sizes = []
+    for root, dirs, files in os.walk(base_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            size_in_bytes = get_size(file_path)
+            size_in_mb = size_in_bytes / (1024 * 1024)
+            files_and_sizes.append((file_path, size_in_mb))
+    return files_and_sizes
 
-# Get the size for each file and subfolder in /mnt
-for item in os.listdir(mnt_path):
-    item_path = os.path.join(mnt_path, item)
-    if os.path.isfile(item_path):
-        size_mb = get_size(item_path)
-        print(f"File: {item}, Size: {size_mb:.2f} MB")
-    elif os.path.isdir(item_path):
-        size_mb = get_size(item_path)
-        print(f"Folder: {item}, Size: {size_mb:.2f} MB")
+# Example usage: Provide the mnt path to your Databricks mount
+mnt_path = "/mnt/your_mount_path"
+
+files_and_sizes = get_files_and_sizes(mnt_path)
+
+# Display the result
+for file, size_mb in files_and_sizes:
+    print(f"File: {file}, Size: {size_mb:.2f} MB")
