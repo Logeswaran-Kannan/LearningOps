@@ -1,2 +1,21 @@
+import os
 
-Thank you, Priya. Amber and Jeelani, I have resubmitted all ideas and assigned them for DE approval to Saranya. Please find the details below, and please inform me if any additional information is needed to expedite this approval process.
+def get_size(path):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            total_size += os.path.getsize(filepath)
+    return total_size / (1024 * 1024)  # Convert bytes to megabytes
+
+mnt_path = '/mnt'
+
+# Get the size for each file and subfolder in /mnt
+for item in os.listdir(mnt_path):
+    item_path = os.path.join(mnt_path, item)
+    if os.path.isfile(item_path):
+        size_mb = get_size(item_path)
+        print(f"File: {item}, Size: {size_mb:.2f} MB")
+    elif os.path.isdir(item_path):
+        size_mb = get_size(item_path)
+        print(f"Folder: {item}, Size: {size_mb:.2f} MB")
