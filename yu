@@ -1,34 +1,28 @@
+# Import necessary libraries
 from pyspark.sql import SparkSession
 import os
 
 # Create a Spark session
-spark = SparkSession.builder.appName("CountFilesAndSize").getOrCreate()
+spark = SparkSession.builder.appName("FileCountAndSize").getOrCreate()
 
 # Define the remote mount folder path
-remote_mount_folder_path = "/mnt/your_remote_mount_path"  # Replace with your actual remote mount folder path
+remote_mount_folder = "/dbfs/mnt/your_remote_mount_folder"  # Replace with your actual remote mount folder path
 
 # Function to get file size in MB
 def get_file_size(file_path):
     return os.path.getsize(file_path) / (1024 * 1024)  # Convert bytes to megabytes
 
-# Get a list of all files in the remote mount folder
-file_paths = [os.path.join(remote_mount_folder_path, file) for file in os.listdir(remote_mount_folder_path)]
+# List files in the remote mount folder
+file_paths = dbutils.fs.ls(remote_mount_folder)
 
-# Create a Spark DataFrame with file paths
-df = spark.createDataFrame(file_paths, "path STRING")
+# Display count of files
+print(f"Total files in {remote_mount_folder}: {len(file_paths)}")
 
-# Register a user-defined function (UDF) to calculate file size
-spark.udf.register("get_file_size", get_file_size)
-
-# Calculate file size for each file using the UDF
-result = spark.sql("SELECT path, get_file_size(path) AS size_MB FROM __TABLE__")
-
-# Count the number of files
-file_count = result.count()
-
-# Show the result
-print(f"Total number of files: {file_count}")
-result.show(truncate=False)
+# Display size of each file
+for file_path_info in file_paths:
+    file_path = file_path_info.path
+    file_size_mb = get_file_size(file_path)
+    print(f"File: {file_path}, Size: {file_size_mb:.2f} MB")
 
 # Stop the Spark session
 spark.stop()
