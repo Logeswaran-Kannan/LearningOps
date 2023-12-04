@@ -1,34 +1,30 @@
-from pyspark.sql import SparkSession
+# Import necessary libraries
 import os
 
-# Create a Spark session
-spark = SparkSession.builder.appName("FileCountAndSize").getOrCreate()
+# Specify the mount point folder path
+mount_point = "/mnt/your_mount_point"
 
-# Define the remote mount folder path
-mount_folder_path = "/mnt/your_remote_mount_path"  # Replace with your actual remote mount path
+# Function to recursively count files and calculate total size
+def count_files_and_size(folder_path):
+    total_files = 0
+    total_size = 0
 
-# Function to get file size in MB
-def get_file_size(file_path):
-    return os.path.getsize(file_path) / (1024 * 1024)  # Convert bytes to megabytes
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            total_files += 1
+            total_size += os.path.getsize(file_path)
 
-# Get a list of all files in the folder and its subfolders
-file_paths = [os.path.join(root, file) for root, dirs, files in os.walk(mount_folder_path) for file in files]
+    return total_files, total_size
 
-# Create a Spark DataFrame with file paths
-df = spark.createDataFrame(file_paths, "path STRING")
+# Get a list of folders in the mount point
+folders = dbutils.fs.ls(mount_point)
 
-# Register a user-defined function (UDF) to calculate file size
-spark.udf.register("get_file_size", get_file_size)
+# Display header
+print(f"{'Folder':<50} {'File Count':<15} {'Total Size (bytes)':<20}")
 
-# Calculate file size for each file using the UDF
-result = spark.sql("SELECT path, get_file_size(path) AS size_MB FROM __TABLE__")
-
-# Count the number of files in each folder
-file_count = spark.sql("SELECT COUNT(*) AS count, SUBSTRING_INDEX(path, '/', -2) AS folder FROM __TABLE__ GROUP BY folder")
-
-# Show the result
-result.show(truncate=False)
-file_count.show(truncate=False)
-
-# Stop the Spark session
-spark.stop()
+# Iterate through each folder and count files and calculate size
+for folder in folders:
+    folder_path = folder.path
+    file_count, total_size = count_files_and_size(folder_path)
+    print(f"{folder_path:<50} {file_count:<15} {total_size:<20}")
