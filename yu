@@ -1,9 +1,2 @@
-CREATE TABLE B AS
-WITH RankedData AS (
-    SELECT
-        *,
-        ROW_NUMBER() OVER (PARTITION BY quoteid ORDER BY sysd DESC) AS sysd_rank
-    FROM A
-)
-SELECT * FROM RankedData
-WHERE (sysd_rank = 1 AND sysd = 'Y') OR (sysd_rank = 1 AND sysd = 'N');
+
+Please check the schedule for me and Jeelani on December 23 and January 24. We made some adjustments for the upcoming week to match Jeelani's expectations, and we'll talk about these changes in our call. Additionally, we need to figure out a backup plan for when I'm on vacation. The day-to-day plan is tentative for now since we haven't received the LLD (Low-Level Design) yet. We'll update it once we have the LLD and know which entities are being delivered.
