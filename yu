@@ -1,24 +1,23 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, size
+import os
 
-# Create a Spark session
-spark = SparkSession.builder.appName("FileCountAndSize").getOrCreate()
+# Define the mount folder path
+mount_folder_path = "/mnt/your_folder_path"  # Replace with your actual folder path
 
-# Define the folder path
-folder_path = "/mnt/your_folder_path"  # Replace with your actual folder path
+# List all files in the mount folder
+files = dbutils.fs.ls(mount_folder_path)
 
-# Read files from the specified folder
-files_df = spark.read.option("recursiveFileLookup", "true").parquet(folder_path)
+# Function to get file size in MB
+def get_file_size(file_info):
+    file_path = file_info.path
+    file_size = file_info.size / (1024 * 1024)  # Convert bytes to megabytes
+    return file_path, file_size
 
-# Count the number of files
-file_count = files_df.count()
+# Get file sizes using the function
+file_sizes = [get_file_size(file_info) for file_info in files]
 
-# Display the count of files
-print(f"Number of files in the folder: {file_count}")
-
-# Display the size of each file
-files_with_size = files_df.select("path", size("value").alias("file_size_bytes"))
-files_with_size.show(truncate=False)
-
-# Stop the Spark session
-spark.stop()
+# Display the count and size of each file
+for file_path, file_size in file_sizes:
+    print(f"File: {file_path}, Size: {file_size:.2f} MB")
+    
+# Display the total number of files
+print(f"Total number of files: {len(file_sizes)}")
