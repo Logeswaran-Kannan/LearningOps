@@ -1,2 +1,18 @@
+import os
 
-Please check the schedule for me and Jeelani on December 23 and January 24. We made some adjustments for the upcoming week to match Jeelani's expectations, and we'll talk about these changes in our call. Additionally, we need to figure out a backup plan for when I'm on vacation. The day-to-day plan is tentative for now since we haven't received the LLD (Low-Level Design) yet. We'll update it once we have the LLD and know which entities are being delivered.
+# Define the folder path
+folder_path = "/mnt/your_folder_path"  # Replace with your actual folder path
+
+# Get a list of all files in the folder
+file_paths = [os.path.join(folder_path, file) for file in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, file))]
+
+# Function to get file size in MB
+def get_file_size(file_path):
+    return os.path.getsize(file_path) / (1024 * 1024)  # Convert bytes to megabytes
+
+# Calculate file size for each file
+file_sizes = [(file_path, get_file_size(file_path)) for file_path in file_paths]
+
+# Print or further process the file sizes
+for file_path, size_MB in file_sizes:
+    print(f"File: {file_path}, Size: {size_MB:.2f} MB")
