@@ -1,5 +1,6 @@
 # Import necessary libraries
 import os
+import pandas as pd
 
 # Specify the mount point folder path
 mount_point = "/mnt/your_mount_point"
@@ -13,20 +14,37 @@ def count_files_and_size(folder_path):
     files = dbutils.fs.ls(folder_path)
 
     for file_info in files:
-        file_path = file_info.path
         total_files += 1
         total_size += file_info.size
 
-    return total_files, total_size
+    # Convert size to GB
+    total_size_gb = total_size / (1024 ** 3)
+
+    return total_files, total_size_gb
 
 # Get a list of folders in the mount point
 folders = dbutils.fs.ls(mount_point)
 
-# Display header
-print(f"{'Folder':<50} {'File Count':<15} {'Total Size (bytes)':<20}")
+# Create lists to store data
+folder_paths = []
+file_counts = []
+total_sizes_gb = []
 
 # Iterate through each folder and count files and calculate size
 for folder in folders:
     folder_path = folder.path
-    file_count, total_size = count_files_and_size(folder_path)
-    print(f"{folder_path:<50} {file_count:<15} {total_size:<20}")
+    file_count, total_size_gb = count_files_and_size(folder_path)
+    
+    folder_paths.append(folder_path)
+    file_counts.append(file_count)
+    total_sizes_gb.append(total_size_gb)
+
+# Create a DataFrame
+df = pd.DataFrame({
+    'Folder': folder_paths,
+    'File Count': file_counts,
+    'Total Size (GB)': total_sizes_gb
+})
+
+# Display the DataFrame
+display(df)
