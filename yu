@@ -9,11 +9,13 @@ def count_files_and_size(folder_path):
     total_files = 0
     total_size = 0
 
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            total_files += 1
-            total_size += os.path.getsize(file_path)
+    # Use dbutils.fs.ls to get the list of files in a folder
+    files = dbutils.fs.ls(folder_path)
+
+    for file_info in files:
+        file_path = file_info.path
+        total_files += 1
+        total_size += file_info.size
 
     return total_files, total_size
 
