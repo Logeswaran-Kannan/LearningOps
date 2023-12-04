@@ -1,18 +1,34 @@
+from pyspark.sql import SparkSession
 import os
+
+# Create a Spark session
+spark = SparkSession.builder.appName("FileCountAndSize").getOrCreate()
 
 # Define the folder path
 folder_path = "/mnt/your_folder_path"  # Replace with your actual folder path
-
-# Get a list of all files in the folder
-file_paths = [os.path.join(folder_path, file) for file in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, file))]
 
 # Function to get file size in MB
 def get_file_size(file_path):
     return os.path.getsize(file_path) / (1024 * 1024)  # Convert bytes to megabytes
 
-# Calculate file size for each file
-file_sizes = [(file_path, get_file_size(file_path)) for file_path in file_paths]
+# Get a list of all files in the folder
+file_paths = [os.path.join(folder_path, file) for file in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, file))]
 
-# Print or further process the file sizes
-for file_path, size_MB in file_sizes:
-    print(f"File: {file_path}, Size: {size_MB:.2f} MB")
+# Create a Spark DataFrame with file paths
+df = spark.createDataFrame(file_paths, "path STRING")
+
+# Register a user-defined function (UDF) to calculate file size
+spark.udf.register("get_file_size", get_file_size)
+
+# Calculate file size for each file using the UDF
+result = spark.sql("SELECT path, get_file_size(path) AS size_MB FROM __TABLE__")
+
+# Count the number of files
+file_count = result.count()
+
+# Show the result
+result.show(truncate=False)
+print(f"Number of files: {file_count}")
+
+# Stop the Spark session
+spark.stop()
