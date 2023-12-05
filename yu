@@ -1,50 +1,5 @@
-# Import necessary libraries
-import os
-import pandas as pd
+After processing the initial historical data of 700 files in the pre-production environment, we have captured the actual cost in pre-production and provided an estimated cost for a similar load in the production environment. Please note that these estimates are based on a high-level analysis of a sample set of records processed in the pre-production environment using the current Databricks cluster configuration.
 
-# Specify the mount point folder path
-mount_point = "/mnt/your_mount_point"
+The estimated production cost may vary based on factors such as data volume, cluster configuration, and cluster performance. It's important to understand that these estimates only cover compute costs, as storage costs cannot be segmented at the project level.
 
-# Function to recursively count files and calculate total size
-def count_files_and_size(folder_path):
-    total_files = 0
-    total_size = 0
-
-    # Use dbutils.fs.ls to get the list of files in a folder
-    files = dbutils.fs.ls(folder_path)
-
-    for file_info in files:
-        total_files += 1
-        total_size += file_info.size
-
-    # Convert size to GB
-    total_size_gb = total_size / (1024 ** 3)
-
-    return total_files, total_size_gb
-
-# Get a list of folders in the mount point
-folders = dbutils.fs.ls(mount_point)
-
-# Create lists to store data
-folder_paths = []
-file_counts = []
-total_sizes_gb = []
-
-# Iterate through each folder and count files and calculate size
-for folder in folders:
-    folder_path = folder.path
-    file_count, total_size_gb = count_files_and_size(folder_path)
-    
-    folder_paths.append(folder_path)
-    file_counts.append(file_count)
-    total_sizes_gb.append(total_size_gb)
-
-# Create a DataFrame
-df = pd.DataFrame({
-    'Folder': folder_paths,
-    'File Count': file_counts,
-    'Total Size (GB)': total_sizes_gb
-})
-
-# Display the DataFrame
-display(df)
+We recommend reviewing and discussing these estimates for potential performance enhancements. Additionally, it's advisable to cross-verify these estimates with the cloud council for pre-cost approval. Keep in mind that these are general estimates, and actual production costs may be influenced by various factors specific to the production environment.
