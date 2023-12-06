@@ -1,17 +1,11 @@
-ncomplete Test Scope for Inbound and Outbound Feeds:
+Thank you for giving me the chance to share my self-appraisal comments for Y23. I've provided detailed comments for each item in Go-perform, and I'm happy to discuss them further through a Teams meeting at your convenience.
 
-Description: Testing covers the processing from the landing layer to placing the extract file in the specified storage location for Sagi team. However, the processing of external source files from DVSA through API into the landing (inbound feed) and handling the extract file from the outbound storage feed are not within the scope of this System Integration Testing (SIT). Automation for these processes is expected in the production release.
-Mitigation: Ensure that the sagi team covers the development of the inbound and outbound feed processing as part of their responsibilities during subsequent releases.
-Production Data Volume and Processing Time Concerns:
-
-Description: The expected production data volume is estimated at 340,000 records for the initial load and 1,440 records for daily loads. In lower environments, with a data volume of 2,700 records, the average processing time for each layer is 17 minutes. It is recommended to align the production Databricks configuration to handle the initial data load volume and closely monitor the processing timeline.
-Mitigation: Regularly monitor the processing performance in production and make adjustments to the Databricks configuration as needed to meet performance requirements.
-Source Data Quality Issues Risk:
-
-Description: Several source data quality issues have been identified and discussed in the defect section. These observations have been communicated to the business during User Acceptance Testing (UAT). The decision has been made to accept these source data issues without implementing cleansing measures. This is considered an accepted risk, with the possibility of addressing source data cleansing in future releases.
-Mitigation: Document and communicate the identified source data quality issues, and be prepared to revisit data cleansing strategies in future releases if required.
-Limited Test Data Coverage:
-
-Description: Due to the limited availability of test data, certain business scenarios are not covered in testing. The project team has acknowledged this as a known data issue arising from the unavailability of continuous data in lower environments.
-Mitigation: Acknowledge the limited test data coverage as a known issue, and document any business scenarios not covered due to data constraints. Consider addressing data continuity challenges for future testing cycles.
-These risk statements outline potential challenges and suggest mitigations to address or manage each risk. Adjustments should be made based on specific project requirements and the evolving nature of the testing and development processes.
+I successfully completed my external exam on Azure Data Engineering.
+I implemented a fully automated testing framework using Azure DevOps pipeline, which was well-received by the client.
+I led the testing activities for the Aurora program, one of the biggest and long-running programs, coordinating with the offshore team for multiple releases. This program provides valuable business insights to the Sales team.
+In addition to that, I led multiple other short-term programs concurrently.
+Our program got nominated for the Client Year of Project award. Hopefully, we will win, as we earned trust from the client and stakeholders.
+I upskilled and trained team members to adapt to the DEVOPS platform.
+I created a centralized knowledge repository for the new testing platform that will be referred to by stakeholders and project teams.
+I led the Bluebolt program and created multiple automation assets through Bluebolt, resulting in hard and soft dollar savings of $4,000 and an overall team savings of $6,000.
+As a Senior Test BI lead at the client, I earned trust and created a good reputation among the client's technical front. This indirectly led to new business, replacing two competitor organizations with Cognizant on a Software as a Service platform – a significant milestone for organizational expansion.
