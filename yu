@@ -1,3 +1,18 @@
-Hi Kate, the validation for the initial load in Preprod is done, and everything looks good except for the "AAX_DEACTIVATIONDATE" column. I couldn't find any values populated from the bronze, but the other newly added columns in the "cam_6_12" schema and the regression for other tables align with the existing benchmarked data. I believe the alter script provided here is intended for production use. The cost analysis is the only pending task.
+Problem Statement:
 
-Regarding the Azure portal, for the "cam_ingestion" tag, it currently shows an actual cost of £0.28. However, I have some doubts about whether it reflects all the costs at this point in time. We might need to wait until today to see the full cost reflected accurately in the Azure portal.
+This Hot Fix addresses a Business change request for the existing AIP - Pricing Remedy Tenure Report. The business expects to see POS APR instead of APR derived from DAVE.
+Reason for Change:
+
+The derived APR is displaying values greater than 50%, which do not accurately reflect the actual APR associated with the policy. Therefore, the decision was made to replace the APR derived from DAVE with the actual POS APR received from CDL in the AIP - Pricing Remedy Tenure Report.
+Solution Approach:
+
+To address the problem statement, it was decided to modify the design to accommodate the changes. For the History fix, a manual merge will be performed to update the key.
+Validation Approach:
+
+As part of this hot fix validation, the project team agreed to test only at the FACT level. The changes to the report, which involve replacing APR with POS_APR in the dataset, were not done in the lower environment as the report changes will be directly implemented in production. This is considered a Medium risk.
+Data Anomalies:
+
+In the lower environment, we observed very few samples with unrealistic POS APR, categorized as a source data issue. Similarly, in production, we observed POS APR as 40, which requires further investigation by the business, as DAVE consumes the data as is from CDL.
+Exemptions:
+
+Cost analysis and Preprod testing are exempt for this hot fix release.
