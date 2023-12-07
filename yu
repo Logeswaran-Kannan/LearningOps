@@ -1,21 +1,27 @@
-I am writing to express my interest in the Data Quality Assurance Engineer position at [Company Name], as advertised. With my extensive background in data quality assurance and a proven track record of ensuring the quality and integrity of both data and services, I believe I am well-suited for this role.
-
-In my previous role as a [Your Previous Job Title], I successfully planned, designed, and executed comprehensive test strategies in collaboration with delivery teams. I have a deep understanding of project requirements and objectives, ensuring that quality assurance considerations are integrated from the project's inception. My expertise lies in implementing the latest quality assurance best practices within the data engineering team, contributing to the creation and review of technical specifications and test plans, and estimating the complexity of work involved in data engineering team deliverables.
-
-Key attributes that make me a strong candidate for this role include:
-
-Full Stack QA Experience: I possess a robust skill set in full-stack QA, with proficiency in Agile, CICD, Cloud, Azure, Postman, SQL Server (Queries), and Azure Databricks, Data Factory, Functions, and/or DevOps.
-
-Defect Management and Reporting: I have hands-on experience in defect management, generating quality reports, and driving resolutions to ensure the quality outcome of both technology and data products.
-
-Collaborative Approach: I am adept at contributing within the wider engineering community, sharing knowledge and experiences to support the evolution of the discipline.
-
-Proactive Problem Solver: My understanding of software development methodologies and experience in testing data outcomes for data products allows me to proactively identify and address potential issues.
-
-I am excited about the opportunity to bring my skills and enthusiasm for quality assurance to [Company Name]. I am confident that my technical proficiency, collaborative mindset, and commitment to excellence align well with the objectives outlined in the job description.
-
-Thank you for considering my application. I am eager to further discuss how my skills and experiences can contribute to the success of [Company Name]. I am available at your earliest convenience for an interview and can be reached at [Your Phone Number] or [Your Email Address].
-
-Sincerely,
-
-[Your Name]
+SELECT
+  APR,
+  COUNT(*) AS PolicyCount,
+  CASE
+    WHEN APR = 0 THEN '0%'
+    WHEN APR > 0 AND APR <= 10 THEN '0-10%'
+    WHEN APR > 10 AND APR <= 20 THEN '10-20%'
+    WHEN APR > 20 AND APR <= 30 THEN '20-30%'
+    WHEN APR > 30 AND APR <= 40 THEN '30-40%'
+    WHEN APR > 40 AND APR <= 50 THEN '40-50%'
+    WHEN APR > 50 THEN '>50%'
+  END AS APR_Category
+FROM
+  YourTableName
+GROUP BY
+  APR,
+  CASE
+    WHEN APR = 0 THEN '0%'
+    WHEN APR > 0 AND APR <= 10 THEN '0-10%'
+    WHEN APR > 10 AND APR <= 20 THEN '10-20%'
+    WHEN APR > 20 AND APR <= 30 THEN '20-30%'
+    WHEN APR > 30 AND APR <= 40 THEN '30-40%'
+    WHEN APR > 40 AND APR <= 50 THEN '40-50%'
+    WHEN APR > 50 THEN '>50%'
+  END
+ORDER BY
+  APR;
