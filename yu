@@ -1,1 +1,1 @@
-Thank you for clarifying, Kate. Yes, there might be a low probability of this scenario occurring at the moment. As you mentioned, if they send just one sample update, we can verify our ingestion if necessary.
+The initial load compute cost analysis is complete, and the incurred cost is £0.63, taking 18 minutes and 44 seconds to complete. In the current production, the daily load increment costs £2.78, indicating at a high level that the cost will not increase in production with the addition of these 6 columns.
