@@ -1,9 +1,6 @@
+Risks and Issues:
 
-Defect: No new defects have been observed. A minor observation regarding the data type for a column named AA_LABOURVAT was identified between the Low-Level Design (LLD) and the actual Data Definition Language (DDL). This was later confirmed with the business, and the LLD was updated to align with the actual DDL.
-
-Risk and Issue:
-
-This release specifically focuses on the additional columns added to the existing tables. Any issues related to the existing setup in the production environment are out of scope for this release.
-Any source data quality issues are considered out of scope for this release.
-For a column named AA_DEACTIVATEDATE, it was noted that it is not populated from the source in the Preprod environment of Bronze and the analytical layer. The developer confirmed this with the source data team, stating that this scenario is less frequent in the Preprod environment, and it was not created in the source itself. As a result, we have not been able to verify this column in Preprod, although it has been verified in a lower test environment.
-Confirmation: The testing team has confirmed that no one is using this test environment.
+This release specifically focuses on the additional columns added to existing tables. Any issues related to previously existing elements in the production environment are considered out of scope for this release.
+Any source data quality issues are also considered out of scope for this release.
+For the column named AA_DEACTIVATEDATE, it was not populated from the source in the Preprod environment of Bronze and the analytical layer. The developer confirmed this with the source data team, stating that this scenario is less common in the Preprod environment and is not created in the source itself. Due to this, we have not been able to verify this column in Preprod. However, it has been verified in a lower test environment.
+A high-level cost analysis has been conducted post the addition of these columns. The existing table shows no change in the increase of compute cost and time. However, this analysis is based on cluster configuration and lower environment, and it may change when releasing the code in production. Other parameters of production cluster configuration and dependencies are different. It is recommended to monitor the compute cost and run time for a couple of days to assess any changes.
