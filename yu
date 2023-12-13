@@ -1,20 +1,17 @@
-# Importing necessary libraries
-from dbutils import dbutils
+# Define the folder path
+mnt_folder_path = "/mnt/your_folder_path"
 
-# Specify the mount path
-mount_path = "/mnt/YOUR_MOUNT_PATH"
+# List all files in the folder
+file_names = dbutils.fs.ls(mnt_folder_path)
 
-# List files in the mount path
-files = dbutils.fs.ls(mount_path)
+# Extract the file names
+file_names_list = [file.name for file in file_names]
 
-# Check if there are any files
-if files:
-    # Extract the names of the first and last files
-    first_file_name = files[0].name
-    last_file_name = files[-1].name
+# Display the list of file names
+print(file_names_list)
 
-    # Display the results
-    print(f"First File Name: {first_file_name}")
-    print(f"Last File Name: {last_file_name}")
-else:
-    print("No files found in the specified mount path.")
+# Convert the list to a DataFrame
+file_names_df = spark.createDataFrame(file_names_list, StringType()).toDF("FileNames")
+
+# Write the DataFrame to an output table
+file_names_df.write.mode("overwrite").saveAsTable("your_database.your_output_table")
