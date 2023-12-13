@@ -1,20 +1,20 @@
-Quick update on all the releases that went live during yesterday's deployment:
+# Importing necessary libraries
+from dbutils import dbutils
 
-GIPP - Design Change for ARP:
+# Specify the mount path
+mount_path = "/mnt/YOUR_MOUNT_PATH"
 
-ETL and Reporting changes went live successfully.
-Sanity check completed, and handover to Business for UAT validation this morning.
-AA - Additional Column Changes:
+# List files in the mount path
+files = dbutils.fs.ls(mount_path)
 
-From this release perspective, everything is in good shape, and it was successful.
-Jobs ran smoothly.
-During the sanity check, a discrepancy was observed in the data for the newly added fields. Data is populating for these columns only from today's incremental load. However, in the source, data for these fields is seen even before today's date. As we're currently performing only incremental loads, this historical data won't be present in the analytical layer. Val and Kate agree to treat this change as another CR since it is not approved by the Cloud Council.
-MOT Testing:
+# Check if there are any files
+if files:
+    # Extract the names of the first and last files
+    first_file_name = files[0].name
+    last_file_name = files[-1].name
 
-Historical data was processed from landing to the outbound file area for further processing by the sagacity team.
-There is an issue with viewing the outbound file generated, possibly because it was processed from the outbound path and subsequently deleted. Clarification is needed from the sagacity team. Oona will follow up on this matter.
-Initial load file count has been verified with Kevin, and it matches the expected file count.
-Catch-up load is required as Julian has processed data only until September, while initially, it was expected to have data until December.
-Although the incremental job load is complete, no incremental data has been processed. Oona will follow up with Julian to enable the automated process for the daily feed to the landing area.
-For business user notification, we require a list of business/interested users for day-to-day job status notifications. Oona will provide that list.
-A high-level duplicates check was performed on each analytical layer table, and no new duplicates were found, except for known observations.
+    # Display the results
+    print(f"First File Name: {first_file_name}")
+    print(f"Last File Name: {last_file_name}")
+else:
+    print("No files found in the specified mount path.")
