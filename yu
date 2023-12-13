@@ -1,1 +1,22 @@
-Following the discussion with Val, the existing criteria for this release have been satisfied, and any back-population of historical data will be treated as a separate Change Request (CR), not included in this release. I am confident that we can proceed to close this PR.
+
+Here's a revised version:
+
+Quick update on all releases that went live during yesterday's deployment:
+
+GIPP - Design Change for ARP - ETL and Reporting:
+
+The changes were successfully deployed, and a sanity check was completed. The handover to Business for UAT validation took place this morning.
+AA - Additional Column Changes:
+
+From the release perspective, everything is in good shape, and the jobs ran successfully. However, during the sanity check, a discrepancy in the data for the newly added fields was observed. Data is populating for these columns only from today's incremental load, though we notice data for these fields in the source even before today's date. Since we're currently focusing on incremental loads, this data won't be present in the analytical layer. Val and Kate agree to treat this change as another Change Request (CR) as it is not approved by the Cloud Council.
+MOT Testing:
+
+Historical data was processed from landing to the outbound file area. However, we couldn't view the outbound file generated, possibly because the sagacity team processed it from the outbound path, leading to the file being deleted. Confirmation is needed from the sagacity team, and Oona will follow up on this matter.
+
+The initial load file count has been verified with Kevin, confirming it matches the expected file count.
+
+Although the incremental job load is complete, no incremental data has been processed. Oona will follow up with Julian to enable the automated process for the daily feed to the landing area.
+
+For business user notification, we need a list of business/interested users for day-to-day job status notifications, and Oona will provide that list.
+
+A high-level duplicates check was performed on each analytical layer table, revealing no new duplicates beyond known observations.
