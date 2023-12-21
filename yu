@@ -1,26 +1,30 @@
+# Import necessary libraries
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
-# Initialize Spark session
+# Define DBFS path to the input CSV file
+dbfs_csv_path = "/dbfs/path/to/input.csv"  # Replace with your actual DBFS path
+
+# Create Spark session
 spark = SparkSession.builder.appName("DuplicateCheck").getOrCreate()
 
-# Read CSV sheet with tablename and grain_column_list
-csv_path = "/path/to/your/csv/sheet.csv"  # Replace with the actual path
-csv_df = spark.read.option("header", "true").csv(csv_path)
+# Read CSV file into DataFrame
+csv_df = spark.read.option("header", "true").csv(dbfs_csv_path)
 
-# Iterate through each row in the CSV
+# Iterate over rows in the DataFrame
 for row in csv_df.rdd.collect():
-    tablename = row["tablename"]
-    grain_column_list = row["grain_column_list"].split(",")  # Assuming grain_column_list is a comma-separated string
+    table_name = row['tablename']
+    grain_column_list = row['grain_column_list'].split(',')
 
-    # Read data from the table in MRT database with filter condition
-    table_df = spark.read.format("delta").table(f"MRT.{tablename}").filter(col("endat").isNull())
+    # Read data from the specified table in MRT database
+    mrt_table_df = spark.table(f"MRT.{table_name}")
 
-    # Check for duplicates based on the grain_column_list
-    duplicate_count = table_df.groupBy(grain_column_list).count().filter("count > 1").count()
+    # Apply duplicate check with filter condition (endat is null)
+    duplicate_rows = mrt_table_df.groupBy(*grain_column_list).count().filter(col("count") > 1).filter(col("endat").isNull())
 
-    # Display results
-    print(f"Duplicate check for table {tablename} with grain columns {grain_column_list}: {duplicate_count} duplicate rows found.")
+    # Show the duplicate rows
+    print(f"Duplicate rows in {table_name} with filter condition (endat is null):")
+    duplicate_rows.show(truncate=False)
 
-# Stop Spark session
+# Stop the Spark session
 spark.stop()
