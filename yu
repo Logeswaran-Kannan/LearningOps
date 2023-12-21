@@ -1,23 +1,9 @@
-from pyspark.sql import SparkSession
+Hey Bhavya,
 
-# Define Azure Synapse SQL pool connection details
-synapse_server = "your_synapse_server"
-database = "your_database"
-user = "your_username"
-password = "your_password"
-jdbc_url = f"jdbc:sqlserver://{synapse_server}:1433;database={database};user={user};password={password};"
+I've been looking at the samples, and there's an interesting observation. Some of them made it into the fact, while others didn't. The main issue seems to be that the samples not making it into the fact have the 'valid_to' column populated, which shouldn't be the case according to the requirements. Abinaya might need to check why these samples with 'valid_to' populated are being created.
 
-# Define the list of tables to copy
-input_tables = ["table1", "table2", "table3"]  # Replace with your actual table names
+On the flip side, the 'party_guid' that made it into the fact doesn't seem right. It's linked to the wrong contract number. This is something that needs fixing.
 
-for synapse_table in input_tables:
-    # Extract table name without the prefix and add '_VC' suffix
-    databricks_table = synapse_table.replace("mrt_owner.", "") + "_VC"
-    
-    synapse_df = spark.read.format("jdbc").option("url", jdbc_url).option("dbtable", synapse_table).load()
-    
-    # Write to Databricks default schema with the modified table name and overwrite mode
-    synapse_df.write.format("delta").mode("overwrite").saveAsTable(databricks_table)
+Let me know if you have any thoughts on this.
 
-# Stop the Spark session
-spark.stop()
+Cheers!
