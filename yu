@@ -17,8 +17,9 @@ spark = SparkSession.builder.appName("SynapseToDatabricks").getOrCreate()
 for table in input_tables:
     synapse_df = spark.read.format("jdbc").option("url", jdbc_url).option("dbtable", table).load()
     
-    # Write to Databricks default schema with the same table name
-    synapse_df.write.format("delta").saveAsTable(table)
+    # Extract table name and check if it ends with "_VC"
+    if table.endswith("_VC"):
+        # Write to Databricks default schema with overwrite
+        synapse_df.write.format("delta").mode("overwrite").saveAsTable(table)
 
 # Stop the Spark session
-spark.stop()
