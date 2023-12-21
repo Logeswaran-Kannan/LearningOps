@@ -10,14 +10,14 @@ jdbc_url = f"jdbc:sqlserver://{synapse_server}:1433;database={database};user={us
 # Define the list of tables to copy
 input_tables = ["table1", "table2", "table3"]  # Replace with your actual table names
 
-# Create Spark session
-spark = SparkSession.builder.appName("SynapseToDatabricks").getOrCreate()
-
-for table in input_tables:
-    synapse_df = spark.read.format("jdbc").option("url", jdbc_url).option("dbtable", table).load()
+for synapse_table in input_tables:
+    # Extract table name without the prefix and add '_VC' suffix
+    databricks_table = synapse_table.replace("mrt_owner.", "") + "_VC"
     
-    # Write to Databricks default schema with the same table name suffixed by "_VC" and overwrite existing data
-    synapse_df.write.format("delta").mode("overwrite").saveAsTable(f"{table}_VC")
+    synapse_df = spark.read.format("jdbc").option("url", jdbc_url).option("dbtable", synapse_table).load()
+    
+    # Write to Databricks default schema with the modified table name and overwrite mode
+    synapse_df.write.format("delta").mode("overwrite").saveAsTable(databricks_table)
 
 # Stop the Spark session
 spark.stop()
