@@ -13,13 +13,11 @@ input_tables = ["table1", "table2", "table3"]  # Replace with your actual table 
 # Create Spark session
 spark = SparkSession.builder.appName("SynapseToDatabricks").getOrCreate()
 
-# Read data from Synapse tables and create replicas in Databricks default schema
 for table in input_tables:
     synapse_df = spark.read.format("jdbc").option("url", jdbc_url).option("dbtable", table).load()
     
-    # Extract table name and check if it ends with "_VC"
-    if table.endswith("_VC"):
-        # Write to Databricks default schema with overwrite
-        synapse_df.write.format("delta").mode("overwrite").saveAsTable(table)
+    # Write to Databricks default schema with the same table name suffixed by "_VC" and overwrite existing data
+    synapse_df.write.format("delta").mode("overwrite").saveAsTable(f"{table}_VC")
 
 # Stop the Spark session
+spark.stop()
