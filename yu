@@ -1,9 +1,26 @@
-Hey Bhavya,
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-I've been looking at the samples, and there's an interesting observation. Some of them made it into the fact, while others didn't. The main issue seems to be that the samples not making it into the fact have the 'valid_to' column populated, which shouldn't be the case according to the requirements. Abinaya might need to check why these samples with 'valid_to' populated are being created.
+# Initialize Spark session
+spark = SparkSession.builder.appName("DuplicateCheck").getOrCreate()
 
-On the flip side, the 'party_guid' that made it into the fact doesn't seem right. It's linked to the wrong contract number. This is something that needs fixing.
+# Read CSV sheet with tablename and grain_column_list
+csv_path = "/path/to/your/csv/sheet.csv"  # Replace with the actual path
+csv_df = spark.read.option("header", "true").csv(csv_path)
 
-Let me know if you have any thoughts on this.
+# Iterate through each row in the CSV
+for row in csv_df.rdd.collect():
+    tablename = row["tablename"]
+    grain_column_list = row["grain_column_list"].split(",")  # Assuming grain_column_list is a comma-separated string
 
-Cheers!
+    # Read data from the table in MRT database with filter condition
+    table_df = spark.read.format("delta").table(f"MRT.{tablename}").filter(col("endat").isNull())
+
+    # Check for duplicates based on the grain_column_list
+    duplicate_count = table_df.groupBy(grain_column_list).count().filter("count > 1").count()
+
+    # Display results
+    print(f"Duplicate check for table {tablename} with grain columns {grain_column_list}: {duplicate_count} duplicate rows found.")
+
+# Stop Spark session
+spark.stop()
