@@ -23,7 +23,18 @@ for row in csv_df.rdd.collect():
 
     # Display results
     print(f"Duplicates in {tablename} for grain columns {grain_columns}:")
-    duplicate_rows.show(truncate=False)
+    
+    # Check if duplicates exist
+    if duplicate_rows.count() > 0:
+        # Display overall duplicate count
+        overall_duplicate_count = duplicate_rows.count()
+        print(f"Overall duplicate count: {overall_duplicate_count}")
+
+        # Display a sample of 20 records
+        sample_records = mrt_df.join(duplicate_rows.select(grain_columns), on=grain_columns).limit(20)
+        sample_records.show(truncate=False)
+    else:
+        print("No duplicates found, count: 0")
 
 # Stop the Spark session
 spark.stop()
