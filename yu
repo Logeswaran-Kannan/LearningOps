@@ -1,1 +1,24 @@
-Modifications are needed in the VC Claims mart to encompass data from all source systems. Samples generated from claim application sources such as Synergy and ICE are absent in the ultimate mart table. The identified root cause indicates a need to update the design document, specifying the sources to be incorporated into the final mart table. Following discussions with the developer, there is a plan to engage with the designer to amend the Low-Level Design (LLD) and implement the necessary changes in both the table and dataset.
+from pyspark.sql import SparkSession
+
+# Define Azure Synapse SQL pool connection details
+synapse_server = "your_synapse_server"
+database = "your_database"
+user = "your_username"
+password = "your_password"
+jdbc_url = f"jdbc:sqlserver://{synapse_server}:1433;database={database};user={user};password={password};"
+
+# Define the list of tables to copy
+input_tables = ["table1", "table2", "table3"]  # Replace with your actual table names
+
+# Create Spark session
+spark = SparkSession.builder.appName("SynapseToDatabricks").getOrCreate()
+
+# Read data from Synapse tables and create replicas in Databricks default schema
+for table in input_tables:
+    synapse_df = spark.read.format("jdbc").option("url", jdbc_url).option("dbtable", table).load()
+    
+    # Write to Databricks default schema with the same table name
+    synapse_df.write.format("delta").saveAsTable(table)
+
+# Stop the Spark session
+spark.stop()
