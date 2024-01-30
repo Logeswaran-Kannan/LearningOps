@@ -1,1 +1,6 @@
-Essentially, the problem with policy tier column values exists in the broker policy table, but it's not present in the policy line premium level. Mahesh's initial investigation reveals a value difference between the two schemas. He noticed that a result ID, present in the base analytical schema, is missing in the schema used for the silver data load. This issue needs further investigation by the development team, and if necessary, the CDL team should be involved after the development team confirms the findings.
+We need Vinod to confirm if the two columns (pricebeat and pricetobeattype) mentioned in the defects should be included in the LLD or if they can be removed.
+
+
+
+
+
