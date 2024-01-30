@@ -1,1 +1,3 @@
-After examining the tests initially, it seems that there's a problem with the business event ID missing in the mv_account table. This issue causes the process type code and policy line items to be incorrectly linked to the policy event status code. We need more investigation from the development team to confirm this and resolve the missing business event ID problem, which could be due to a data loading issue.
+This problem has two parts. First, the issue with the data type has been fixed in the Low-Level Design (LLD) to show correctly. The adjustments have been made, and now the development team will incorporate these changes into the code.
+
+Secondly, there's an issue with missing cancellation dates suspected to be a data problem, as they're absent in the analytical layer itself. The design team will verify this, and the testing team will track the percentage of such occurrences to gauge the impact.
