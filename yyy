@@ -1,2 +1,9 @@
+Issue S1, concerning the renewal data feed, is currently under discussion with all parties, including the Microsoft team, to identify a viable solution. Given its impact on data ingestion, downstream layers, and project timelines, it is critical to resolve promptly.
 
-Simply add the extra columns mentioned in the CSV file located at the specified path, then run it. It will generate the result as shown. Let me know if you need any help.
+The data load for dimension reference tables has been received, and an initial round of testing has been completed. Defect fixes and revalidation are currently underway.
+
+Add-ons LLD handover has been received, and testing design and execution are currently in progress.
+
+The data missing issue, attributed to CDL not being sent, is adversely affecting business scenario validation. Further analysis and a clean run are necessary to prepare the test bed effectively.
+
+Data availability validation is currently in progress, based on the RTM document that was received.
