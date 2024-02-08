@@ -1,1 +1,9 @@
-Basically, both things are similar, but they focus on different Databricks workspaces. Reports are made from the insight cluster in production. To make sure users have permission and all the necessary tables are in the insight cluster, I've added five test cases.
+The S1 defect concerning the renewal data feed issue is currently in the Build analysis phase. Initial analysis indicates that we have not received values for certain columns.
+
+Initial testing of the dimension reference tables is complete, and we are currently addressing defects and conducting revalidation.
+
+Validation for the broker policy silver and fact is scheduled to commence on 7/02, but the build handover is expected on 09/02.
+
+The data missing issue, attributed to CDL not being sent, is impacting the validation of business scenarios. Further analysis and a clean run are needed to prepare the test bed.
+
+Data availability validation is ongoing based on the RTM document received.
