@@ -1,12 +1,1 @@
-
-Subject: Expressing Gratitude for Aurora Program Support
-
-Dear [Recipient],
-
-I extend my sincere appreciation for your unwavering support throughout the Aurora program in 2023. Despite the challenges we faced, our collective efforts as a team enabled us to overcome obstacles and achieve remarkable results. I'm delighted to share that Aurora was recognized as the Project of Transformation for the year 2023.
-
-Your steadfast support has been invaluable during the ups and downs of this long-running program. I am grateful for the collaboration and dedication demonstrated by our team.
-
-Looking forward to another successful year ahead.
-
-Best regards,
+Sure, then Kaesava can proceed with the business scenario. I think as part of this, we're also addressing data availability for these scenarios, so there's no need to do this as a separate task. Do we have any planned dates for getting approval? Because if the data is available for these scenarios, we don't need to ask anything from the front end team. But if it's not, then we need to let the front end team know to check if it's a CDL issue or if there's missing data coverage. We've noticed a couple of defects where we entered data in the front end, but it's missing in the CDL.
