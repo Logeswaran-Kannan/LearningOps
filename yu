@@ -1,14 +1,1 @@
-Here's a quick update on the E2P fix and data feed validation:
-
-E2P Fix Intermediate Update:
-
-The fix verification changes are about 60% complete. Currently, we're addressing a data sync issue that's impacting the validation of key columns.
-In the snapshot fact table, we expect both CORE and SI records, but we're observing both quote and Policy records labeled as STRATA CORE according to the source system.
-We need to plan for incremental loading and setting up Preprod.
-Data Feed Validation Update:
-
-For RTP_INCUMBENT, there's a mismatch in the previous policy number attribute, and RTPLOG_ID is null in both the source and target.
-New attributes are missing in schemedatalist and riskdetails provided in the schema.
-RTP_OFFER tables are missing in the provided schema.
-EH_BRONZE_UNPROCESSED is also missing in the provided schema.
-We believe the schema we're using, TRO, is correct. Let's discuss these issues further in our upcoming meeting.
+This situation is part of the Renewal validation process. On the front end, we observe that addons have been added, and the same is reflected in analytics. Could you please advise us on where exactly we should check this addons flag? It would be beneficial for us to track this issue with the source team if it's related to CDL.
