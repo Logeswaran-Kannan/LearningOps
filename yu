@@ -1,2 +1,1 @@
-
-I'm currently experimenting with a few options based on the data volume in both production and testing environments. I received the count details from the production support team for this method. I just want to emphasize that it may not provide a near-accurate cost estimate.
+Apologies for any confusion. I have supplied the Databricks utilization costs for both environments, with the understanding that the data is already available in both environments and storage costs are not included. The cost variation is solely determined by the volume of data we have selected for this fix. In the pre-production environment, we retain data for two months, while in production, we retain the entire dataset.
