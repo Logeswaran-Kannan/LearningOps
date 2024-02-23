@@ -1,1 +1,14 @@
-Sorry for the mix-up. Let's hold off on testing the migration policies until we get the go-ahead from the architect. That means we'll keep things as they are and not report any issues related to the migrated policies for now.
+Test Execution Progress:
+
+Test execution for E2P is currently at 65% completion in the lower test environment.
+Remaining test cases, including those related to report testing, incremental data validation, and UAT validation, have been scheduled to be conducted in preprod.
+This decision is driven by limitations in data and source data quality in the lower test environment, mainly due to migration data disparities.
+Test Plan and Cloud Cost Estimation:
+
+The test plan has been shared with the project team.
+Cloud cost estimation has been communicated to the cloud council for approval, a crucial step before moving the code to the preprod environment.
+Test Data Availability Discrepancy:
+
+Test data availability in preprod does not align with the data in production.
+Deviation analysis is being performed to calibrate the data for UAT testing.
+Discrepancies identified have been shared with the development team for further investigation and necessary action.
