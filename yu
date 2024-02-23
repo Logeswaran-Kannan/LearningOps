@@ -1,1 +1,1 @@
-During your validation of these analytical tables, please make sure to incorporate the migrated policies as well. Jeelani, please exclude the migrated policies while you validate for the E2P fix; the migration is only scoped for TS03.
+Sorry for the mix-up. Let's hold off on testing the migration policies until we get the go-ahead from the architect. That means we'll keep things as they are and not report any issues related to the migrated policies for now.
