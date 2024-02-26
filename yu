@@ -1,7 +1,14 @@
-Subject: Meeting Request: Preprod Data Load Status and E2P Report Questions
+Current Week Summary:
 
-Hi [Recipient],
+Preprod Environment Preparation:
 
-I hope this email finds you well. I would like to schedule a brief 15-minute discussion to address the current status of the Preprod data load and any questions related to the E2P Report.
+Cloud cost estimation has been shared with the cloud council for approval and has been successfully approved.
+Code push to Preprod has been completed.
+Initial data load preparation is in progress, and the team anticipates completing the initial data load by 27/02.
+Post data load completion, the report team will initiate the creation of the test report version using the preprod schema where the fix has been applied.
+Deviation analysis is underway to address discrepancies in test data availability in preprod compared to production. Discrepancies have been captured for UAT reference.
+Test Execution for E2P:
 
-Could we please find a convenient time to meet? Your insights and input would be greatly appreciated.
+Test execution for E2P is currently at 65% completion in the lower test environment.
+Remaining test cases, including report testing, incremental data validation, and UAT validation, will be conducted in preprod.
+The decision to move these test cases to preprod is driven by limitations in data and source data quality, mainly due to migration data disparities present in the lower test environment.
