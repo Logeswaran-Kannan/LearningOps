@@ -1,14 +1,17 @@
-Current Week Summary:
+Weekly Test Summary:
 
-Preprod Environment Preparation:
+Analytical Layer Blocker Issue:
 
-Cloud cost estimation has been shared with the cloud council for approval and has been successfully approved.
-Code push to Preprod has been completed.
-Initial data load preparation is in progress, and the team anticipates completing the initial data load by 27/02.
-Post data load completion, the report team will initiate the creation of the test report version using the preprod schema where the fix has been applied.
-Deviation analysis is underway to address discrepancies in test data availability in preprod compared to production. Discrepancies have been captured for UAT reference.
-Test Execution for E2P:
+A blocker issue related to larger message size in the Analytical layer has been resolved.
+Data load in the lower test environment has been conducted to test the fix, and revalidation is currently in progress.
+New Functionalities Release Plan:
 
-Test execution for E2P is currently at 65% completion in the lower test environment.
-Remaining test cases, including report testing, incremental data validation, and UAT validation, will be conducted in preprod.
-The decision to move these test cases to preprod is driven by limitations in data and source data quality, mainly due to migration data disparities present in the lower test environment.
+New functionalities are planned for release in production based on milestones set at the layer level.
+The first milestone is set for March 8th, targeting new changes for TS03 at the analytical level in the preprod environment.
+The scope of this release includes moving two new tables and introducing new columns to two existing tables in preprod.
+Renewal Data Handling:
+
+It has been decided to dump production renewal data into the Bronze layer once the front end goes live.
+The data will then be copied into the preprod Bronze layer and processed with the new codebase in preprod.
+This approach ensures that no existing commercial dashboards generated from the analytical layer are impacted by renewal data.
+It aims to gain confidence from business users before moving the code into production, followed by the release of other layers.
