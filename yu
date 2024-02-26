@@ -1,18 +1,21 @@
+Test Execution Plan for This Week:
 
-Risk for Item 2:
+E2P Fix - Preprod Completion:
 
-The cloud cost estimation may not align with the budgetary constraints or expectations of the cloud council, leading to delays or reevaluation of the project's financial feasibility.
-If the cloud council does not approve the estimated costs, it may result in a halt or delay in moving the code to the preprod environment, impacting the project timeline and delivery.
-Risk for Item 3:
+Complete preprod initial, incremental validation, UAT, and TSR signoff for the E2P fix.
+Today's Priority: Thoroughly understand the details of the data mismatch issue deviation.
+The cost estimation for the E2P fix was based solely on the existing data in preprod and did not include the defect fix from the performance tuning release. Please share the TSR approval for the performance tuning project to highlight associated risks.
+Analytical Layer Validation - Non-Migrated Data Release (TC 29th Jan):
 
-The discrepancy in test data availability between preprod and production environments may lead to inaccurate testing results and incomplete validation.
-If the deviation analysis and calibration process do not effectively align the test data with production, it may impact the accuracy and reliability of the UAT testing results.
-Failure to address the data discrepancy could result in delayed UAT, prolonging the overall testing phase and potentially delaying the project delivery.
+Conclude analytical table validation, including functional and regression testing.
+Compare data between Kingfisher and Analytical for Non-RTP tables.
+For RTP tables, run functional processing comparisons between logs from either Kingfisher or Bronze.
+Reveal defects related to analytical layer issues, perform data quality analysis, and address source data quality issues.
+Business Scenario Validation in Silver and Gold Layer:
 
+Map sample policies to business scenarios and validate.
+Utilize the same sample for technical scenario validation once defects associated with the analytical layer are resolved.
+Commercial MI Report Regression TD Readiness:
 
-User
-Rephrase - 1. There is source data missing issue in MV_POLICY and MV_POLICY_HISTORY leads to RTPLOG_ID and Webreference is making unable to check E2P fix fully as this scenqrio is failing , as there is known source data sync up issue in test environment its been decided to test this scenqrio in preprod.  2. As the agent key present in  test data in test users and will not have hit in dim employee table so we unable to verify the agent details as is like production As there is known data sync up issue whenever new schema gets create in test environment we unable to verify other key columns ,  so its been decice to verify the fix at preprod level
-ChatGPT
-The absence of source data in MV_POLICY and MV_POLICY_HISTORY, leading to missing RTPLOG_ID and Webreference, has hindered the complete validation of the E2P fix. Due to a recognized source data synchronization issue in the test environment, it has been determined that testing this scenario in preprod is necessary.
-
-The presence of the agent key in test data within test users, without a corresponding entry in the dim employee table, hampers the verification of agent details in line with production. Given the acknowledged data synchronization issue whenever a new schema is created in the test environment, validating other key columns becomes challenging. Consequently, it has been decided to assess the fix at the preprod level.
+Obtain necessary access to understand NB (New Business), cancellation reports, and plan for test design.
+Include access to risks associated with preprod data quality issues in the test design plan.
