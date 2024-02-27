@@ -1,19 +1,32 @@
-Quick Intermediate Status Update:
+# JDBC URL for connecting to the PostgreSQL database
+jdbc_url = "jdbc:postgresql://your_host:your_port/your_database"
 
-Issue DCD-47490:
+# JDBC driver class
+jdbc_driver = "org.postgresql.Driver"
 
-In the test environment, Webreference and policy reference are populating as 0 for some samples.
-We are primarily investigating this scenario to validate the 'quote_ind' column, which is undergoing logic changes as part of the E2P fix.
-It has been decided to validate this scenario in production, where we have observed the same issue.
-The issue stems from missing business event IDs between 'mv_policy' and 'mv_policy_event_history' in production, which are the sources for Webreference and policy reference.
-Initial observations suggest that this issue started occurring from Feb 14th, 2024.
-Given that the issue already exists in production, it should be considered a production incident rather than a defect.
-Observation - Duplicates in Risk Profile Master Table:
+# Database connection properties
+connection_properties = {
+    "user": "your_username",
+    "password": "your_password",
+    "driver": jdbc_driver
+}
 
-Three risk profile category key columns have duplicates in the risk profile master table.
-A hotfix has been applied in production, and Sungjin will implement the changes in preprod as well.
-Data load is currently in progress and will be completed within an hour.
-Issue DCD-47477 - Agent Key:
+# Table name pattern to filter only tables from the kingfisher_core schema
+table_pattern = "kingfisher_core.%"
 
-The issue of the agent key populating as -1 also exists in the preprod environment.
-We are conducting an analysis against production to identify any deviations.
+# Spark SQL query to fetch table names and columns containing 'date'
+query = f"""
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'kingfisher_core'
+    AND column_name LIKE '%date%'
+"""
+
+# Load data using JDBC
+df = spark.read.jdbc(url=jdbc_url, table="information_schema.columns", properties=connection_properties)
+
+# Filter tables and columns containing 'date'
+filtered_df = df.filter((df.table_schema == 'kingfisher_core') & (df.column_name.contains('date')))
+
+# Show the results
+filtered_df.show()
