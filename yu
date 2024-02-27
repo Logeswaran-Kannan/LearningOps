@@ -1,49 +1,52 @@
 import psycopg2
-from psycopg2 import Error
+from psycopg2 import sql
 
-# Database connection parameters
-host = "your_host"
-database = "your_database"
-user = "your_user"
-password = "your_password"
-schema = "kingfisher"  # Specify the schema name
+def get_tables_with_date_column(connection):
+    tables = []
 
-try:
-    # Establishing the connection
-    connection = psycopg2.connect(
-        user=user,
-        password=password,
-        host=host,
-        database=database
-    )
+    try:
+        with connection.cursor() as cursor:
+            # Get table names within 'kingfisher' schema
+            cursor.execute("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'kingfisher'
+            """)
+            tables = cursor.fetchall()
 
-    cursor = connection.cursor()
+            # Get column names for each table containing 'date' column
+            for table in tables:
+                table_name = table[0]
+                cursor.execute(sql.SQL("""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'kingfisher'
+                    AND table_name = %s
+                    AND column_name = 'date'
+                """), (table_name,))
+                date_column = cursor.fetchone()
+                if date_column:
+                    print(f"Table: {table_name}, Date Column: {date_column[0]}")
 
-    # Query to retrieve table names and column names
-    query = """
-    SELECT table_name, column_name
-    FROM information_schema.columns
-    WHERE table_schema = %s AND column_name LIKE %s;
-    """
-
-    # Execute the query
-    cursor.execute(query, (schema, '%date%'))
-
-    # Fetch all rows
-    tables_with_date_column = cursor.fetchall()
-
-    # Print table names and column names containing 'date'
-    for table in tables_with_date_column:
-        print("Table Name:", table[0])
-        print("Column Name:", table[1])
-        print("\n")
-
-except (Exception, Error) as error:
-    print("Error while connecting to PostgreSQL", error)
-
-finally:
-    # Closing database connection.
-    if connection:
-        cursor.close()
+    except psycopg2.Error as e:
+        print(f"Error: {e}")
+    finally:
         connection.close()
-        print("PostgreSQL connection is closed")
+
+# Replace these variables with your actual database connection details
+db_config = {
+    'host': 'your_host',
+    'port': 'your_port',
+    'database': 'your_database',
+    'user': 'your_user',
+    'password': 'your_password'
+}
+
+# Construct the connection string
+connection_string = f"host={db_config['host']} port={db_config['port']} dbname={db_config['database']} user={db_config['user']} password={db_config['password']}"
+
+# Connect to the PostgreSQL database
+connection = psycopg2.connect(connection_string)
+
+# Retrieve table names and column names with 'date' in 'kingfisher' schema
+get_tables_with_date_column(connection)
