@@ -1,15 +1,4 @@
-# Use PySpark to access Databricks SQL API
-from pyspark.sql import SparkSession
-
-# Create a SparkSession
-spark = SparkSession.builder \
-    .appName("Fetch Table Columns with Date") \
-    .getOrCreate()
-
-# Set the schema and database
-schema = "kingfisher_core"
-
-# Define a function to fetch table names and their columns
+# Define a function to fetch table names and their columns excluding tables starting with '__apply'
 def fetch_table_columns_with_date(schema):
     table_columns = []
 
@@ -20,32 +9,23 @@ def fetch_table_columns_with_date(schema):
     # Iterate through each table
     for table_row in tables_df.collect():
         table_name = table_row["tableName"]
-        columns = []
 
-        # Query to fetch columns in the table that contain 'date'
-        columns_query = f"DESCRIBE {schema}.{table_name}"
-        columns_df = spark.sql(columns_query)
+        # Exclude tables starting with '__apply'
+        if not table_name.startswith("__apply"):
+            columns = []
 
-        # Iterate through each column and check for 'date' in the column name
-        for column_row in columns_df.collect():
-            column_name = column_row["col_name"]
-            if "date" in column_name.lower():
-                columns.append(column_name)
+            # Query to fetch columns in the table that contain 'date'
+            columns_query = f"DESCRIBE {schema}.{table_name}"
+            columns_df = spark.sql(columns_query)
 
-        # If columns with 'date' are found, add to the result list
-        if columns:
-            table_columns.append({"Table": table_name, "Date Columns": columns})
+            # Iterate through each column and check for 'date' in the column name
+            for column_row in columns_df.collect():
+                column_name = column_row["col_name"]
+                if "date" in column_name.lower():
+                    columns.append(column_name)
+
+            # If columns with 'date' are found, add to the result list
+            if columns:
+                table_columns.append({"Table": table_name, "Date Columns": columns})
 
     return table_columns
-
-# Fetch table names and columns with 'date'
-result = fetch_table_columns_with_date(schema)
-
-# Convert the result to a DataFrame
-result_df = spark.createDataFrame(result)
-
-# Show the result
-result_df.show(truncate=False)
-
-# Stop the SparkSession
-spark.stop()
