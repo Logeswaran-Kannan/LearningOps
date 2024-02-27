@@ -1,17 +1,49 @@
-Weekly Test Summary:
+import psycopg2
+from psycopg2 import Error
 
-Analytical Layer Blocker Issue:
+# Database connection parameters
+host = "your_host"
+database = "your_database"
+user = "your_user"
+password = "your_password"
+schema = "kingfisher"  # Specify the schema name
 
-A blocker issue related to larger message size in the Analytical layer has been resolved.
-Data load in the lower test environment has been conducted to test the fix, and revalidation is currently in progress.
-New Functionalities Release Plan:
+try:
+    # Establishing the connection
+    connection = psycopg2.connect(
+        user=user,
+        password=password,
+        host=host,
+        database=database
+    )
 
-New functionalities are planned for release in production based on milestones set at the layer level.
-The first milestone is set for March 8th, targeting new changes for TS03 at the analytical level in the preprod environment.
-The scope of this release includes moving two new tables and introducing new columns to two existing tables in preprod.
-Renewal Data Handling:
+    cursor = connection.cursor()
 
-It has been decided to dump production renewal data into the Bronze layer once the front end goes live.
-The data will then be copied into the preprod Bronze layer and processed with the new codebase in preprod.
-This approach ensures that no existing commercial dashboards generated from the analytical layer are impacted by renewal data.
-It aims to gain confidence from business users before moving the code into production, followed by the release of other layers.
+    # Query to retrieve table names and column names
+    query = """
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = %s AND column_name LIKE %s;
+    """
+
+    # Execute the query
+    cursor.execute(query, (schema, '%date%'))
+
+    # Fetch all rows
+    tables_with_date_column = cursor.fetchall()
+
+    # Print table names and column names containing 'date'
+    for table in tables_with_date_column:
+        print("Table Name:", table[0])
+        print("Column Name:", table[1])
+        print("\n")
+
+except (Exception, Error) as error:
+    print("Error while connecting to PostgreSQL", error)
+
+finally:
+    # Closing database connection.
+    if connection:
+        cursor.close()
+        connection.close()
+        print("PostgreSQL connection is closed")
