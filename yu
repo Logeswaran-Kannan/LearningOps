@@ -1,6 +1,19 @@
+Quick Intermediate Status Update:
 
-Observation 1: In the test environment, there are instances where both the Webreference and policy reference fields populate as 0 for certain samples. Our primary focus is to verify the quote_ind column, which is undergoing logic changes as part of the E2P fix. Therefore, it has been determined that validating this scenario in production is necessary.
+Issue DCD-47490:
 
-We have observed a similar scenario in production, where the absence of a business event ID between the mv_policy and mv_policy_event_history tables results in missing Webreference and policy reference values. Based on our initial observations, this issue appears to have started occurring around February 14th, 2024.
+In the test environment, Webreference and policy reference are populating as 0 for some samples.
+We are primarily investigating this scenario to validate the 'quote_ind' column, which is undergoing logic changes as part of the E2P fix.
+It has been decided to validate this scenario in production, where we have observed the same issue.
+The issue stems from missing business event IDs between 'mv_policy' and 'mv_policy_event_history' in production, which are the sources for Webreference and policy reference.
+Initial observations suggest that this issue started occurring from Feb 14th, 2024.
+Given that the issue already exists in production, it should be considered a production incident rather than a defect.
+Observation - Duplicates in Risk Profile Master Table:
 
-Given that the issue already exists in production, it should be treated as a production incident rather than a defect.
+Three risk profile category key columns have duplicates in the risk profile master table.
+A hotfix has been applied in production, and Sungjin will implement the changes in preprod as well.
+Data load is currently in progress and will be completed within an hour.
+Issue DCD-47477 - Agent Key:
+
+The issue of the agent key populating as -1 also exists in the preprod environment.
+We are conducting an analysis against production to identify any deviations.
