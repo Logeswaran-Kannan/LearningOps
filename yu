@@ -1,32 +1,58 @@
-# JDBC URL for connecting to the PostgreSQL database
-jdbc_url = "jdbc:postgresql://your_host:your_port/your_database"
+import psycopg2
+import pandas as pd
 
-# JDBC driver class
-jdbc_driver = "org.postgresql.Driver"
-
-# Database connection properties
-connection_properties = {
-    "user": "your_username",
-    "password": "your_password",
-    "driver": jdbc_driver
+# Replace these variables with your actual database connection details
+db_config = {
+    'host': 'your_host',
+    'port': 'your_port',
+    'database': 'your_database',
+    'user': 'your_user',
+    'password': 'your_password'
 }
 
-# Table name pattern to filter only tables from the kingfisher_core schema
-table_pattern = "kingfisher_core.%"
+# Construct the connection string
+connection_string = f"host={db_config['host']} port={db_config['port']} dbname={db_config['database']} user={db_config['user']} password={db_config['password']}"
 
-# Spark SQL query to fetch table names and columns containing 'date'
-query = f"""
-    SELECT table_name, column_name
-    FROM information_schema.columns
-    WHERE table_schema = 'kingfisher_core'
-    AND column_name LIKE '%date%'
-"""
+# Connect to the PostgreSQL database
+connection = psycopg2.connect(connection_string)
 
-# Load data using JDBC
-df = spark.read.jdbc(url=jdbc_url, table="information_schema.columns", properties=connection_properties)
+def get_tables_with_date_column(connection):
+    result = []
 
-# Filter tables and columns containing 'date'
-filtered_df = df.filter((df.table_schema == 'kingfisher_core') & (df.column_name.contains('date')))
+    try:
+        with connection.cursor() as cursor:
+            # Get table names within 'kingfisher_core' schema
+            cursor.execute("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'kingfisher_core'
+            """)
+            tables = cursor.fetchall()
 
-# Show the results
-filtered_df.show()
+            # Get column names for each table containing 'date' column
+            for table in tables:
+                table_name = table[0]
+                cursor.execute("""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'kingfisher_core'
+                    AND table_name = %s
+                    AND column_name ILIKE '%%date%%'
+                """, (table_name,))
+                date_columns = cursor.fetchall()
+                if date_columns:
+                    result.append({'Table': table_name, 'Date Columns': [col[0] for col in date_columns]})
+
+    except psycopg2.Error as e:
+        print(f"Error: {e}")
+    finally:
+        connection.close()
+
+    return result
+
+# Fetch table names and date columns
+result_data = get_tables_with_date_column(connection)
+
+# Output the result in a table format using Pandas
+result_df = pd.DataFrame(result_data)
+display(result_df)
