@@ -1,52 +1,6 @@
-import psycopg2
-from psycopg2 import sql
 
-def get_tables_with_date_column(connection):
-    tables = []
+Observation 1: In the test environment, there are instances where both the Webreference and policy reference fields populate as 0 for certain samples. Our primary focus is to verify the quote_ind column, which is undergoing logic changes as part of the E2P fix. Therefore, it has been determined that validating this scenario in production is necessary.
 
-    try:
-        with connection.cursor() as cursor:
-            # Get table names within 'kingfisher' schema
-            cursor.execute("""
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'kingfisher'
-            """)
-            tables = cursor.fetchall()
+We have observed a similar scenario in production, where the absence of a business event ID between the mv_policy and mv_policy_event_history tables results in missing Webreference and policy reference values. Based on our initial observations, this issue appears to have started occurring around February 14th, 2024.
 
-            # Get column names for each table containing 'date' column
-            for table in tables:
-                table_name = table[0]
-                cursor.execute(sql.SQL("""
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = 'kingfisher'
-                    AND table_name = %s
-                    AND column_name = 'date'
-                """), (table_name,))
-                date_column = cursor.fetchone()
-                if date_column:
-                    print(f"Table: {table_name}, Date Column: {date_column[0]}")
-
-    except psycopg2.Error as e:
-        print(f"Error: {e}")
-    finally:
-        connection.close()
-
-# Replace these variables with your actual database connection details
-db_config = {
-    'host': 'your_host',
-    'port': 'your_port',
-    'database': 'your_database',
-    'user': 'your_user',
-    'password': 'your_password'
-}
-
-# Construct the connection string
-connection_string = f"host={db_config['host']} port={db_config['port']} dbname={db_config['database']} user={db_config['user']} password={db_config['password']}"
-
-# Connect to the PostgreSQL database
-connection = psycopg2.connect(connection_string)
-
-# Retrieve table names and column names with 'date' in 'kingfisher' schema
-get_tables_with_date_column(connection)
+Given that the issue already exists in production, it should be treated as a production incident rather than a defect.
