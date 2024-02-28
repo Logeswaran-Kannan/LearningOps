@@ -1,7 +1,57 @@
-Hey Subbu,
+import pandas as pd
+import psycopg2
 
-Just wanted to let you know that Nishant has re-created all those defects under the AUR board. He's the point of contact for any additional details you might need on these defects.
+# Read CSV file containing table names and date filter column names
+csv_path = '/dbfs/path/to/csv/file.csv'
+df_csv = pd.read_csv(csv_path)
 
-Once you have them in defect triage, could you please let us know the ETA?
+# PostgreSQL connection details
+host = 'your_postgres_host'
+port = 'your_postgres_port'
+database = 'your_database_name'
+user = 'your_username'
+password = 'your_password'
 
-Thanks!
+# Connect to PostgreSQL database
+conn = psycopg2.connect(
+    host=host,
+    port=port,
+    database=database,
+    user=user,
+    password=password
+)
+
+# Function to process data profile
+def process_data_profile(table_name, date_filter_column):
+    sql = f"SELECT * FROM {table_name}"
+    if date_filter_column:
+        sql += f" WHERE {date_filter_column} BETWEEN 'start_timestamp' AND 'end_timestamp'"
+    
+    df = pd.read_sql_query(sql, conn)
+    
+    # Data profiling
+    data_profile = []
+    for col in df.columns:
+        null_percentage = df[col].isnull().mean() * 100
+        min_value = df[col].min()
+        max_value = df[col].max()
+        zero_percentage = (df[col] == 0).mean() * 100
+        data_profile.append([table_name, col, null_percentage, min_value, max_value, zero_percentage, sql])
+    
+    return pd.DataFrame(data_profile, columns=['tablename', 'columnname', 'null_percentage', 'min', 'max', 'zero_percentage', 'sql_used'])
+
+# Process data profile for each table and date filter column
+data_profiles = []
+for index, row in df_csv.iterrows():
+    table_name = row['table_name']
+    date_filter_column = row['date_filter_column']
+    data_profiles.append(process_data_profile(table_name, date_filter_column))
+
+# Concatenate data profiles into a single DataFrame
+result_df = pd.concat(data_profiles, ignore_index=True)
+
+# Print the result DataFrame
+print(result_df)
+
+# Close PostgreSQL connection
+conn.close()
