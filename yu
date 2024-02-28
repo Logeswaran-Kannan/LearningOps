@@ -1,68 +1,25 @@
-import psycopg2
-import pandas as pd
+Subject: Feedback Meeting: E2P Fix on Reports 'Extract to Panel' and 'Panel Changes'
 
-# Replace these variables with your actual database connection details
-db_config = {
-    'host': 'your_host',
-    'port': 'your_port',
-    'database': 'your_database',
-    'user': 'your_user',
-    'password': 'your_password'
-}
+Dear Team,
 
-# Construct the connection string
-connection_string = f"host={db_config['host']} port={db_config['port']} dbname={db_config['database']} user={db_config['user']} password={db_config['password']}"
+I hope this email finds you well.
 
-# Connect to the PostgreSQL database
-connection = psycopg2.connect(connection_string)
+I am writing to inform you about a meeting scheduled for tomorrow to gather feedback on the E2P fix implemented on the reports 'Extract to Panel' and 'Panel Changes' as part of our UAT testing phase.
 
-def get_tables_with_date_column(connection):
-    result = []
+Agenda:
 
-    try:
-        with connection.cursor() as cursor:
-            # Get table names within 'kingfisher_core' schema
-            cursor.execute("""
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'kingfisher_core'
-            """)
-            tables = cursor.fetchall()
+Review and provide feedback on the E2P fix implemented on the reports 'Extract to Panel' and 'Panel Changes'.
+Address any questions or concerns related to the change.
+Discuss the readiness of the reports for UAT testing.
+The reports are expected to be ready for UAT testing by this afternoon, and I have scheduled this meeting to ensure that we address any queries or issues before moving forward with the production deployment.
 
-            # Get column names and count for each table containing 'date' column
-            for table in tables:
-                table_name = table[0]
-                cursor.execute("""
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = 'kingfisher_core'
-                    AND table_name = %s
-                    AND column_name ILIKE '%%date%%'
-                """, (table_name,))
-                date_columns = cursor.fetchall()
-                
-                # Get total column count for the table
-                cursor.execute("""
-                    SELECT COUNT(*)
-                    FROM information_schema.columns
-                    WHERE table_schema = 'kingfisher_core'
-                    AND table_name = %s
-                """, (table_name,))
-                column_count = cursor.fetchone()[0]
-                
-                if date_columns:
-                    result.append({'Table': table_name, 'Date Columns': [col[0] for col in date_columns], 'Total Columns': column_count})
+Your participation and valuable insights during the meeting will be highly appreciated.
 
-    except psycopg2.Error as e:
-        print(f"Error: {e}")
-    finally:
-        connection.close()
+Meeting Details:
+Date: [Insert Date]
+Time: [Insert Time]
+Location: [Insert Location]
 
-    return result
+Please feel free to reach out if you have any questions or require further clarification before the meeting.
 
-# Fetch table names, date columns, and total column count
-result_data = get_tables_with_date_column(connection)
-
-# Output the result in a table format using Pandas
-result_df = pd.DataFrame(result_data)
-display(result_df)
+Looking forward to our discussion tomorrow.
