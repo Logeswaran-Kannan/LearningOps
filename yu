@@ -1,6 +1,9 @@
-Brief Release Changes:
+Thank you for joining the UAT call and providing valuable feedback. During the discussion, we presented the planned changes for this release:
 
-The 'Extract to Panel' Report and 'Panel Changes' now reflect reduced quote volume based on the last presented quote compared to production.
-Current Portfolio data is now being populated in the 'Extract to Panel' Report.
-A filter has been introduced in the 'Panel Change' report to facilitate data reconciliation based on quote type.
-Reporting snapshots are now weekly-based, with cumulative monthly data, scheduled to run every Thursday going forward.
+In the 'extract to Panel' Report and 'Panel Changes', the quote volume has been revised based on the last presented quote, resulting in a reduction in volume compared to production.
+The current Portfolio is now being populated in the 'extract to panel' report.
+A filter has been introduced in the 'panel change' report to facilitate data filtering based on the quote Type filter, making it easier to reconcile between these two reports.
+The reporting snapshot is now based on a weekly schedule, with cumulative reports generated at weekly intervals within each month. These reports are planned to be run every Thursday going forward.
+Regarding the current portfolio, the report now reflects only live policies, with cumulative updates reflecting the latest month snapshot. We have confirmed that the count excludes cancelled policies. Additionally, we verified  'Unknown' values present in each risk portfolio category, which are missing from the source data itself. We will continue monitoring these missing values and work with the source team to address them.
+
+With these questions clarified, we believe we have approval to move our changes to production. Thank you for your attention to these matters, and we look forward to the successful implementation of these updates.
