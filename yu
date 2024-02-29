@@ -1,7 +1,6 @@
-I trust that the following updates have been completed. Could you please verify?
+Brief Release Changes:
 
-Initial and incremental SCD data loads.
-Risk profile key '224' is missing in the dimension table.
-The logic for risk profile key '-300' has been updated with the latest code.
-There has been a logic change for the quote type key for the policy.
-Thank you.
+The 'Extract to Panel' Report and 'Panel Changes' now reflect reduced quote volume based on the last presented quote compared to production.
+Current Portfolio data is now being populated in the 'Extract to Panel' Report.
+A filter has been introduced in the 'Panel Change' report to facilitate data reconciliation based on quote type.
+Reporting snapshots are now weekly-based, with cumulative monthly data, scheduled to run every Thursday going forward.
