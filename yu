@@ -1,68 +1,7 @@
-import pandas as pd
-import psycopg2
+I trust that the following updates have been completed. Could you please verify?
 
-# Function to connect to Postgres database
-def connect_to_postgres(host, port, dbname, user, password):
-    conn = psycopg2.connect(
-        host=host,
-        port=port,
-        dbname=dbname,
-        user=user,
-        password=password
-    )
-    return conn
-
-
-# Function to process data profile for a given table and date filter column
-def process_data_profile(conn, table_name, date_filter_column, start_date, end_date):
-    # Construct SQL query based on date filter column availability
-    if date_filter_column:
-        query = f"SELECT * FROM {table_name} WHERE {date_filter_column} BETWEEN '{start_date}' AND '{end_date}'"
-    else:
-        query = f"SELECT * FROM {table_name}"
-
-    # Execute query and fetch results
-    df = pd.read_sql(query, conn)
-
-    # Data profiling
-    data_profile = []
-    for column in df.columns:
-        null_percentage = df[column].isnull().mean() * 100
-        min_value = df[column].min()
-        max_value = df[column].max()
-        zero_percentage = (df[column] == 0).mean() * 100
-        data_profile.append([table_name, column, null_percentage, min_value, max_value, zero_percentage, query])
-
-    return pd.DataFrame(data_profile, columns=['Table Name', 'Column Name', 'Null Percentage', 'Min Value', 'Max Value', 'Zero Percentage', 'SQL Used'])
-
-
-# Main function
-def main():
-    # DBFS path to CSV file containing table names and date filter column names
-    dbfs_csv_path = 'dbfs:/path/to/csv_file.csv'
-
-    # Read CSV file into DataFrame
-    csv_df = pd.read_csv(dbfs_csv_path)
-
-    # Connect to Postgres database
-    conn = connect_to_postgres(host='your_host', port='your_port', dbname='your_dbname', user='your_user', password='your_password')
-
-    # Loop through each row in CSV DataFrame
-    for index, row in csv_df.iterrows():
-        table_name = row['Table Name']
-        date_filter_column = row['Date Filter Column']
-        start_date = row['Start Date']
-        end_date = row['End Date']
-
-        # Process data profile for the current table and date filter column
-        data_profile_df = process_data_profile(conn, table_name, date_filter_column, start_date, end_date)
-
-        # Display or save data profile DataFrame as needed
-        print(data_profile_df)
-
-    # Close database connection
-    conn.close()
-
-
-if __name__ == "__main__":
-    main()
+Initial and incremental SCD data loads.
+Risk profile key '224' is missing in the dimension table.
+The logic for risk profile key '-300' has been updated with the latest code.
+There has been a logic change for the quote type key for the policy.
+Thank you.
