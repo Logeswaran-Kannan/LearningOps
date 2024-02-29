@@ -1,16 +1,1 @@
-Thank you for joining the UAT call and providing valuable feedback. Your input has been instrumental in shaping the upcoming changes for this release. Below is a summary of the key points discussed and the changes planned:
-
-In the 'extract to Panel' Report and 'Panel Changes', the quote volume has been revised based on the last presented quote, resulting in a reduction in volume compared to production.
-The current Portfolio is now being populated in the 'extract to panel' report.
-A filter has been introduced in the 'panel change' report to facilitate data filtering based on the quote Type filter, making it easier to reconcile between these two reports.
-The reporting snapshot is now based on a weekly schedule, with cumulative reports generated at weekly intervals within each month. These reports are planned to be run every Thursday going forward.
-
-Regarding the current portfolio, it was discussed that the report should reflect only live policies, with cumulative updates on a month-to-month basis reflected in the latest month snapshot. We have confirmed that cancelled policies are excluded from the count.
-
-Additionally, it was noted that there are unknown values present in each risk portfolio category. Upon investigation, it was determined that these quotes are missing values from the source itself. We will continue to monitor these missing values and coordinate with the source team for resolution.
-
-With these clarifications and actions taken, we are confident in moving forward with the changes to production.
-
-Thank you once again for your collaboration and dedication to ensuring the success of this release.
-
-With these questions clarified, we believe we have approval to move our changes to production. Thank you for your attention to these matters, and we look forward to the successful implementation of these updates.
+Please note that there won't be any filter in report to filter on a weekly basis, and the report is scheduled to run every Thursday going forward.we are proceeding with our changes in production on March 5th, and the report will be available from March 7th.Thank you for your attention to these matters.
