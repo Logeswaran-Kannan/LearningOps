@@ -1,11 +1,10 @@
-Summary of this week's activities:
 
-Milestone 1, which concentrated on the release of Analytical Layer non-migrated policies in preprod, included the following achievements:
+Upcoming Week Action Items:
 
-During the week, we conducted retesting and subsequently closed four analytical issues pertaining to RTP_RISKDETAIL and RTP_SCHEMADATALIST.
+Completion of Analytical Layer Test (Non-Migrated) by Nisha - All tables, both functional and regression, are to be tested. Due to the delay, the planned dates have been extended by 2 more days. However, no further extensions will be granted beyond this date. Please provide daily completion status without fail. Jeelani, your support is requested until the 5th for the analytical tasks.
 
-Defects related to source data were identified and raised in the AUR board for end-to-end triage.
+E2P Smoke Testing from the 6th to 7th by Jeel - Scenarios requiring validation as part of the smoke test will be sent to you. Ensure you have a production backup before the report refresh.
 
-Progress was made on regression table validation for both CORE and SI, with 65% coverage completed.
+For all Silver & Gold data defects, especially those related to LLD mismatch, revalidate against the new data and update the defects. Any issues specific to business scenarios should be sent to Kesava to avoid duplication of efforts. An incremental load will be requested to cover the silver data.
 
-Furthermore, we are in the process of retesting the silver defects that have been reassigned to the testing team.
+Confirmation of Regression Test bed with Mitul for Commercial MI reports.
