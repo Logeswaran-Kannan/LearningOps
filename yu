@@ -1,9 +1,8 @@
-Based on the provided content, the scope of the release includes the following key aspects:
+Limitation: Data sync issues between production and test environments resulted in certain test scenarios not being covered during functional testing.
+Mitigation: As per business suggestion, these scenarios will be covered in the smoke test window. Any issues identified during this window will be treated as intermediate fixes in production, ensuring prompt resolution of critical issues.
 
-Testing for three fact gold tables: The release involves testing for three fact gold tables, which are likely to be affected by the changes made to the reports. This testing may include verifying data integrity, validating calculations, and ensuring that the reports accurately reflect the data from these tables.
+Limitation: The release involves full data refresh for the gold quote fact tables, which may lead to increased data volume and potential performance challenges.
+Mitigation: It is essential to ensure that Databricks performance is aligned to handle the increased volume of data. While testing in preprod was based on a 2-month data volume, additional performance testing should be conducted to validate the scalability and efficiency of Databricks for handling the full data refresh in production.
 
-Changes to the 'Extract to Panel' Report and 'Panel Changes': The release encompasses updates to the 'Extract to Panel' Report and 'Panel Changes' to incorporate revisions such as revised quote volume, population of the current Portfolio, and introduction of a filter in the 'Panel Change' report.
-
-Exclusion of other layers: It's important to note that the release does not include changes to other layers beyond the mentioned reports and the testing of the three fact gold tables. This indicates a focused scope limited to specific components within the system.
-
-Therefore, the scope of the release primarily revolves around enhancing the functionality and accuracy of the 'Extract to Panel' Report and 'Panel Changes', as well as ensuring the integrity and reliability of the data within the three fact gold tables. It is essential to prioritize thorough testing of these components to validate the changes and minimize the risk of any adverse impacts on the 
+Limitation: PowerBI connectivity and semantic layer changes need to be included as per the elevation document, and any dependency with PowerBI connectivity needs to be resolved within the specified timeframe.
+Mitigation: Ensure thorough coordination and communication between the teams responsible for PowerBI connectivity and semantic layer changes. Prioritize the resolution of any dependencies related to PowerBI connectivity to ensure smooth integration and functionality of the reports post-release.
