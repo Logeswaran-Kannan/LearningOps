@@ -1,1 +1,9 @@
-Please note that there won't be any filter in report to filter on a weekly basis, and the report is scheduled to run every Thursday going forward.we are proceeding with our changes in production on March 5th, and the report will be available from March 7th.Thank you for your attention to these matters.
+Based on the provided content, the scope of the release includes the following key aspects:
+
+Testing for three fact gold tables: The release involves testing for three fact gold tables, which are likely to be affected by the changes made to the reports. This testing may include verifying data integrity, validating calculations, and ensuring that the reports accurately reflect the data from these tables.
+
+Changes to the 'Extract to Panel' Report and 'Panel Changes': The release encompasses updates to the 'Extract to Panel' Report and 'Panel Changes' to incorporate revisions such as revised quote volume, population of the current Portfolio, and introduction of a filter in the 'Panel Change' report.
+
+Exclusion of other layers: It's important to note that the release does not include changes to other layers beyond the mentioned reports and the testing of the three fact gold tables. This indicates a focused scope limited to specific components within the system.
+
+Therefore, the scope of the release primarily revolves around enhancing the functionality and accuracy of the 'Extract to Panel' Report and 'Panel Changes', as well as ensuring the integrity and reliability of the data within the three fact gold tables. It is essential to prioritize thorough testing of these components to validate the changes and minimize the risk of any adverse impacts on the 
