@@ -1,8 +1,9 @@
-Limitation: Data sync issues between production and test environments resulted in certain test scenarios not being covered during functional testing.
-Mitigation: As per business suggestion, these scenarios will be covered in the smoke test window. Any issues identified during this window will be treated as intermediate fixes in production, ensuring prompt resolution of critical issues.
+Summary for this week:
 
-Limitation: The release involves full data refresh for the gold quote fact tables, which may lead to increased data volume and potential performance challenges.
-Mitigation: It is essential to ensure that Databricks performance is aligned to handle the increased volume of data. While testing in preprod was based on a 2-month data volume, additional performance testing should be conducted to validate the scalability and efficiency of Databricks for handling the full data refresh in production.
+The functionality for the E2P fix has been successfully implemented and verified with the business. Changes were made based on their suggestions. However, we have received feedback to conduct detailed smoke testing to ensure data quality, as the data in preprod does not support verification of all business cases. Based on the condition signoff received, we are scheduled to release on March 5th.
 
-Limitation: PowerBI connectivity and semantic layer changes need to be included as per the elevation document, and any dependency with PowerBI connectivity needs to be resolved within the specified timeframe.
-Mitigation: Ensure thorough coordination and communication between the teams responsible for PowerBI connectivity and semantic layer changes. Prioritize the resolution of any dependencies related to PowerBI connectivity to ensure smooth integration and functionality of the reports post-release.
+The Deployment Plan and TSR have been handed over to the Run Team as part of the Release readiness process.
+
+Cost analysis on preprod is complete, and we have utilized only 25% of the planned cost.
+
+We are currently awaiting CAB approval for the release.
