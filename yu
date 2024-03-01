@@ -1,1 +1,11 @@
-The implemented functionality for the E2P fix has undergone verification with the business, and changes have been made based on their suggestions. We appreciate all your support. Additionally, suggestions have been received to conduct detailed smoke testing to ensure data quality, as the data in preprod does not support verification of all business cases. Based on the condition signoff received, we are scheduled to release on March 5th.
+Summary of this week's activities:
+
+Milestone 1, which concentrated on the release of Analytical Layer non-migrated policies in preprod, included the following achievements:
+
+During the week, we conducted retesting and subsequently closed four analytical issues pertaining to RTP_RISKDETAIL and RTP_SCHEMADATALIST.
+
+Defects related to source data were identified and raised in the AUR board for end-to-end triage.
+
+Progress was made on regression table validation for both CORE and SI, with 65% coverage completed.
+
+Furthermore, we are in the process of retesting the silver defects that have been reassigned to the testing team.
