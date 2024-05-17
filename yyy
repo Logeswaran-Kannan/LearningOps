@@ -1,1 +1,15 @@
-Data Source Fixes and Historical Data Integrity - Any source data fix done by CDL is always a forward fix, meaning that certain functionalities, like add-ons, may have been partially addressed. Because of this, we were unable to test the fix in the test environment since the historical data became invalid due to the defect. This issue will also be present in production, indicating that any historical fix on CDL will always require a full refresh. We believe the issue with the add-ons was fixed on the source side on May 16th, and we plan to monitor this after it goes live in production.
+This release primarily addresses the following report requirements and their supporting components:
+
+Policy Terms Exceptions Reporting:
+
+As insurance policies near their expiry date, they automatically go through a renewal process where policy risk data is resubmitted to generate renewal quotes.
+These quotes are processed in batches, and the resulting prices are used to prepare customer renewal invitations.
+The current CDL system lacks the capability to identify and report exceptions in this process, necessitating an alternative solution.
+The new automated process will identify exceptions, analyze the data using business rules, and generate outputs for further analysis and remedial action.
+Business To Agent Dashboard:
+
+Renewal data from the CDL Policy system will be integrated into the existing Call Centre sales dashboard.
+This will provide a unified view of AA sales and separate views for AA Tiara and CDL AA sales to meet the Business to Agent call handling requirements.
+Existing Insurance Reports:
+
+Reports like value measures, pricing remedies, panel changes, and data extracts for panel changes will remain unaffected by the renewal data integration, as they have separate requirements for upcoming releases.
