@@ -1,5 +1,26 @@
 This release primarily addresses the following report requirements and their supporting components:
 
+question.
+
+rephrase release  test summary - 1. System Test execution coverage - System testing for various layer like analytical, reference, silver, gold, dataset, dashboard has been completed for the scoped table mentioned in HLD and test plan.
+
+2. Orchestration process has been tested up to the gold layer in a preprod environment. However, the end-to- end orchestration, which includes reporting and dataset, has not been done due to a known limitation with the scheduled refresh of reporting in the lower environment, similar to production.
+
+3. Data Load and Inceremental Validation - Inital validation is done test environment and Incerement validation was done in preprod based on the sample data analysis , as we have less renewal volume in Preprod .
+
+4. High-level non-functional validation for performance and cost analysis was conducted based on the implemented optimization measure. However, the metrics collected were solely for the purpose of sharing information, as the development team planned to improve the code in future releases. There was no comparison made against the benchmark history in terms of testing.
+
+5. Defects-There are open defects at severity levels S2 and S3 that have been accepted by the business for release 1. However, there is a plan in place to address these defects in subsequent releases.
+
+6. User Acceptance Testing -  1.  Aurora TS03 - The Conditional  UAT Signoff has been obtained for release 1 , any changes reported during the warranty period will be addressed in future releases. 2.Policy Terms Exceptions Reporting: No UAT observations has been provided during the UAT window, considered as Signoff obatined. 3 Business To Agent Dashboard: UAT Signoff with One Open defect, consdering the defect will be addressed in future release. 4. Existing Insurance Reports: N/A
+
+7. Migration Data testing -The volume of Migrated data in preprod / Production is not ramped up at the moment or very few in numbers , it expected to grow up eventually in production, performance data will not included this migrated volume ; also there are open defects related to migrated data at the moment in CDL front end might cause certain functinality not to work as expected.
+
+8. Data quality issue and edge case scenarios - Due to parellel echelon testing happening in same UAT environment , data with defect is also present in lower test envirinment also certain edge cases scenarios are unable to test , these are discussed with business and explained the business.
+
+9.Due to recent source system upgrade activity  the production jobs are failed , it is under the assumption the production support team has ensured the worklow and data load load has resumed as previous state and ensured the data qulaity and continuity was mainted as is before the issue andget confirmed with business , any relevant issue   post renewal release will not taken warrenty period
+-------------------------------------------------------------------------------------
+
 Policy Terms Exceptions Reporting:
 
 As insurance policies near their expiry date, they automatically go through a renewal process where policy risk data is resubmitted to generate renewal quotes.
@@ -103,3 +124,20 @@ By anticipating these risks and implementing appropriate mitigation strategies, 
 
 ______________________________________________
 
+test summary - 1. System Test execution coverage - System testing for various layer like analytical, reference, silver, gold, dataset, dashboard has been completed for the scoped table mentioned in HLD and test plan.
+
+2. Orchestration process has been tested up to the gold layer in a preprod environment. However, the end-to- end orchestration, which includes reporting and dataset, has not been done due to a known limitation with the scheduled refresh of reporting in the lower environment, similar to production.
+
+3. Data Load and Inceremental Validation - Inital validation is done test environment and Incerement validation was done in preprod based on the sample data analysis , as we have less renewal volume in Preprod .
+
+4. High-level non-functional validation for performance and cost analysis was conducted based on the implemented optimization measure. However, the metrics collected were solely for the purpose of sharing information, as the development team planned to improve the code in future releases. There was no comparison made against the benchmark history in terms of testing.
+
+5. Defects-There are open defects at severity levels S2 and S3 that have been accepted by the business for release 1. However, there is a plan in place to address these defects in subsequent releases.
+
+6. User Acceptance Testing -  1.  Aurora TS03 - The Conditional  UAT Signoff has been obtained for release 1 , any changes reported during the warranty period will be addressed in future releases. 2.Policy Terms Exceptions Reporting: No UAT observations has been provided during the UAT window, considered as Signoff obatined. 3 Business To Agent Dashboard: UAT Signoff with One Open defect, consdering the defect will be addressed in future release. 4. Existing Insurance Reports: N/A
+
+7. Migration Data testing -The volume of Migrated data in preprod / Production is not ramped up at the moment or very few in numbers , it expected to grow up eventually in production, performance data will not included this migrated volume ; also there are open defects related to migrated data at the moment in CDL front end might cause certain functinality not to work as expected.
+
+8. Data quality issue and edge case scenarios - Due to parellel echelon testing happening in same UAT environment , data with defect is also present in lower test envirinment also certain edge cases scenarios are unable to test , these are discussed with business and explained the business.
+
+9.Due to recent source system upgrade activity  the production jobs are failed , it is under the assumption the production support team has ensured the worklow and data load load has resumed as previous state and ensured the data qulaity and continuity was mainted as is before the issue andget confirmed with business , any relevant issue   post renewal release will not taken warrenty period
