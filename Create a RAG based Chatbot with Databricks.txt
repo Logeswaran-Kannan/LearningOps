@@ -1,0 +1,362 @@
+Hello, my name is Jason Drew and today I'm going to take you through a demo, kind of a hands-on
+how to demo on how to create a rag-based chatbot with Databricks.
+Now I will include a link to the code that I use and I'm going to also try to highlight
+the little snippets that you would need to change in order to make this work for your
+particular use case.
+So in this example, for the majority of this demo, I'm going to be using PDF files and
+kind of making an appliance chatbot, so something to answer kind of how to trouble shooting
+questions on appliances.
+Now of course you can use this for anything that you want.
+For PDFs, I utilize UC volumes.
+If you were to use this for data that you had in more structured formats like CSP, you
+could use external locations.
+And I will show you examples of both.
+But the way that this demo, the majority of this demo is going to go, is that we're going
+to be placing document PDFs within a UC volume.
+And once we do that, then we need to basically extract the text from that document and put
+it into chunks and load it into a table.
+From there, we're going to create a vector search endpoint and in conjunction with an embedding
+model that is included with Databricks.
+In this particular example, we're going to be using the Databricks BGE, large EN embedding
+model.
+We will create a vector index.
+Now if you're familiar with Ragger, retrieve augmented generation, basically this is the
+data that you have specific for your organization that the vector index is going to be able to
+look up through the Ragger application and provide content specific to that with a large
+language model like dbrx, which we'll be using for the chatbot side of this.
+So there's two different models on this.
+There's an embedding model and then the LLM used for the chat interface.
+Once we've got that put together, we're going to create something called a rag retriever,
+which goes into a rag lane chain, which basically combines the prompt template or the instructions
+and how you want this LLM to basically kind of behave.
+And then also the dbrx instruct model.
+So that's the one that gives it kind of the front end, natural language query capabilities.
+Once we've got that assembled, we'll go ahead and register that as a model to UC.
+And then we're going to create a model serving in point so that we can interact with this
+model in real time.
+So users will be able to query that in real time.
+Then what we're going to do is we're going to go through a little bit of an example and
+how to operationalize this.
+In other words, as we get more data or more documents in this case, how do we go ahead
+and keep our model and our vector index up to date so that our chatbot can continue
+to answer the questions and to the best of its ability.
+So let's start off with the first step.
+We're going to place some documents into a UC volume.
+So here I am within Unity Catalog Explorer.
+And I'm in a particular catalog and schema that I've created called LLM and rag.
+You of course can create this with any name that you want.
+But when you have the volume and we're going to be referring to the volume's location,
+this is how you find the location.
+It'll be actually what I have highlighted in the bottom there for the volume's location.
+So I'm going to go ahead and upload a washer manual PDF to this particular volume.
+And now that I have it in my volume, I need to be able to extract that and put that into
+a docs text as that's what I'm calling the table, preparing that data
+so that we can do the vector index on it.
+So I will provide a link that has all of these different notebooks for you to utilize.
+And the first one that we're going to run is the Create Needed Tables notebook.
+So it's pretty simple here.
+I'm creating two tables.
+One that I'm calling docs text and one that I'm calling docs track.
+And in both of these, I've been able to change data feed,
+so I can keep track of where the level changes.
+And in my docs text table, I am auto-generating the primary key,
+which is going to be used as our index and we'll see that in action here in a little bit.
+And then of course, name this whatever is appropriate for you.
+So in these two cases, you'll probably need to put different three level names
+basis and table names depending upon what you want to name them.
+So when we go ahead and we run this, if I go to catalog,
+you'll see that it's created those two tables for us.
+Now they're blank, but we'll fill them up with stuff here very, very shortly.
+Now the next step is we're going to run two A,
+which is incremental PDF to docs text.
+So in this notebook, first of all, we need to install some required dependencies.
+So I'm using PDF plumber and lane chain.
+Then what I'm doing is I'm basically creating a data frame
+that will list all of the files that I have in that particular volume.
+And this is so we can keep track of what we've already processed
+and we don't have duplicate processing of that.
+So as you can see, it's just showing right now washer manual PDF
+because that's all that we have in there currently.
+Then what we want to do is run this cell three,
+where we're going to check for files not yet processed.
+So that's at that beginning where we're doing a select distinct
+of the file name from the docs track table.
+Well, the docs track table was just created.
+It has nothing in it.
+So of course, there's nothing that's going to filter out at this point.
+But it would the next subsequent time that we run this.
+Then what it's going to do is it's basically going to
+chunk this out.
+And we see the splitter and the chunk kind of settings down at the bottom.
+And then we're going to utilize a pandas UDF,
+which then we can reference when we are inserting our text into the docs tracks table.
+So what this is showing is that for that one PDF document
+and the settings of how we want to chunk this,
+that it's made 295 rows of text information.
+And you'll see 295 IDs or indexes on this.
+And then the final thing we're doing here is basically now we're updating
+our docs track table.
+So the next time this runs, it won't reprocess that file.
+Anyone, of course, make sure that that is pertinent
+and changed to the names and the three level names
+based that you're using.
+So if we go back to catalog explorer,
+now we can see our docs text table has all these different IDs
+with different chunks of text.
+And our docs tracks table has the washer manual PDF.
+Now, if I were to run this again without any kind of new files in there,
+it wouldn't process any more rows.
+And that's why we're doing it the way that I set it up.
+Now, I did want to include an alternate option here
+in case you maybe wanted to scrape some data from a website
+or maybe if you just had data that was in a more structured
+or semi-structured format like a CSV file.
+So I found a website called Appify
+where I can do, it's kind of a freemium model
+where I could create a web content crawler.
+And in that, basically, I would put in whatever website it is that I wanted
+and I'd go ahead and save and start that.
+And that will try to go through all the different levels of the website.
+Some websites have been more successful for me than others,
+but the neat thing is it's going to take all that text.
+And then I have the ability to go ahead and export that as a CSV file.
+And if I do that, then I can utilize this to BCSV to docs text notebook that I've provided.
+It's going to be very similar.
+First of all, though, we don't need PDF plumbers
+because we're not doing this PDF, but we do need the chain.
+In this case, I am basically trunking out data from the data frame,
+which I, in this case, can reference just an external location.
+It doesn't need to be a volume.
+The splitter and the chunks and all that stuff is very similar.
+That pandas PDF is identical.
+And then I basically use that to load to the table.
+In this case, I didn't do it.
+I just wanted to show you what that would be like.
+And then, of course, I'm not keeping track of a docs,
+you know, check table because we're doing it a different way.
+But anyway, this was just basically to kind of show you another way
+that you could go about loading that data.
+For indexing.
+So now that we've got all of our data prepared,
+now we want to create a vector search endpoint.
+It's very easy to do.
+You basically go to compute, vector search,
+and say that you want to create a vector search endpoint.
+You give it a name, it'll take a second to spin up,
+and then it'll become available for you to use.
+Now, right now, it doesn't have any indexes,
+so it's not really doing anything.
+But that will change here very, very shortly.
+So now, let's go ahead and create the vector index,
+which basically we need that vector search endpoint.
+We need an embedding model, which is the Databricks BGE,
+large EN embedding model that comes with Databricks.
+So back in catalog explorer,
+I'm going to go to my docs text table.
+And then I'm going to click these three little dots
+in the upper right hand corner.
+And I'm going to say, I want to create a vector search index.
+And so then it'll take you through this preperion to it
+of GUI, where we're basically saying, OK,
+what do we want to name this vector index?
+In this case, I'm just going to call it docs IDX.
+What's the primary key?
+Well, there's only two columns in that table, right?
+There's ID and text, so it's pretty obviously ID.
+We're using the endpoint that we just created.
+We want to compute the embeddings.
+And we're going to compute those based upon the text column,
+utilizing the embedding model that we just spoke about,
+the BGE, large EN.
+And we want this to be triggered.
+It could be continuous, but in this case, we want it to be triggered.
+So I'm going to go ahead and say, create.
+It'll take a moment for it to do the initial sync.
+And once that's available, now we have basically
+done a vector index of all of the text information
+from the PDFs that we have in that volume.
+And we can even query this endpoint.
+So if I say something like detergent,
+what this is doing is just giving similarity scores
+and retrieving information.
+This is not the chatbot interface
+or the natural language processing yet.
+This is basically just proving that if we give it a word,
+it will be able to retrieve information
+from that vector index.
+So we still got some more work to do.
+But you can see it's giving a similarity score here
+based upon detergent.
+You can also see that it's answering questions,
+sometimes in different languages.
+But we can solve for all of that
+when we do the prompt template here shortly.
+So now we need to give this application
+a way to retrieve that information.
+And to do that, we create what's called a rad retriever.
+So I've got that in this third notebook
+called the rad chatbot.
+So again, we're going to install some
+necessary dependencies at top.
+And then we're going to set some needed parameters.
+So first of all, I want to call attention
+to the scope and the key.
+So you need to create a personal access token
+for this to work.
+And then if you don't want to expose
+that personal access token,
+you really need to have a secret scope and secret setup.
+Now, if you don't know how to do this,
+I will include a short video in the description
+of this to explain how to do that.
+But assuming that you do know how to do that,
+then you'll go ahead and reference the index name
+and the vector search endpoint.
+And then we're going to build the retriever.
+And the retriever, you need to use the same embedding model
+that you used for your embedding or your vector index.
+And then we're going to put all this together
+into a rag lane chain.
+So we're going to take that reference, that retriever,
+prompt template, and then we're going to tell it
+to use DBRX Instruct for the chatbot.
+So here, you can see in this cell, what's our chat model?
+What's that DBRX Instruct that we just talked about?
+What's the template?
+So what are the basically parameters
+that you wanted to work under?
+So I'm basically telling it that you are an assistant
+for home appliance users and really only answer questions
+that are relevant to that, that you have information on.
+Don't make things up, make as concise as possible,
+answer only in English.
+And then you could even test that within this notebook.
+And then finally, what we need to do is,
+we need to register this as a UC model.
+So this is the code and this cell six that does that.
+And basically, the way you would want to change
+is the model name.
+And of course, the dots are going to indicate
+where this is going to get registered to
+in the three level namespace.
+What you want to call the run name, et cetera.
+And once you run this, then within catalog explorer
+under that catalog, you will see the model being registered.
+So now we have the model that we want to be able to,
+basically, serve it up real time.
+And in order to do that, we need to create
+a model serving endpoint.
+So if we go to serving and we click create serving endpoint,
+then we basically want to tell us what model do we want to serve?
+Well, we want to serve the model that we just registered to UC.
+So the LLM catalog rag and appliance chat pot,
+in my case, years will probably be different.
+And then we want to give it a compute scale out option.
+Well, this is just an example.
+So I'm going to use the smallest one.
+And then we do need to include the Databricks token.
+So in this case, this is the format
+and the demo is to scope and the Azure three token is my token.
+And again, I will give instructions on how to set this up
+in the link in the description of this video.
+So once we do that, we'll go ahead and have it spin it up.
+It'll take a little bit of time.
+And once it's up and ready to take requests,
+now we can actually query that endpoint directly.
+So I could ask it something like,
+what does a sud's message mean?
+And it's going to give me a pretty good response.
+But if I ask it something like, what's the meaning of life?
+Well, that's not even appropriate question for it.
+And our template told them not to even try to answer those
+to politely decline.
+And sure enough, we can see that it's reminding the user
+that it's a home appliance chatbot for those types of questions.
+And they can't really answer philosophical life questions
+like that.
+Okay, so let's ask it an appropriate question.
+But one that we know it does not yet have data for,
+like what do I do with my gas range burner well white?
+Well, we only have information on a washer machine.
+So it doesn't have this, but it's saying
+that you should look at the documentation for that.
+Well, let's go ahead and update it
+so that it can answer that question for us.
+So that's where we kind of go into a little bit
+of the operationalization of this.
+So what I'm going to do is I'm going to make a job here.
+And I'm going to have it have one task.
+That task is to run this incremental PDF
+to Doc's text notebook that we've been working on.
+I'm going to create that as a task,
+but then I'm going to add a trigger to this.
+And this trigger is going to be a file arrival trigger.
+So that anytime a new PDF doc happens to land
+in this volume, then I want to go ahead
+and kick off this workflow, if you will.
+So right now, nothing's running because we have no new files.
+But if we go to the catalog and we upload to that volume now,
+a gas range manual, then we can see
+that it's kicking off a new job and it's processing.
+And once it's done, our docs text table is up to date.
+And then the second part that we need to do
+is basically synchronize, re-synchronize the vector search endpoint.
+So if this was running continuously,
+it would just have just done this for us, but we have it's triggered.
+We could sync it now by clicking that sync now button.
+But instead, let's go ahead and click this link that takes it to the pipeline.
+So basically in the background, what this is doing
+is creating a DLT pipeline.
+And we could schedule this so that maybe every night at midnight,
+as we're collecting more and more of these files, it'll re-sync this.
+So the next day, it can answer all the questions on the new files.
+In this case, I just went ahead and manually kicked it off
+so that we can see what the output is.
+And now, if I go back to the model serving endpoint and query that again
+and ask the same question that I asked just a few moments earlier,
+what do I do if my gas range burner won't light?
+Well, now it's giving me a very appropriate, inaccurate answer to that
+because it has access to that information in the vector index.
+So that's how we kind of create that chatbot.
+But in real life, you'll probably want a GUI front end on this
+and have some sort of third party tool call it.
+And so a good example of how this might work
+is in this final notebook called chatbot GUI.
+So in this one, I'm using Gradio, which is a free front end.
+And I'm installing some dependencies like DB Tunnel and AIO HTTP.
+And of course, restarting the session so it takes those into effect.
+Then in order for a third party application
+to call a model serving endpoint, it basically needs two things.
+It needs to understand, it needs that access to the token.
+So in this case, I'm grabbing it from a secret scope
+and the token, Azure 3 token.
+So yours would be different.
+And then I need to reference the model serving invocation endpoint URL.
+Now, if you don't know where to get this URL,
+if you just go to the model serving endpoint,
+it's up there right at the top and you can copy and paste that.
+Also, this is set to work with the model
+and the structure that I put together.
+But if for whatever reason, your payload was different,
+you need to keep in mind the format that is being passed
+to whatever front end application.
+So if your payload's different,
+you might need to work on structuring that payload
+a little bit differently.
+Down here, final things that I made
+is I changed the title, the description, and an example.
+And then I went ahead and ran this.
+And what this does in this particular case
+is giving me a URL.
+I click on that URL.
+Now I'm in the appliance chatbot demo from Gradio.
+I ask you a question like,
+how long should I preheat my griddle for pancakes?
+And it gives me an answer
+because it has that information from the vector index.
+So I hope you found this useful
+and I encourage you to go ahead and give it a try.
+I think you'd be surprised about how quickly
+you can get up and running with your own use cases.
+So I thank you for your time and have fun.
+Thank you.
