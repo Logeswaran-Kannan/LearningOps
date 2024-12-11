@@ -1,0 +1,13 @@
+Metric,Value,Formula,Formula Calculation,Calculated Value,Matches?
+Average Core GWP,371.74,GWP - Discount,371.74 - 17.14,354.6,Yes (matches Core Discounted GWP)
+Average Core Discounted GWP,354.6,Core GWP - Discount,371.74 - 17.14,354.6,Yes
+Average Core NWP,277.56,Core GWP - Adjustments,N/A,N/A,Close to Policy NWP (0.86 difference)
+Average Policy NWP,278.42,NWP + Adjustment,N/A,N/A,Close to Core NWP (0.86 difference)
+Average IAF,28.0,Flat Fee,Flat Value,28.0,Yes
+Average Core Commission,94.18,Core Undiscounted Commission,Matched directly,94.18,Yes
+Average Policy Commission,112.52,Policy Commission,Matched directly,112.52,Yes
+Average Policy Commission Discount,17.14,Policy Commission - Discounted Commission,112.52 - 95.38,17.14,Yes
+Average Core Discounted Commission,77.04,Undiscounted Commission - Discounts,94.18 - 17.14,77.04,Yes
+Core Commission Rate Inc IAF %,30.56,Commission Inc IAF / Core GWP * 100,(112.52 / 371.74) * 100,30.56,Yes
+Policy Discount Inc IAF %,4.29,Discount / Policy Commission * 100,(17.14 / 112.52) * 100,4.29,Yes
+Discounted Policy Commission Rate Inc IAF %,27.45,Discounted Policy Commission / Core GWP * 100,(95 / 371.74) * 100,27.45,Yes
