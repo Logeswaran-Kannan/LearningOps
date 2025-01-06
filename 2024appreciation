@@ -1,1 +1,1 @@
-Hope you're doing well! I wanted to let you know that my current program with The AA is wrapping up on January 16th, and I’m scheduled to be relieved from the program on January 22nd. I’m exploring opportunities moving forward and would love to discuss any potential options.
+I noticed that the approximate Databricks compute cost for the Aurora loads in preprod is around $5k based on the accumulated view. Due to known limitations, we’re unable to account for storage costs, but this figure includes multiple loads, some of which are full refreshes.
