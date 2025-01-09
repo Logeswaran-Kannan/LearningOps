@@ -1,1 +1,11 @@
-I noticed that the approximate Databricks compute cost for the Aurora loads in preprod is around $5k based on the accumulated view. Due to known limitations, we’re unable to account for storage costs, but this figure includes multiple loads, some of which are full refreshes.
+Hi [New Team Member's Name],
+
+Welcome to the team! I hope your onboarding process is going smoothly. I’m excited to support you as you transition into the role.
+
+To ensure a smooth handover, I’ve already documented and recorded the end-to-end processes, which include all the key details. Once your onboarding is complete, please feel free to reach out so I can provide you with the handover. I recommend reviewing the documentation beforehand so we can use our time together to address any specific questions or clarifications you might have.
+
+If your onboarding is still in progress, there are some organizational security policies that may limit the details I can share until everything is set up. In such cases, I’m happy to provide a high-level overview verbally, but I understand it might be less effective without access to the documents.
+
+@Amber – Could you please share the details of his onboarding status, availability date, and AA access? This will help me schedule some time daily for the knowledge transfer while balancing my other deliverables. Also, please coordinate with Sujatha to ensure the basic onboarding package is fully in place.
+
+Looking forward to connecting soon!
