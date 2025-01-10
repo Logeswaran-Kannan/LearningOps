@@ -1,28 +1,9 @@
-Subject: Renewal Dataset and Estimated UAT Readiness Timeline
+Release is tentatively scheduled for 30th January, following the completion of UAT for both policy and quote.
+Current Risk:
 
-Hi Stephen,
+The offer dataset development is a potential risk. While Suriya is focusing on the renewal dataset, we propose Nars could take up the offer dataset development post-completion of RTK interaction defects. Nars’ familiarity with offer data would be an advantage, but this will need to be internally planned by the development team.
+Additional Task – Renewal Dataset Extension:
 
-Following discussions with Suriya, Vinod, and myself regarding the renewal dataset, we’ve identified that this effort goes beyond reconciliation and will require a certain level of code changes accompanied by functional testing. Here’s the proposed plan and timeline:
+Currently, we lack background information on this task. If details about the changes required for the renewal extension can be provided, we can evaluate the feasibility of including them in the planned code updates starting today.
+Suriya, please share your thoughts if I’ve missed anything or if there are additional considerations.
 
-Deliverable Split:
-
-We recommend splitting the deliverables into policy-level and quote-level changes.
-Policy-level changes are estimated to require 30–40% code modification.
-Quote-level changes are estimated to require 50% code modification.
-Timeline for Policy-Level Changes:
-
-Code changes for the policy level are targeted for completion by mid-next week, followed by validation and handover for business UAT the week after.
-Timeline for Quote-Level Changes:
-
-While UAT is ongoing for the policy-level changes, the focus will shift to completing quote-level changes.
-The release for both policy and quote-level changes is planned for 30th January, contingent on UAT completion.
-Current Risks and Recommendations:
-
-Offer Dataset Development: There’s a potential risk related to offer dataset development. A possible solution is assigning this task to Nars after he resolves the RTK interaction defects, given his familiarity with offer data. The development team can finalize this plan internally.
-Renewal Dataset Extension: We noticed an additional task for "Renewal Dataset Extension" but currently lack background information. If we can obtain details about the required changes, we’ll aim to incorporate them into the code changes starting today.
-Suriya, please feel free to add any points I might have missed.
-
-Looking forward to your inputs and confirmation on the above.
-
-Best regards,
-[Your Name]
