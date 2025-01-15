@@ -1,9 +1,13 @@
-Release is tentatively scheduled for 30th January, following the completion of UAT for both policy and quote.
-Current Risk:
+Hi Everyone,
 
-The offer dataset development is a potential risk. While Suriya is focusing on the renewal dataset, we propose Nars could take up the offer dataset development post-completion of RTK interaction defects. Nars’ familiarity with offer data would be an advantage, but this will need to be internally planned by the development team.
-Additional Task – Renewal Dataset Extension:
+As you may already know, my last working day at AA is next week. As part of my personal self-assessment process, I like to collect feedback about my time working with you. This feedback is purely for my own reflection and to help me gain insights into my tenure.
 
-Currently, we lack background information on this task. If details about the changes required for the renewal extension can be provided, we can evaluate the feasibility of including them in the planned code updates starting today.
-Suriya, please share your thoughts if I’ve missed anything or if there are additional considerations.
+I would greatly appreciate it if you could share your thoughts—both positive and negative. Negative feedback is especially welcome, as it helps me grow. Please feel free to share your points based on our interactions and your perspective.
 
+Thank you so much for taking the time to provide your feedback!
+
+
+
+------------------------
+
+I believe this does not apply to online renewals, as we have observed some samples where interactions exist for online renewals but no negotiation takes place.
