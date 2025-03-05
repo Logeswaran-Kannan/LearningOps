@@ -58,8 +58,7 @@ df_results = df_results.select("db_name", "table_name", "record_count", "run_tim
 # Truncate and load results into the output table
 df_results.write.mode("overwrite").saveAsTable(f"{catalog}.default.{output_table}")
 
-# Display results
-import ace_tools as tools
-tools.display_dataframe_to_user(name="Record Count Results", dataframe=df_results)
+# Display results in Databricks
+display(df_results)  # Use this in Databricks Notebooks instead of ace_tools
 
 print(f"Script execution completed in {total_runtime} seconds.")
