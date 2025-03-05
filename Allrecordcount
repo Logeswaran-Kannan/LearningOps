@@ -38,16 +38,22 @@ for table in table_list:
     table_end_time = time.time()
     runtime_seconds = round(table_end_time - table_start_time, 2)
 
-    # Append results
-    results.append((database, table, record_count, current_timestamp(), runtime_seconds, comment))
+    # Append results (without timestamp)
+    results.append((database, table, record_count, runtime_seconds, comment))
 
 # Total runtime
 end_time = time.time()
 total_runtime = round(end_time - start_time, 2)
 
 # Convert results to DataFrame
-columns = ["db_name", "table_name", "record_count", "run_timestamp", "runtime_seconds", "comments"]
+columns = ["db_name", "table_name", "record_count", "runtime_seconds", "comments"]
 df_results = spark.createDataFrame(results, columns)
+
+# Add run timestamp column using Spark function
+df_results = df_results.withColumn("run_timestamp", current_timestamp())
+
+# Reorder columns to match expected schema
+df_results = df_results.select("db_name", "table_name", "record_count", "run_timestamp", "runtime_seconds", "comments")
 
 # Truncate and load results into the output table
 df_results.write.mode("overwrite").saveAsTable(f"{catalog}.default.{output_table}")
