@@ -1,0 +1,59 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit, current_timestamp
+import time
+
+# Initialize Spark Session
+spark = SparkSession.builder.appName("Databricks_Record_Count").getOrCreate()
+
+# Define database and catalog
+catalog = "core_tst_sys9"
+database = "ods_views"
+output_table = "recordcounttest"  # Output table in default database
+
+# Fetch all table names from the specified database
+tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{database}").select("tableName")
+table_list = [row["tableName"] for row in tables_df.collect()]
+
+# Prepare results list
+results = []
+
+# Start execution
+start_time = time.time()
+
+for table in table_list:
+    table_start_time = time.time()
+    try:
+        # Perform count query
+        count_df = spark.sql(f"SELECT COUNT(*) AS record_count FROM {catalog}.{database}.{table}")
+        record_count = count_df.collect()[0]["record_count"]
+
+        # Determine comments
+        comment = "Success" if record_count > 0 else "No data loaded"
+
+    except Exception as e:
+        record_count = -1  # Indicate failure
+        comment = f"Error: {str(e)}"
+
+    # Capture run time per table
+    table_end_time = time.time()
+    runtime_seconds = round(table_end_time - table_start_time, 2)
+
+    # Append results
+    results.append((database, table, record_count, current_timestamp(), runtime_seconds, comment))
+
+# Total runtime
+end_time = time.time()
+total_runtime = round(end_time - start_time, 2)
+
+# Convert results to DataFrame
+columns = ["db_name", "table_name", "record_count", "run_timestamp", "runtime_seconds", "comments"]
+df_results = spark.createDataFrame(results, columns)
+
+# Truncate and load results into the output table
+df_results.write.mode("overwrite").saveAsTable(f"{catalog}.default.{output_table}")
+
+# Display results
+import ace_tools as tools
+tools.display_dataframe_to_user(name="Record Count Results", dataframe=df_results)
+
+print(f"Script execution completed in {total_runtime} seconds.")
