@@ -1,5 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, count, when, lit, array_except, current_timestamp
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
 import time
 
 # Initialize Spark Session
@@ -21,6 +22,24 @@ target_tables = [row["tableName"] for row in target_tables_df.collect()]
 
 # Identify common tables for comparison
 common_tables = list(set(src_tables).intersection(set(target_tables)))
+
+# Define Schema Explicitly
+schema = StructType([
+    StructField("table_name", StringType(), True),
+    StructField("src_db", StringType(), True),
+    StructField("target_db", StringType(), True),
+    StructField("src_missing_columns", ArrayType(StringType()), True),
+    StructField("target_missing_columns", ArrayType(StringType()), True),
+    StructField("src_count", IntegerType(), True),
+    StructField("target_count", IntegerType(), True),
+    StructField("src_vs_target_diff", IntegerType(), True),
+    StructField("target_vs_src_diff", IntegerType(), True),
+    StructField("null_count_diff_columns", ArrayType(StringType()), True),
+    StructField("data_mismatch_columns", ArrayType(StringType()), True),
+    StructField("status", StringType(), True),
+    StructField("comment", StringType(), True),
+    StructField("run_timestamp", StringType(), True)
+])
 
 # Prepare results list
 results = []
@@ -45,6 +64,10 @@ for table in common_tables:
 
         # Drop mismatched columns before comparison
         common_columns = list(src_columns.intersection(target_columns))
+        if not common_columns:  # If no common columns, log and continue
+            results.append((table, src_db, target_db, src_missing_cols, target_missing_cols, 0, 0, 0, 0, [], [], "FAIL", "No common columns", str(current_timestamp())))
+            continue
+
         df_src = df_src.select(common_columns)
         df_target = df_target.select(common_columns)
 
@@ -93,16 +116,14 @@ for table in common_tables:
 
     # Append results
     results.append((table, src_db, target_db, src_missing_cols, target_missing_cols, src_count, target_count, 
-                    src_vs_target_diff, target_vs_src_diff, null_diff_columns, mismatch_cols, status, comment))
+                    src_vs_target_diff, target_vs_src_diff, null_diff_columns, mismatch_cols, status, comment, str(current_timestamp())))
 
-# Convert results to DataFrame
-columns = ["table_name", "src_db", "target_db", "src_missing_columns", "target_missing_columns", 
-           "src_count", "target_count", "src_vs_target_diff", "target_vs_src_diff", 
-           "null_count_diff_columns", "data_mismatch_columns", "status", "comment"]
-df_results = spark.createDataFrame(results, columns)
-
-# Add run timestamp column
-df_results = df_results.withColumn("run_timestamp", current_timestamp())
+# If no valid data, create an empty DataFrame with schema
+if not results:
+    df_results = spark.createDataFrame([], schema)
+else:
+    # Convert results to DataFrame
+    df_results = spark.createDataFrame(results, schema)
 
 # Truncate and load results into the output table
 df_results.write.mode("overwrite").saveAsTable(f"{catalog}.default.{output_table}")
