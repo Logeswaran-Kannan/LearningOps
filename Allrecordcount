@@ -13,29 +13,41 @@ output_table = f"{catalog}.data_migration_validation_results"
 
 # Parameters
 exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
-exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add specific tables to exclude
-exclude_table_patterns = ["_change_", "_sqldf"]  # Exclude tables containing these patterns
+exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add table names to exclude
+exclude_table_text = "_change_"  # Exclude tables containing this text
 
 aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
 aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
 
-# Function to determine target table name
-def get_target_table_name(source_table_name):
-    if "billingcenter_" in source_table_name:
-        return f"vw_billingcenter_current_{source_table_name.replace('billingcenter_', '')}"
-    elif "powercenter_" in source_table_name:
-        return f"vw_powercenter_current_{source_table_name.replace('powercenter_', '')}"
-    elif "claimcenter_" in source_table_name:
-        return f"vw_claimcenter_current_{source_table_name.replace('claimcenter_', '')}"
-    else:
-        return f"vm_{source_table_name}"
+# Check if output table exists, create if not
+if not spark.catalog.tableExists(output_table):
+    schema = [
+        "table_name STRING", "src_database STRING", "tgt_database STRING", 
+        "src_vs_tgt_missing_columns STRING", "tgt_vs_src_missing_columns STRING", 
+        "src_count BIGINT", "tgt_count BIGINT", "src_vs_tgt_data_mismatch_count BIGINT", 
+        "tgt_vs_src_data_mismatch_count BIGINT", "null_diff_columns STRING", "data_mismatch_columns STRING", 
+        "status STRING", "comment STRING", "time_taken_seconds DOUBLE"
+    ]
+    create_table_query = f"""
+    CREATE TABLE {output_table} (
+        {', '.join(schema)}
+    ) USING DELTA
+    """
+    spark.sql(create_table_query)
 
-# Fetch list of tables from source, ensuring exclusions based on patterns
+# Fetch list of tables from source, ensuring we properly exclude the specified tables
 all_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
-source_tables = [table for table in all_tables if table not in exclude_tables and not any(pattern in table for pattern in exclude_table_patterns)]
+source_tables = [table for table in all_tables if table not in exclude_tables and exclude_table_text not in table]
 
-# Truncate output table before each run
-spark.sql(f"TRUNCATE TABLE {output_table}")
+def get_target_table_name(table_name):
+    if "billingcenter_" in table_name:
+        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
+    elif "powercenter_" in table_name:
+        return f"vw_powercenter_current_{table_name.split('powercenter_')[-1]}"
+    elif "claimcenter_" in table_name:
+        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
+    else:
+        return f"vm_{table_name}"
 
 def validate_table(table_name):
     target_table_name = get_target_table_name(table_name)
@@ -48,13 +60,8 @@ def validate_table(table_name):
         
         # Apply AURE_LOAD_DATE filter to both source and target tables
         if "AURE_LOAD_DATE" in src_df.columns and "AURE_LOAD_DATE" in tgt_df.columns:
-            src_filter = f"SELECT * FROM {source_db}.{table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
-            tgt_filter = f"SELECT * FROM {target_db}.{target_table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
-            src_df = spark.sql(src_filter)
-            tgt_df = spark.sql(tgt_filter)
-        else:
-            src_filter = f"SELECT * FROM {source_db}.{table_name}"
-            tgt_filter = f"SELECT * FROM {target_db}.{target_table_name}"
+            src_df = src_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
+            tgt_df = tgt_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
         
         # Get source and target schemas
         src_cols = {col_name: dtype for col_name, dtype in src_df.dtypes}
@@ -113,26 +120,23 @@ def validate_table(table_name):
             status = "PASS"
             comment = "Pass"
         
-        time_taken = round(time.time() - start_time, 2)
+        time_taken = time.time() - start_time
         
         # Store results in output table
         result_df = spark.createDataFrame([
             (table_name, source_db, target_db, ",".join(missing_in_target), ",".join(missing_in_source),
              src_count, tgt_count, comparison_count_src, comparison_count_tgt, ",".join(null_diffs),
-             ",".join(mismatched_cols), status, comment, time_taken, src_filter, tgt_filter)
+             ",".join(mismatched_cols), status, comment, time_taken)
         ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
+            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
         
         result_df.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
         error_df = spark.createDataFrame([
-            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0, "", "")
-        ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
-            "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
-        
+            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0)
+        ], result_df.schema)
         error_df.write.mode("append").saveAsTable(output_table)
 
 # Iterate over each table and validate
