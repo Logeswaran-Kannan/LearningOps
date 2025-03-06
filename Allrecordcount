@@ -1,137 +1,95 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, count, when, lit, array_except, current_timestamp
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
-import time
+from pyspark.sql.functions import col, count, when, lit, expr
 
 # Initialize Spark Session
-spark = SparkSession.builder.appName("Databricks_Table_Comparison").getOrCreate()
+spark = SparkSession.builder.appName("DataMigrationValidation").enableHiveSupport().getOrCreate()
 
-# Define catalog and databases
-catalog = "core_tst_sys9"
-src_db = "ods"  # Source database
-target_db = "ods_views"  # Target database
-output_table = "table_comparison_results"
+# Define Source and Target Catalogs and Databases
+source_catalog = "ods"
+target_catalog = "ods_views"
+output_catalog = "core_tst_sys9"
+output_table = "default.validation_results"
 
-# Fetch table names from the source database
-src_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{src_db}").select("tableName")
-src_tables = [row["tableName"] for row in src_tables_df.collect()]
+# Fetch Source Table List
+source_tables = [row["tableName"] for row in spark.sql(f"SHOW TABLES IN {source_catalog}").collect()]
 
-# Define Schema Explicitly
-schema = StructType([
-    StructField("table_name", StringType(), True),
-    StructField("src_db", StringType(), True),
-    StructField("target_db", StringType(), True),
-    StructField("src_missing_columns", ArrayType(StringType()), True),
-    StructField("target_missing_columns", ArrayType(StringType()), True),
-    StructField("src_count", IntegerType(), True),
-    StructField("target_count", IntegerType(), True),
-    StructField("src_vs_target_diff", IntegerType(), True),
-    StructField("target_vs_src_diff", IntegerType(), True),
-    StructField("null_count_diff_columns", ArrayType(StringType()), True),
-    StructField("data_mismatch_columns", ArrayType(StringType()), True),
-    StructField("status", StringType(), True),
-    StructField("comment", StringType(), True),
-    StructField("run_timestamp", StringType(), True)
-])
+def get_table_schema(database, table_name):
+    """Fetches table schema as a set of column names."""
+    return set([col["col_name"] for col in spark.sql(f"DESCRIBE {database}.{table_name}").collect()])
 
-# Prepare results list
-results = []
-
-# Start execution timer
-start_time = time.time()
-
-for table in src_tables:
-    table_start_time = time.time()
-    target_table_name = f"vw_{table}"  # Add "vw_" prefix for target table
-
+def validate_table(src_table, tgt_table):
+    """Validates source and target tables and returns a result row."""
     try:
-        # Check if target table exists
-        target_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{target_db}").select("tableName")
-        target_tables = [row["tableName"] for row in target_tables_df.collect()]
+        src_df = spark.table(f"{source_catalog}.{src_table}")
+        tgt_df = spark.table(f"{target_catalog}.{tgt_table}")
 
-        if target_table_name not in target_tables:
-            results.append((table, src_db, target_db, [], [], 0, 0, 0, 0, [], [], "FAIL", "Target table missing", str(current_timestamp())))
-            continue  # Skip to the next table
-
-        # Load source and target data
-        df_src = spark.sql(f"SELECT * FROM {catalog}.{src_db}.{table}")
-        df_target = spark.sql(f"SELECT * FROM {catalog}.{target_db}.{target_table_name}")
-
-        # Get column lists
-        src_columns = set(df_src.columns)
-        target_columns = set(df_target.columns)
+        # Fetch DDL Schema
+        src_schema = get_table_schema(source_catalog, src_table)
+        tgt_schema = get_table_schema(target_catalog, tgt_table)
 
         # Identify missing columns
-        src_missing_cols = list(target_columns - src_columns)  # In target but missing in source
-        target_missing_cols = list(src_columns - target_columns)  # In source but missing in target
+        src_missing_cols = list(tgt_schema - src_schema)
+        tgt_missing_cols = list(src_schema - tgt_schema)
 
-        # Drop mismatched columns before comparison
-        common_columns = list(src_columns.intersection(target_columns))
-        if not common_columns:  # If no common columns, log and continue
-            results.append((table, src_db, target_db, src_missing_cols, target_missing_cols, 0, 0, 0, 0, [], [], "FAIL", "No common columns", str(current_timestamp())))
-            continue
-
-        df_src = df_src.select(common_columns)
-        df_target = df_target.select(common_columns)
+        # Align schema by dropping extra columns
+        common_cols = list(src_schema & tgt_schema)
+        src_df = src_df.select(common_cols)
+        tgt_df = tgt_df.select(common_cols)
 
         # Count comparison
-        src_count = df_src.count()
-        target_count = df_target.count()
+        src_count = src_df.count()
+        tgt_count = tgt_df.count()
 
-        # Data row comparison
-        df_src_except = df_src.exceptAll(df_target)  # Rows in source but not in target
-        df_target_except = df_target.exceptAll(df_src)  # Rows in target but not in source
-        src_vs_target_diff = df_src_except.count()
-        target_vs_src_diff = df_target_except.count()
+        # Data comparison
+        data_mismatch_count = src_df.subtract(tgt_df).count()
+        rev_data_mismatch_count = tgt_df.subtract(src_df).count()
 
-        # Column-wise null count comparison
-        src_null_counts = df_src.select([count(when(col(c).isNull(), c)).alias(c) for c in common_columns]).collect()[0].asDict()
-        target_null_counts = df_target.select([count(when(col(c).isNull(), c)).alias(c) for c in common_columns]).collect()[0].asDict()
-        null_diff_columns = [col for col in common_columns if src_null_counts[col] != target_null_counts[col]]
+        # Null Count Comparison
+        null_count_diff_cols = []
+        for col_name in common_cols:
+            src_nulls = src_df.select(count(when(col(col_name).isNull(), col_name))).collect()[0][0]
+            tgt_nulls = tgt_df.select(count(when(col(col_name).isNull(), col_name))).collect()[0][0]
+            if src_nulls != tgt_nulls:
+                null_count_diff_cols.append(col_name)
 
-        # Identify data mismatch columns
-        mismatch_cols = []
-        for col_name in common_columns:
-            src_values = df_src.select(col_name).distinct()
-            target_values = df_target.select(col_name).distinct()
-            if src_values.exceptAll(target_values).count() > 0 or target_values.exceptAll(src_values).count() > 0:
-                mismatch_cols.append(col_name)
-
-        # Determine status & comment
-        if not src_missing_cols and not target_missing_cols and src_count == target_count and src_vs_target_diff == 0 and target_vs_src_diff == 0 and not null_diff_columns and not mismatch_cols:
-            status, comment = "PASS", "PASS"
-        elif not src_missing_cols and not target_missing_cols and src_count != target_count:
-            status, comment = "FAIL", "Count fails"
-        elif not src_missing_cols and not target_missing_cols and src_vs_target_diff > 0 and target_vs_src_diff > 0:
-            status, comment = "FAIL", "Data validation fails"
-        elif not src_missing_cols and not target_missing_cols and not mismatch_cols and null_diff_columns:
-            status, comment = "FAIL", "Null validation fails"
+        # Determine Status and Comments
+        if src_schema == tgt_schema and src_count == tgt_count and data_mismatch_count == 0 and rev_data_mismatch_count == 0 and not null_count_diff_cols:
+            status, comment = "PASS", "All tests passed"
+        elif src_schema != tgt_schema:
+            status, comment = "FAIL", "DDL Mismatch"
+        elif src_count != tgt_count:
+            status, comment = "FAIL", "Count Mismatch"
+        elif data_mismatch_count > 0 or rev_data_mismatch_count > 0:
+            status, comment = "FAIL", "Data Mismatch"
+        elif null_count_diff_cols:
+            status, comment = "FAIL", "Null Count Mismatch"
         else:
-            status, comment = "FAIL", "DDL mismatch or data missing"
+            status, comment = "FAIL", "Unknown Error"
 
+        # Prepare Result Row
+        result_row = [(src_table, source_catalog, target_catalog, str(src_missing_cols), str(tgt_missing_cols),
+                      src_count, tgt_count, data_mismatch_count, rev_data_mismatch_count,
+                      str(null_count_diff_cols), "", status, comment)]
+
+        return spark.createDataFrame(result_row, ["table_name", "src_database", "target_database", "src_vs_target_ddl_missing", "target_vs_src_ddl_missing",
+                                                  "src_count", "target_count", "src_vs_target_data_diff", "target_vs_src_data_diff",
+                                                  "null_count_differences", "data_mismatch_columns", "status", "comment"])
     except Exception as e:
-        status, comment = "ERROR", f"Error processing table: {str(e)}"
-        src_count, target_count, src_vs_target_diff, target_vs_src_diff, null_diff_columns, mismatch_cols = -1, -1, -1, -1, [], []
+        # Handle cases where table does not exist
+        error_row = [(src_table, source_catalog, target_catalog, "", "", 0, 0, 0, 0, "", "", "FAIL", f"Error: {str(e)}")]
+        return spark.createDataFrame(error_row, ["table_name", "src_database", "target_database", "src_vs_target_ddl_missing", "target_vs_src_ddl_missing",
+                                                  "src_count", "target_count", "src_vs_target_data_diff", "target_vs_src_data_diff",
+                                                  "null_count_differences", "data_mismatch_columns", "status", "comment"])
 
-    # Capture run time per table
-    table_end_time = time.time()
-    runtime_seconds = round(table_end_time - table_start_time, 2)
+# Iterate over tables and validate
+final_results = None
+for src_table in source_tables:
+    tgt_table = f"vm_{src_table}"
+    result_df = validate_table(src_table, tgt_table)
+    final_results = result_df if final_results is None else final_results.union(result_df)
 
-    # Append results
-    results.append((table, src_db, target_db, src_missing_cols, target_missing_cols, src_count, target_count, 
-                    src_vs_target_diff, target_vs_src_diff, null_diff_columns, mismatch_cols, status, comment, str(current_timestamp())))
+# Write results to output table with version history
+final_results.withColumn("execution_time", expr("current_timestamp()"))
+final_results.write.mode("append").saveAsTable(f"{output_catalog}.{output_table}")
 
-# If no valid data, create an empty DataFrame with schema
-if not results:
-    df_results = spark.createDataFrame([], schema)
-else:
-    # Convert results to DataFrame
-    df_results = spark.createDataFrame(results, schema)
-
-# Truncate and load results into the output table
-df_results.write.mode("overwrite").saveAsTable(f"{catalog}.default.{output_table}")
-
-# Display results in Databricks
-display(df_results)
-
-print(f"Script execution completed in {round(time.time() - start_time, 2)} seconds.")
+print("Validation completed and results stored successfully.")
