@@ -8,23 +8,23 @@ spark = SparkSession.builder.appName("Databricks_Table_Comparison").getOrCreate(
 
 # Define catalog and databases
 catalog = "core_tst_sys9"
-src_db = "ods"           # Source database
+src_db = "ods"  # Source database
 target_db = "ods_views"  # Target database
 output_table = "table_comparison_results"
 
-# Fetch table list from the source database (ODS)
+# Fetch all table names from source and target databases
 src_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{src_db}").select("tableName")
-src_tables = [row["tableName"] for row in src_tables_df.collect()]
-
-# Construct target table names (prepend "vw_" to each source table name)
-target_tables = {f"vw_{table}": table for table in src_tables}  # Mapping {target_table: source_table}
-
-# Fetch actual tables in target database (ODS_VIEWS)
 target_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{target_db}").select("tableName")
-existing_target_tables = set(row["tableName"] for row in target_tables_df.collect())
 
-# Identify tables that exist in both source and target
-common_tables = {tgt: src for tgt, src in target_tables.items() if tgt in existing_target_tables}
+# Convert table lists
+src_tables = [row["tableName"] for row in src_tables_df.collect()]
+target_tables = [row["tableName"] for row in target_tables_df.collect()]
+
+# Create mapping of source table names to target table names
+mapped_target_tables = {f"vw_{table}": table for table in src_tables}  # Target tables are prefixed with "vw_"
+
+# Identify tables where corresponding "vw_" exists in target
+common_tables = {src: tgt for tgt, src in mapped_target_tables.items() if tgt in target_tables}
 
 # Define Schema Explicitly
 schema = StructType([
@@ -68,7 +68,7 @@ for target_table, source_table in common_tables.items():
         # Drop mismatched columns before comparison
         common_columns = list(src_columns.intersection(target_columns))
         if not common_columns:  # If no common columns, log and continue
-            results.append((target_table, src_db, target_db, src_missing_cols, target_missing_cols, 0, 0, 0, 0, [], [], "FAIL", "No common columns", str(current_timestamp())))
+            results.append((source_table, src_db, target_db, src_missing_cols, target_missing_cols, 0, 0, 0, 0, [], [], "FAIL", "No common columns", str(current_timestamp())))
             continue
 
         df_src = df_src.select(common_columns)
@@ -118,7 +118,7 @@ for target_table, source_table in common_tables.items():
     runtime_seconds = round(table_end_time - table_start_time, 2)
 
     # Append results
-    results.append((target_table, src_db, target_db, src_missing_cols, target_missing_cols, src_count, target_count, 
+    results.append((source_table, src_db, target_db, src_missing_cols, target_missing_cols, src_count, target_count, 
                     src_vs_target_diff, target_vs_src_diff, null_diff_columns, mismatch_cols, status, comment, str(current_timestamp())))
 
 # If no valid data, create an empty DataFrame with schema
