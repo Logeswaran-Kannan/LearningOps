@@ -42,7 +42,9 @@ except AnalysisException:
             data_mismatch_columns STRING,
             status STRING,
             comment STRING,
-            time_taken_seconds DOUBLE
+            time_taken_seconds DOUBLE,
+            source_sql STRING,
+            target_sql STRING
         ) USING DELTA
     """)
 
@@ -65,14 +67,13 @@ def validate_table(table_name):
     start_time = time.time()
     
     try:
-        # Load source and target data
-        src_df = spark.table(f"{source_db}.{table_name}")
-        tgt_df = spark.table(f"{target_db}.{target_table_name}")
+        # Generate SQL queries for source and target
+        source_sql = f"SELECT * FROM {source_db}.{table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        target_sql = f"SELECT * FROM {target_db}.{target_table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
         
-        # Apply AURE_LOAD_DATE filter to both source and target tables
-        if "AURE_LOAD_DATE" in src_df.columns and "AURE_LOAD_DATE" in tgt_df.columns:
-            src_df = src_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
-            tgt_df = tgt_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
+        # Load source and target data
+        src_df = spark.sql(source_sql)
+        tgt_df = spark.sql(target_sql)
         
         # Get source and target schemas
         src_cols = {col_name: dtype for col_name, dtype in src_df.dtypes}
@@ -137,7 +138,7 @@ def validate_table(table_name):
         result_df = spark.createDataFrame([
             (table_name, source_db, target_db, ",".join(missing_in_target), ",".join(missing_in_source),
              src_count, tgt_count, comparison_count_src, comparison_count_tgt, ",".join(null_diffs),
-             ",".join(mismatched_cols), status, comment, time_taken)
+             ",".join(mismatched_cols), status, comment, time_taken, source_sql, target_sql)
         ], schema=spark.table(output_table).schema)
         
         result_df.write.mode("append").saveAsTable(output_table)
