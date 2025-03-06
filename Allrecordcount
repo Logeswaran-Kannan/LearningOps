@@ -1,2 +1,3 @@
+# Fetch list of tables from source, ensuring we properly exclude the specified tables
 all_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
 source_tables = [table for table in all_tables if table not in exclude_tables]
