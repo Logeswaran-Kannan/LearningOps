@@ -11,11 +11,13 @@ target_db = "ods_views"
 output_db = "core_tst_sys9"
 output_table = "data_migration_validation_results"
 
+# Parameters
+exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
+aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
+aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
+
 # Fetch list of tables from source
 source_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
-
-# Define columns to exclude
-excluded_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
 
 def validate_table(table_name):
     target_table_name = f"vm_{table_name}"
@@ -27,22 +29,25 @@ def validate_table(table_name):
         tgt_df = spark.table(f"{target_db}.{target_table_name}")
         
         # Get source and target schemas
-        src_cols = {col_name for col_name, dtype in src_df.dtypes if col_name not in excluded_columns}
-        tgt_cols = {col_name for col_name, dtype in tgt_df.dtypes if col_name not in excluded_columns}
+        src_cols = {col_name: dtype for col_name, dtype in src_df.dtypes}
+        tgt_cols = {col_name: dtype for col_name, dtype in tgt_df.dtypes}
+        
+        # Exclude unwanted columns
+        src_cols = {col_name: dtype for col_name, dtype in src_cols.items() if col_name not in exclude_columns}
+        tgt_cols = {col_name: dtype for col_name, dtype in tgt_cols.items() if col_name not in exclude_columns}
         
         # Compare DDL structures
-        missing_in_target = list(src_cols - tgt_cols)
-        missing_in_source = list(tgt_cols - src_cols)
+        missing_in_target = list(set(src_cols.keys()) - set(tgt_cols.keys()))
+        missing_in_source = list(set(tgt_cols.keys()) - set(src_cols.keys()))
         
         # Align columns by dropping extra ones
-        common_cols = list(src_cols & tgt_cols)
+        common_cols = list(set(src_cols.keys()) & set(tgt_cols.keys()))
         src_df = src_df.select(common_cols)
         tgt_df = tgt_df.select(common_cols)
         
-        # Apply date filter for data comparison
-        date_filter = "AURE_LOAD_DATE BETWEEN '2024-10-08T09:07:48.000+00:00' AND '2024-10-10T09:07:48.000+00:00'"
-        src_df = src_df.where(date_filter)
-        tgt_df = tgt_df.where(date_filter)
+        # Filter data using AURE_LOAD_DATE condition
+        src_df = src_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
+        tgt_df = tgt_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
         
         # Row count comparison
         src_count = src_df.count()
@@ -84,8 +89,7 @@ def validate_table(table_name):
             status = "PASS"
             comment = "Pass"
         
-        # Calculate time taken
-        time_taken = round(time.time() - start_time, 2)
+        time_taken = time.time() - start_time
         
         # Store results in output table
         result_df = spark.createDataFrame([
@@ -94,7 +98,7 @@ def validate_table(table_name):
              ",".join(mismatched_cols), status, comment, time_taken)
         ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_sec"])
+            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
         
         result_df.write.mode("append").saveAsTable(f"{output_db}.{output_table}")
         
@@ -103,11 +107,11 @@ def validate_table(table_name):
             (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0)
         ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_sec"])
+            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
         
         error_df.write.mode("append").saveAsTable(f"{output_db}.{output_table}")
 
-# Iterate over each table and validate one by one
+# Iterate over each table and validate
 for table in source_tables:
     validate_table(table)
 
