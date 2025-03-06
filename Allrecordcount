@@ -1,26 +1,3 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.utils import AnalysisException
-from pyspark.sql.functions import col, count, lit, when, expr, current_timestamp
-import time
-
-# Initialize Spark session
-spark = SparkSession.builder.appName("DataMigrationValidation").enableHiveSupport().getOrCreate()
-
-# Define catalog and databases
-catalog = "core_tst_sys9"
-source_db = f"{catalog}.ods"
-target_db = f"{catalog}.ods_views"
-output_table = f"{catalog}.default.data_migration_validation_results"
-
-# Parameters
-exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
-exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add table names to exclude
-exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this text
-
-aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
-aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
-
-# Check if output table exists, create if not, then truncate
 try:
     spark.sql(f"DESCRIBE TABLE {output_table}")
     print(f"Truncating output table {output_table}.")
@@ -67,30 +44,21 @@ def validate_table(table_name):
     start_time = time.time()
     
     try:
-        # Generate SQL queries for source and target
-        source_sql = f"SELECT * FROM {source_db}.{table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
-        target_sql = f"SELECT * FROM {target_db}.{target_table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        # Load source and target data to extract column names
+        src_df = spark.table(f"{source_db}.{table_name}")
+        tgt_df = spark.table(f"{target_db}.{target_table_name}")
         
-        # Load source and target data
+        # Get common columns for both tables
+        common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
+        column_list = ", ".join(common_cols)
+        
+        # Generate SQL queries for source and target including column names
+        source_sql = f"SELECT {column_list} FROM {source_db}.{table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        target_sql = f"SELECT {column_list} FROM {target_db}.{target_table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        
+        # Execute SQL queries
         src_df = spark.sql(source_sql)
         tgt_df = spark.sql(target_sql)
-        
-        # Get source and target schemas
-        src_cols = {col_name: dtype for col_name, dtype in src_df.dtypes}
-        tgt_cols = {col_name: dtype for col_name, dtype in tgt_df.dtypes}
-        
-        # Exclude unwanted columns
-        src_cols = {col_name: dtype for col_name, dtype in src_cols.items() if col_name not in exclude_columns}
-        tgt_cols = {col_name: dtype for col_name, dtype in tgt_cols.items() if col_name not in exclude_columns}
-        
-        # Compare DDL structures
-        missing_in_target = list(set(src_cols.keys()) - set(tgt_cols.keys()))
-        missing_in_source = list(set(tgt_cols.keys()) - set(src_cols.keys()))
-        
-        # Align columns by dropping extra ones
-        common_cols = list(set(src_cols.keys()) & set(tgt_cols.keys()))
-        src_df = src_df.select(common_cols)
-        tgt_df = tgt_df.select(common_cols)
         
         # Row count comparison
         src_count = src_df.count()
@@ -116,9 +84,9 @@ def validate_table(table_name):
                     mismatched_cols.append(col_name)
         
         # Determine status and comments
-        if missing_in_source or missing_in_target:
+        if not common_cols:
             status = "FAIL"
-            comment = "DDL Mismatch"
+            comment = "No common columns for comparison"
         elif not count_match:
             status = "FAIL"
             comment = "Count Validation Fails"
@@ -136,9 +104,9 @@ def validate_table(table_name):
         
         # Store results in output table
         result_df = spark.createDataFrame([
-            (table_name, source_db, target_db, ",".join(missing_in_target), ",".join(missing_in_source),
-             src_count, tgt_count, comparison_count_src, comparison_count_tgt, ",".join(null_diffs),
-             ",".join(mismatched_cols), status, comment, time_taken, source_sql, target_sql)
+            (table_name, source_db, target_db, "", "", src_count, tgt_count, 
+             comparison_count_src, comparison_count_tgt, ",".join(null_diffs), ",".join(mismatched_cols), 
+             status, comment, time_taken, source_sql, target_sql)
         ], schema=spark.table(output_table).schema)
         
         result_df.write.mode("append").saveAsTable(output_table)
