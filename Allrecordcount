@@ -8,23 +8,23 @@ spark = SparkSession.builder.appName("Databricks_Table_Comparison").getOrCreate(
 
 # Define catalog and databases
 catalog = "core_tst_sys9"
-src_db = "ods_views"
-target_db = "ods"
+src_db = "ods"           # Source database
+target_db = "ods_views"  # Target database
 output_table = "table_comparison_results"
 
-# Fetch all table names from both databases
+# Fetch table list from the source database (ODS)
 src_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{src_db}").select("tableName")
-target_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{target_db}").select("tableName")
-
-# Convert table lists
 src_tables = [row["tableName"] for row in src_tables_df.collect()]
-target_tables = [row["tableName"] for row in target_tables_df.collect()]
 
-# Adjust source table names (remove 'vw_' prefix for comparison)
-src_tables_modified = {table[3:]: table for table in src_tables if table.startswith("vw_")}  # Map {actual_name: vw_table_name}
+# Construct target table names (prepend "vw_" to each source table name)
+target_tables = {f"vw_{table}": table for table in src_tables}  # Mapping {target_table: source_table}
 
-# Identify common tables
-common_tables = list(set(target_tables).intersection(set(src_tables_modified.keys())))
+# Fetch actual tables in target database (ODS_VIEWS)
+target_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{target_db}").select("tableName")
+existing_target_tables = set(row["tableName"] for row in target_tables_df.collect())
+
+# Identify tables that exist in both source and target
+common_tables = {tgt: src for tgt, src in target_tables.items() if tgt in existing_target_tables}
 
 # Define Schema Explicitly
 schema = StructType([
@@ -50,14 +50,11 @@ results = []
 # Start execution timer
 start_time = time.time()
 
-for table in common_tables:
+for target_table, source_table in common_tables.items():
     table_start_time = time.time()
-    src_table = src_tables_modified[table]  # Get actual 'vw_' prefixed table name
-    target_table = table  # Regular table name in target
-
     try:
         # Load source and target data
-        df_src = spark.sql(f"SELECT * FROM {catalog}.{src_db}.{src_table}")
+        df_src = spark.sql(f"SELECT * FROM {catalog}.{src_db}.{source_table}")
         df_target = spark.sql(f"SELECT * FROM {catalog}.{target_db}.{target_table}")
 
         # Get column lists
@@ -71,7 +68,7 @@ for table in common_tables:
         # Drop mismatched columns before comparison
         common_columns = list(src_columns.intersection(target_columns))
         if not common_columns:  # If no common columns, log and continue
-            results.append((table, src_db, target_db, src_missing_cols, target_missing_cols, 0, 0, 0, 0, [], [], "FAIL", "No common columns", str(current_timestamp())))
+            results.append((target_table, src_db, target_db, src_missing_cols, target_missing_cols, 0, 0, 0, 0, [], [], "FAIL", "No common columns", str(current_timestamp())))
             continue
 
         df_src = df_src.select(common_columns)
@@ -121,7 +118,7 @@ for table in common_tables:
     runtime_seconds = round(table_end_time - table_start_time, 2)
 
     # Append results
-    results.append((table, src_db, target_db, src_missing_cols, target_missing_cols, src_count, target_count, 
+    results.append((target_table, src_db, target_db, src_missing_cols, target_missing_cols, src_count, target_count, 
                     src_vs_target_diff, target_vs_src_diff, null_diff_columns, mismatch_cols, status, comment, str(current_timestamp())))
 
 # If no valid data, create an empty DataFrame with schema
