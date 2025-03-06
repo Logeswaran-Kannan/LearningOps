@@ -31,6 +31,27 @@ def get_target_table_name(source_table_name):
     else:
         return f"vm_{source_table_name}"
 
+# Check if output table exists, if not, create it
+if not spark._jsparkSession.catalog().tableExists(output_table):
+    spark.sql(f"CREATE TABLE {output_table} (
+        table_name STRING,
+        src_database STRING,
+        tgt_database STRING,
+        src_vs_tgt_missing_columns STRING,
+        tgt_vs_src_missing_columns STRING,
+        src_count INT,
+        tgt_count INT,
+        src_vs_tgt_data_mismatch_count INT,
+        tgt_vs_src_data_mismatch_count INT,
+        null_diff_columns STRING,
+        data_mismatch_columns STRING,
+        status STRING,
+        comment STRING,
+        time_taken_seconds DOUBLE,
+        source_sql STRING,
+        target_sql STRING
+    ) USING DELTA")
+
 # Fetch list of tables from source, ensuring exclusions based on patterns
 all_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
 source_tables = [table for table in all_tables if table not in exclude_tables and not any(pattern in table for pattern in exclude_table_patterns)]
@@ -119,18 +140,10 @@ def validate_table(table_name):
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
             "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
         
-        result_df = result_df.withColumn("time_taken_seconds", col("time_taken_seconds").cast(DoubleType()))
         result_df.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
-        error_df = spark.createDataFrame([
-            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0.0, source_sql, target_sql)
-        ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
-            "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
-        
-        error_df = error_df.withColumn("time_taken_seconds", col("time_taken_seconds").cast(DoubleType()))
-        error_df.write.mode("append").saveAsTable(output_table)
+        pass
 
 # Iterate over each table and validate
 for table in source_tables:
