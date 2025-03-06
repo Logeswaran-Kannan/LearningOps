@@ -5,11 +5,11 @@ import time
 # Initialize Spark session
 spark = SparkSession.builder.appName("DataMigrationValidation").enableHiveSupport().getOrCreate()
 
-# Define source and target databases
-source_db = "ods"
-target_db = "ods_views"
-output_db = "core_tst_sys9"
-output_table = "data_migration_validation_results"
+# Define catalog and databases
+catalog = "core_tst_sys9"
+source_db = f"{catalog}.ods"
+target_db = f"{catalog}.ods_views"
+output_table = f"{catalog}.data_migration_validation_results"
 
 # Parameters
 exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
@@ -100,7 +100,7 @@ def validate_table(table_name):
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
             "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
         
-        result_df.write.mode("append").saveAsTable(f"{output_db}.{output_table}")
+        result_df.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
         error_df = spark.createDataFrame([
@@ -109,7 +109,7 @@ def validate_table(table_name):
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
             "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
         
-        error_df.write.mode("append").saveAsTable(f"{output_db}.{output_table}")
+        error_df.write.mode("append").saveAsTable(output_table)
 
 # Iterate over each table and validate
 for table in source_tables:
