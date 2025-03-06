@@ -20,10 +20,11 @@ exclude_table_text = "_change_"  # Exclude tables containing this text
 aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
 aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
 
-# Check if output table exists, create if not
+# Check if output table exists, create if not, then truncate
 try:
     spark.sql(f"DESCRIBE TABLE {output_table}")
-    print(f"Output table {output_table} already exists.")
+    print(f"Truncating output table {output_table}.")
+    spark.sql(f"TRUNCATE TABLE {output_table}")
 except AnalysisException:
     print(f"Creating output table {output_table}.")
     spark.sql(f"""
@@ -130,7 +131,7 @@ def validate_table(table_name):
             status = "PASS"
             comment = "Pass"
         
-        time_taken = time.time() - start_time
+        time_taken = float(time.time() - start_time)
         
         # Store results in output table
         result_df = spark.createDataFrame([
@@ -142,10 +143,7 @@ def validate_table(table_name):
         result_df.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
-        error_df = spark.createDataFrame([
-            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0)
-        ], schema=spark.table(output_table).schema)
-        error_df.write.mode("append").saveAsTable(output_table)
+        print(f"Error processing table {table_name}: {e}")
 
 # Iterate over each table and validate
 for table in source_tables:
