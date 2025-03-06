@@ -48,8 +48,13 @@ def validate_table(table_name):
         
         # Apply AURE_LOAD_DATE filter to both source and target tables
         if "AURE_LOAD_DATE" in src_df.columns and "AURE_LOAD_DATE" in tgt_df.columns:
-            src_df = src_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
-            tgt_df = tgt_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
+            src_filter = f"SELECT * FROM {source_db}.{table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+            tgt_filter = f"SELECT * FROM {target_db}.{target_table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+            src_df = spark.sql(src_filter)
+            tgt_df = spark.sql(tgt_filter)
+        else:
+            src_filter = f"SELECT * FROM {source_db}.{table_name}"
+            tgt_filter = f"SELECT * FROM {target_db}.{target_table_name}"
         
         # Get source and target schemas
         src_cols = {col_name: dtype for col_name, dtype in src_df.dtypes}
@@ -108,25 +113,25 @@ def validate_table(table_name):
             status = "PASS"
             comment = "Pass"
         
-        time_taken = time.time() - start_time
+        time_taken = round(time.time() - start_time, 2)
         
         # Store results in output table
         result_df = spark.createDataFrame([
             (table_name, source_db, target_db, ",".join(missing_in_target), ",".join(missing_in_source),
              src_count, tgt_count, comparison_count_src, comparison_count_tgt, ",".join(null_diffs),
-             ",".join(mismatched_cols), status, comment, time_taken)
+             ",".join(mismatched_cols), status, comment, time_taken, src_filter, tgt_filter)
         ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
+            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
         
         result_df.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
         error_df = spark.createDataFrame([
-            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0)
+            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0, "", "")
         ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
+            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
         
         error_df.write.mode("append").saveAsTable(output_table)
 
