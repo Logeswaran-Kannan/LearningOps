@@ -13,11 +13,13 @@ output_table = f"{catalog}.data_migration_validation_results"
 
 # Parameters
 exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
+exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add table names to exclude
+
 aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
 aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
 
-# Fetch list of tables from source
-source_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
+# Fetch list of tables from source excluding the specified tables
+source_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect() if row.tableName not in exclude_tables]
 
 def validate_table(table_name):
     target_table_name = f"vm_{table_name}"
@@ -27,6 +29,10 @@ def validate_table(table_name):
         # Load source and target data
         src_df = spark.table(f"{source_db}.{table_name}")
         tgt_df = spark.table(f"{target_db}.{target_table_name}")
+        
+        # Apply AURE_LOAD_DATE filter to both source and target tables
+        src_df = src_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
+        tgt_df = tgt_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
         
         # Get source and target schemas
         src_cols = {col_name: dtype for col_name, dtype in src_df.dtypes}
@@ -44,10 +50,6 @@ def validate_table(table_name):
         common_cols = list(set(src_cols.keys()) & set(tgt_cols.keys()))
         src_df = src_df.select(common_cols)
         tgt_df = tgt_df.select(common_cols)
-        
-        # Filter data using AURE_LOAD_DATE condition
-        src_df = src_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
-        tgt_df = tgt_df.filter((col("AURE_LOAD_DATE") >= aure_load_date_start) & (col("AURE_LOAD_DATE") <= aure_load_date_end))
         
         # Row count comparison
         src_count = src_df.count()
