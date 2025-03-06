@@ -1,5 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, count, lit, when, expr, current_timestamp
+from pyspark.sql.types import DoubleType
 import time
 
 # Initialize Spark session
@@ -107,7 +108,7 @@ def validate_table(table_name):
             status = "PASS"
             comment = "Pass"
         
-        time_taken = round(time.time() - start_time, 2)
+        time_taken = float(round(time.time() - start_time, 2))
         
         # Store results in output table
         result_df = spark.createDataFrame([
@@ -118,15 +119,17 @@ def validate_table(table_name):
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
             "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
         
+        result_df = result_df.withColumn("time_taken_seconds", col("time_taken_seconds").cast(DoubleType()))
         result_df.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
         error_df = spark.createDataFrame([
-            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0, source_sql, target_sql)
+            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0.0, source_sql, target_sql)
         ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
             "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
             "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds", "source_sql", "target_sql"])
         
+        error_df = error_df.withColumn("time_taken_seconds", col("time_taken_seconds").cast(DoubleType()))
         error_df.write.mode("append").saveAsTable(output_table)
 
 # Iterate over each table and validate
