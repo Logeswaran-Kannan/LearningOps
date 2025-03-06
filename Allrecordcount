@@ -12,19 +12,9 @@ src_db = "ods"  # Source database
 target_db = "ods_views"  # Target database
 output_table = "table_comparison_results"
 
-# Fetch table names from both databases
+# Fetch table names from the source database
 src_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{src_db}").select("tableName")
-target_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{target_db}").select("tableName")
-
-# Convert table lists
 src_tables = [row["tableName"] for row in src_tables_df.collect()]
-target_tables = [row["tableName"] for row in target_tables_df.collect()]
-
-# Remove "vw_" prefix from target table names
-target_table_map = {tbl.replace("vw_", ""): tbl for tbl in target_tables}
-
-# Identify common tables based on the updated names
-common_tables = [tbl for tbl in src_tables if tbl in target_table_map]
 
 # Define Schema Explicitly
 schema = StructType([
@@ -50,11 +40,19 @@ results = []
 # Start execution timer
 start_time = time.time()
 
-for table in common_tables:
+for table in src_tables:
     table_start_time = time.time()
-    target_table_name = target_table_map[table]  # Get actual target table name with "vw_"
+    target_table_name = f"vw_{table}"  # Add "vw_" prefix for target table
 
     try:
+        # Check if target table exists
+        target_tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{target_db}").select("tableName")
+        target_tables = [row["tableName"] for row in target_tables_df.collect()]
+
+        if target_table_name not in target_tables:
+            results.append((table, src_db, target_db, [], [], 0, 0, 0, 0, [], [], "FAIL", "Target table missing", str(current_timestamp())))
+            continue  # Skip to the next table
+
         # Load source and target data
         df_src = spark.sql(f"SELECT * FROM {catalog}.{src_db}.{table}")
         df_target = spark.sql(f"SELECT * FROM {catalog}.{target_db}.{target_table_name}")
