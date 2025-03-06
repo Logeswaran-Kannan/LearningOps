@@ -22,15 +22,15 @@ aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
 # Check if output table exists, create if not
 if not spark.catalog.tableExists(output_table):
     schema = [
-        "table_name STRING", "src_database STRING", "tgt_database STRING", 
-        "src_vs_tgt_missing_columns STRING", "tgt_vs_src_missing_columns STRING", 
-        "src_count BIGINT", "tgt_count BIGINT", "src_vs_tgt_data_mismatch_count BIGINT", 
-        "tgt_vs_src_data_mismatch_count BIGINT", "null_diff_columns STRING", "data_mismatch_columns STRING", 
-        "status STRING", "comment STRING", "time_taken_seconds DOUBLE"
+        ("table_name", "STRING"), ("src_database", "STRING"), ("tgt_database", "STRING"),
+        ("src_vs_tgt_missing_columns", "STRING"), ("tgt_vs_src_missing_columns", "STRING"),
+        ("src_count", "BIGINT"), ("tgt_count", "BIGINT"), ("src_vs_tgt_data_mismatch_count", "BIGINT"),
+        ("tgt_vs_src_data_mismatch_count", "BIGINT"), ("null_diff_columns", "STRING"),
+        ("data_mismatch_columns", "STRING"), ("status", "STRING"), ("comment", "STRING"), ("time_taken_seconds", "DOUBLE")
     ]
     create_table_query = f"""
     CREATE TABLE {output_table} (
-        {', '.join(schema)}
+        {', '.join([f'{col} {dtype}' for col, dtype in schema])}
     ) USING DELTA
     """
     spark.sql(create_table_query)
@@ -123,21 +123,16 @@ def validate_table(table_name):
         time_taken = time.time() - start_time
         
         # Store results in output table
-        result_df = spark.createDataFrame([
-            (table_name, source_db, target_db, ",".join(missing_in_target), ",".join(missing_in_source),
-             src_count, tgt_count, comparison_count_src, comparison_count_tgt, ",".join(null_diffs),
-             ",".join(mismatched_cols), status, comment, time_taken)
-        ], ["table_name", "src_database", "tgt_database", "src_vs_tgt_missing_columns", 
-            "tgt_vs_src_missing_columns", "src_count", "tgt_count", "src_vs_tgt_data_mismatch_count", 
-            "tgt_vs_src_data_mismatch_count", "null_diff_columns", "data_mismatch_columns", "status", "comment", "time_taken_seconds"])
-        
-        result_df.write.mode("append").saveAsTable(output_table)
+        result_df = [(table_name, source_db, target_db, ",".join(missing_in_target), ",".join(missing_in_source),
+                      src_count, tgt_count, comparison_count_src, comparison_count_tgt, ",".join(null_diffs),
+                      ",".join(mismatched_cols), status, comment, time_taken)]
+        df_schema = spark.createDataFrame(result_df, schema=[col for col, _ in schema])
+        df_schema.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
-        error_df = spark.createDataFrame([
-            (table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0)
-        ], result_df.schema)
-        error_df.write.mode("append").saveAsTable(output_table)
+        error_df = [(table_name, source_db, target_db, "", "", 0, 0, 0, 0, "", "", "FAIL", str(e), 0)]
+        df_schema = spark.createDataFrame(error_df, schema=[col for col, _ in schema])
+        df_schema.write.mode("append").saveAsTable(output_table)
 
 # Iterate over each table and validate
 for table in source_tables:
