@@ -10,12 +10,12 @@ spark = SparkSession.builder.appName("DataMigrationValidation").enableHiveSuppor
 catalog = "core_tst_sys9"
 source_db = f"{catalog}.ods"
 target_db = f"{catalog}.ods_views"
-output_table = f"{catalog}.data_migration_validation_results"
+output_table = f"{catalog}.default.data_migration_validation_results"
 
 # Parameters
 exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
 exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add table names to exclude
-exclude_table_text = "_change_"  # Exclude tables containing this text
+exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this text
 
 aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
 aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
@@ -48,7 +48,7 @@ except AnalysisException:
 
 # Fetch list of tables from source, ensuring we properly exclude the specified tables
 all_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
-source_tables = [table for table in all_tables if table not in exclude_tables and exclude_table_text not in table]
+source_tables = [table for table in all_tables if table not in exclude_tables and not any(exclude_text in table for exclude_text in exclude_table_texts)]
 
 def get_target_table_name(table_name):
     if "billingcenter_" in table_name:
