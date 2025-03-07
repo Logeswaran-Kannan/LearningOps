@@ -1,14 +1,1 @@
-Subject: Request to Create a Test Team & Channel in Teams for Webhook Testing
-
-Hey [Scrum Master's Name],
-
-Hope you're doing well!
-
-As part of our framework development, I need to test message pushes from Databricks to Teams via a webhook. To do that, I’d like to set up a test team and a dedicated channel where we can run multiple test cases before integrating it into the final setup.
-
-Could you help me create a test team in Microsoft Teams along with a channel (maybe something like "Databricks Webhook Testing")? I’ll try sending messages via the webhook, but I believe I might need Admin access for that. If it doesn’t work, I’ll go ahead and raise a service request for the required permissions.
-
-Let me know what you think or if there’s anything I should check first. Appreciate your help!
-
-Thanks,
-[Your Name]
+Oh, no worries! I’ll go ahead and create a service ticket to request that access. Thanks for giving it a try!
