@@ -1,1 +1,117 @@
-Haha, that’s really helpful! Even when you’re away, your mind is still in work mode—impressive! 😄 We’ll follow up with Paul to get those details. Thanks again, appreciate it! 
+# Define Delta Live Table
+spark.sql(f"""
+    CREATE OR REFRESH LIVE TABLE {output_table} AS
+    SELECT * FROM (SELECT 
+        '' AS table_name, 
+        '' AS src_database, 
+        '' AS tgt_database,
+        '' AS src_vs_tgt_missing_columns,
+        '' AS tgt_vs_src_missing_columns,
+        0 AS src_count,
+        0 AS tgt_count,
+        0 AS src_vs_tgt_data_mismatch_count,
+        0 AS tgt_vs_src_data_mismatch_count,
+        '' AS null_diff_columns,
+        '' AS data_mismatch_columns,
+        '' AS status,
+        '' AS comment,
+        0.0 AS time_taken_seconds,
+        '' AS source_sql,
+        '' AS target_sql
+    ) WHERE 1=0
+""")
+
+# Fetch list of tables from source, ensuring we properly exclude the specified tables
+all_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
+source_tables = [table for table in all_tables if table not in exclude_tables and not any(exclude_text in table for exclude_text in exclude_table_texts)]
+
+def get_target_table_name(table_name):
+    if "billingcenter_" in table_name:
+        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
+    elif "policycenter_" in table_name:
+        return f"vw_policycenter_current_{table_name.split('policycenter_')[-1]}"
+    elif "claimcenter_" in table_name:
+        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
+    else:
+        return f"vm_{table_name}"
+
+def validate_table(table_name):
+    target_table_name = get_target_table_name(table_name)
+    start_time = time.time()
+    
+    try:
+        # Load source and target data to extract column names
+        src_df = spark.table(f"{source_db}.{table_name}")
+        tgt_df = spark.table(f"{target_db}.{target_table_name}")
+        
+        # Get common columns for both tables
+        common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
+        column_list = ", ".join(common_cols)
+        
+        # Generate SQL queries for source and target including column names
+        source_sql = f"SELECT {column_list} FROM {source_db}.{table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        target_sql = f"SELECT {column_list} FROM {target_db}.{target_table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        
+        # Execute SQL queries
+        src_df = spark.sql(source_sql)
+        tgt_df = spark.sql(target_sql)
+        
+        # Row count comparison
+        src_count = src_df.count()
+        tgt_count = tgt_df.count()
+        count_match = src_count == tgt_count
+        
+        # Null count comparison
+        null_diffs = []
+        for col_name in common_cols:
+            src_null_count = src_df.filter(col(col_name).isNull()).count()
+            tgt_null_count = tgt_df.filter(col(col_name).isNull()).count()
+            if src_null_count != tgt_null_count:
+                null_diffs.append(col_name)
+        
+        # Data comparison
+        mismatched_cols = []
+        comparison_count_src = src_df.exceptAll(tgt_df).count()
+        comparison_count_tgt = tgt_df.exceptAll(src_df).count()
+        
+        if comparison_count_src > 0 or comparison_count_tgt > 0:
+            for col_name in common_cols:
+                if src_df.select(col_name).exceptAll(tgt_df.select(col_name)).count() > 0:
+                    mismatched_cols.append(col_name)
+        
+        # Determine status and comments
+        if not common_cols:
+            status = "FAIL"
+            comment = "No common columns for comparison"
+        elif not count_match:
+            status = "FAIL"
+            comment = "Count Validation Fails"
+        elif comparison_count_src > 0 or comparison_count_tgt > 0:
+            status = "FAIL"
+            comment = "Data Validation Fails"
+        elif null_diffs:
+            status = "FAIL"
+            comment = "Null Validation Fails"
+        else:
+            status = "PASS"
+            comment = "Pass"
+        
+        time_taken = float(time.time() - start_time)
+        
+        # Store results in output table
+        result_df = spark.createDataFrame([
+            (table_name, source_db, target_db, "", "", src_count, tgt_count, 
+             comparison_count_src, comparison_count_tgt, ",".join(null_diffs), ",".join(mismatched_cols), 
+             status, comment, time_taken, source_sql, target_sql)
+        ], schema=spark.table(output_table).schema)
+        
+        result_df.write.mode("append").saveAsTable(output_table)
+        
+    except Exception as e:
+        print(f"Error processing table {table_name}: {e}")
+
+# Iterate over each table and validate
+for table in source_tables:
+    validate_table(table)
+
+print("Data migration validation completed.")
