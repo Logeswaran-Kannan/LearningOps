@@ -1,6 +1,10 @@
-import dlt
-from pyspark.sql.functions import col, count, lit, when, expr
+from pyspark.sql import SparkSession
+from pyspark.sql.utils import AnalysisException
+from pyspark.sql.functions import col, count, lit, when, expr, current_timestamp
 import time
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("DataMigrationValidation").enableHiveSupport().getOrCreate()
 
 # Define catalog and databases
 catalog = "core_tst_sys9"
@@ -16,25 +20,33 @@ exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this t
 aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
 aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
 
-@dlt.table(comment="Stores data migration validation results", temporary=False)
-def data_migration_results():
-    return spark.createDataFrame([], schema="""
-        table_name STRING,
-        src_database STRING,
-        tgt_database STRING,
-        src_vs_tgt_missing_columns STRING,
-        tgt_vs_src_missing_columns STRING,
-        src_count BIGINT,
-        tgt_count BIGINT,
-        src_vs_tgt_data_mismatch_count BIGINT,
-        tgt_vs_src_data_mismatch_count BIGINT,
-        null_diff_columns STRING,
-        data_mismatch_columns STRING,
-        status STRING,
-        comment STRING,
-        time_taken_seconds DOUBLE,
-        source_sql STRING,
-        target_sql STRING
+# Check if output table exists, create if not, then use overwrite mode
+try:
+    spark.read.table(output_table)
+    print(f"Overwriting output table {output_table}.")
+    overwrite_mode = True
+except AnalysisException:
+    print(f"Creating output table {output_table}.")
+    overwrite_mode = False
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {output_table} (
+            table_name STRING,
+            src_database STRING,
+            tgt_database STRING,
+            src_vs_tgt_missing_columns STRING,
+            tgt_vs_src_missing_columns STRING,
+            src_count BIGINT,
+            tgt_count BIGINT,
+            src_vs_tgt_data_mismatch_count BIGINT,
+            tgt_vs_src_data_mismatch_count BIGINT,
+            null_diff_columns STRING,
+            data_mismatch_columns STRING,
+            status STRING,
+            comment STRING,
+            time_taken_seconds DOUBLE,
+            source_sql STRING,
+            target_sql STRING
+        ) USING DELTA
     """)
 
 # Fetch list of tables from source, ensuring we properly exclude the specified tables
@@ -114,14 +126,17 @@ def validate_table(table_name):
         
         time_taken = float(time.time() - start_time)
         
-        # Append results to Delta Live Table
+        # Store results in output table using overwrite mode for first batch, append for subsequent runs
+        mode = "overwrite" if overwrite_mode else "append"
+        overwrite_mode = False  # Switch to append after the first overwrite
+        
         result_df = spark.createDataFrame([
             (table_name, source_db, target_db, "", "", src_count, tgt_count, 
              comparison_count_src, comparison_count_tgt, ",".join(null_diffs), ",".join(mismatched_cols), 
              status, comment, time_taken, source_sql, target_sql)
         ], schema=spark.table(output_table).schema)
         
-        result_df.write.mode("append").saveAsTable(output_table)
+        result_df.write.mode(mode).saveAsTable(output_table)
         
     except Exception as e:
         print(f"Error processing table {table_name}: {e}")
