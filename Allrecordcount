@@ -1,3 +1,6 @@
+aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
+aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
+
 # Define Delta Live Table
 spark.sql(f"""
     CREATE OR REFRESH LIVE TABLE {output_table} AS
