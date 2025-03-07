@@ -3,3 +3,21 @@ Just wanted to check—does the Oracle access request ticket we raised cover all
 Also, I’m looking for a common read-only user ID that can be used for integration with our automation framework. I believe Paul is the DB admin—would it be possible to request this from him?
 
 Let me know your thoughts. Thanks!
+
+# Create Spark Session
+spark = SparkSession.builder.appName("OracleConnector").getOrCreate()
+dbutils = DBUtils(spark)
+
+# Fetch credentials from Databricks Secret Scope
+oracle_user = dbutils.secrets.get(scope="my_secret_scope", key="oracle_user")
+oracle_password = dbutils.secrets.get(scope="my_secret_scope", key="oracle_password")
+
+# Define Oracle JDBC URL
+oracle_url = "jdbc:oracle:thin:@//<HOST>:<PORT>/<SERVICE_NAME>"
+
+# Define connection properties
+oracle_properties = {
+    "user": oracle_user,
+    "password": oracle_password,
+    "driver": "oracle.jdbc.OracleDriver"
+}
