@@ -50,6 +50,10 @@ except Exception:
         """
     )
 
+# Fetch list of tables from source, ensuring we properly exclude the specified tables
+all_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
+source_tables = [table for table in all_tables if table not in exclude_tables and not any(exclude_text in table for exclude_text in exclude_table_texts)]
+
 # Generate Run ID (incremental value)
 try:
     max_run_id = spark.read.table(output_table).agg(spark_max("run_id")).collect()[0][0]
