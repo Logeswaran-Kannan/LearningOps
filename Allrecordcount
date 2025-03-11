@@ -1,1 +1,160 @@
-My ADM account has been created, but I don’t see any resource details associated with it. Could you please add my ADM account to Databricks, Azure Portal, and Azure DevOps? Thanks!
+import dlt
+from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max
+import time
+
+# Define catalog and databases
+catalog = "core_tst_sys9"
+source_db = f"{catalog}.ods"
+target_db = f"{catalog}.ods_views"
+output_table = f"{catalog}.default.data_migration_validation_results"
+
+# Parameters
+exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
+exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add table names to exclude
+exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this text
+
+aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
+aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
+
+# Check if output table exists, create if not
+try:
+    spark.read.table(output_table)
+    print(f"Delta Live Table {output_table} exists.")
+except Exception:
+    print(f"Creating Delta Live Table {output_table}.")
+    dlt.create_table(
+        name=output_table,
+        comment="Stores data migration validation results",
+        schema="""
+            run_id BIGINT,
+            table_name STRING,
+            src_database STRING,
+            tgt_database STRING,
+            src_vs_tgt_missing_columns STRING,
+            tgt_vs_src_missing_columns STRING,
+            src_count BIGINT,
+            tgt_count BIGINT,
+            src_duplicate_count BIGINT,
+            tgt_duplicate_count BIGINT,
+            src_vs_tgt_data_mismatch_count BIGINT,
+            tgt_vs_src_data_mismatch_count BIGINT,
+            null_diff_columns STRING,
+            data_mismatch_columns STRING,
+            status STRING,
+            comment STRING,
+            time_taken_seconds DOUBLE,
+            source_sql STRING,
+            target_sql STRING,
+            validation_timestamp TIMESTAMP,
+            test_case_detail STRING
+        """
+    )
+
+# Generate Run ID (incremental value)
+try:
+    max_run_id = spark.read.table(output_table).agg(spark_max("run_id")).collect()[0][0]
+    run_id = 1 if max_run_id is None else max_run_id + 1
+except Exception:
+    run_id = 1
+
+def get_target_table_name(table_name):
+    if "billingcenter_" in table_name:
+        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
+    elif "policycenter_" in table_name:
+        return f"vw_policycenter_current_{table_name.split('policycenter_')[-1]}"
+    elif "claimcenter_" in table_name:
+        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
+    else:
+        return f"vm_{table_name}"
+
+def validate_table(table_name):
+    target_table_name = get_target_table_name(table_name)
+    start_time = time.time()
+    
+    try:
+        # Load source and target data to extract column names
+        src_df = spark.table(f"{source_db}.{table_name}")
+        tgt_df = spark.table(f"{target_db}.{target_table_name}")
+        
+        # Get common columns for both tables
+        common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
+        column_list = ", ".join(common_cols)
+        
+        # Generate SQL queries for source and target including column names
+        source_sql = f"SELECT {column_list} FROM {source_db}.{table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        target_sql = f"SELECT {column_list} FROM {target_db}.{target_table_name} WHERE AURE_LOAD_DATE BETWEEN '{aure_load_date_start}' AND '{aure_load_date_end}'"
+        
+        # Execute SQL queries
+        src_df = spark.sql(source_sql)
+        tgt_df = spark.sql(target_sql)
+        
+        # Row count comparison
+        src_count = src_df.count()
+        tgt_count = tgt_df.count()
+        count_match = src_count == tgt_count
+        
+        # Duplicate check
+        src_duplicate_count = src_df.groupBy(common_cols).count().filter("count > 1").count()
+        tgt_duplicate_count = tgt_df.groupBy(common_cols).count().filter("count > 1").count()
+        
+        # Null count comparison
+        null_diffs = []
+        for col_name in common_cols:
+            src_null_count = src_df.filter(col(col_name).isNull()).count()
+            tgt_null_count = tgt_df.filter(col(col_name).isNull()).count()
+            if src_null_count != tgt_null_count:
+                null_diffs.append(col_name)
+        
+        # Data comparison
+        mismatched_cols = []
+        comparison_count_src = src_df.exceptAll(tgt_df).count()
+        comparison_count_tgt = tgt_df.exceptAll(src_df).count()
+        
+        if comparison_count_src > 0 or comparison_count_tgt > 0:
+            for col_name in common_cols:
+                if src_df.select(col_name).exceptAll(tgt_df.select(col_name)).count() > 0:
+                    mismatched_cols.append(col_name)
+        
+        # Test case detail
+        test_case_detail = f"Bronze_validation_{table_name}"
+        
+        # Determine status and comments
+        if not common_cols:
+            status = "FAIL"
+            comment = "No common columns for comparison"
+        elif not count_match:
+            status = "FAIL"
+            comment = "Count Validation Fails"
+        elif comparison_count_src > 0 or comparison_count_tgt > 0:
+            status = "FAIL"
+            comment = "Data Validation Fails"
+        elif null_diffs:
+            status = "FAIL"
+            comment = "Null Validation Fails"
+        elif src_duplicate_count > 0 or tgt_duplicate_count > 0:
+            status = "FAIL"
+            comment = "Duplicate Data Found"
+        else:
+            status = "PASS"
+            comment = "Pass"
+        
+        time_taken = float(time.time() - start_time)
+        validation_timestamp = current_timestamp()
+        
+        # Append results to Delta Live Table
+        result_df = spark.createDataFrame([
+            (run_id, table_name, source_db, target_db, "", "", src_count, tgt_count, 
+             src_duplicate_count, tgt_duplicate_count, comparison_count_src, comparison_count_tgt, ",".join(null_diffs), ",".join(mismatched_cols), 
+             status, comment, time_taken, source_sql, target_sql, validation_timestamp, test_case_detail)
+        ], schema=spark.table(output_table).schema)
+        
+        result_df.write.mode("append").saveAsTable(output_table)
+        
+    except Exception as e:
+        print(f"Error processing table {table_name}: {e}")
+
+# Iterate over each table and validate
+for table in source_tables:
+    validate_table(table)
+
+print("Data migration validation completed.")
