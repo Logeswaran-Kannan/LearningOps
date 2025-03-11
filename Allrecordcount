@@ -6,7 +6,7 @@ import time
 catalog = "core_tst_sys9"
 source_db = f"{catalog}.ods"
 target_db = f"{catalog}.ods_views"
-output_table = f"{catalog}.default.data_migration_validation_results"
+output_table = "data_migration_validation_results"
 
 # Parameters
 exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
@@ -16,43 +16,34 @@ exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this t
 aure_load_date_start = "2024-10-08T09:07:48.000+00:00"
 aure_load_date_end = "2024-10-10T09:07:48.000+00:00"
 
-# Check if output table exists, create if not
-try:
-    spark.read.table(output_table)
-    print(f"Delta Live Table {output_table} exists.")
-except Exception:
-    print(f"Creating Delta Live Table {output_table}.")
-    dlt.create_table(
-        name=output_table,
-        comment="Stores data migration validation results",
-        schema="""
-            run_id BIGINT,
-            table_name STRING,
-            src_database STRING,
-            tgt_database STRING,
-            src_vs_tgt_missing_columns STRING,
-            tgt_vs_src_missing_columns STRING,
-            src_count BIGINT,
-            tgt_count BIGINT,
-            src_duplicate_count BIGINT,
-            tgt_duplicate_count BIGINT,
-            src_vs_tgt_data_mismatch_count BIGINT,
-            tgt_vs_src_data_mismatch_count BIGINT,
-            null_diff_columns STRING,
-            data_mismatch_columns STRING,
-            status STRING,
-            comment STRING,
-            time_taken_seconds DOUBLE,
-            source_sql STRING,
-            target_sql STRING,
-            validation_timestamp TIMESTAMP,
-            test_case_detail STRING
-        """
-    )
-
-# Fetch list of tables from source, ensuring we properly exclude the specified tables
-all_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
-source_tables = [table for table in all_tables if table not in exclude_tables and not any(exclude_text in table for exclude_text in exclude_table_texts)]
+# Fetch list of tables from source, ensuring exclusions
+@dlt.table(comment="Stores data migration validation results")
+def data_migration_results():
+    return spark.sql(f"""
+        SELECT 
+            CAST(NULL AS BIGINT) AS run_id,
+            CAST(NULL AS STRING) AS table_name,
+            CAST(NULL AS STRING) AS src_database,
+            CAST(NULL AS STRING) AS tgt_database,
+            CAST(NULL AS STRING) AS src_vs_tgt_missing_columns,
+            CAST(NULL AS STRING) AS tgt_vs_src_missing_columns,
+            CAST(NULL AS BIGINT) AS src_count,
+            CAST(NULL AS BIGINT) AS tgt_count,
+            CAST(NULL AS BIGINT) AS src_duplicate_count,
+            CAST(NULL AS BIGINT) AS tgt_duplicate_count,
+            CAST(NULL AS BIGINT) AS src_vs_tgt_data_mismatch_count,
+            CAST(NULL AS BIGINT) AS tgt_vs_src_data_mismatch_count,
+            CAST(NULL AS STRING) AS null_diff_columns,
+            CAST(NULL AS STRING) AS data_mismatch_columns,
+            CAST(NULL AS STRING) AS status,
+            CAST(NULL AS STRING) AS comment,
+            CAST(NULL AS DOUBLE) AS time_taken_seconds,
+            CAST(NULL AS STRING) AS source_sql,
+            CAST(NULL AS STRING) AS target_sql,
+            CAST(NULL AS TIMESTAMP) AS validation_timestamp,
+            CAST(NULL AS STRING) AS test_case_detail
+        WHERE FALSE
+    """)
 
 # Generate Run ID (incremental value)
 try:
@@ -156,6 +147,10 @@ def validate_table(table_name):
         
     except Exception as e:
         print(f"Error processing table {table_name}: {e}")
+
+# Fetch tables dynamically
+source_tables = [row.tableName for row in spark.sql(f"SHOW TABLES IN {source_db}").collect()]
+source_tables = [table for table in source_tables if table not in exclude_tables and not any(exclude_text in table for exclude_text in exclude_table_texts)]
 
 # Iterate over each table and validate
 for table in source_tables:
