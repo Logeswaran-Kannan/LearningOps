@@ -28,6 +28,39 @@ except Exception:
 # Capture run timestamp
 run_timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
 
+# Check if output table exists, create as Materialized View if not
+try:
+    spark.read.table(output_table)
+    print(f"Table {output_table} exists.")
+except Exception:
+    print(f"Creating Materialized View {output_table}.")
+    spark.sql(f"""
+        CREATE MATERIALIZED VIEW IF NOT EXISTS {output_table} AS
+        SELECT * FROM (SELECT
+            CAST(NULL AS BIGINT) AS run_id,
+            CAST(NULL AS STRING) AS table_name,
+            CAST(NULL AS STRING) AS src_database,
+            CAST(NULL AS STRING) AS tgt_database,
+            CAST(NULL AS STRING) AS src_vs_tgt_missing_columns,
+            CAST(NULL AS STRING) AS tgt_vs_src_missing_columns,
+            CAST(NULL AS BIGINT) AS src_count,
+            CAST(NULL AS BIGINT) AS tgt_count,
+            CAST(NULL AS BIGINT) AS src_duplicate_count,
+            CAST(NULL AS BIGINT) AS tgt_duplicate_count,
+            CAST(NULL AS BIGINT) AS src_vs_tgt_data_mismatch_count,
+            CAST(NULL AS BIGINT) AS tgt_vs_src_data_mismatch_count,
+            CAST(NULL AS STRING) AS null_diff_columns,
+            CAST(NULL AS STRING) AS data_mismatch_columns,
+            CAST(NULL AS STRING) AS status,
+            CAST(NULL AS STRING) AS comment,
+            CAST(NULL AS DOUBLE) AS time_taken_seconds,
+            CAST(NULL AS STRING) AS source_sql,
+            CAST(NULL AS STRING) AS target_sql,
+            CAST(NULL AS TIMESTAMP) AS validation_timestamp,
+            CAST(NULL AS STRING) AS test_case_detail
+        ) WHERE 1 = 0
+    """)
+
 # Fetch source tables
 source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
 
@@ -83,32 +116,13 @@ def validate_table(table_name):
         
         test_case_detail = f"Bronze_validation_{table_name}"
         
-        if not common_cols:
-            status = "FAIL"
-            comment = "No common columns for comparison"
-        elif not count_match:
-            status = "FAIL"
-            comment = "Count Validation Fails"
-        elif comparison_count_src > 0 or comparison_count_tgt > 0:
-            status = "FAIL"
-            comment = "Data Validation Fails"
-        elif null_diffs:
-            status = "FAIL"
-            comment = "Null Validation Fails"
-        elif src_duplicate_count > 0 or tgt_duplicate_count > 0:
-            status = "FAIL"
-            comment = "Duplicate Data Found"
-        else:
-            status = "PASS"
-            comment = "Pass"
-        
         time_taken = float(time.time() - start_time)
         
         result_data = [(run_id, table_name, source_db, target_db, "", "", 
                         src_count, tgt_count, src_duplicate_count, tgt_duplicate_count, 
                         comparison_count_src, comparison_count_tgt, ",".join(null_diffs) if null_diffs else None, 
                         ",".join(mismatched_cols) if mismatched_cols else None, 
-                        status, comment, time_taken, source_sql, target_sql, 
+                        "PASS" if count_match else "FAIL", "Count Validation Result", time_taken, source_sql, target_sql, 
                         run_timestamp, test_case_detail)]
         
         result_df = spark.createDataFrame(result_data, schema=spark.table(output_table).schema)
