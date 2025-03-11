@@ -1,78 +1,3 @@
-# Task 1: Spark Validation Notebook
-
-from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
-import time
-
-# Define catalog and databases
-catalog = "core_tst_sys9"
-source_db = f"{catalog}.ods"
-target_db = f"{catalog}.ods_views"
-output_table = f"{catalog}.default.data_migration_validation_results"
-
-# Parameters
-exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
-exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add table names to exclude
-exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this text
-
-azure_load_date_start = "2024-10-08T09:07:48.000+00:00"
-azure_load_date_end = "2024-10-10T09:07:48.000+00:00"
-
-# Generate Run ID (incremental value)
-try:
-    max_run_id = spark.read.table(output_table).agg(spark_max("run_id")).collect()[0][0]
-    run_id = 1 if max_run_id is None else max_run_id + 1
-except Exception:
-    run_id = 1
-
-# Capture run timestamp
-from pyspark.sql.functions import current_timestamp
-run_timestamp = current_timestamp()
-
-# Check if output table exists, create if not
-try:
-    spark.read.table(output_table)
-    print(f"Delta table {output_table} exists.")
-except Exception:
-    print(f"Creating Delta table {output_table}.")
-    schema = StructType([
-        StructField("run_id", IntegerType(), False),
-        StructField("table_name", StringType(), False),
-        StructField("src_database", StringType(), False),
-        StructField("tgt_database", StringType(), False),
-        StructField("src_vs_tgt_missing_columns", StringType(), True),
-        StructField("tgt_vs_src_missing_columns", StringType(), True),
-        StructField("src_count", IntegerType(), True),
-        StructField("tgt_count", IntegerType(), True),
-        StructField("src_duplicate_count", IntegerType(), True),
-        StructField("tgt_duplicate_count", IntegerType(), True),
-        StructField("src_vs_tgt_data_mismatch_count", IntegerType(), True),
-        StructField("tgt_vs_src_data_mismatch_count", IntegerType(), True),
-        StructField("null_diff_columns", StringType(), True),
-        StructField("data_mismatch_columns", StringType(), True),
-        StructField("status", StringType(), False),
-        StructField("comment", StringType(), True),
-        StructField("time_taken_seconds", DoubleType(), True),
-        StructField("source_sql", StringType(), True),
-        StructField("target_sql", StringType(), True),
-        StructField("validation_timestamp", TimestampType(), True),
-        StructField("test_case_detail", StringType(), True)
-    ])
-    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(output_table)
-
-# Fetch source tables
-source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
-
-def get_target_table_name(table_name):
-    if "billingcenter_" in table_name:
-        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
-    elif "policycenter_" in table_name:
-        return f"vw_policycenter_current_{table_name.split('policycenter_')[-1]}"
-    elif "claimcenter_" in table_name:
-        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
-    else:
-        return f"vm_{table_name}"
-
 def validate_table(table_name):
     target_table_name = get_target_table_name(table_name)
     start_time = time.time()
@@ -94,8 +19,8 @@ def validate_table(table_name):
         tgt_count = tgt_df.count()
         count_match = src_count == tgt_count
         
-        src_duplicate_count = src_df.groupBy(common_cols).count().filter("count > 1").count()
-        tgt_duplicate_count = tgt_df.groupBy(common_cols).count().filter("count > 1").count()
+        src_duplicate_count = spark.sql(f"SELECT {column_list}, count(*) FROM {source_db}.{table_name} GROUP BY {column_list} HAVING count(*) > 1").count()
+        tgt_duplicate_count = spark.sql(f"SELECT {column_list}, count(*) FROM {target_db}.{target_table_name} GROUP BY {column_list} HAVING count(*) > 1").count()
         
         null_diffs = []
         for col_name in common_cols:
