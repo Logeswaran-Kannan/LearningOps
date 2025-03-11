@@ -28,38 +28,36 @@ except Exception:
 # Capture run timestamp
 run_timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
 
-# Check if output table exists, create as Materialized View if not
+# Check if output table exists, create if not
 try:
     spark.read.table(output_table)
-    print(f"Table {output_table} exists.")
+    print(f"Delta table {output_table} exists.")
 except Exception:
-    print(f"Creating Materialized View {output_table}.")
-    spark.sql(f"""
-        CREATE MATERIALIZED VIEW IF NOT EXISTS {output_table} AS
-        SELECT * FROM (SELECT
-            CAST(NULL AS BIGINT) AS run_id,
-            CAST(NULL AS STRING) AS table_name,
-            CAST(NULL AS STRING) AS src_database,
-            CAST(NULL AS STRING) AS tgt_database,
-            CAST(NULL AS STRING) AS src_vs_tgt_missing_columns,
-            CAST(NULL AS STRING) AS tgt_vs_src_missing_columns,
-            CAST(NULL AS BIGINT) AS src_count,
-            CAST(NULL AS BIGINT) AS tgt_count,
-            CAST(NULL AS BIGINT) AS src_duplicate_count,
-            CAST(NULL AS BIGINT) AS tgt_duplicate_count,
-            CAST(NULL AS BIGINT) AS src_vs_tgt_data_mismatch_count,
-            CAST(NULL AS BIGINT) AS tgt_vs_src_data_mismatch_count,
-            CAST(NULL AS STRING) AS null_diff_columns,
-            CAST(NULL AS STRING) AS data_mismatch_columns,
-            CAST(NULL AS STRING) AS status,
-            CAST(NULL AS STRING) AS comment,
-            CAST(NULL AS DOUBLE) AS time_taken_seconds,
-            CAST(NULL AS STRING) AS source_sql,
-            CAST(NULL AS STRING) AS target_sql,
-            CAST(NULL AS TIMESTAMP) AS validation_timestamp,
-            CAST(NULL AS STRING) AS test_case_detail
-        ) WHERE 1 = 0
-    """)
+    print(f"Creating Delta table {output_table}.")
+    schema = StructType([
+        StructField("run_id", IntegerType(), False),
+        StructField("table_name", StringType(), False),
+        StructField("src_database", StringType(), False),
+        StructField("tgt_database", StringType(), False),
+        StructField("src_vs_tgt_missing_columns", StringType(), True),
+        StructField("tgt_vs_src_missing_columns", StringType(), True),
+        StructField("src_count", IntegerType(), True),
+        StructField("tgt_count", IntegerType(), True),
+        StructField("src_duplicate_count", IntegerType(), True),
+        StructField("tgt_duplicate_count", IntegerType(), True),
+        StructField("src_vs_tgt_data_mismatch_count", IntegerType(), True),
+        StructField("tgt_vs_src_data_mismatch_count", IntegerType(), True),
+        StructField("null_diff_columns", StringType(), True),
+        StructField("data_mismatch_columns", StringType(), True),
+        StructField("status", StringType(), False),
+        StructField("comment", StringType(), True),
+        StructField("time_taken_seconds", DoubleType(), True),
+        StructField("source_sql", StringType(), True),
+        StructField("target_sql", StringType(), True),
+        StructField("validation_timestamp", TimestampType(), True),
+        StructField("test_case_detail", StringType(), True)
+    ])
+    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(output_table)
 
 # Fetch source tables
 source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
@@ -109,12 +107,8 @@ def validate_table(table_name):
         comparison_count_src = src_df.exceptAll(tgt_df).count()
         comparison_count_tgt = tgt_df.exceptAll(src_df).count()
         
-        if comparison_count_src > 0 or comparison_count_tgt > 0:
-            for col_name in common_cols:
-                if src_df.select(col_name).exceptAll(tgt_df.select(col_name)).count() > 0:
-                    mismatched_cols.append(col_name)
-        
-        test_case_detail = f"Bronze_validation_{table_name}"
+        status = "PASS" if count_match and not null_diffs and not mismatched_cols else "FAIL"
+        comment = "Validation Completed"
         
         time_taken = float(time.time() - start_time)
         
@@ -122,8 +116,8 @@ def validate_table(table_name):
                         src_count, tgt_count, src_duplicate_count, tgt_duplicate_count, 
                         comparison_count_src, comparison_count_tgt, ",".join(null_diffs) if null_diffs else None, 
                         ",".join(mismatched_cols) if mismatched_cols else None, 
-                        "PASS" if count_match else "FAIL", "Count Validation Result", time_taken, source_sql, target_sql, 
-                        run_timestamp, test_case_detail)]
+                        status, comment, time_taken, source_sql, target_sql, 
+                        run_timestamp, "Bronze_validation_{table_name}")]
         
         result_df = spark.createDataFrame(result_data, schema=spark.table(output_table).schema)
         result_df.write.mode("append").saveAsTable(output_table)
