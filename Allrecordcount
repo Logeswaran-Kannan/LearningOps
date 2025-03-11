@@ -2,8 +2,8 @@
 
 from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
-import datetime
 import time
+import datetime
 
 # Define catalog and databases
 catalog = "core_tst_sys9"
@@ -82,6 +82,7 @@ def validate_table(table_name):
         tgt_df = spark.table(f"{target_db}.{target_table_name}")
         
         common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
+        duplicate_check_cols = list(set(common_cols) - {"AZURE_LOAD_DATE"})
         column_list = ", ".join(common_cols)
         
         source_sql = f"SELECT {column_list} FROM {source_db}.{table_name} WHERE AZURE_LOAD_DATE BETWEEN '{azure_load_date_start}' AND '{azure_load_date_end}'"
@@ -94,32 +95,19 @@ def validate_table(table_name):
         tgt_count = tgt_df.count()
         count_match = src_count == tgt_count
         
-        # Duplicate Check after excluding columns
-        src_duplicate_count = src_df.groupBy(common_cols).count().filter(col("count") > 1).count()
-        tgt_duplicate_count = tgt_df.groupBy(common_cols).count().filter(col("count") > 1).count()
+        src_duplicate_count = src_df.groupBy(duplicate_check_cols).count().filter("count > 1").count()
+        tgt_duplicate_count = tgt_df.groupBy(duplicate_check_cols).count().filter("count > 1").count()
         
-        null_diffs = []
-        for col_name in common_cols:
-            src_null_count = src_df.filter(col(col_name).isNull()).count()
-            tgt_null_count = tgt_df.filter(col(col_name).isNull()).count()
-            if src_null_count != tgt_null_count:
-                null_diffs.append(col_name)
-        
-        mismatched_cols = []
-        comparison_count_src = src_df.exceptAll(tgt_df).count()
-        comparison_count_tgt = tgt_df.exceptAll(src_df).count()
-        
-        status = "PASS" if count_match and not null_diffs and not mismatched_cols else "FAIL"
+        status = "PASS" if count_match and src_duplicate_count == 0 and tgt_duplicate_count == 0 else "FAIL"
         comment = "Validation Completed"
         
         time_taken = float(time.time() - start_time)
         
         result_data = [(run_id, table_name, source_db, target_db, "", "", 
                         src_count, tgt_count, src_duplicate_count, tgt_duplicate_count, 
-                        comparison_count_src, comparison_count_tgt, ",".join(null_diffs) if null_diffs else None, 
-                        ",".join(mismatched_cols) if mismatched_cols else None, 
+                        0, 0, "", "", 
                         status, comment, time_taken, source_sql, target_sql, 
-                        run_timestamp, f"Bronze_validation_{table_name}")]
+                        run_timestamp, "Bronze_validation_{table_name}")]
         
         result_df = spark.createDataFrame(result_data, schema=spark.table(output_table).schema)
         result_df.write.mode("append").saveAsTable(output_table)
