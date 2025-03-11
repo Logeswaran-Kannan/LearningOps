@@ -26,7 +26,8 @@ except Exception:
     run_id = 1
 
 # Capture run timestamp
-run_timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+from pyspark.sql.functions import current_timestamp
+run_timestamp = current_timestamp()
 
 # Check if output table exists, create if not
 try:
