@@ -24,6 +24,9 @@ try:
 except Exception:
     run_id = 1
 
+# Fetch source tables
+source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
+
 def get_target_table_name(table_name):
     if "billingcenter_" in table_name:
         return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
