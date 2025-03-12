@@ -23,4 +23,10 @@ df_source = read(source_table)
 # Write data into Delta Live Table
 write_stream(df_source).to_table(target_table)
 
-Thanks! I can see the subscription and access Databricks using the ADM account. Is there a separate link for Azure DevOps to check out the codebase repo for CI/CD implementation?
+Subject: Quick Walkthrough on POC – Bronze Validation
+
+Hey everyone,
+
+I've scheduled this call to walk you through a high-level demo of the POC. It'll be a quick glimpse into how we're planning to implement the Bronze validation. Your feedback and input would be super helpful in shaping and improving the system.
+
+Looking forward to catching up on the call!
