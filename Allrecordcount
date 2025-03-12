@@ -1,104 +1,24 @@
-from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max, stddev, mean, length, when
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
-import datetime
-import time
+from dlt import create_streaming_table, read, write_stream, table_exists
+from pyspark.sql import SparkSession
 
-# Define catalog and databases
-catalog = "core_tst_sys9"
-source_db = f"{catalog}.ods"
-target_db = f"{catalog}.ods_views"
-output_table = f"{catalog}.default.data_migration_validation_results"
+# Define Spark Session
+spark = SparkSession.builder.appName("DLT_Data_Migration_Copy").getOrCreate()
 
-# Parameters
-exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
-exclude_tables = {"table_to_exclude1", "table_to_exclude2"}  # Add table names to exclude
-exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this text
+# Define Source and Target Tables
+source_table = "default.data_migration_validation_results"
+target_catalog = "core_tst_sys9"
+target_table = f"{target_catalog}.dashboard_data_migration_results"
 
-azure_load_date_start = "2024-10-08T09:07:48.000+00:00"
-azure_load_date_end = "2024-10-10T09:07:48.000+00:00"
+# Check if the target table exists
+if not table_exists(target_table):
+    # Create the Delta Live Table if it doesn't exist
+    create_streaming_table(
+        name=target_table,
+        schema=spark.table(source_table).schema
+    )
 
-# Generate Run ID (incremental value)
-try:
-    max_run_id = spark.read.table(output_table).agg(spark_max("run_id")).collect()[0][0]
-    run_id = 1 if max_run_id is None else max_run_id + 1
-except Exception:
-    run_id = 1
+# Read from source table (incremental updates)
+df_source = read(source_table)
 
-# Capture run timestamp
-run_timestamp = datetime.datetime.now()
-
-# Check if output table exists, create if not
-try:
-    spark.read.table(output_table)
-    print(f"Delta table {output_table} exists.")
-except Exception:
-    print(f"Creating Delta table {output_table}.")
-    schema = StructType([
-        StructField("run_id", IntegerType(), False),
-        StructField("table_name", StringType(), False),
-        StructField("src_database", StringType(), False),
-        StructField("tgt_database", StringType(), False),
-        StructField("missing_columns", StringType(), True),
-        StructField("datatype_mismatch", StringType(), True),
-        StructField("src_count", IntegerType(), True),
-        StructField("tgt_count", IntegerType(), True),
-        StructField("src_duplicate_count", IntegerType(), True),
-        StructField("tgt_duplicate_count", IntegerType(), True),
-        StructField("src_vs_tgt_data_mismatch_count", IntegerType(), True),
-        StructField("tgt_vs_src_data_mismatch_count", IntegerType(), True),
-        StructField("null_diff_columns", StringType(), True),
-        StructField("data_mismatch_columns", StringType(), True),
-        StructField("string_length_violations", StringType(), True),
-        StructField("scientific_notation_violations", StringType(), True),
-        StructField("integer_only_double_columns", StringType(), True),
-        StructField("decimal_precision_violations", StringType(), True),
-        StructField("outlier_columns", StringType(), True),
-        StructField("negative_values_unsigned", StringType(), True),
-        StructField("incorrect_date_formats", StringType(), True),
-        StructField("status", StringType(), False),
-        StructField("comment", StringType(), True),
-        StructField("time_taken_seconds", DoubleType(), True),
-        StructField("source_sql", StringType(), True),
-        StructField("target_sql", StringType(), True),
-        StructField("validation_timestamp", TimestampType(), True),
-        StructField("test_case_detail", StringType(), True)
-    ])
-    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(output_table)
-
-def validate_table(table_name):
-    target_table_name = get_target_table_name(table_name)
-    start_time = time.time()
-    
-    try:
-        src_df = spark.table(f"{source_db}.{table_name}")
-        tgt_df = spark.table(f"{target_db}.{target_table_name}")
-        
-        common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
-        
-        missing_columns = list(set(src_df.columns) ^ set(tgt_df.columns))
-        datatype_mismatch = [col for col in common_cols if str(src_df.schema[col].dataType) != str(tgt_df.schema[col].dataType)]
-        
-        null_diffs = [col for col in common_cols if src_df.filter(col(col).isNull()).count() != tgt_df.filter(col(col).isNull()).count()]
-        
-        string_length_violations = [col for col in common_cols if src_df.filter(length(col) > 250).count() > 0]
-        scientific_notation_violations = [col for col in common_cols if src_df.filter(col.rlike("[eE]"))]
-        integer_only_double_columns = [col for col in common_cols if src_df.select(col).distinct().rdd.map(lambda x: x[0]).filter(lambda x: isinstance(x, float) and x.is_integer()).count() > 0]
-        decimal_precision_violations = [col for col in common_cols if src_df.select(col).rdd.map(lambda x: x[0]).filter(lambda x: isinstance(x, float) and len(str(x).split('.')[-1]) > 5).count() > 0]
-        
-        outlier_columns = [col for col in common_cols if abs(src_df.select(mean(col)).collect()[0][0] - src_df.select(stddev(col)).collect()[0][0]) > 3 * src_df.select(stddev(col)).collect()[0][0]]
-        negative_values_unsigned = [col for col in common_cols if src_df.filter(col < 0).count() > 0]
-        incorrect_date_formats = [col for col in common_cols if src_df.filter(~col.rlike("\\d{4}-\\d{2}-\\d{2}"))]
-        
-        status = "PASS" if not missing_columns and not datatype_mismatch and not null_diffs else "FAIL"
-        comment = "Validation Completed"
-        time_taken = float(time.time() - start_time)
-        
-        result_data = [(run_id, table_name, source_db, target_db, ",".join(missing_columns), ",".join(datatype_mismatch),
-                        src_df.count(), tgt_df.count(), "", "", "", "", ",".join(null_diffs), "", ",".join(string_length_violations), ",".join(scientific_notation_violations), ",".join(integer_only_double_columns), ",".join(decimal_precision_violations), ",".join(outlier_columns), ",".join(negative_values_unsigned), ",".join(incorrect_date_formats),
-                        status, comment, time_taken, "", "", run_timestamp, f"Bronze_validation_{table_name}")]
-        
-        result_df = spark.createDataFrame(result_data, schema=spark.table(output_table).schema)
-        result_df.write.mode("append").saveAsTable(output_table)
-        
-    except Exception as e:
-        print(f"Error processing table {table_name}: {e}")
+# Write data into Delta Live Table
+write_stream(df_source).to_table(target_table)
