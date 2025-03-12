@@ -22,3 +22,5 @@ df_source = read(source_table)
 
 # Write data into Delta Live Table
 write_stream(df_source).to_table(target_table)
+
+Thanks! I can see the subscription and access Databricks using the ADM account. Is there a separate link for Azure DevOps to check out the codebase repo for CI/CD implementation?
