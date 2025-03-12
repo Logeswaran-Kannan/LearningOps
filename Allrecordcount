@@ -32,6 +32,17 @@ run_timestamp = datetime.datetime.now()
 # Fetch source tables
 source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
 
+# Function to determine target table name
+def get_target_table_name(table_name):
+    if "billingcenter_" in table_name:
+        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
+    elif "policycenter_" in table_name:
+        return f"vw_policycenter_current_{table_name.split('policycenter_')[-1]}"
+    elif "claimcenter_" in table_name:
+        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
+    else:
+        return f"vm_{table_name}"
+
 # Check if exploratory table exists, create if not
 try:
     spark.read.table(exploratory_table)
