@@ -1,24 +1,17 @@
-from dlt import create_streaming_table, read, write_stream, table_exists
+import dlt
+from pyspark.sql.functions import *
 from pyspark.sql import SparkSession
-
-# Define Spark Session
-spark = SparkSession.builder.appName("DLT_Data_Migration_Copy").getOrCreate()
 
 # Define Source and Target Tables
 source_table = "default.data_migration_validation_results"
-target_catalog = "core_tst_sys9"
-target_table = f"{target_catalog}.dashboard_data_migration_results"
+target_table = "core_tst_sys9.dashboard_data_migration_results"
 
-# Check if the target table exists
-if not table_exists(target_table):
-    # Create the Delta Live Table if it doesn't exist
-    create_streaming_table(
-        name=target_table,
-        schema=spark.table(source_table).schema
-    )
-
-# Read from source table (incremental updates)
-df_source = read(source_table)
-
-# Write data into Delta Live Table
-write_stream(df_source).to_table(target_table)
+@dlt.table(
+    name="dashboard_data_migration_results",
+    comment="This table stores validation results for the data migration dashboard",
+    table_properties={
+        "quality": "gold"
+    }
+)
+def create_dashboard_table():
+    return spark.read.table(source_table)
