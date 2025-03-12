@@ -29,6 +29,9 @@ except Exception:
 # Capture run timestamp
 run_timestamp = datetime.datetime.now()
 
+# Fetch source tables
+source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
+
 # Check if exploratory table exists, create if not
 try:
     spark.read.table(exploratory_table)
