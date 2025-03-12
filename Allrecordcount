@@ -8,24 +8,16 @@ target_table = "core_tst_sys9.dashboard_data_migration_results"
 
 @dlt.table(
     name="dashboard_data_migration_results",
-    comment="This table stores validation results for the data migration dashboard",
+    comment="This table stores unique validation results for the data migration dashboard",
     table_properties={
         "quality": "gold"
     }
 )
 def create_dashboard_table():
-    # Read source data and apply distinct filter to remove duplicates
-    df_source = spark.read.table(source_table).distinct()
+    # Read source table
+    df_source = spark.read.table(source_table)
 
-    # Implementing Merge Logic to Avoid Duplicates
-    dlt.create_streaming_table(target_table)
-    
-    dlt.apply_changes(
-        target=target_table,
-        source=df_source,
-        keys=["table_name", "run_timestamp"],  # Define uniqueness criteria
-        sequence_by="run_timestamp",  # Keep the latest records
-        stored_as_scd_type=1  # Type 1 SCD (Updates existing, avoids duplicates)
-    )
+    # Remove duplicates based on all columns
+    df_unique = df_source.dropDuplicates()
 
-    return df_source
+    return df_unique
