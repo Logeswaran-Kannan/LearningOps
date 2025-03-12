@@ -1,23 +1,109 @@
-import dlt
-from pyspark.sql.functions import *
-from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max, stddev, mean
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
+import datetime
+import time
+import re
 
-# Define Source and Target Tables
-source_table = "default.data_migration_validation_results"
-target_table = "core_tst_sys9.dashboard_data_migration_results"
+# Define catalog and databases
+catalog = "core_tst_sys9"
+source_db = f"{catalog}.ods"
+target_db = f"{catalog}.ods_views"
+output_table = f"{catalog}.default.data_migration_validation_results"
+exploratory_table = f"{catalog}.default.data_migration_exploratory_result"
 
-@dlt.table(
-    name="dashboard_data_migration_results",
-    comment="This table stores unique validation results for the data migration dashboard",
-    table_properties={
-        "quality": "gold"
-    }
-)
-def create_dashboard_table():
-    # Read source table
-    df_source = spark.read.table(source_table)
+# Parameters
+exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
+exclude_tables = set(spark.read.csv('dbfs:/path/to/exclusion_list.csv', header=True).filter(col('excludeindiciator') == 'Y').select('tablename').rdd.flatMap(lambda x: x).collect())  # Add table names to exclude
+exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this text
 
-    # Remove duplicates based on all columns
-    df_unique = df_source.dropDuplicates()
+azure_load_date_start = "2024-10-08T09:07:48.000+00:00"
+azure_load_date_end = "2024-10-10T09:07:48.000+00:00"
 
-    return df_unique
+# Generate Run ID (incremental value)
+try:
+    max_run_id = spark.read.table(output_table).agg(spark_max("run_id")).collect()[0][0]
+    run_id = 1 if max_run_id is None else max_run_id + 1
+except Exception:
+    run_id = 1
+
+# Capture run timestamp
+run_timestamp = datetime.datetime.now()
+
+# Check if exploratory table exists, create if not
+try:
+    spark.read.table(exploratory_table)
+    print(f"Delta table {exploratory_table} exists.")
+except Exception:
+    print(f"Creating Delta table {exploratory_table}.")
+    schema = StructType([
+        StructField("run_id", IntegerType(), False),
+        StructField("table_name", StringType(), False),
+        StructField("column_name", StringType(), False),
+        StructField("missing_in_source", StringType(), True),
+        StructField("missing_in_target", StringType(), True),
+        StructField("data_type_mismatch", StringType(), True),
+        StructField("null_count_diff", IntegerType(), True),
+        StructField("distinct_value_mismatch", StringType(), True),
+        StructField("string_length_violation", IntegerType(), True),
+        StructField("scientific_notation_detected", IntegerType(), True),
+        StructField("float_contains_only_integers", IntegerType(), True),
+        StructField("decimal_precision_violation", IntegerType(), True),
+        StructField("statistical_outliers", IntegerType(), True),
+        StructField("negative_values_in_unsigned", IntegerType(), True),
+        StructField("incorrect_date_format", IntegerType(), True)
+    ])
+    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(exploratory_table)
+
+def validate_table(table_name):
+    target_table_name = get_target_table_name(table_name)
+    try:
+        src_df = spark.table(f"{source_db}.{table_name}")
+        tgt_df = spark.table(f"{target_db}.{target_table_name}")
+        
+        src_cols = set(src_df.columns) - exclude_columns
+        tgt_cols = set(tgt_df.columns) - exclude_columns
+        common_cols = list(src_cols & tgt_cols)
+        
+        for col_name in common_cols:
+            src_col_type = src_df.schema[col_name].dataType
+            tgt_col_type = tgt_df.schema[col_name].dataType
+            
+            src_null_count = src_df.filter(col(col_name).isNull()).count()
+            tgt_null_count = tgt_df.filter(col(col_name).isNull()).count()
+            null_count_diff = abs(src_null_count - tgt_null_count)
+            
+            src_distinct = src_df.select(col_name).distinct().count()
+            tgt_distinct = tgt_df.select(col_name).distinct().count()
+            distinct_mismatch = src_distinct != tgt_distinct
+            
+            string_length_violation = src_df.filter(expr(f'LENGTH({col_name}) > 250')).count() if isinstance(src_col_type, StringType) else 0
+            
+            scientific_notation_detected = src_df.filter(col(col_name).rlike(r'[eE]')).count() if isinstance(src_col_type, DoubleType) else 0
+            
+            float_contains_only_integers = src_df.filter(col(col_name) % 1 == 0).count() if isinstance(src_col_type, DoubleType) else 0
+            
+            decimal_precision_violation = src_df.filter(col(col_name) % 1 > 0.00001).count() if isinstance(src_col_type, DoubleType) else 0
+            
+            mean_val = src_df.select(mean(col(col_name))).collect()[0][0]
+            stddev_val = src_df.select(stddev(col(col_name))).collect()[0][0]
+            outlier_count = src_df.filter((col(col_name) > mean_val + 3 * stddev_val) | (col(col_name) < mean_val - 3 * stddev_val)).count() if stddev_val else 0
+            
+            negative_values_in_unsigned = src_df.filter(col(col_name) < 0).count() if "unsigned" in str(src_col_type) else 0
+            
+            incorrect_date_format = src_df.filter(~col(col_name).rlike(r'\d{4}-\d{2}-\d{2}')).count() if isinstance(src_col_type, StringType) and "date" in col_name.lower() else 0
+            
+            result_data = [(run_id, table_name, col_name, col_name not in src_cols, col_name not in tgt_cols, 
+                            src_col_type != tgt_col_type, null_count_diff, distinct_mismatch, 
+                            string_length_violation, scientific_notation_detected, 
+                            float_contains_only_integers, decimal_precision_violation, 
+                            outlier_count, negative_values_in_unsigned, incorrect_date_format)]
+            
+            result_df = spark.createDataFrame(result_data, schema=spark.table(exploratory_table).schema)
+            result_df.write.mode("append").saveAsTable(exploratory_table)
+    except Exception as e:
+        print(f"Error processing table {table_name}: {e}")
+
+for table in source_tables:
+    validate_table(table)
+
+print("Data migration exploratory validation completed.")
