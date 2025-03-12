@@ -4,29 +4,48 @@ WITH latest_run AS (
     FROM core_tst_sys9.default.data_migration_validation_results
 )
 
--- Generate KPIs based on the latest run
+-- Generate KPI metrics for dashboard
 SELECT 
     d.run_id,
     d.table_name,
     d.src_database,
     d.tgt_database,
     COUNT(*) AS total_tests,
-    CASE WHEN SUM(CASE WHEN d.status = 'Success' THEN 1 ELSE 0 END) = 0 THEN 0 ELSE 1 END AS success_count,
-    CASE WHEN SUM(CASE WHEN d.status = 'Failure' THEN 1 ELSE 0 END) = 0 THEN 0 ELSE 1 END AS failure_count,
-    CASE WHEN SUM(CASE WHEN d.src_vs_tgt_missing_columns IS NOT NULL THEN 1 ELSE 0 END) = 0 THEN 0 ELSE 1 END AS src_vs_tgt_missing_col_count,
-    CASE WHEN SUM(CASE WHEN d.tgt_vs_src_missing_columns IS NOT NULL THEN 1 ELSE 0 END) = 0 THEN 0 ELSE 1 END AS tgt_vs_src_missing_col_count,
-    CASE WHEN SUM(d.src_count) = 0 THEN 0 ELSE 1 END AS total_src_records,
-    CASE WHEN SUM(d.tgt_count) = 0 THEN 0 ELSE 1 END AS total_tgt_records,
-    CASE WHEN SUM(d.src_duplicate_count) = 0 THEN 0 ELSE 1 END AS total_src_duplicates,
-    CASE WHEN SUM(d.tgt_duplicate_count) = 0 THEN 0 ELSE 1 END AS total_tgt_duplicates,
-    CASE WHEN SUM(d.src_vs_tgt_data_mismatch_count) = 0 THEN 0 ELSE 1 END AS total_src_vs_tgt_mismatches,
-    CASE WHEN SUM(d.tgt_vs_src_data_mismatch_count) = 0 THEN 0 ELSE 1 END AS total_tgt_vs_src_mismatches,
-    CASE WHEN SUM(CASE WHEN d.null_diff_columns IS NOT NULL THEN 1 ELSE 0 END) = 0 THEN 0 ELSE 1 END AS null_diff_column_issues,
-    CASE WHEN SUM(CASE WHEN d.data_mismatch_columns IS NOT NULL THEN 1 ELSE 0 END) = 0 THEN 0 ELSE 1 END AS data_mismatch_column_issues,
-    AVG(d.time_taken_seconds) AS avg_time_taken_seconds,
-    MAX(d.time_taken_seconds) AS max_time_taken_seconds,
-    MIN(d.time_taken_seconds) AS min_time_taken_seconds
+    CASE WHEN d.status = 'Success' THEN 1 ELSE 0 END AS success_flag,
+    CASE WHEN d.status = 'Failure' THEN 1 ELSE 0 END AS failure_flag,
+    CASE WHEN COALESCE(d.src_vs_tgt_missing_columns, '') = '' THEN 0 ELSE 1 END AS src_vs_tgt_missing_col_flag,
+    CASE WHEN COALESCE(d.tgt_vs_src_missing_columns, '') = '' THEN 0 ELSE 1 END AS tgt_vs_src_missing_col_flag,
+    CASE WHEN COALESCE(d.src_count, 0) = 0 THEN 0 ELSE 1 END AS src_count_flag,
+    CASE WHEN COALESCE(d.tgt_count, 0) = 0 THEN 0 ELSE 1 END AS tgt_count_flag,
+    CASE WHEN COALESCE(d.src_duplicate_count, 0) = 0 THEN 0 ELSE 1 END AS src_duplicate_flag,
+    CASE WHEN COALESCE(d.tgt_duplicate_count, 0) = 0 THEN 0 ELSE 1 END AS tgt_duplicate_flag,
+    CASE WHEN COALESCE(d.src_vs_tgt_data_mismatch_count, 0) = 0 THEN 0 ELSE 1 END AS src_vs_tgt_data_mismatch_flag,
+    CASE WHEN COALESCE(d.tgt_vs_src_data_mismatch_count, 0) = 0 THEN 0 ELSE 1 END AS tgt_vs_src_data_mismatch_flag,
+    CASE WHEN COALESCE(d.null_diff_columns, '') = '' THEN 0 ELSE 1 END AS null_diff_column_flag,
+    CASE WHEN COALESCE(d.data_mismatch_columns, '') = '' THEN 0 ELSE 1 END AS data_mismatch_column_flag,
+    CASE 
+        WHEN COALESCE(d.src_count, 0) = 0 AND COALESCE(d.tgt_count, 0) = 0 THEN 'Pass - No Data Present'
+        WHEN (COALESCE(d.src_count, 0) = 0 AND COALESCE(d.tgt_count, 0) > 0) 
+             OR (COALESCE(d.src_count, 0) > 0 AND COALESCE(d.tgt_count, 0) = 0) 
+             THEN 'Data Load Issue - No Data Loaded'
+        WHEN COALESCE(d.src_count, 0) = COALESCE(d.tgt_count, 0) AND COALESCE(d.src_count, 0) > 0 
+             AND COALESCE(d.src_duplicate_count, 0) = 0 AND COALESCE(d.tgt_duplicate_count, 0) = 0 
+             AND COALESCE(d.src_vs_tgt_data_mismatch_count, 0) = 0 AND COALESCE(d.tgt_vs_src_data_mismatch_count, 0) = 0 
+             THEN 'Pass with Data'
+        WHEN COALESCE(d.src_count, 0) = COALESCE(d.tgt_count, 0) AND COALESCE(d.src_count, 0) > 0 
+             AND COALESCE(d.src_duplicate_count, 0) = 0 AND COALESCE(d.tgt_duplicate_count, 0) = 0 
+             AND (COALESCE(d.src_vs_tgt_data_mismatch_count, 0) > 0 OR COALESCE(d.tgt_vs_src_data_mismatch_count, 0) > 0) 
+             THEN 'Data Transformation Issue'
+        WHEN COALESCE(d.src_count, 0) = COALESCE(d.tgt_count, 0) AND COALESCE(d.src_count, 0) > 0 
+             AND (COALESCE(d.src_duplicate_count, 0) > 0 OR COALESCE(d.tgt_duplicate_count, 0) > 0) 
+             AND COALESCE(d.src_vs_tgt_data_mismatch_count, 0) = 0 AND COALESCE(d.tgt_vs_src_data_mismatch_count, 0) = 0 
+             THEN 'Duplicate Issue'
+        ELSE 'Other Issue'
+    END AS outcome
 FROM core_tst_sys9.default.data_migration_validation_results d
 JOIN latest_run l ON d.run_id = l.max_run_id
-GROUP BY d.run_id, d.table_name, d.src_database, d.tgt_database
+GROUP BY d.run_id, d.table_name, d.src_database, d.tgt_database, d.status, 
+         d.src_vs_tgt_missing_columns, d.tgt_vs_src_missing_columns, d.src_count, d.tgt_count, 
+         d.src_duplicate_count, d.tgt_duplicate_count, d.src_vs_tgt_data_mismatch_count, 
+         d.tgt_vs_src_data_mismatch_count, d.null_diff_columns, d.data_mismatch_columns
 ORDER BY d.run_id DESC;
