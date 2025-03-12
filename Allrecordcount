@@ -2,13 +2,14 @@ from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max 
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
 import datetime
 import time
+import re
 
 # Define catalog and databases
 catalog = "core_tst_sys9"
 source_db = f"{catalog}.ods"
 target_db = f"{catalog}.ods_views"
 output_table = f"{catalog}.default.data_migration_validation_results"
-exploratory_output_table = f"{catalog}.default.data_migration_exploratory_result"
+exploratory_table = f"{catalog}.default.data_migration_exploratory_result"
 
 # Parameters
 exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
@@ -28,69 +29,95 @@ except Exception:
 # Capture run timestamp
 run_timestamp = datetime.datetime.now()
 
-# Create Exploratory Table if not exists
-try:
-    spark.read.table(exploratory_output_table)
-    print(f"Delta table {exploratory_output_table} exists.")
-except Exception:
-    print(f"Creating Delta table {exploratory_output_table}.")
-    schema = StructType([
-        StructField("run_id", IntegerType(), False),
-        StructField("table_name", StringType(), False),
-        StructField("src_database", StringType(), False),
-        StructField("tgt_database", StringType(), False),
-        StructField("missing_columns", StringType(), True),
-        StructField("datatype_mismatch_columns", StringType(), True),
-        StructField("null_count_diff_columns", StringType(), True),
-        StructField("distinct_value_mismatch_columns", StringType(), True),
-        StructField("string_length_violation_columns", StringType(), True),
-        StructField("scientific_notation_columns", StringType(), True),
-        StructField("non_float_columns_with_integer_values", StringType(), True),
-        StructField("decimal_precision_violation_columns", StringType(), True),
-        StructField("statistical_outlier_columns", StringType(), True),
-        StructField("negative_values_in_unsigned_columns", StringType(), True),
-        StructField("incorrect_date_format_columns", StringType(), True),
-        StructField("status", StringType(), False),
-        StructField("comment", StringType(), True),
-        StructField("validation_timestamp", TimestampType(), True)
-    ])
-    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(exploratory_output_table)
-
 # Fetch source tables
 source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
 
+# Function to determine target table name
+def get_target_table_name(table_name):
+    if "billingcenter_" in table_name:
+        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
+    elif "policycenter_" in table_name:
+        return f"vw_policycenter_current_{table_name.split('policycenter_')[-1]}"
+    elif "claimcenter_" in table_name:
+        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
+    else:
+        return f"vm_{table_name}"
+
+# Check if exploratory table exists, create if not
+try:
+    spark.read.table(exploratory_table)
+    print(f"Delta table {exploratory_table} exists.")
+except Exception:
+    print(f"Creating Delta table {exploratory_table}.")
+    schema = StructType([
+        StructField("run_id", IntegerType(), False),
+        StructField("table_name", StringType(), False),
+        StructField("column_name", StringType(), False),
+        StructField("missing_in_source", StringType(), True),
+        StructField("missing_in_target", StringType(), True),
+        StructField("data_type_mismatch", StringType(), True),
+        StructField("null_count_diff", IntegerType(), True),
+        StructField("distinct_value_mismatch", StringType(), True),
+        StructField("string_length_violation", IntegerType(), True),
+        StructField("scientific_notation_detected", IntegerType(), True),
+        StructField("float_contains_only_integers", IntegerType(), True),
+        StructField("decimal_precision_violation", IntegerType(), True),
+        StructField("statistical_outliers", IntegerType(), True),
+        StructField("negative_values_in_unsigned", IntegerType(), True),
+        StructField("incorrect_date_format", IntegerType(), True)
+    ])
+    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(exploratory_table)
+
 def validate_table(table_name):
-    target_table_name = f"vm_{table_name}"
-    
+    target_table_name = get_target_table_name(table_name)
     try:
         src_df = spark.table(f"{source_db}.{table_name}")
         tgt_df = spark.table(f"{target_db}.{target_table_name}")
         
-        common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
-        missing_columns = list(set(src_df.columns) ^ set(tgt_df.columns))
+        src_cols = set(src_df.columns) - exclude_columns
+        tgt_cols = set(tgt_df.columns) - exclude_columns
+        common_cols = list(src_cols & tgt_cols)
         
-        datatype_mismatches = [col for col in common_cols if src_df.schema[col].dataType != tgt_df.schema[col].dataType]
-        null_count_diff_cols = [col for col in common_cols if src_df.filter(col(col).isNull()).count() != tgt_df.filter(col(col).isNull()).count()]
-        distinct_mismatch_cols = [col for col in common_cols if src_df.select(col).distinct().count() != tgt_df.select(col).distinct().count()]
-        string_length_violations = [col for col in common_cols if src_df.select(col).filter(expr(f'length({col}) > 250')).count() > 0]
-        scientific_notation_cols = [col for col in common_cols if src_df.select(col).filter(expr(f'{col} like "%.E+%"')).count() > 0]
-        decimal_precision_violations = [col for col in common_cols if src_df.select(col).filter(expr(f'abs({col}) - floor(abs({col})) > 1e-5')).count() > 0]
-        outlier_cols = [col for col in common_cols if src_df.select(stddev(col), mean(col)).first()[0] and src_df.select(col).filter(col(col) > (src_df.select(mean(col)).first()[0] + 3 * src_df.select(stddev(col)).first()[0])).count() > 0]
-        negative_unsigned_cols = [col for col in common_cols if src_df.select(col).filter(col(col) < 0).count() > 0]
-        incorrect_date_format_cols = [col for col in common_cols if src_df.select(col).filter(expr(f"to_date({col}, 'yyyy-MM-dd') is null")).count() > 0]
-        
-        status = "PASS" if not any([missing_columns, datatype_mismatches, null_count_diff_cols, distinct_mismatch_cols, string_length_violations, scientific_notation_cols, decimal_precision_violations, outlier_cols, negative_unsigned_cols, incorrect_date_format_cols]) else "FAIL"
-        comment = "Exploratory validation completed."
-        
-        result_data = [(run_id, table_name, source_db, target_db, ",".join(missing_columns), ",".join(datatype_mismatches), ",".join(null_count_diff_cols), ",".join(distinct_mismatch_cols), ",".join(string_length_violations), ",".join(scientific_notation_cols), ",".join(decimal_precision_violations), ",".join(outlier_cols), ",".join(negative_unsigned_cols), ",".join(incorrect_date_format_cols), status, comment, run_timestamp)]
-        
-        result_df = spark.createDataFrame(result_data, schema=spark.table(exploratory_output_table).schema)
-        result_df.write.mode("append").saveAsTable(exploratory_output_table)
-        
+        for col_name in common_cols:
+            src_col_type = src_df.schema[col_name].dataType
+            tgt_col_type = tgt_df.schema[col_name].dataType
+            
+            src_null_count = src_df.filter(col(col_name).isNull()).count()
+            tgt_null_count = tgt_df.filter(col(col_name).isNull()).count()
+            null_count_diff = abs(src_null_count - tgt_null_count)
+            
+            src_distinct = src_df.select(col_name).distinct().count()
+            tgt_distinct = tgt_df.select(col_name).distinct().count()
+            distinct_mismatch = src_distinct != tgt_distinct
+            
+            string_length_violation = src_df.filter(expr(f'LENGTH({col_name}) > 250')).count() if isinstance(src_col_type, StringType) else 0
+            
+            scientific_notation_detected = src_df.filter(col(col_name).rlike(r'[eE]')).count() if isinstance(src_col_type, DoubleType) else 0
+            
+            float_contains_only_integers = src_df.filter(col(col_name) % 1 == 0).count() if isinstance(src_col_type, DoubleType) else 0
+            
+            decimal_precision_violation = src_df.filter(col(col_name) % 1 > 0.00001).count() if isinstance(src_col_type, DoubleType) else 0
+            
+            mean_val = src_df.select(mean(col(col_name))).collect()[0][0]
+            stddev_val = src_df.select(stddev(col(col_name))).collect()[0][0]
+            outlier_count = src_df.filter((col(col_name) > mean_val + 3 * stddev_val) | (col(col_name) < mean_val - 3 * stddev_val)).count() if stddev_val else 0
+            
+            negative_values_in_unsigned = src_df.filter(col(col_name) < 0).count() if "unsigned" in str(src_col_type) else 0
+            
+            incorrect_date_format = src_df.filter(~col(col_name).rlike(r'\d{4}-\d{2}-\d{2}')).count() if isinstance(src_col_type, StringType) and "date" in col_name.lower() else 0
+            
+            result_data = [(run_id, table_name, col_name, col_name not in src_cols, col_name not in tgt_cols, 
+                            src_col_type != tgt_col_type, null_count_diff, distinct_mismatch, 
+                            string_length_violation, scientific_notation_detected, 
+                            float_contains_only_integers, decimal_precision_violation, 
+                            outlier_count, negative_values_in_unsigned, incorrect_date_format)]
+            
+            result_df = spark.createDataFrame(result_data, schema=spark.table(exploratory_table).schema)
+            result_df.write.mode("append").saveAsTable(exploratory_table)
     except Exception as e:
         print(f"Error processing table {table_name}: {e}")
 
 for table in source_tables:
     validate_table(table)
 
-print("Exploratory Data Validation Completed.")
+print("Data migration exploratory validation completed.")
