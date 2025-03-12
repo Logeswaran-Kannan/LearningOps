@@ -1,6 +1,4 @@
-# Task 1: Spark Validation Notebook
-
-from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max
+from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max, stddev, mean, length, when
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
 import datetime
 import time
@@ -40,8 +38,8 @@ except Exception:
         StructField("table_name", StringType(), False),
         StructField("src_database", StringType(), False),
         StructField("tgt_database", StringType(), False),
-        StructField("src_vs_tgt_missing_columns", StringType(), True),
-        StructField("tgt_vs_src_missing_columns", StringType(), True),
+        StructField("missing_columns", StringType(), True),
+        StructField("datatype_mismatch", StringType(), True),
         StructField("src_count", IntegerType(), True),
         StructField("tgt_count", IntegerType(), True),
         StructField("src_duplicate_count", IntegerType(), True),
@@ -50,6 +48,13 @@ except Exception:
         StructField("tgt_vs_src_data_mismatch_count", IntegerType(), True),
         StructField("null_diff_columns", StringType(), True),
         StructField("data_mismatch_columns", StringType(), True),
+        StructField("string_length_violations", StringType(), True),
+        StructField("scientific_notation_violations", StringType(), True),
+        StructField("integer_only_double_columns", StringType(), True),
+        StructField("decimal_precision_violations", StringType(), True),
+        StructField("outlier_columns", StringType(), True),
+        StructField("negative_values_unsigned", StringType(), True),
+        StructField("incorrect_date_formats", StringType(), True),
         StructField("status", StringType(), False),
         StructField("comment", StringType(), True),
         StructField("time_taken_seconds", DoubleType(), True),
@@ -60,19 +65,6 @@ except Exception:
     ])
     spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(output_table)
 
-# Fetch source tables
-source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
-
-def get_target_table_name(table_name):
-    if "billingcenter_" in table_name:
-        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
-    elif "policycenter_" in table_name:
-        return f"vw_policycenter_current_{table_name.split('policycenter_')[-1]}"
-    elif "claimcenter_" in table_name:
-        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
-    else:
-        return f"vm_{table_name}"
-
 def validate_table(table_name):
     target_table_name = get_target_table_name(table_name)
     start_time = time.time()
@@ -82,53 +74,31 @@ def validate_table(table_name):
         tgt_df = spark.table(f"{target_db}.{target_table_name}")
         
         common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
-        column_list = ", ".join(common_cols)
         
-        source_sql = f"SELECT {column_list} FROM {source_db}.{table_name} WHERE AZURE_LOAD_DATE BETWEEN '{azure_load_date_start}' AND '{azure_load_date_end}'"
-        target_sql = f"SELECT {column_list} FROM {target_db}.{target_table_name} WHERE AZURE_LOAD_DATE BETWEEN '{azure_load_date_start}' AND '{azure_load_date_end}'"
+        missing_columns = list(set(src_df.columns) ^ set(tgt_df.columns))
+        datatype_mismatch = [col for col in common_cols if str(src_df.schema[col].dataType) != str(tgt_df.schema[col].dataType)]
         
-        src_df = spark.sql(source_sql)
-        tgt_df = spark.sql(target_sql)
+        null_diffs = [col for col in common_cols if src_df.filter(col(col).isNull()).count() != tgt_df.filter(col(col).isNull()).count()]
         
-        src_count = src_df.count()
-        tgt_count = tgt_df.count()
-        count_match = src_count == tgt_count
+        string_length_violations = [col for col in common_cols if src_df.filter(length(col) > 250).count() > 0]
+        scientific_notation_violations = [col for col in common_cols if src_df.filter(col.rlike("[eE]"))]
+        integer_only_double_columns = [col for col in common_cols if src_df.select(col).distinct().rdd.map(lambda x: x[0]).filter(lambda x: isinstance(x, float) and x.is_integer()).count() > 0]
+        decimal_precision_violations = [col for col in common_cols if src_df.select(col).rdd.map(lambda x: x[0]).filter(lambda x: isinstance(x, float) and len(str(x).split('.')[-1]) > 5).count() > 0]
         
-        # Duplicate Check after excluding columns
-        duplicate_check_cols = list(set(common_cols) - {"AZURE_LOAD_DATE"})
-src_duplicate_count = src_df.groupBy(duplicate_check_cols).count().filter(col("count") > 1).count()
-        tgt_duplicate_count = tgt_df.groupBy(duplicate_check_cols).count().filter(col("count") > 1).count()
+        outlier_columns = [col for col in common_cols if abs(src_df.select(mean(col)).collect()[0][0] - src_df.select(stddev(col)).collect()[0][0]) > 3 * src_df.select(stddev(col)).collect()[0][0]]
+        negative_values_unsigned = [col for col in common_cols if src_df.filter(col < 0).count() > 0]
+        incorrect_date_formats = [col for col in common_cols if src_df.filter(~col.rlike("\\d{4}-\\d{2}-\\d{2}"))]
         
-        null_diffs = []
-        for col_name in common_cols:
-            src_null_count = src_df.filter(col(col_name).isNull()).count()
-            tgt_null_count = tgt_df.filter(col(col_name).isNull()).count()
-            if src_null_count != tgt_null_count:
-                null_diffs.append(col_name)
-        
-        mismatched_cols = []
-        comparison_count_src = src_df.exceptAll(tgt_df).count()
-        comparison_count_tgt = tgt_df.exceptAll(src_df).count()
-        
-        status = "PASS" if count_match and not null_diffs and not mismatched_cols else "FAIL"
+        status = "PASS" if not missing_columns and not datatype_mismatch and not null_diffs else "FAIL"
         comment = "Validation Completed"
-        
         time_taken = float(time.time() - start_time)
         
-        result_data = [(run_id, table_name, source_db, target_db, "", "", 
-                        src_count, tgt_count, src_duplicate_count, tgt_duplicate_count, 
-                        comparison_count_src, comparison_count_tgt, ",".join(null_diffs) if null_diffs else None, 
-                        ",".join(mismatched_cols) if mismatched_cols else None, 
-                        status, comment, time_taken, source_sql, target_sql, 
-                        run_timestamp, f"Bronze_validation_{table_name}")]
+        result_data = [(run_id, table_name, source_db, target_db, ",".join(missing_columns), ",".join(datatype_mismatch),
+                        src_df.count(), tgt_df.count(), "", "", "", "", ",".join(null_diffs), "", ",".join(string_length_violations), ",".join(scientific_notation_violations), ",".join(integer_only_double_columns), ",".join(decimal_precision_violations), ",".join(outlier_columns), ",".join(negative_values_unsigned), ",".join(incorrect_date_formats),
+                        status, comment, time_taken, "", "", run_timestamp, f"Bronze_validation_{table_name}")]
         
         result_df = spark.createDataFrame(result_data, schema=spark.table(output_table).schema)
         result_df.write.mode("append").saveAsTable(output_table)
         
     except Exception as e:
         print(f"Error processing table {table_name}: {e}")
-
-for table in source_tables:
-    validate_table(table)
-
-print("Data migration validation completed.")
