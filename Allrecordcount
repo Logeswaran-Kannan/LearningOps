@@ -1,109 +1,32 @@
-from pyspark.sql.functions import col, count, lit, expr, current_timestamp, max as spark_max, mean, stddev
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, TimestampType
-import datetime
-import time
+-- Extract the latest run_id
+WITH latest_run AS (
+    SELECT MAX(run_id) AS run_id
+    FROM core_tst_sys9.default.data_migration_validation_results
+)
 
-# Define catalog and databases
-catalog = "core_tst_sys9"
-source_db = f"{catalog}.ods"
-target_db = f"{catalog}.ods_views"
-output_table = f"{catalog}.default.data_migration_validation_results"
-exploratory_output_table = f"{catalog}.default.data_migration_exploratory_result"
-
-# Parameters
-exclude_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG"}
-exclude_tables = set(spark.read.csv('dbfs:/path/to/exclusion_list.csv', header=True).filter(col('excludeindiciator') == 'Y').select('tablename').rdd.flatMap(lambda x: x).collect())  # Add table names to exclude
-exclude_table_texts = ["_change_", "_sqldf"]  # Exclude tables containing this text
-
-azure_load_date_start = "2024-10-08T09:07:48.000+00:00"
-azure_load_date_end = "2024-10-10T09:07:48.000+00:00"
-
-# Generate Run ID (incremental value)
-try:
-    max_run_id = spark.read.table(output_table).agg(spark_max("run_id")).collect()[0][0]
-    run_id = 1 if max_run_id is None else max_run_id + 1
-except Exception:
-    run_id = 1
-
-# Capture run timestamp
-run_timestamp = datetime.datetime.now()
-
-# Check if exploratory table exists, create if not
-try:
-    spark.read.table(exploratory_output_table)
-    print(f"Delta table {exploratory_output_table} exists.")
-except Exception:
-    print(f"Creating Delta table {exploratory_output_table}.")
-    schema = StructType([
-        StructField("run_id", IntegerType(), False),
-        StructField("table_name", StringType(), False),
-        StructField("column_name", StringType(), False),
-        StructField("missing_in_source", StringType(), True),
-        StructField("missing_in_target", StringType(), True),
-        StructField("data_type_mismatch", StringType(), True),
-        StructField("null_count_diff", IntegerType(), True),
-        StructField("distinct_value_mismatch", StringType(), True),
-        StructField("string_length_violation", IntegerType(), True),
-        StructField("scientific_notation_detected", IntegerType(), True),
-        StructField("float_contains_only_integers", IntegerType(), True),
-        StructField("decimal_precision_violation", IntegerType(), True),
-        StructField("statistical_outliers", IntegerType(), True),
-        StructField("negative_values_in_unsigned", IntegerType(), True),
-        StructField("incorrect_date_format", IntegerType(), True)
-    ])
-    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable(exploratory_output_table)
-
-# Fetch source tables
-source_tables = [table.name for table in spark.catalog.listTables(source_db) if table.name not in exclude_tables and not any(text in table.name for text in exclude_table_texts)]
-
-def get_target_table_name(table_name):
-    if "billingcenter_" in table_name:
-        return f"vw_billingcenter_current_{table_name.split('billingcenter_')[-1]}"
-    elif "policycenter_" in table_name:
-        return f"vw_policycenter_current_{table_name.split('policycenter_')[-1]}"
-    elif "claimcenter_" in table_name:
-        return f"vw_claimcenter_current_{table_name.split('claimcenter_')[-1]}"
-    else:
-        return f"vm_{table_name}"
-
-def validate_table(table_name):
-    target_table_name = get_target_table_name(table_name)
-    start_time = time.time()
-    
-    try:
-        src_df = spark.table(f"{source_db}.{table_name}")
-        tgt_df = spark.table(f"{target_db}.{target_table_name}")
-        
-        common_cols = list(set(src_df.columns) & set(tgt_df.columns) - exclude_columns)
-        missing_columns = list(set(src_df.columns) ^ set(tgt_df.columns))
-        data_type_mismatches = [col_name for col_name in common_cols if src_df.schema[col_name].dataType != tgt_df.schema[col_name].dataType]
-        
-        null_diffs = [col_name for col_name in common_cols if src_df.filter(col(col_name).isNull()).count() != tgt_df.filter(col(col_name).isNull()).count()]
-        distinct_value_mismatches = [col_name for col_name in common_cols if src_df.select(col_name).distinct().count() != tgt_df.select(col_name).distinct().count()]
-        
-        string_length_violations = [col_name for col_name in common_cols if src_df.filter(expr(f'LENGTH({col_name}) > 250')).count() > 0]
-        scientific_notation_values = [col_name for col_name in common_cols if src_df.filter(col(col_name).rlike("[0-9]+\.[0-9]+E[+-][0-9]+")).count() > 0]
-        float_integer_columns = [col_name for col_name in common_cols if src_df.filter(col(col_name).cast("double") == col(col_name).cast("int")).count() == src_df.count()]
-        decimal_precision_violations = [col_name for col_name in common_cols if src_df.filter(expr(f'MOD({col_name}, 1) * 1000000 > 0')).count() > 0]
-        
-        outlier_cols = []
-        for col_name in common_cols:
-            stats = src_df.select(mean(col(col_name)).alias("mean"), stddev(col(col_name)).alias("std")).collect()
-            if stats[0]["std"] is not None:
-                threshold_low, threshold_high = stats[0]["mean"] - 3 * stats[0]["std"], stats[0]["mean"] + 3 * stats[0]["std"]
-                if src_df.filter((col(col_name) < threshold_low) | (col(col_name) > threshold_high)).count() > 0:
-                    outlier_cols.append(col_name)
-        
-        negative_unsigned_values = [col_name for col_name in common_cols if src_df.filter(col(col_name) < 0).count() > 0]
-        incorrect_date_formats = [col_name for col_name in common_cols if src_df.filter(~col(col_name).rlike("\\d{4}-\\d{2}-\\d{2}")).count() > 0]
-        
-        result_data = [(run_id, table_name, source_db, target_db, "Validation Completed", time.time() - start_time, run_timestamp)]
-        
-        spark.createDataFrame(result_data, schema=spark.table(exploratory_output_table).schema).write.mode("append").saveAsTable(exploratory_output_table)
-    except Exception as e:
-        print(f"Error processing table {table_name}: {e}")
-
-for table in source_tables:
-    validate_table(table)
-
-print("Data migration exploratory validation completed.")
+-- Generate KPIs based on the latest run
+SELECT 
+    run_id,
+    table_name,
+    src_database,
+    tgt_database,
+    COUNT(*) AS total_tests,
+    SUM(CASE WHEN status = 'Success' THEN 1 ELSE 0 END) AS success_count,
+    SUM(CASE WHEN status = 'Failure' THEN 1 ELSE 0 END) AS failure_count,
+    SUM(CASE WHEN src_vs_tgt_missing_columns IS NOT NULL THEN 1 ELSE 0 END) AS src_vs_tgt_missing_col_count,
+    SUM(CASE WHEN tgt_vs_src_missing_columns IS NOT NULL THEN 1 ELSE 0 END) AS tgt_vs_src_missing_col_count,
+    SUM(src_count) AS total_src_records,
+    SUM(tgt_count) AS total_tgt_records,
+    SUM(src_duplicate_count) AS total_src_duplicates,
+    SUM(tgt_duplicate_count) AS total_tgt_duplicates,
+    SUM(src_vs_tgt_data_mismatch_count) AS total_src_vs_tgt_mismatches,
+    SUM(tgt_vs_src_data_mismatch_count) AS total_tgt_vs_src_mismatches,
+    SUM(CASE WHEN null_diff_columns IS NOT NULL THEN 1 ELSE 0 END) AS null_diff_column_issues,
+    SUM(CASE WHEN data_mismatch_columns IS NOT NULL THEN 1 ELSE 0 END) AS data_mismatch_column_issues,
+    AVG(time_taken_seconds) AS avg_time_taken_seconds,
+    MAX(time_taken_seconds) AS max_time_taken_seconds,
+    MIN(time_taken_seconds) AS min_time_taken_seconds
+FROM core_tst_sys9.default.data_migration_validation_results
+JOIN latest_run ON data_migration_validation_results.run_id = latest_run.run_id
+GROUP BY run_id, table_name, src_database, tgt_database
+ORDER BY run_id DESC;
