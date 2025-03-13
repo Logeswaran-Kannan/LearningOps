@@ -1,1 +1,3 @@
-dbutils.secrets.list("akv-secret-scope")
+databricks secrets create-scope --scope akv-secret-scope \
+--scope-backend-type AZURE_KEYVAULT \
+--dns-name "https://LVUKSPRDINF002_KeyVault.vault.azure.net"
