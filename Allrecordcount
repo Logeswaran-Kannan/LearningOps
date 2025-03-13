@@ -1,1 +1,1 @@
-Hi Graham, would you be able to join the SIT automation framework session?
+dbutils.secrets.list("akv-secret-scope")
