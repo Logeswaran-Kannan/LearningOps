@@ -1,3 +1,14 @@
-# Retrieve Oracle credentials from Azure Key Vault in Databricks
-oracle_user = "SVC_GIMI_ADF"  # Static user from linked service
-oracle_password = dbutils.secrets.get(scope="akv-secret-scope", key="BCRSYS9-SVCGIMIADF")
+def list_files_recursive(path):
+    files = dbutils.fs.ls(path)
+    for file in files:
+        print(file.path)
+        if file.isDir():
+            list_files_recursive(file.path)
+
+# List files in the Build environment
+print("Listing files in Build environment:")
+list_files_recursive("abfss://lv-data-lake@lvazuksblddlg2001.dfs.core.windows.net/raw/structured")
+
+# List files in the Test environment
+print("Listing files in Test environment:")
+list_files_recursive("abfss://lv-data-lake@lvazukststdlg2001.dfs.core.windows.net/raw/structured")
