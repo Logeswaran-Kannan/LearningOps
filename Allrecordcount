@@ -1,14 +1,1 @@
-def list_files_recursive(path):
-    files = dbutils.fs.ls(path)
-    for file in files:
-        print(file.path)
-        if file.isDir():
-            list_files_recursive(file.path)
-
-# List files in the Build environment
-print("Listing files in Build environment:")
-list_files_recursive("abfss://lv-data-lake@lvazuksblddlg2001.dfs.core.windows.net/raw/structured")
-
-# List files in the Test environment
-print("Listing files in Test environment:")
-list_files_recursive("abfss://lv-data-lake@lvazukststdlg2001.dfs.core.windows.net/raw/structured")
+I can't access the storage container. Not sure if it's because the workspace is Unity Catalog-enabled or if we just don't have the right permissions for the storage container.
