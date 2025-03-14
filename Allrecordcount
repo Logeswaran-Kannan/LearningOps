@@ -1,1 +1,3 @@
-I can't access the storage container. Not sure if it's because the workspace is Unity Catalog-enabled or if we just don't have the right permissions for the storage container.
+Thanks, I can see the folder structures now! I believe we need to refer to policycenter_sys9, but I noticed two parquet files—one inside the subfolder and one outside. Which one should we be using?
+
+Also, I see that the files were generated today. Does that mean a new parquet file is created daily, or is it a single file that gets replaced each day with all previous data included?
