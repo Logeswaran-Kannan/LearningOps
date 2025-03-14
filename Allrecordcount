@@ -1,8 +1,8 @@
-Great! Let’s proceed with Option 2 (Staging Delta Table) as it aligns well with our validation needs.
+Can you please implement this change in the ingestion process and let us know once it's completed? We'll monitor the process next week to ensure it meets our validation requirements. Thanks!
 
-Before finalizing, I’d like to check with my team to ensure they are on board with this approach. If everyone agrees, we can request Paul to make the necessary minor change in the ingestion code.
 
-Key Benefits of This Approach:
-✅ 7-day retention period via Delta Lake Time Travel, allowing us to validate historical data without direct PostgreSQL access.
-✅ Structured Staging Delta Table, making it easier to compare with ODS.
-✅ Assuming the staging table mirrors the ODS schema, our comparisons should be straightforward.
+
+
+
+
+
