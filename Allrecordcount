@@ -1,69 +1,8 @@
-Hi [Data Engineer Name], I wanted to discuss some ideas for validating our data between the raw layer and the ODS. Since we’re unable to directly access the PostgreSQL read replica from Databricks, I’m looking at alternatives that compare raw data against the ODS. I have two options in mind. Can we go over these?
+Great! Let’s proceed with Option 2 (Staging Delta Table) as it aligns well with our validation needs.
 
-Data Engineer:
-Sure, happy to help. What options are you considering?
+Before finalizing, I’d like to check with my team to ensure they are on board with this approach. If everyone agrees, we can request Paul to make the necessary minor change in the ingestion code.
 
-You:
-The first option is to set up a Raw Data Backup. Essentially, before the pipeline runs and clears the raw data, we’d create a copy of the raw files in a separate backup or archival location. This backup would persist for a defined retention period—say 7 days—allowing us to perform validation by comparing these backup files against the data in the ODS.
-
-Data Engineer:
-I see. So the idea is to have a non-volatile copy of the raw data for audit and validation purposes?
-
-You:
-Exactly. That way, even if our production pipeline clears the raw files immediately after ingestion, we still have a reliable source to compare counts and even perform content-level validations. We could use something like:
-
-python
-Copy
-Edit
-dbutils.fs.cp("abfss://raw-data@storage.dfs.core.windows.net/raw/", "abfss://raw-data@storage.dfs.core.windows.net/raw_backup/", recurse=True)
-This copy operation would run before the cleanup process.
-
-Data Engineer:
-That makes sense. It would add some storage overhead, but for validation purposes, it sounds worthwhile. What’s your second option?
-
-You:
-The second option is to use a Staging Delta Table for Comparison. Instead of directly querying temporary raw files, we would load the raw data into a Delta table that persists between pipeline runs. This staging table would serve as an intermediary layer where we can easily run queries to validate record counts and even perform more detailed comparisons with the ODS data.
-
-Data Engineer:
-So, essentially, we would have a permanent staging area for the raw data, and our validation process would compare this staging table with the ODS tables?
-
-You:
-Yes, exactly. For instance, we could load data like this:
-
-python
-Copy
-Edit
-spark.read.format("parquet").load("abfss://raw-data@storage.dfs.core.windows.net/raw/") \
-  .write.format("delta").mode("append").saveAsTable("staging_raw.my_data")
-Then, our validation job can simply query:
-
-sql
-Copy
-Edit
-SELECT COUNT(*) FROM staging_raw.my_data;
-SELECT COUNT(*) FROM ods.my_data;
-and even perform row-level comparisons if needed.
-
-Data Engineer:
-That’s a solid approach as well. Using Delta tables will give you faster queries and a reliable comparison since the data persists beyond the raw ingestion cycle.
-
-You:
-Right. Both these options help address the issue of transient raw data. The Raw Data Backup is great for long-term historical validation, while the Staging Delta Table offers a structured and query-optimized comparison point.
-
-Data Engineer:
-I agree. We need to consider the storage implications for the backup and ensure that our pipeline is modified to include the copy operation. For the staging table, we’ll have to set up the ETL job to write to Delta and manage schema evolution if necessary.
-
-You:
-Absolutely. Could you help assess the feasibility and any adjustments needed for these changes? Also, let’s discuss how to best integrate these steps into our current pipeline without impacting the existing ingestion process.
-
-Data Engineer:
-Sure, I’ll look into the implementation details and evaluate the performance and storage impacts. I’ll also check if we can schedule the backup operation at the right time in the pipeline so that it captures the raw data before it’s cleared.
-
-You:
-Great, thank you. Once we have a plan, I’d like to set up a meeting to go over the changes and any potential adjustments in our scheduling or resource allocation.
-
-Data Engineer:
-Sounds like a plan. I’ll draft a proposal with the necessary changes and we can review it together.
-
-You:
-Perfect, thanks for your help!
+Key Benefits of This Approach:
+✅ 7-day retention period via Delta Lake Time Travel, allowing us to validate historical data without direct PostgreSQL access.
+✅ Structured Staging Delta Table, making it easier to compare with ODS.
+✅ Assuming the staging table mirrors the ODS schema, our comparisons should be straightforward.
