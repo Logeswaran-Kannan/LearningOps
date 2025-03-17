@@ -1,8 +1,10 @@
-Can you please implement this change in the ingestion process and let us know once it's completed? We'll monitor the process next week to ensure it meets our validation requirements. Thanks!
-
-
-
-
-
-
-
+Category	Total Effort (Days)
+Test Framework Setup & Planning	14
+Data Extraction and Test Data Identification	10
+Schema Validation Development	9
+Detailed Data Quality Validation Development	16
+Risk-Based Validation (Silver & Gold)	10
+Orchestration & Performance Checks	9
+Reporting & Dashboarding	7
+SIT Execution & Defect Management	15
+Total Estimated Effort	90 Days
