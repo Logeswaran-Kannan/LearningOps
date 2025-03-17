@@ -1,1 +1,29 @@
-=WORKDAY(A1-1, B1) + (B1 - NETWORKDAYS(A1, WORKDAY(A1-1, B1)))
+Connect to your Home Wi-Fi or use an Ethernet Cable
+
+From the Start Menu click the "LV= Remote Access Client
+
+You'll need to download the RSA app to your smart-phone-the icon should look like this in the App Store:
+
+RSA
+
+Then scan the QR code below:
+
+Jacidient INC 29091102
+
+For first time logon only enter 6 digit from the token in the box marked "Enter Pin + Tokencode"
+
+https//remote.Ivgig.co.uk -BIG-IP Edge Chen
+
+f5
+
+Secure Logon for LV-
+
+Username
+
+Enter Pin+Tokaricade
+
+Then select "yes" in the drop down. This will generate the VPN 4-digit PIN.
+
+Take a note of this 4-digit PIN. Follow the instructions on screen. Once the token on your phone has , enter the VPN 4-digit PIN followed by the 6-digit Tokencode - to create 10 digits in total.
+
+If you haven't been texted your password, you'll need to contact the LV=Service
