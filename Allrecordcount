@@ -1,1 +1,7 @@
-Have you had a chance to find the TNS details (Host, Service Name, Port) for the sys9 environment? Whenever you get a moment, could you send them over?
+Thanks, Graham. I'll give these TNS details a go and let you know how I get on.
+
+We're using this email thread to track access requests and connection details only, so if you need any additional access for an application or database, just drop it in here.
+
+I'll also set up a daily testing tracker and status email template, which will include updates on test design, execution, defects, blockers, and overall progress. Once we've wrapped up our test estimation discussion, I'll update the test tracker accordingly.
+
+Cheers!
