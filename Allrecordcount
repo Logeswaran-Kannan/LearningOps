@@ -1,2 +1,23 @@
-CREATE VOLUME catalog_name.schema_name.my_volume
-COMMENT 'Volume to store Oracle JDBC JAR file';
+# Import required libraries
+from pyspark.sql import SparkSession
+
+# Initialize Spark Session (For local testing, not required in Databricks)
+spark = SparkSession.builder.appName("OracleDB_Connection").getOrCreate()
+
+# Set Oracle JDBC Connection Properties
+jdbc_url = "jdbc:oracle:thin:@//your_host:your_port/your_service_name"
+
+connection_properties = {
+    "user": "your_username",
+    "password": "your_password",
+    "driver": "oracle.jdbc.OracleDriver"
+}
+
+# SQL query to fetch table names from Oracle database
+query = "(SELECT table_name FROM all_tables WHERE owner = 'YOUR_SCHEMA') AS table_list"
+
+# Read table list into a DataFrame
+df_tables = spark.read.jdbc(url=jdbc_url, table=query, properties=connection_properties)
+
+# Show the table list
+df_tables.show(truncate=False)
