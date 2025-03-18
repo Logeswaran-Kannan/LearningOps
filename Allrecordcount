@@ -1,9 +1,2 @@
-Thanks, Graham. I’ll give it a go with these TNS details and let you know how I get on.
-
-Just a heads-up – we’re using this email thread to track access requests and connection details only. If anyone needs access to any other applications or databases, please drop them in here so we can keep everything in one place.
-
-I’ll also set up a daily testing tracker and status email template, which will cover daily progress on test design, execution, defects, blockers, and updates. After our test estimation session, I’ll update the test tracker accordingly.
-
-Regarding the table list, now that we have Oracle DB access, could you compare the list against the database and highlight any missing tables? That way, we can confirm with Graham and Simon.
-
-Cheers!
+CREATE VOLUME catalog_name.schema_name.my_volume
+COMMENT 'Volume to store Oracle JDBC JAR file';
