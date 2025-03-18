@@ -1,7 +1,9 @@
-Thanks, Graham. I'll give these TNS details a go and let you know how I get on.
+Thanks, Graham. I’ll give it a go with these TNS details and let you know how I get on.
 
-We're using this email thread to track access requests and connection details only, so if you need any additional access for an application or database, just drop it in here.
+Just a heads-up – we’re using this email thread to track access requests and connection details only. If anyone needs access to any other applications or databases, please drop them in here so we can keep everything in one place.
 
-I'll also set up a daily testing tracker and status email template, which will include updates on test design, execution, defects, blockers, and overall progress. Once we've wrapped up our test estimation discussion, I'll update the test tracker accordingly.
+I’ll also set up a daily testing tracker and status email template, which will cover daily progress on test design, execution, defects, blockers, and updates. After our test estimation session, I’ll update the test tracker accordingly.
+
+Regarding the table list, now that we have Oracle DB access, could you compare the list against the database and highlight any missing tables? That way, we can confirm with Graham and Simon.
 
 Cheers!
