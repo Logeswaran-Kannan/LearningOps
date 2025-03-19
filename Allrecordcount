@@ -1,23 +1,5 @@
-# Import required libraries
-from pyspark.sql import SparkSession
+I'm working on implementing the CI/CD for the SIT framework that deploys workflows in Databricks, and I need repo access in Azure DevOps to get started. At the moment, my role as a stakeholder doesn’t allow me to view repos, so I’m looking for Data Engineer role access to be able to copy the branch to a local repo and make changes on top of it.
 
-# Initialize Spark Session (For local testing, not required in Databricks)
-spark = SparkSession.builder.appName("OracleDB_Connection").getOrCreate()
+Also, I’d need access to the main branch and pipeline details to understand the existing setup. Is there any document or Confluence page that outlines the do’s and don’ts of the current process? Would be great to have a reference before making any changes.
 
-# Set Oracle JDBC Connection Properties
-jdbc_url = "jdbc:oracle:thin:@//your_host:your_port/your_service_name"
-
-connection_properties = {
-    "user": "your_username",
-    "password": "your_password",
-    "driver": "oracle.jdbc.OracleDriver"
-}
-
-# SQL query to fetch table names from Oracle database
-query = "(SELECT table_name FROM all_tables WHERE owner = 'YOUR_SCHEMA') AS table_list"
-
-# Read table list into a DataFrame
-df_tables = spark.read.jdbc(url=jdbc_url, table=query, properties=connection_properties)
-
-# Show the table list
-df_tables.show(truncate=False)
+Let me know when you get a chance. Appreciate your help! 😊
