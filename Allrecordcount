@@ -1,1 +1,3 @@
-dbfs:/Workspace/Repos/ODS_SIT_AUTOMATION_POC/UKS_SIT_DW_E2E/REFERENCE_FILE/table_list.csv
+Thanks! I feel it's a bit too early to start adding the automation framework details to Confluence, especially with so many unknowns at this stage. Let's focus on completing the POC first so we can get a clear view of the end-to-end flow, limitations, mitigations, operational challenges, fail-safes, access restrictions, and performance benchmarks—that’s why I’ve been holding off for now. But having a base version in place is absolutely fine.
+
+By the way, did you get a chance to cross-check the list Hazel provided against Oracle and compare it with the one Simon shared?
