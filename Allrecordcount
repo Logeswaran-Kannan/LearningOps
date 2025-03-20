@@ -1,71 +1,43 @@
-import json
-from databricks_api import DatabricksAPI
 from pyspark.sql import SparkSession
 
 # Initialize Spark Session
 spark = SparkSession.builder.appName("CreateDatabricksJob").getOrCreate()
 
-# Databricks workspace URL (Modify as needed)
-DATABRICKS_INSTANCE = "https://<your-databricks-instance>"
+# Define job name
+job_name = "UKS_SIT_DW_E2E_Deployment"
 
-# Initialize Databricks API
-db = DatabricksAPI(DATABRICKS_INSTANCE)
-
-# Define Job Configuration
-job_config = {
-    "name": "UKS_SIT_DW_E2E_Deployment",
-    "tasks": [
-        {
-            "task_key": "ValidationTask",
-            "notebook_task": {
-                "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL"
-            },
-            "new_cluster": {
-                "spark_version": "12.2.x-scala2.12",
-                "node_type_id": "Standard_DS3_v2",
-                "num_workers": 2
-            }
+# Define the task list (Validation Task and DLT Pipeline Task)
+tasks = [
+    {
+        "task_key": "ValidationTask",
+        "notebook_task": {
+            "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL"
         },
-        {
-            "task_key": "DLT_PIPELINE",
-            "notebook_task": {
-                "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/DLT_REFRESH_PIPELINE"
-            },
-            "depends_on": [
-                {
-                    "task_key": "ValidationTask"
-                }
-            ],
-            "new_cluster": {
-                "spark_version": "12.2.x-scala2.12",
-                "node_type_id": "Standard_DS3_v2",
-                "num_workers": 2
-            }
+        "new_cluster": {
+            "spark_version": "12.2.x-scala2.12",
+            "node_type_id": "Standard_DS3_v2",
+            "num_workers": 2
         }
-    ]
-}
+    },
+    {
+        "task_key": "DLT_PIPELINE",
+        "notebook_task": {
+            "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/DLT_REFRESH_PIPELINE"
+        },
+        "depends_on": [
+            {
+                "task_key": "ValidationTask"
+            }
+        ],
+        "new_cluster": {
+            "spark_version": "12.2.x-scala2.12",
+            "node_type_id": "Standard_DS3_v2",
+            "num_workers": 2
+        }
+    }
+]
 
-# Convert config to JSON
-job_payload = json.dumps(job_config)
+# Create the Job in Databricks
+dbutils.notebook.run("/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/Create_Job_Helper", timeout_seconds=0, arguments={"job_name": job_name, "tasks": tasks})
 
-# Create or update the job
-try:
-    existing_jobs = db.jobs.list_jobs()
-    job_id = None
-
-    # Check if the job already exists
-    for job in existing_jobs['jobs']:
-        if job['settings']['name'] == "UKS_SIT_DW_E2E_Deployment":
-            job_id = job['job_id']
-            break
-
-    if job_id:
-        print(f"Updating existing job: {job_id}")
-        db.jobs.reset_job(job_id, job_config)
-    else:
-        print("Creating a new job...")
-        db.jobs.create_job(job_config)
-    
-    print("Job deployment successful!")
-except Exception as e:
-    print(f"Error deploying job: {e}")
+print("Job Created Successfully!")
