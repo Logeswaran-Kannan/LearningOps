@@ -1,43 +1,35 @@
-from pyspark.sql import SparkSession
-
-# Initialize Spark Session
-spark = SparkSession.builder.appName("CreateDatabricksJob").getOrCreate()
+import json
+import time
 
 # Define job name
 job_name = "UKS_SIT_DW_E2E_Deployment"
 
-# Define the task list (Validation Task and DLT Pipeline Task)
+# Define tasks list (Validation Task and DLT Pipeline Task)
 tasks = [
     {
         "task_key": "ValidationTask",
-        "notebook_task": {
-            "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL"
-        },
-        "new_cluster": {
-            "spark_version": "12.2.x-scala2.12",
-            "node_type_id": "Standard_DS3_v2",
-            "num_workers": 2
-        }
+        "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL"
     },
     {
         "task_key": "DLT_PIPELINE",
-        "notebook_task": {
-            "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/DLT_REFRESH_PIPELINE"
-        },
-        "depends_on": [
-            {
-                "task_key": "ValidationTask"
-            }
-        ],
-        "new_cluster": {
-            "spark_version": "12.2.x-scala2.12",
-            "node_type_id": "Standard_DS3_v2",
-            "num_workers": 2
-        }
+        "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/DLT_REFRESH_PIPELINE",
+        "depends_on": ["ValidationTask"]
     }
 ]
 
-# Create the Job in Databricks
-dbutils.notebook.run("/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/Create_Job_Helper", timeout_seconds=0, arguments={"job_name": job_name, "tasks": tasks})
+# Function to run a notebook
+def run_notebook(notebook_path):
+    try:
+        print(f"Starting notebook: {notebook_path}")
+        result = dbutils.notebook.run(notebook_path, timeout_seconds=0)
+        print(f"Completed notebook: {notebook_path} - Result: {result}")
+    except Exception as e:
+        print(f"Error running {notebook_path}: {str(e)}")
 
-print("Job Created Successfully!")
+# Run validation task
+run_notebook(tasks[0]["notebook_path"])
+
+# Run DLT task after validation
+if "depends_on" in tasks[1] and tasks[1]["depends_on"][0] == "ValidationTask":
+    time.sleep(5)  # Small delay to ensure previous task finishes
+    run_notebook(tasks[1]["notebook_path"])
