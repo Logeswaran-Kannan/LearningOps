@@ -1,35 +1,97 @@
+import requests
 import json
-import time
+
+# Databricks workspace URL
+DATABRICKS_INSTANCE = "https://<your-databricks-instance>"
+
+# Databricks Personal Access Token (Replace with a secret if possible)
+TOKEN = "<your-personal-access-token>"
+
+# Headers for authentication
+HEADERS = {
+    "Authorization": f"Bearer {TOKEN}",
+    "Content-Type": "application/json"
+}
 
 # Define job name
-job_name = "UKS_SIT_DW_E2E_Deployment"
+JOB_NAME = "UKS_SIT_DW_E2E_Deployment"
 
-# Define tasks list (Validation Task and DLT Pipeline Task)
-tasks = [
-    {
-        "task_key": "ValidationTask",
-        "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL"
-    },
-    {
-        "task_key": "DLT_PIPELINE",
-        "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/DLT_REFRESH_PIPELINE",
-        "depends_on": ["ValidationTask"]
-    }
-]
+# Define the workflow tasks (Validation Task and DLT Pipeline Task)
+job_payload = {
+    "name": JOB_NAME,
+    "tasks": [
+        {
+            "task_key": "ValidationTask",
+            "notebook_task": {
+                "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL"
+            },
+            "new_cluster": {
+                "spark_version": "12.2.x-scala2.12",
+                "node_type_id": "Standard_DS3_v2",
+                "num_workers": 2
+            }
+        },
+        {
+            "task_key": "DLT_PIPELINE",
+            "notebook_task": {
+                "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/DLT_REFRESH_PIPELINE"
+            },
+            "depends_on": [
+                {
+                    "task_key": "ValidationTask"
+                }
+            ],
+            "new_cluster": {
+                "spark_version": "12.2.x-scala2.12",
+                "node_type_id": "Standard_DS3_v2",
+                "num_workers": 2
+            }
+        }
+    ]
+}
 
-# Function to run a notebook
-def run_notebook(notebook_path):
-    try:
-        print(f"Starting notebook: {notebook_path}")
-        result = dbutils.notebook.run(notebook_path, timeout_seconds=0)
-        print(f"Completed notebook: {notebook_path} - Result: {result}")
-    except Exception as e:
-        print(f"Error running {notebook_path}: {str(e)}")
+# Function to check if the job already exists
+def get_existing_jobs():
+    url = f"{DATABRICKS_INSTANCE}/api/2.1/jobs/list"
+    response = requests.get(url, headers=HEADERS)
+    if response.status_code == 200:
+        return response.json().get("jobs", [])
+    else:
+        print(f"Error fetching jobs: {response.text}")
+        return []
 
-# Run validation task
-run_notebook(tasks[0]["notebook_path"])
+# Check if job already exists
+existing_jobs = get_existing_jobs()
+job_id = None
 
-# Run DLT task after validation
-if "depends_on" in tasks[1] and tasks[1]["depends_on"][0] == "ValidationTask":
-    time.sleep(5)  # Small delay to ensure previous task finishes
-    run_notebook(tasks[1]["notebook_path"])
+for job in existing_jobs:
+    if job["settings"]["name"] == JOB_NAME:
+        job_id = job["job_id"]
+        break
+
+# Function to create a new job
+def create_job():
+    url = f"{DATABRICKS_INSTANCE}/api/2.1/jobs/create"
+    response = requests.post(url, headers=HEADERS, data=json.dumps(job_payload))
+    if response.status_code == 200:
+        print(f"Job '{JOB_NAME}' created successfully.")
+    else:
+        print(f"Error creating job: {response.text}")
+
+# Function to update an existing job
+def update_job(job_id):
+    url = f"{DATABRICKS_INSTANCE}/api/2.1/jobs/reset"
+    update_payload = {"job_id": job_id, "new_settings": job_payload}
+    response = requests.post(url, headers=HEADERS, data=json.dumps(update_payload))
+    if response.status_code == 200:
+        print(f"Job '{JOB_NAME}' updated successfully.")
+    else:
+        print(f"Error updating job: {response.text}")
+
+# Create or update job
+if job_id:
+    print(f"Updating existing job (ID: {job_id})...")
+    update_job(job_id)
+else:
+    print(f"Creating a new job...")
+    create_job()
