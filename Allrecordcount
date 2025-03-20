@@ -1,51 +1,81 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 # Define workflow name
 workflow_name = "UKS_SIT_DW_E2E_Workflow"
 
-# Define tasks (ODS Validation and DLT Pipeline)
-tasks = [
-    {
-        "task_key": "ValidationTask",
-        "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL"
+# Define tasks with dependencies and job cluster configuration
+tasks = {
+    "ValidationTask": {
+        "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/ODS_BRONZE_VALIDATION_ESSENTIAL",
+        "depends_on": [],
+        "cluster_config": {
+            "num_workers": 2,
+            "spark_version": "13.3.x-scala2.12",
+            "node_type_id": "Standard_DS3_v2"
+        }
     },
-    {
-        "task_key": "DLT_PIPELINE",
+    "DLT_PIPELINE": {
         "notebook_path": "/Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/UKS_SIT_DW_E2E/DLT_REFRESH_PIPELINE",
-        "depends_on": ["ValidationTask"]
+        "depends_on": ["ValidationTask"],
+        "cluster_config": {
+            "num_workers": 2,
+            "spark_version": "13.3.x-scala2.12",
+            "node_type_id": "Standard_DS3_v2"
+        }
     }
-]
+}
 
-# Function to run a notebook task
-def run_notebook(task):
+# Function to run a notebook task on a job cluster
+def run_notebook_on_cluster(task_key):
+    task = tasks[task_key]
     notebook_path = task["notebook_path"]
+    
+    # Define cluster configuration
+    cluster_settings = task["cluster_config"]
+
     try:
-        print(f"Starting task: {task['task_key']} ({notebook_path})")
-        result = dbutils.notebook.run(notebook_path, timeout_seconds=0)
-        print(f"Completed: {task['task_key']} - Result: {result}")
+        print(f"🚀 [{task_key}] Starting execution on a job cluster...")
+
+        # Launch notebook with a new job cluster
+        result = dbutils.notebook.run(
+            notebook_path, 
+            timeout_seconds=0, 
+            arguments={
+                "num_workers": cluster_settings["num_workers"],
+                "spark_version": cluster_settings["spark_version"],
+                "node_type_id": cluster_settings["node_type_id"]
+            }
+        )
+
+        print(f"✅ [{task_key}] Completed successfully - Result: {result}")
+        return True
     except Exception as e:
-        print(f"Error running {task['task_key']}: {str(e)}")
+        print(f"❌ [{task_key}] Failed: {str(e)}")
+        return False
 
-# Function to create or modify the workflow
+# Function to execute workflow with dependency management
 def execute_workflow():
-    print(f"Executing Workflow: {workflow_name}")
+    print(f"🚀 Executing Workflow: {workflow_name}")
 
-    # Track executed tasks
     executed_tasks = {}
 
-    for task in tasks:
-        # Check dependencies
-        if "depends_on" in task:
-            parent_task = task["depends_on"][0]
-            while parent_task not in executed_tasks:
-                print(f"Waiting for {parent_task} to complete...")
-                time.sleep(5)  # Wait for the parent task to complete
-
-        # Run the notebook task
-        run_notebook(task)
-        executed_tasks[task["task_key"]] = True  # Mark task as completed
-
-    print(f"Workflow Execution Completed: {workflow_name}")
+    while len(executed_tasks) < len(tasks):
+        for task_key, task_info in tasks.items():
+            # If task is already executed, skip it
+            if task_key in executed_tasks:
+                continue
+            
+            # Check if dependencies are met
+            if all(dep in executed_tasks for dep in task_info["depends_on"]):
+                # Run task on a job cluster and mark as executed
+                if run_notebook_on_cluster(task_key):
+                    executed_tasks[task_key] = True
+                else:
+                    print(f"❌ Workflow Stopped due to failure in {task_key}")
+                    return
+    
+    print(f"✅ Workflow Execution Completed: {workflow_name}")
 
 # Run the workflow
 execute_workflow()
