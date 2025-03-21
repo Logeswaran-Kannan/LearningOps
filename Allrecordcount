@@ -1,27 +1,11 @@
-Why is Access Required for Both S3 Console and Event Hub Access for Testing?
-1️⃣ Amazon S3 Console Access
-Why Required?
+Ensures Data Consistency – Direct access to the PostgreSQL read replica allows testers to validate that ingested data matches source system records without affecting the live production database.
 
-Enables batch data testing by allowing testers to inspect, validate, and manage files stored in S3.
-Needed for manual verification of test data ingestion, format, and schema validation.
-Required to re-upload or adjust test datasets if needed.
-Supports troubleshooting by checking logs, file integrity, and access permissions.
-Testing Scope with S3 Console:
+Supports Complex Queries – Testing requires running complex validation queries on large datasets, which is more efficient on a read replica than on real-time streaming or batch-processed data.
 
-Batch data ingestion validation.
-Ensuring correct file format, schema, and completeness.
-Manually uploading test datasets for different scenarios.
-Checking access controls and permissions.
-2️⃣ Event Hub Access
-Why Required?
+Facilitates Historical Data Validation – The read replica maintains historical data, enabling testers to verify transformations, aggregations, and business logic across different time periods.
 
-Real-time data validation is crucial for SIT automation.
-Ensures streaming data pipelines are functioning correctly.
-Helps in debugging failures in event-driven processing.
-Required for tracking message delivery to Delta Lake for SIT validation.
-Testing Scope with Event Hub:
+Reduces Performance Impact – By using the read replica instead of the primary database, testing activities do not interfere with production workloads, ensuring stability.
 
-Monitoring streaming data ingestion and real-time processing.
-Ensuring event-driven messages reach downstream systems correctly.
-Debugging issues like message loss, delays, or incorrect transformations.
-Verifying event schema correctness and format.
+Enables Schema and Data Integrity Checks – Direct access allows testers to confirm schema consistency, column-level data integrity, and key constraints for accurate downstream processing.
+
+Would you like a more detailed breakdown or a Jira ticket request for this? 🚀
