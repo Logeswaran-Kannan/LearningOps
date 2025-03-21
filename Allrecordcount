@@ -1,83 +1,27 @@
-. Automated Framework POC
-Description:
-Create a Proof of Concept (POC) for an automated SIT testing framework.
-The POC should cover:
+Why is Access Required for Both S3 Console and Event Hub Access for Testing?
+1️⃣ Amazon S3 Console Access
+Why Required?
 
-Understanding the current data flow across systems.
-Integration with data sources (e.g., Policy Center, Billing Center, Claim Center).
-Designing the framework model script.
-Implementing validation processes.
-Creating dashboards for reporting.
-Integrating Jira for defect and task tracking.
-Definition of Done (DoD):
+Enables batch data testing by allowing testers to inspect, validate, and manage files stored in S3.
+Needed for manual verification of test data ingestion, format, and schema validation.
+Required to re-upload or adjust test datasets if needed.
+Supports troubleshooting by checking logs, file integrity, and access permissions.
+Testing Scope with S3 Console:
 
-POC is implemented and demonstrated to the project team.
-Feedback is incorporated.
-Sign-off is received from stakeholders.
-✅ 2. Automation Test Plan
-Description:
-Develop the Automation Test Plan based on the completed POC.
-Key activities:
+Batch data ingestion validation.
+Ensuring correct file format, schema, and completeness.
+Manually uploading test datasets for different scenarios.
+Checking access controls and permissions.
+2️⃣ Event Hub Access
+Why Required?
 
-Define the automation strategy and scope.
-Identify tools, frameworks, and test data approaches.
-Document the test plan in Confluence for collaboration and approvals.
-Definition of Done (DoD):
+Real-time data validation is crucial for SIT automation.
+Ensures streaming data pipelines are functioning correctly.
+Helps in debugging failures in event-driven processing.
+Required for tracking message delivery to Delta Lake for SIT validation.
+Testing Scope with Event Hub:
 
-Test Plan documented in Confluence.
-Reviewed and signed off by stakeholders.
-✅ 3. In-Scope Table Identification for Data Validation
-Description:
-Identify and document all tables that are in-scope for SIT automated validation. This includes:
-
-Source
-ODS
-ODS_VIEW
-SILVER
-GOLD
-Outbound feed
-Cover all key systems: Policy Center, Billing Center, Claim Center, and related reference tables.
-
-Definition of Done (DoD):
-
-List of in-scope tables reviewed and signed off.
-Shared in Confluence or designated tracking sheet.
-✅ 4. Test Coverage Identification for Automated SIT Validation
-Description:
-Define the coverage matrix for SIT data validation automation. Activities include:
-
-Sample script creation for each validation type.
-Cover data anomalies (e.g., NULLs, duplicates, counts).
-Define rules and logic per validation type.
-Definition of Done (DoD):
-
-Test coverage matrix approved.
-Sample scripts executed successfully with expected results.
-Scripts reviewed and reusable for broader validation.
-✅ 5. Test Environment Setup
-Description:
-Document and configure the test environment, including:
-
-Source database details for all systems.
-Read replica details.
-Table-level metadata (names, schemas).
-S3 source paths.
-Access credentials and connection configuration.
-Definition of Done (DoD):
-
-All environment details documented and validated.
-Access to all required environments is confirmed.
-✅ 6. Test Data Availability
-Description:
-Ensure test data is available in all environments:
-
-On-premises DB
-Read Replica
-S3 source
-Activities include identifying required data sets, loading or syncing them, and validating their readiness for automated testing.
-
-Definition of Done (DoD):
-
-Required test data is available in each test environment.
-Data validation checks passed (record counts, sample spot checks).
-Ready for test execution.
+Monitoring streaming data ingestion and real-time processing.
+Ensuring event-driven messages reach downstream systems correctly.
+Debugging issues like message loss, delays, or incorrect transformations.
+Verifying event schema correctness and format.
