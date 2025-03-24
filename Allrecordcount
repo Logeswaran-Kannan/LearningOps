@@ -1,3 +1,4 @@
 - script: |
-    databricks workspace import-dir --overwrite "$(Pipeline.Workspace)/DatabricksNotebooks/notebooks" /Workspace/Repos/ODS_SIT_AUTOMATION_POC/notebooks/
-  displayName: 'Deploy Notebooks to Databricks'
+    echo "Creating Databricks Workflow for Dev"
+    databricks jobs create --json-file workflows/dev_workflow.json
+  displayName: "Create Dev Workflow"
