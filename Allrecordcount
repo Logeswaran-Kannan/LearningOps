@@ -3,13 +3,12 @@
 # Step 1: Imports
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from pyspark.sql.types import StringType
 import requests
 import json
 
 # COMMAND ----------
 
-# Step 2: Read latest data per test case
+# Step 2: Read latest test data for each test_case_detail
 df = spark.table("core_tst_sys9.dashboard_data_migration_results")
 
 latest_df = df.withColumn(
@@ -72,11 +71,10 @@ def create_jira_test(row):
 
 # COMMAND ----------
 
-# Step 5: Run Jira creation (collect to driver)
-rows = latest_df.collect()
+# Step 5: Stream-safe iteration with toLocalIterator()
 final_rows = []
 
-for row in rows:
+for row in latest_df.toLocalIterator():
     jira_key = create_jira_test(row)
     row_dict = row.asDict()
     row_dict["TC_JIRA_ID"] = jira_key
@@ -84,11 +82,11 @@ for row in rows:
 
 # COMMAND ----------
 
-# Step 6: Save as new table
+# Step 6: Save to new Delta table
 final_df = spark.createDataFrame(final_rows)
 final_df.write.format("delta").mode("overwrite").saveAsTable("core_tst_sys9.dashboard_data_migration_results_with_jira")
 
 # COMMAND ----------
 
-# Done ✅
+# Done ✅ Show results
 display(final_df.select("table_name", "test_case_detail", "TC_JIRA_ID"))
