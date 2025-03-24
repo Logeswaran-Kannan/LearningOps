@@ -1,48 +1,64 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, row_number
-from pyspark.sql.window import Window
+from pyspark.sql import functions as F
 import requests
 import json
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("JiraXrayTestCaseCreator").getOrCreate()
-
-# Read the table
+# Step 1: Load table
 df = spark.table("core_tst_sys9.dashboard_data_migration_results")
 
-# Window spec to get latest run_id per test case
-df_latest = df.withColumn("row_num", row_number().over(
-    Window.partitionBy("test_case_detail").orderBy(col("run_id").desc())
-)).filter(col("row_num") == 1).drop("row_num")
+# Step 2: Get latest run_id for each test_case_detail
+latest_df = df.withColumn(
+    "row_number", 
+    F.row_number().over(
+        Window.partitionBy("test_case_detail").orderBy(F.desc("run_id"))
+    )
+).filter("row_number = 1").drop("row_number")
 
-# Jira API setup
-jira_url = "https://your-jira-instance.atlassian.net/rest/api/2/issue"
-jira_auth = ("your-email@example.com", "your-api-token")
+# Step 3: Define JIRA variables
+jira_url = "https://your-domain.atlassian.net/rest/api/3/issue"
+jira_auth = ("your-email@example.com", "your-api-token")  # Replace with your JIRA credentials
 jira_headers = {
     "Content-Type": "application/json"
 }
 
-# Loop through each row and create Jira test case
-for row in df_latest.collect():
-    fields_description = "".join([
-        f"| {field.name} | {getattr(row, field.name)} |\n"
-        for field in df_latest.schema.fields
-    ])
+# Function to convert each row into a JIRA test case
+def create_jira_test(row):
+    description_table = "| Field | Value |\n|---|---|\n"
+    for field in row.asDict():
+        if field != "test_case_detail":
+            description_table += f"| {field} | {row[field]} |\n"
 
     payload = {
         "fields": {
             "project": {"key": "BICOE"},
-            "summary": f"{row.test_case_detail} contact with \"Automated test validation source against ODS\"",
-            "description": f"|| Field || Value ||\n{fields_description}",
+            "summary": f"{row['test_case_detail']} - Automated test validation source against ODS",
             "issuetype": {"name": "Test"},
             "labels": ["AUTOMATED-SIT"],
-            "customfield_XXXXX": {"value": "Automated_SIT"},  # Replace XXXXX with field ID for Test Type
-            "customfield_YYYYY": "Automated_SIT",  # Replace YYYYY with field ID for Test Repository Path
-            "customfield_ZZZZZ": [
-                {"key": "BICOE-7799"}  # Replace ZZZZZ with field ID for Test Plans
-            ]
+            "description": description_table,
+            "customfield_12345": {"value": "Automated_SIT"},  # Replace customfield_12345 with actual field ID for Test Type
+            "customfield_67890": "Automated_SIT",             # Replace customfield_67890 with actual field ID for Test Repository Path
+            "customfield_testplan": [{"key": "BICOE-7799"}]   # Replace customfield_testplan with actual field ID for test plans
         }
     }
 
-    response = requests.post(jira_url, headers=jira_headers, auth=jira_auth, data=json.dumps(payload))
-    print(f"Created: {response.status_code}, Response: {response.text}")
+    response = requests.post(jira_url, headers=jira_headers, auth=jira_auth, json=payload)
+    if response.status_code == 201:
+        return response.json().get("key")
+    else:
+        print(f"Failed to create JIRA issue for {row['test_case_detail']}: {response.text}")
+        return None
+
+# Step 4: Apply JIRA creation per row
+from pyspark.sql.types import StringType
+from pyspark.sql.functions import pandas_udf
+import pandas as pd
+
+@pandas_udf(StringType())
+def get_tc_jira_id_udf(*cols):
+    df = pd.concat(cols, axis=1)
+    df.columns = latest_df.columns
+    return df.apply(lambda row: create_jira_test(row), axis=1)
+
+latest_with_jira = latest_df.withColumn("TC_JIRA_ID", get_tc_jira_id_udf(*[F.col(c) for c in latest_df.columns]))
+
+# Step 5: Save to new table
+latest_with_jira.write.mode("overwrite").saveAsTable("core_tst_sys9.dashboard_data_migration_with_tc_id")
