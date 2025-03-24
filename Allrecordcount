@@ -1,92 +1,13 @@
-# COMMAND ----------
+columns_to_keep = [
+    "run_id", "table_name", "src_database", "tgt_database",
+    "src_vs_tgt_missing_columns", "tgt_vs_src_missing_columns",
+    "src_count", "tgt_count", "src_duplicate_count", "tgt_duplicate_count",
+    "src_vs_tgt_data_mismatch_count", "status", "test_case_detail"
+]
 
-# Step 1: Imports
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-import requests
-import json
-
-# COMMAND ----------
-
-# Step 2: Read latest test data for each test_case_detail
-df = spark.table("core_tst_sys9.dashboard_data_migration_results")
-
-latest_df = df.withColumn(
+latest_df_simple = df.select(*columns_to_keep).withColumn(
     "rn",
     F.row_number().over(
         Window.partitionBy("table_name", "test_case_detail").orderBy(F.desc("run_id"))
     )
 ).filter("rn = 1").drop("rn")
-
-# COMMAND ----------
-
-# Step 3: Jira connection details
-JIRA_URL = "https://yourcompany.atlassian.net/rest/api/2/issue"
-JIRA_AUTH = ("your_email@company.com", "your_api_token")  # Use Databricks secrets in production!
-HEADERS = {"Content-Type": "application/json"}
-
-# Custom field IDs (replace with real ones from Jira)
-FIELD_TEST_TYPE = "customfield_12345"
-FIELD_REPO_PATH = "customfield_67890"
-FIELD_TEST_PLAN = "customfield_13579"
-
-# COMMAND ----------
-
-# Step 4: Helper functions
-def format_description(row):
-    desc = "<table><tr><th>Field</th><th>Value</th></tr>"
-    for field, value in row.asDict().items():
-        safe_val = str(value).replace("<", "&lt;").replace(">", "&gt;")
-        desc += f"<tr><td>{field}</td><td>{safe_val}</td></tr>"
-    desc += "</table>"
-    return desc
-
-def create_jira_test(row):
-    summary = f"{row['test_case_detail']} contact with Automated test validation source against ODS"
-    description = format_description(row)
-    
-    payload = {
-        "fields": {
-            "project": {"key": "BICOE"},
-            "summary": summary,
-            "issuetype": {"name": "Test"},
-            "labels": ["AUTOMATED-SIT"],
-            "description": description,
-            FIELD_TEST_TYPE: "Automated_SIT",
-            FIELD_REPO_PATH: "Automated_SIT",
-            FIELD_TEST_PLAN: [{"key": "BICOE-7799"}]
-        }
-    }
-
-    try:
-        response = requests.post(JIRA_URL, headers=HEADERS, auth=JIRA_AUTH, data=json.dumps(payload))
-        if response.status_code == 201:
-            return response.json().get("key")
-        else:
-            print(f"[ERROR] Jira failed for {row['test_case_detail']} | Status: {response.status_code} | Body: {response.text}")
-            return None
-    except Exception as e:
-        print(f"[EXCEPTION] Jira call failed: {e}")
-        return None
-
-# COMMAND ----------
-
-# Step 5: Stream-safe iteration with toLocalIterator()
-final_rows = []
-
-for row in latest_df.toLocalIterator():
-    jira_key = create_jira_test(row)
-    row_dict = row.asDict()
-    row_dict["TC_JIRA_ID"] = jira_key
-    final_rows.append(row_dict)
-
-# COMMAND ----------
-
-# Step 6: Save to new Delta table
-final_df = spark.createDataFrame(final_rows)
-final_df.write.format("delta").mode("overwrite").saveAsTable("core_tst_sys9.dashboard_data_migration_results_with_jira")
-
-# COMMAND ----------
-
-# Done ✅ Show results
-display(final_df.select("table_name", "test_case_detail", "TC_JIRA_ID"))
