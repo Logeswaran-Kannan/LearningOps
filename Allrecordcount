@@ -1,4 +1,48 @@
-- script: |
-    echo "Creating Databricks Workflow for Dev"
-    databricks jobs create --json-file workflows/dev_workflow.json
-  displayName: "Create Dev Workflow"
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, row_number
+from pyspark.sql.window import Window
+import requests
+import json
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("JiraXrayTestCaseCreator").getOrCreate()
+
+# Read the table
+df = spark.table("core_tst_sys9.dashboard_data_migration_results")
+
+# Window spec to get latest run_id per test case
+df_latest = df.withColumn("row_num", row_number().over(
+    Window.partitionBy("test_case_detail").orderBy(col("run_id").desc())
+)).filter(col("row_num") == 1).drop("row_num")
+
+# Jira API setup
+jira_url = "https://your-jira-instance.atlassian.net/rest/api/2/issue"
+jira_auth = ("your-email@example.com", "your-api-token")
+jira_headers = {
+    "Content-Type": "application/json"
+}
+
+# Loop through each row and create Jira test case
+for row in df_latest.collect():
+    fields_description = "".join([
+        f"| {field.name} | {getattr(row, field.name)} |\n"
+        for field in df_latest.schema.fields
+    ])
+
+    payload = {
+        "fields": {
+            "project": {"key": "BICOE"},
+            "summary": f"{row.test_case_detail} contact with \"Automated test validation source against ODS\"",
+            "description": f"|| Field || Value ||\n{fields_description}",
+            "issuetype": {"name": "Test"},
+            "labels": ["AUTOMATED-SIT"],
+            "customfield_XXXXX": {"value": "Automated_SIT"},  # Replace XXXXX with field ID for Test Type
+            "customfield_YYYYY": "Automated_SIT",  # Replace YYYYY with field ID for Test Repository Path
+            "customfield_ZZZZZ": [
+                {"key": "BICOE-7799"}  # Replace ZZZZZ with field ID for Test Plans
+            ]
+        }
+    }
+
+    response = requests.post(jira_url, headers=jira_headers, auth=jira_auth, data=json.dumps(payload))
+    print(f"Created: {response.status_code}, Response: {response.text}")
