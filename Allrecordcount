@@ -1,13 +1,44 @@
-columns_to_keep = [
-    "run_id", "table_name", "src_database", "tgt_database",
-    "src_vs_tgt_missing_columns", "tgt_vs_src_missing_columns",
-    "src_count", "tgt_count", "src_duplicate_count", "tgt_duplicate_count",
-    "src_vs_tgt_data_mismatch_count", "status", "test_case_detail"
-]
+import requests
+from requests.auth import HTTPBasicAuth
+import json
 
-latest_df_simple = df.select(*columns_to_keep).withColumn(
-    "rn",
-    F.row_number().over(
-        Window.partitionBy("table_name", "test_case_detail").orderBy(F.desc("run_id"))
-    )
-).filter("rn = 1").drop("rn")
+# === CONFIGURATION ===
+jira_url = "https://your-domain.atlassian.net/rest/api/2/issue"
+jira_username = "your-email@example.com"
+jira_api_token = "your-api-token"  # Use API token for Atlassian cloud
+auth = HTTPBasicAuth(jira_username, jira_api_token)
+
+headers = {
+    "Content-Type": "application/json"
+}
+
+# === JIRA ISSUE PAYLOAD ===
+payload = {
+    "fields": {
+        "project": {
+            "key": "BICOE"
+        },
+        "summary": "Automated test validation source against ODS",
+        "description": "test",
+        "issuetype": {
+            "name": "Test"
+        },
+        "labels": ["AUTOMATED-SIT"],
+        
+        # Custom fields (update field IDs accordingly)
+        "customfield_10010": "Automated_SIT",  # Test_type
+        "customfield_10011": "Automated_SIT",  # Test_Repository_Path
+        "customfield_10012": ["BICOE-7799"]     # Test Plans associated
+    }
+}
+
+# === API CALL ===
+response = requests.post(jira_url, auth=auth, headers=headers, json=payload)
+
+# === RESULT HANDLING ===
+if response.status_code == 201:
+    issue_key = response.json()['key']
+    print(f"✅ Test case created successfully. Test Case ID: {issue_key}")
+else:
+    print(f"❌ Failed to create test case: {response.status_code}")
+    print(response.text)
