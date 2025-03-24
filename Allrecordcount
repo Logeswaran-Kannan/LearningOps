@@ -1,2 +1,41 @@
-Please find the latest access status request details. Based on my understanding, I have included a few additional line items.
-Kindly review and update the status if needed, and let me know if anything is missing.
+Hi [Team/Data Engineer],
+
+Based on your response regarding points 3 and 4, I'd like to schedule a walkthrough session at your available time to go through a few scenarios for better clarity.
+
+🔍 Follow-up Questions – Point 3 (CDA Databricks Connector & Testing Flow)
+Example Request:
+Can you demonstrate how the CDA Databricks connector handles change data capture (CDC) for a policy lifecycle?
+Specifically:
+
+Day 1: New Business (NB)
+
+Day 2: Mid-Term Adjustment (MTA)
+
+Day 3: Cancellation
+
+ODS vs ODS_VIEW Clarification:
+
+How are records written to ODS across each event?
+
+How does ODS_VIEW distinguish the latest record? (We understand it's via a flag/column, but would like a concrete dataset example.)
+
+S3 Read for Testing:
+
+How are daily CDA files structured and stored in S3? (e.g., partitioned by date like dt=YYYY-MM-DD)
+
+For test validation, what approach is recommended in Databricks for reading these files?
+Should we use direct spark.read or mount the bucket via /mnt/... path?
+
+Access Requirements (Testing Perspective):
+
+From a QA perspective, what specific access do we need in Databricks to read S3 Parquet files for validation?
+
+Will a mount point (/mnt/...) be created, or do we need to request access using an IAM role or access keys?
+
+🧹 Point 4 – Event Hub
+As clarified, there's no Event Hub involved in the process. We'll revise the architecture diagram accordingly and remove any reference to Event Hub from the flow.
+
+Let me know a convenient time for a quick sync or if you'd prefer to walk through this over a shared doc or notebook. Appreciate your support!
+
+Thanks,
+[Your Name]
