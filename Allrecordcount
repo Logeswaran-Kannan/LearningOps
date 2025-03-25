@@ -1,44 +1,26 @@
-1. Assumed Setup
-S3 Bucket stores CDA files partitioned by date, e.g.,
-s3://insurance-data/policyflow/dt=2025-03-21/
+import requests
+from requests.auth import HTTPBasicAuth
 
-Files follow Parquet or CSV format, named like:
-policy_header_2025-03-21.parquet, policy_transaction_2025-03-22.parquet
+# === CONFIGURATION ===
+jira_base_url = "https://your-domain.atlassian.net"
+api_url = f"{jira_base_url}/rest/api/2/project/BICOE"  # Project metadata as test
+jira_username = "your-email@example.com"
+jira_api_token = "your-api-token"
 
-CDA connector or logic reads these into Delta tables in Databricks:
+# === AUTH ===
+auth = HTTPBasicAuth(jira_username, jira_api_token)
+headers = {
+    "Accept": "application/json"
+}
 
-ods.policy_header
+# === CALL ===
+response = requests.get(api_url, headers=headers, auth=auth)
 
-ods_view.policy_header
-
-📅 2. Example: Change Data Capture for Policy Flow
-Date	Event	Policy Number	Version	Premium	Status
-Day 1	NB	POL123	V1	1000	Active
-Day 2	MTA (Endorsement)	POL123	V2	1200	Active
-Day 3	Cancellation	POL123	V3	0	Cancelled
-This data would appear in 3 rows, captured in the CDA file each day, and loaded into the ods.policy_header table.
-
-🗂️ 3. ODS vs ODS_VIEW
-ods.policy_header: All historical records.
-
-ods_view.policy_header: Same rows, but with an extra column:
-
-is_latest = true only for the latest version per policy.
-
-Policy Number	Version	Premium	Status	is_latest
-POL123	V1	1000	Active	false
-POL123	V2	1200	Active	false
-POL123	V3	0	Cancelled	true
-✅ Record count remains the same in both ODS and ODS_VIEW.
-
-🧪 4. Reading S3 Data in Databricks for Testing
-python
-Copy
-Edit
-# Test read of a specific day's file
-df_day1 = spark.read.format("parquet").load("s3://insurance-data/policyflow/dt=2025-03-21/")
-df_day1.createOrReplaceTempView("cda_day1")
-
-# Preview the data
-spark.sql("SELECT * FROM cda_day1 WHERE policy_number = 'POL123'").show()
-✅ This helps you validate the source before ingestion into Delta tables.
+# === RESULT ===
+if response.status_code == 200:
+    print("✅ Connection to Jira (and Xray) successful!")
+    print("Project name:", response.json().get("name"))
+else:
+    print("❌ Failed to connect to Jira.")
+    print("Status code:", response.status_code)
+    print("Error:", response.text)
