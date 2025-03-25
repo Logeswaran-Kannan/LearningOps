@@ -1,15 +1,1 @@
-SELECT 
-    owner,
-    table_name,
-    column_name,
-    data_type,
-    data_length,
-    data_precision,
-    data_scale,
-    nullable
-FROM 
-    all_tab_columns
-WHERE 
-    owner = 'BCR'
-ORDER BY 
-    table_name, column_id;
+Scheduling a 20-minute daily sync to align on migration testing activities. The intent is to discuss dependencies, blockers, clarifications, and the overall test setup. Please let me know if any adjustments to the timing are needed.
