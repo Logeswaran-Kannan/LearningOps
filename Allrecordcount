@@ -1,1 +1,44 @@
-just a heads-up—I’ll be on leave on April 17th,
+1. Assumed Setup
+S3 Bucket stores CDA files partitioned by date, e.g.,
+s3://insurance-data/policyflow/dt=2025-03-21/
+
+Files follow Parquet or CSV format, named like:
+policy_header_2025-03-21.parquet, policy_transaction_2025-03-22.parquet
+
+CDA connector or logic reads these into Delta tables in Databricks:
+
+ods.policy_header
+
+ods_view.policy_header
+
+📅 2. Example: Change Data Capture for Policy Flow
+Date	Event	Policy Number	Version	Premium	Status
+Day 1	NB	POL123	V1	1000	Active
+Day 2	MTA (Endorsement)	POL123	V2	1200	Active
+Day 3	Cancellation	POL123	V3	0	Cancelled
+This data would appear in 3 rows, captured in the CDA file each day, and loaded into the ods.policy_header table.
+
+🗂️ 3. ODS vs ODS_VIEW
+ods.policy_header: All historical records.
+
+ods_view.policy_header: Same rows, but with an extra column:
+
+is_latest = true only for the latest version per policy.
+
+Policy Number	Version	Premium	Status	is_latest
+POL123	V1	1000	Active	false
+POL123	V2	1200	Active	false
+POL123	V3	0	Cancelled	true
+✅ Record count remains the same in both ODS and ODS_VIEW.
+
+🧪 4. Reading S3 Data in Databricks for Testing
+python
+Copy
+Edit
+# Test read of a specific day's file
+df_day1 = spark.read.format("parquet").load("s3://insurance-data/policyflow/dt=2025-03-21/")
+df_day1.createOrReplaceTempView("cda_day1")
+
+# Preview the data
+spark.sql("SELECT * FROM cda_day1 WHERE policy_number = 'POL123'").show()
+✅ This helps you validate the source before ingestion into Delta tables.
