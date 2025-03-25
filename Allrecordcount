@@ -1,41 +1,36 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, lit, regexp_replace
+from pyspark.sql.functions import col, when, regexp_replace, expr
+from pyspark.sql import functions as F
+import re
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("TableCopyWithModifications").getOrCreate()
-
-# Source table
+# Load the data from the original table
 source_table = "core_tst_sys9.default.bcr_schema_file"
-
-# Read source table
 df = spark.table(source_table)
 
-# Filter out rows with special characters in TABLE_NAME (excluding underscores)
-df_filtered = df.filter(~col("TABLE_NAME").rlike("[^a-zA-Z0-9_]") )
+# Filter out table names containing special characters except underscore (_)
+df_filtered = df.filter(~col("TABLE_NAME").rlike("[^A-Za-z0-9_]+"))
 
-# Define modified datatype column
-df_with_mod_type = df_filtered.withColumn(
-    "MODIFIED_DATATYPE",
+# Add modified_datatype column based on logic
+
+df_transformed = df_filtered.withColumn(
+    "modified_datatype",
     when(col("DATA_TYPE") == "VARCHAR2", "STRING")
     .when(col("DATA_TYPE") == "TIMESTAMP(6)", "TIMESTAMP")
     .when(col("DATA_TYPE") == "SDO_GEOMETRY", "STRING")
-    .when(
-        (col("DATA_TYPE") == "NUMBER") & (col("DATA_PRECISION") > 0) & (col("DATA_SCALE") > 0),
-        col("DATA_TYPE") + "(" + col("DATA_PRECISION").cast("string") + "," + col("DATA_SCALE").cast("string") + ")"
-    )
+    .when((col("DATA_TYPE") == "NUMBER") & (col("DATA_PRECISION") > 0) & (col("DATA_SCALE") > 0),
+          F.concat(F.lit("DECIMAL("), col("DATA_PRECISION").cast("string"), F.lit(","), col("DATA_SCALE").cast("string"), F.lit(")")))
     .when(col("DATA_TYPE") == "NUMBER", "DOUBLE")
     .when(col("DATA_TYPE") == "CLOB", "STRING")
     .when(col("DATA_TYPE") == "CHAR", "STRING")
     .otherwise(col("DATA_TYPE"))
 )
 
-# Add IN_SCOPE column
-final_df = df_with_mod_type.withColumn("IN_SCOPE", lit(True))
+# Add IN_SCOPE column (setting it to True as default, customize as needed)
+df_transformed = df_transformed.withColumn("IN_SCOPE", F.lit(True))
 
-# Define target table name
-target_table = "core_tst_sys9.default.bcr_schema_file_modified"
+# Define the name of the target table
+target_table = "core_tst_sys9.default.bcr_schema_file_copy"
 
-# Save the new table
-final_df.write.mode("overwrite").saveAsTable(target_table)
+# Write the transformed DataFrame to the new table
+df_transformed.write.mode("overwrite").saveAsTable(target_table)
 
-print(f"Table successfully created: {target_table}")
+print(f"Table '{target_table}' created successfully with transformed data.")
