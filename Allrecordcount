@@ -1,36 +1,80 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
-import re
+from pyspark.sql.functions import col, lower, expr, when, lit
+from pyspark.sql import functions as F
 
-# === Setup ===
 catalog = "core_tst"
-schemas = ["ods", "ods_views"]
-excluded_columns = ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]
+ods_db = f"{catalog}.ods"
+ods_views_db = f"{catalog}.ods_views"
+target_table = f"{catalog}.DDL_COMPARE_TABLE"
 
-# === Output list ===
-results = []
+excluded_columns = ['AZURE_LOAD_DATE', 'DWH_FROM_DATE', 'DWH_UNTIL_DATE', 'ENT_FLAG']
+inscope_tables = ["list", "of", "in-scope", "tables"]  # replace with your actual list
 
-# === Helper function ===
-def check_table_for_sys9(schema, table_name):
-    try:
-        full_table_name = f"{catalog}.{schema}.{table_name}"
-        df = spark.read.table(full_table_name)
-        for column in df.columns:
-            if column.upper() not in excluded_columns:
-                if df.schema[column].dataType.simpleString() in ['string', 'varchar']:
-                    match_df = df.filter(col(column).contains("_sys9_")).select(column).limit(1)
-                    if match_df.count() > 0:
-                        value = match_df.collect()[0][0]
-                        results.append((schema, table_name, column, value))
-    except Exception as e:
-        print(f"⚠️ Skipped {schema}.{table_name} due to error: {str(e)}")
 
-# === Loop through schemas and tables ===
-for schema in schemas:
-    tables = spark.catalog.listTables(f"{catalog}.{schema}")
-    for table in tables:
-        check_table_for_sys9(schema, table.name)
+# Helper to fetch and filter metadata
+def get_column_metadata(db_name):
+    return (spark.table("system.information_schema.columns")
+            .filter((col("table_catalog") == catalog) & (col("table_schema") == db_name.split(".")[1]))
+            .filter(col("column_name").contains("_sys9_"))
+            .filter(~col("column_name").isin(*excluded_columns))
+            .filter(col("table_name").isin(*inscope_tables))
+            .selectExpr(
+                "table_name",
+                "column_name",
+                "data_type",
+                f"'{db_name.split('.')[1]}' as db"
+            ))
 
-# === Display results ===
-result_df = spark.createDataFrame(results, ["schema", "table", "column", "sample_value"])
-display(result_df)
+ods_cols = get_column_metadata(ods_db).withColumnRenamed("table_name", "ods_table")
+ods_views_cols = get_column_metadata(ods_views_db).withColumnRenamed("table_name", "ods_view_table")
+
+# Optimize performance
+ods_cols.cache()
+ods_views_cols.cache()
+
+
+# Clean/edited table names
+ods_cols = ods_cols.withColumn("ods_table_edit", expr("regexp_replace(ods_table, 'billingcentre_sys9_', '')"))
+ods_views_cols = ods_views_cols.withColumn("ods_view_table_edit", expr("regexp_replace(ods_view_table, 'billingcentre_sys9_current_', '')"))
+
+
+# Join on cleaned table names
+joined_tables = ods_cols.join(
+    ods_views_cols,
+    ods_cols.ods_table_edit == ods_views_cols.ods_view_table_edit,
+    how="full_outer"
+).withColumn("compare_table_name", when(
+    col("ods_table_edit").isNull(), "Missing in ODS"
+).when(
+    col("ods_view_table_edit").isNull(), "Missing in ODS_VIEW"
+).when(
+    col("ods_table_edit") == col("ods_view_table_edit"), "Match"
+).otherwise("Mismatch"))
+
+# Compare column names
+joined_tables = joined_tables.withColumn("compare_column_name", when(
+    col("column_name") == col("column_name"), "Pass"  # Use better logic if needed
+).otherwise("Mismatch"))
+
+# Compare data types
+joined_tables = joined_tables.withColumn("compare_data_type", when(
+    col("data_type") == col("data_type"), "Match"
+).otherwise("Mismatch"))
+
+
+final_result = joined_tables.select(
+    "ods_table", "column_name", "data_type",
+    "ods_view_table", "column_name", "data_type",
+    "ods_table_edit", "ods_view_table_edit",
+    "compare_table_name", "compare_column_name", "compare_data_type"
+).withColumnRenamed("column_name", "ods_column") \
+ .withColumnRenamed("data_type", "ods_data_type") \
+ .withColumnRenamed("column_name", "ods_view_column") \
+ .withColumnRenamed("data_type", "ods_view_data_type")
+
+# Write to target table
+(final_result
+ .repartition(1)  # Optional: reduce file fragmentation
+ .write
+ .mode("overwrite")
+ .format("delta")
+ .saveAsTable(target_table))
