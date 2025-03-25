@@ -1,1 +1,15 @@
-The ultimate goal for sign-off is to obtain the final list of tables that fall within the validation scope. As I understand it, you were involved in reconciling table names across environments to compile this list. If required, feel free to create a sub-task for this activity. However, if Graham is providing the final list, then the reconciliation step may not be necessary.
+SELECT 
+    owner,
+    table_name,
+    column_name,
+    data_type,
+    data_length,
+    data_precision,
+    data_scale,
+    nullable
+FROM 
+    all_tab_columns
+WHERE 
+    owner = 'BCR'
+ORDER BY 
+    table_name, column_id;
