@@ -1,16 +1,36 @@
-Subject: Daily Sync Call – Migration Testing Alignment
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+import re
 
-Hi Team,
+# === Setup ===
+catalog = "core_tst"
+schemas = ["ods", "ods_views"]
+excluded_columns = ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]
 
-I'm scheduling a daily 20-minute sync call to help us stay aligned on the migration testing activities. The goal is to:
+# === Output list ===
+results = []
 
-Discuss any dependencies, blockers, or clarifications
+# === Helper function ===
+def check_table_for_sys9(schema, table_name):
+    try:
+        full_table_name = f"{catalog}.{schema}.{table_name}"
+        df = spark.read.table(full_table_name)
+        for column in df.columns:
+            if column.upper() not in excluded_columns:
+                if df.schema[column].dataType.simpleString() in ['string', 'varchar']:
+                    match_df = df.filter(col(column).contains("_sys9_")).select(column).limit(1)
+                    if match_df.count() > 0:
+                        value = match_df.collect()[0][0]
+                        results.append((schema, table_name, column, value))
+    except Exception as e:
+        print(f"⚠️ Skipped {schema}.{table_name} due to error: {str(e)}")
 
-Align ourselves on test setup and related activities
+# === Loop through schemas and tables ===
+for schema in schemas:
+    tables = spark.catalog.listTables(f"{catalog}.{schema}")
+    for table in tables:
+        check_table_for_sys9(schema, table.name)
 
-Please let me know if the proposed time needs to be adjusted to better suit your availability.
-
-Thanks and looking forward to our collaboration!
-
-Best regards,
-[Your Name]
+# === Display results ===
+result_df = spark.createDataFrame(results, ["schema", "table", "column", "sample_value"])
+display(result_df)
