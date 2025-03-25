@@ -1,4 +1,4 @@
-from pyspark.sql.functions import col, when, regexp_replace, expr
+from pyspark.sql.functions import col, when, regexp_replace, expr, lit, concat
 from pyspark.sql import functions as F
 import re
 
@@ -16,10 +16,12 @@ df_transformed = df_filtered.withColumn(
     .when(col("DATA_TYPE") == "TIMESTAMP(6)", "TIMESTAMP")
     .when(col("DATA_TYPE") == "SDO_GEOMETRY", "STRING")
     .when(
-        (col("DATA_TYPE") == "NUMBER") & (col("DATA_PRECISION") > 0) & (col("DATA_SCALE") > 0),
-        F.concat(F.lit("DECIMAL("), col("DATA_PRECISION").cast("string"), F.lit(","), col("DATA_SCALE").cast("string"), F.lit(")"))
+        (col("DATA_TYPE") == "NUMBER") & 
+        col("DATA_PRECISION").isNotNull() & col("DATA_SCALE").isNotNull() &
+        (col("DATA_PRECISION") > 0) & (col("DATA_SCALE") > 0),
+        concat(lit("DECIMAL("), col("DATA_PRECISION").cast("string"), lit(","), col("DATA_SCALE").cast("string"), lit(")"))
     )
-    .when((col("DATA_TYPE") == "NUMBER"), "DOUBLE")
+    .when(col("DATA_TYPE") == "NUMBER", "DOUBLE")
     .when(col("DATA_TYPE") == "CLOB", "STRING")
     .when(col("DATA_TYPE") == "CHAR", "STRING")
     .otherwise(col("DATA_TYPE"))
