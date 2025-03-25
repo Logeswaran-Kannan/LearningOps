@@ -1,80 +1,41 @@
-from pyspark.sql.functions import col, lower, expr, when, lit
-from pyspark.sql import functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, lit, regexp_replace
 
-catalog = "core_tst"
-ods_db = f"{catalog}.ods"
-ods_views_db = f"{catalog}.ods_views"
-target_table = f"{catalog}.DDL_COMPARE_TABLE"
+# Initialize Spark session
+spark = SparkSession.builder.appName("TableCopyWithModifications").getOrCreate()
 
-excluded_columns = ['AZURE_LOAD_DATE', 'DWH_FROM_DATE', 'DWH_UNTIL_DATE', 'ENT_FLAG']
-inscope_tables = ["list", "of", "in-scope", "tables"]  # replace with your actual list
+# Source table
+source_table = "core_tst_sys9.default.bcr_schema_file"
 
+# Read source table
+df = spark.table(source_table)
 
-# Helper to fetch and filter metadata
-def get_column_metadata(db_name):
-    return (spark.table("system.information_schema.columns")
-            .filter((col("table_catalog") == catalog) & (col("table_schema") == db_name.split(".")[1]))
-            .filter(col("column_name").contains("_sys9_"))
-            .filter(~col("column_name").isin(*excluded_columns))
-            .filter(col("table_name").isin(*inscope_tables))
-            .selectExpr(
-                "table_name",
-                "column_name",
-                "data_type",
-                f"'{db_name.split('.')[1]}' as db"
-            ))
+# Filter out rows with special characters in TABLE_NAME (excluding underscores)
+df_filtered = df.filter(~col("TABLE_NAME").rlike("[^a-zA-Z0-9_]") )
 
-ods_cols = get_column_metadata(ods_db).withColumnRenamed("table_name", "ods_table")
-ods_views_cols = get_column_metadata(ods_views_db).withColumnRenamed("table_name", "ods_view_table")
+# Define modified datatype column
+df_with_mod_type = df_filtered.withColumn(
+    "MODIFIED_DATATYPE",
+    when(col("DATA_TYPE") == "VARCHAR2", "STRING")
+    .when(col("DATA_TYPE") == "TIMESTAMP(6)", "TIMESTAMP")
+    .when(col("DATA_TYPE") == "SDO_GEOMETRY", "STRING")
+    .when(
+        (col("DATA_TYPE") == "NUMBER") & (col("DATA_PRECISION") > 0) & (col("DATA_SCALE") > 0),
+        col("DATA_TYPE") + "(" + col("DATA_PRECISION").cast("string") + "," + col("DATA_SCALE").cast("string") + ")"
+    )
+    .when(col("DATA_TYPE") == "NUMBER", "DOUBLE")
+    .when(col("DATA_TYPE") == "CLOB", "STRING")
+    .when(col("DATA_TYPE") == "CHAR", "STRING")
+    .otherwise(col("DATA_TYPE"))
+)
 
-# Optimize performance
-ods_cols.cache()
-ods_views_cols.cache()
+# Add IN_SCOPE column
+final_df = df_with_mod_type.withColumn("IN_SCOPE", lit(True))
 
+# Define target table name
+target_table = "core_tst_sys9.default.bcr_schema_file_modified"
 
-# Clean/edited table names
-ods_cols = ods_cols.withColumn("ods_table_edit", expr("regexp_replace(ods_table, 'billingcentre_sys9_', '')"))
-ods_views_cols = ods_views_cols.withColumn("ods_view_table_edit", expr("regexp_replace(ods_view_table, 'billingcentre_sys9_current_', '')"))
+# Save the new table
+final_df.write.mode("overwrite").saveAsTable(target_table)
 
-
-# Join on cleaned table names
-joined_tables = ods_cols.join(
-    ods_views_cols,
-    ods_cols.ods_table_edit == ods_views_cols.ods_view_table_edit,
-    how="full_outer"
-).withColumn("compare_table_name", when(
-    col("ods_table_edit").isNull(), "Missing in ODS"
-).when(
-    col("ods_view_table_edit").isNull(), "Missing in ODS_VIEW"
-).when(
-    col("ods_table_edit") == col("ods_view_table_edit"), "Match"
-).otherwise("Mismatch"))
-
-# Compare column names
-joined_tables = joined_tables.withColumn("compare_column_name", when(
-    col("column_name") == col("column_name"), "Pass"  # Use better logic if needed
-).otherwise("Mismatch"))
-
-# Compare data types
-joined_tables = joined_tables.withColumn("compare_data_type", when(
-    col("data_type") == col("data_type"), "Match"
-).otherwise("Mismatch"))
-
-
-final_result = joined_tables.select(
-    "ods_table", "column_name", "data_type",
-    "ods_view_table", "column_name", "data_type",
-    "ods_table_edit", "ods_view_table_edit",
-    "compare_table_name", "compare_column_name", "compare_data_type"
-).withColumnRenamed("column_name", "ods_column") \
- .withColumnRenamed("data_type", "ods_data_type") \
- .withColumnRenamed("column_name", "ods_view_column") \
- .withColumnRenamed("data_type", "ods_view_data_type")
-
-# Write to target table
-(final_result
- .repartition(1)  # Optional: reduce file fragmentation
- .write
- .mode("overwrite")
- .format("delta")
- .saveAsTable(target_table))
+print(f"Table successfully created: {target_table}")
