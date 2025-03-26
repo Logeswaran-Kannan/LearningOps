@@ -38,9 +38,9 @@ spark.catalog.setCurrentDatabase(replica_db)
 
 replica_df = spark.read.table("information_schema.columns").filter(
     (lower(col("table_schema")) == replica_db.lower()) &
-    ((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
-     col("table_name").contains("_sys9_")) |
-    (col("table_name").startswith("claimcenter_"))
+    (((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
+      col("table_name").contains("_sys9_")) |
+     (col("table_name").startswith("claimcenter_")))
 ).filter(~col("table_name").contains("_pvw_change_") & ~col("table_name").contains("_delta"))
 
 if param_table_filter:
@@ -50,7 +50,7 @@ replica_data = replica_df.select(
     lower(col("table_name")).alias("REPLICA_TABLE_NAME"),
     lower(col("column_name")).alias("REPLICA_COLUMN_NAME"),
     lower(col("full_data_type")).alias("REPLICA_DATA_TYPE"),
-    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME")
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("NORMALIZED_TABLE_NAME")
 )
 
 print(f"Extracted {replica_data.count()} columns from REPLICA")
@@ -63,9 +63,9 @@ spark.catalog.setCurrentDatabase(s3_db)
 
 s3_df = spark.read.table("information_schema.columns").filter(
     (lower(col("table_schema")) == s3_db.lower()) &
-    ((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
-     col("table_name").contains("_")) |
-    (col("table_name").startswith("claimcenter_"))
+    (((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
+      col("table_name").contains("_")) |
+     (col("table_name").startswith("claimcenter_")))
 ).filter(~col("table_name").contains("_pvw_change_") & ~col("table_name").contains("_delta"))
 
 if param_table_filter:
@@ -75,7 +75,7 @@ s3_data = s3_df.select(
     lower(col("table_name")).alias("S3_TABLE_NAME"),
     lower(col("column_name")).alias("S3_COLUMN_NAME"),
     lower(col("full_data_type")).alias("S3_DATA_TYPE"),
-    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME")
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("NORMALIZED_TABLE_NAME")
 )
 
 print(f"Extracted {s3_data.count()} columns from S3")
@@ -83,7 +83,7 @@ print(f"Extracted {s3_data.count()} columns from S3")
 # Normalize Oracle schema
 temp_oracle_df = oracle_df.withColumn("SOURCE", lit("oracle"))
 temp_oracle_df = temp_oracle_df.withColumn(
-    "TABLE_NAME",
+    "NORMALIZED_TABLE_NAME",
     lower(
         regexp_replace(
             regexp_replace(col("TABLE_NAME"), "^billingcenter_sys9_", ""),
@@ -92,7 +92,7 @@ temp_oracle_df = temp_oracle_df.withColumn(
     )
 )
 temp_oracle_df = temp_oracle_df.select(
-    col("TABLE_NAME"),
+    col("NORMALIZED_TABLE_NAME"),
     col("COLUMN_NAME").alias("ORACLE_COLUMN_NAME"),
     col("DATA_TYPE").alias("ORACLE_DATA_TYPE")
 )
@@ -100,7 +100,7 @@ temp_oracle_df = temp_oracle_df.select(
 # Join Oracle with Replica
 oracle_replica_join = temp_oracle_df.join(
     replica_data,
-    (temp_oracle_df["TABLE_NAME"] == replica_data["TABLE_NAME"]) &
+    (temp_oracle_df["NORMALIZED_TABLE_NAME"] == replica_data["NORMALIZED_TABLE_NAME"]) &
     (temp_oracle_df["ORACLE_COLUMN_NAME"] == replica_data["REPLICA_COLUMN_NAME"]),
     "full_outer"
 )
@@ -108,14 +108,14 @@ oracle_replica_join = temp_oracle_df.join(
 # Join result with S3
 combined_df = oracle_replica_join.join(
     s3_data,
-    (oracle_replica_join["TABLE_NAME"] == s3_data["TABLE_NAME"]) &
+    (oracle_replica_join["NORMALIZED_TABLE_NAME"] == s3_data["NORMALIZED_TABLE_NAME"]) &
     (oracle_replica_join["ORACLE_COLUMN_NAME"] == s3_data["S3_COLUMN_NAME"]),
     "full_outer"
 )
 
 # Final projection and comparison
 final_df = combined_df.select(
-    col("TABLE_NAME"),
+    col("NORMALIZED_TABLE_NAME").alias("TABLE_NAME"),
     col("ORACLE_COLUMN_NAME"), col("ORACLE_DATA_TYPE"),
     col("REPLICA_TABLE_NAME"), col("REPLICA_COLUMN_NAME"), col("REPLICA_DATA_TYPE"),
     col("S3_TABLE_NAME"), col("S3_COLUMN_NAME"), col("S3_DATA_TYPE")
