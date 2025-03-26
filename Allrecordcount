@@ -1,125 +1,127 @@
-# Databricks notebook for three-way DDL reconciliation
-from pyspark.sql.functions import col, lower, regexp_replace, expr
-from pyspark.sql.types import StringType
-from pyspark.sql import functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, upper, regexp_replace, lit
+from pyspark.sql.types import StructType, StructField, StringType
+
+spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
 
 # Parameters for testing
-TEST_TABLES = ["claim_tb1", "policy_tb2"]  # Example filtered tables after removing prefixes
+param_table_filter = ["ACCOUNT", "CLAIM"]  # Add desired normalized table names for filtering
 
-# Read Oracle schema CSV
-oracle_df = (spark.read.option("header", True)
-             .csv("/path/to/oracle_schema.csv")
-             .filter("IN_SCOPE = true"))
-
-# Filter out invalid table names
-oracle_df = oracle_df.filter(~col("TABLE_NAME").rlike("[^\w\-]"))
-
-# Exclude unwanted columns
-exclude_cols = ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]
-oracle_df = oracle_df.filter(~col("COLUMN_NAME").isin(exclude_cols))
-
-# Read Read Replica tables
-read_replica_tables = spark.sql("""
-    SHOW TABLES IN core_tst.ODS
-""")
-
-read_replica_tables = read_replica_tables.filter(
-    (col("tableName").startswith("billingcenter_")) |
-    (col("tableName").startswith("policycenter_")) |
-    (col("tableName").startswith("claimcenter_"))
+# 1. Load Oracle schema CSV
+oracle_schema_path = "/mnt/data/oracle_schema.csv"
+oracle_df = (
+    spark.read.option("header", True).csv(oracle_schema_path)
+    .filter(upper(col("IN_SCOPE")) == "TRUE")
+    .withColumn("TABLE_NAME", upper(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", upper(col("COLUMN_NAME")))
+    .withColumn("DATA_TYPE", upper(col("MODIFIED_DATA_TYPE")).alias("DATA_TYPE"))
+    .filter(~col("TABLE_NAME").rlike("[^A-Z0-9_-]"))
 )
 
-read_replica_tables = read_replica_tables.filter(~col("tableName").rlike("_pvw_change_|_delta"))
+# Common cleanup for columns
+exclude_columns = ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]
+oracle_df = oracle_df.filter(~col("COLUMN_NAME").isin(exclude_columns))
 
-# Select appropriate tables
-read_replica_tables = read_replica_tables.filter(
-    (col("tableName").startswith("claimcenter_")) |
-    ((col("tableName").startswith("billingcenter_")) & (col("tableName").contains("_sys9_"))) |
-    ((col("tableName").startswith("policycenter_")) & (col("tableName").contains("_sys9_")))
+# 2. Read Read Replica tables
+replica_catalog = "core_tst"
+replica_db = "ODS"
+replica_tables = spark.catalog.listTables(dbName=replica_db, catalogName=replica_catalog)
+
+replica_filtered = [
+    t.name for t in replica_tables
+    if (
+        (t.name.startswith("billingcenter_") or t.name.startswith("policycenter_")) and ("_sys9_" in t.name)
+        or t.name.startswith("claimcenter_")
+    ) and not ("_pvw_change_" in t.name or "_delta" in t.name)
+]
+
+# 3. Read S3 tables
+s3_catalog = "core_tst_sys9"
+s3_db = "ODS"
+s3_tables = spark.catalog.listTables(dbName=s3_db, catalogName=s3_catalog)
+
+s3_filtered = [
+    t.name for t in s3_tables
+    if (
+        (t.name.startswith("billingcenter_") or t.name.startswith("policycenter_")) and ("_sys9_" in t.name)
+        or t.name.startswith("claimcenter_")
+    ) and not ("_pvw_change_" in t.name or "_delta" in t.name)
+]
+
+def extract_columns(catalog, db, tables, source):
+    rows = []
+    for tbl in tables:
+        try:
+            df = spark.read.table(f"{catalog}.{db}.{tbl}")
+            for field in df.schema.fields:
+                if field.name.upper() not in exclude_columns:
+                    normalized_name = (
+                        tbl.replace("billingcenter_sys9_", "")
+                        .replace("policycenter_sys9_", "")
+                        .replace("claimcenter_", "")
+                        .upper()
+                    )
+                    if normalized_name in param_table_filter:
+                        rows.append((normalized_name, field.name.upper(), field.dataType.simpleString().upper(), source))
+        except Exception as e:
+            print(f"Failed to read table {tbl}: {e}")
+    return rows
+
+replica_data = extract_columns(replica_catalog, replica_db, replica_filtered, "REPLICA")
+s3_data = extract_columns(s3_catalog, s3_db, s3_filtered, "S3")
+
+oracle_data = oracle_df.withColumn("SOURCE", lit("ORACLE"))
+oracle_data = oracle_data.withColumn(
+    "NORMALIZED_TABLE_NAME",
+    upper(
+        regexp_replace(
+            regexp_replace(col("TABLE_NAME"), "^BILLINGCENTER_SYS9_", ""),
+            "^POLICYCENTER_SYS9_|^CLAIMCENTER_", ""
+        )
+    )
+)
+oracle_data = oracle_data.select(
+    col("NORMALIZED_TABLE_NAME").alias("TABLE_NAME"), "COLUMN_NAME", "DATA_TYPE", "SOURCE"
 )
 
-# Read schema for Read Replica
-read_replica_schema = []
-for row in read_replica_tables.collect():
-    table = row["tableName"]
-    try:
-        df = spark.table(f"core_tst.ODS.{table}")
-        schema_df = df.dtypes
-        for col_name, data_type in schema_df:
-            if col_name not in exclude_cols:
-                read_replica_schema.append((table, col_name, data_type))
-    except Exception as e:
-        print(f"Error reading table {table}: {e}")
+schema = StructType([
+    StructField("TABLE_NAME", StringType(), True),
+    StructField("COLUMN_NAME", StringType(), True),
+    StructField("DATA_TYPE", StringType(), True),
+    StructField("SOURCE", StringType(), True),
+])
 
-read_replica_df = spark.createDataFrame(read_replica_schema, ["TABLE_NAME", "COLUMN_NAME", "DATA_TYPE"])
+combined_df = spark.createDataFrame(replica_data + s3_data, schema).unionByName(oracle_data)
 
-# Read S3 tables
-s3_tables = spark.sql("""
-    SHOW TABLES IN core_tst_sys9.ODS
-""")
-
-s3_tables = s3_tables.filter(
-    (col("tableName").startswith("billingcenter_")) |
-    (col("tableName").startswith("policycenter_")) |
-    (col("tableName").startswith("claimcenter_"))
-)
-s3_tables = s3_tables.filter(~col("tableName").rlike("_pvw_change_|_delta"))
-s3_tables = s3_tables.filter(
-    (col("tableName").startswith("claimcenter_")) |
-    ((col("tableName").startswith("billingcenter_")) & (col("tableName").contains("_sys9_"))) |
-    ((col("tableName").startswith("policycenter_")) & (col("tableName").contains("_sys9_")))
+# Pivot the table
+pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["ORACLE", "REPLICA", "S3"]).agg(
+    {"DATA_TYPE": "first"}
 )
 
-# Read schema for S3
-s3_schema = []
-for row in s3_tables.collect():
-    table = row["tableName"]
-    try:
-        df = spark.table(f"core_tst_sys9.ODS.{table}")
-        schema_df = df.dtypes
-        for col_name, data_type in schema_df:
-            if col_name not in exclude_cols:
-                s3_schema.append((table, col_name, data_type))
-    except Exception as e:
-        print(f"Error reading table {table}: {e}")
+# Add comparison result
+result_df = pivot_df.withColumn(
+    "COMPARISON_RESULT",
+    
+    when(
+        col("ORACLE").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(),
+        when((col("ORACLE") == col("REPLICA")) & (col("REPLICA") == col("S3")), "MATCH")
+        .otherwise("MISMATCH")
+    ).when(
+        col("ORACLE").isNull() & col("REPLICA").isNull() & col("S3").isNull(), "ALL_MISSING"
+    ).when(
+        col("ORACLE").isNotNull() & col("REPLICA").isNull() & col("S3").isNull(), "ORACLE_ONLY"
+    ).when(
+        col("ORACLE").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "ORACLE_REPLICA_ONLY"
+    ).when(
+        col("ORACLE").isNotNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "ORACLE_S3_ONLY"
+    ).when(
+        col("ORACLE").isNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "REPLICA_ONLY"
+    ).when(
+        col("ORACLE").isNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "S3_ONLY"
+    ).when(
+        col("ORACLE").isNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(), "REPLICA_S3_ONLY"
+    )
+)
 
-s3_df = spark.createDataFrame(s3_schema, ["TABLE_NAME", "COLUMN_NAME", "DATA_TYPE"])
-
-# Normalize table names for comparison
-remove_prefix_udf = F.udf(lambda x: re.sub(r"^(billingcenter_sys9_|policycenter_sys9_|claimcenter_)", "", x), StringType())
-
-oracle_df = oracle_df.withColumn("NORMALIZED_TABLE", remove_prefix_udf("TABLE_NAME"))
-read_replica_df = read_replica_df.withColumn("NORMALIZED_TABLE", remove_prefix_udf("TABLE_NAME"))
-s3_df = s3_df.withColumn("NORMALIZED_TABLE", remove_prefix_udf("TABLE_NAME"))
-
-# Filter by TEST_TABLES
-oracle_df = oracle_df.filter(col("NORMALIZED_TABLE").isin(TEST_TABLES))
-read_replica_df = read_replica_df.filter(col("NORMALIZED_TABLE").isin(TEST_TABLES))
-s3_df = s3_df.filter(col("NORMALIZED_TABLE").isin(TEST_TABLES))
-
-# Perform full outer joins
-merged = oracle_df.select("NORMALIZED_TABLE", "COLUMN_NAME", col("MODIFIED_DATA_TYPE").alias("ORACLE_DATA_TYPE")) \
-    .join(read_replica_df.select("NORMALIZED_TABLE", "COLUMN_NAME", col("DATA_TYPE").alias("READ_REPLICA_DATA_TYPE")),
-          ["NORMALIZED_TABLE", "COLUMN_NAME"], "fullouter") \
-    .join(s3_df.select("NORMALIZED_TABLE", "COLUMN_NAME", col("DATA_TYPE").alias("S3_DATA_TYPE")),
-          ["NORMALIZED_TABLE", "COLUMN_NAME"], "fullouter")
-
-# Add result column
-merged = merged.withColumn("COMPARISON_RESULT", expr("""
-    CASE 
-        WHEN ORACLE_DATA_TYPE IS NOT NULL AND READ_REPLICA_DATA_TYPE IS NOT NULL AND S3_DATA_TYPE IS NOT NULL THEN 'Present, Present, Present'
-        WHEN ORACLE_DATA_TYPE IS NULL AND READ_REPLICA_DATA_TYPE IS NULL AND S3_DATA_TYPE IS NULL THEN 'Missing, Missing, Missing'
-        WHEN ORACLE_DATA_TYPE IS NOT NULL AND READ_REPLICA_DATA_TYPE IS NULL AND S3_DATA_TYPE IS NULL THEN 'Present, Missing, Missing'
-        WHEN ORACLE_DATA_TYPE IS NOT NULL AND READ_REPLICA_DATA_TYPE IS NULL AND S3_DATA_TYPE IS NOT NULL THEN 'Present, Missing, Present'
-        WHEN ORACLE_DATA_TYPE IS NOT NULL AND READ_REPLICA_DATA_TYPE IS NOT NULL AND S3_DATA_TYPE IS NULL THEN 'Present, Present, Missing'
-        WHEN ORACLE_DATA_TYPE IS NULL AND READ_REPLICA_DATA_TYPE IS NOT NULL AND S3_DATA_TYPE IS NULL THEN 'Missing, Present, Missing'
-        WHEN ORACLE_DATA_TYPE IS NULL AND READ_REPLICA_DATA_TYPE IS NULL AND S3_DATA_TYPE IS NOT NULL THEN 'Missing, Missing, Present'
-        ELSE 'Other'
-    END
-"""))
-
-# Write to target table
-(merged.write 
- .format("delta")
- .mode("overwrite")
- .saveAsTable("core_tst.ODS.DDL_COMPARE_TABLE"))
+# 4. Write result to DDL_COMPARE_TABLE
+result_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
