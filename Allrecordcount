@@ -1,6 +1,77 @@
-schema_df = (
-    spark.read.option("header", True).csv("dbfs:/Workspace/UKS_SIT_DW_E2E/REFERENCE_FILE/Schema_list.csv")
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lower, regexp_replace, lit, when
+from pyspark.sql.types import StructType, StructField, StringType
+
+spark = SparkSession.builder.getOrCreate()
+
+# Parameters
+input_csv_path = "/path/to/oracle_schema.csv"
+test_table_names = ["claimcenter_policy", "billingcenter_invoice"]  # example filtered table names
+output_table_name = "DDL_COMPARE_TABLE"
+
+# Helper functions
+def clean_table_name(col_expr):
+    return regexp_replace(regexp_replace(regexp_replace(lower(col_expr), "^billingcenter_sys9_", ""), "^policycenter_sys9_", ""), "^claimcenter_", "")
+
+excluded_columns = ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]
+
+# 1. Read Oracle Schema CSV
+oracle_df = (
+    spark.read.option("header", True).csv(input_csv_path)
     .filter(col("IN_SCOPE") == "true")
     .filter(~col("TABLE_NAME").rlike("[^\w-]"))
     .select("TABLE_NAME", "COLUMN_NAME", col("MODIFIED_DATA_TYPE").alias("DATA_TYPE"))
+    .filter(~col("COLUMN_NAME").isin(excluded_columns))
+    .withColumn("SOURCE", lit("ORACLE"))
+    .withColumn("CLEANED_TABLE_NAME", clean_table_name(col("TABLE_NAME")))
 )
+
+# 2. Read Read Replica and S3
+def get_filtered_delta_tables(catalog, test_tables):
+    full_df = spark.sql(f"""
+        SELECT table_name, column_name, data_type 
+        FROM {catalog}.information_schema.columns 
+        WHERE (table_name LIKE 'billingcenter\\_%' OR table_name LIKE 'policycenter\\_%' OR table_name LIKE 'claimcenter\\_%')
+    """)
+
+    filtered_df = (
+        full_df.filter(~col("table_name").rlike("_pvw_change_|_delta"))
+        .filter(
+            (col("table_name").startswith("claimcenter_")) |
+            (
+                ((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
+                 col("table_name").rlike("_sys9_"))
+            )
+        )
+        .filter(~col("column_name").isin(excluded_columns))
+        .withColumn("CLEANED_TABLE_NAME", clean_table_name(col("table_name")))
+        .filter(col("CLEANED_TABLE_NAME").isin(test_tables))
+    )
+    return filtered_df
+
+read_replica_df = get_filtered_delta_tables("core_tst.ods", test_table_names).withColumn("SOURCE", lit("READ_REPLICA"))
+s3_df = get_filtered_delta_tables("core_tst_sys9.ods", test_table_names).withColumn("SOURCE", lit("S3"))
+
+# 3. Union all
+combined_df = oracle_df.unionByName(read_replica_df).unionByName(s3_df)
+
+# 4. Pivot to compare DDL
+pivot_df = combined_df.groupBy("CLEANED_TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["ORACLE", "READ_REPLICA", "S3"]).agg(first("DATA_TYPE"))
+
+# 5. Add Comparison Result
+result_df = pivot_df.withColumn(
+    "RESULT",
+    when(col("ORACLE").isNotNull() & col("READ_REPLICA").isNotNull() & col("S3").isNotNull(), lit("Present in All"))
+    .when(col("ORACLE").isNull() & col("READ_REPLICA").isNull() & col("S3").isNull(), lit("Missing in All"))
+    .when(col("ORACLE").isNotNull() & col("READ_REPLICA").isNull() & col("S3").isNull(), lit("Only in Oracle"))
+    .when(col("ORACLE").isNotNull() & col("READ_REPLICA").isNotNull() & col("S3").isNull(), lit("Missing in S3"))
+    .when(col("ORACLE").isNotNull() & col("READ_REPLICA").isNull() & col("S3").isNotNull(), lit("Missing in Read Replica"))
+    .when(col("ORACLE").isNull() & col("READ_REPLICA").isNotNull() & col("S3").isNull(), lit("Only in Read Replica"))
+    .when(col("ORACLE").isNull() & col("READ_REPLICA").isNull() & col("S3").isNotNull(), lit("Only in S3"))
+    .otherwise(lit("Partial Match"))
+)
+
+# 6. Save to target table
+result_df.withColumnRenamed("CLEANED_TABLE_NAME", "TABLE_NAME").write.mode("overwrite").saveAsTable(output_table_name)
+
+print("DDL Reconciliation completed and results saved to", output_table_name)
