@@ -50,7 +50,7 @@ replica_data = replica_df.select(
     lower(col("table_name")).alias("REPLICA_TABLE_NAME"),
     lower(col("column_name")).alias("REPLICA_COLUMN_NAME"),
     lower(col("full_data_type")).alias("REPLICA_DATA_TYPE"),
-    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("NORMALIZED_TABLE_NAME")
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("REPLICA_NORMALIZED_TABLE_NAME")
 )
 
 print(f"Extracted {replica_data.count()} columns from REPLICA")
@@ -75,7 +75,7 @@ s3_data = s3_df.select(
     lower(col("table_name")).alias("S3_TABLE_NAME"),
     lower(col("column_name")).alias("S3_COLUMN_NAME"),
     lower(col("full_data_type")).alias("S3_DATA_TYPE"),
-    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("NORMALIZED_TABLE_NAME")
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("S3_NORMALIZED_TABLE_NAME")
 )
 
 print(f"Extracted {s3_data.count()} columns from S3")
@@ -83,7 +83,7 @@ print(f"Extracted {s3_data.count()} columns from S3")
 # Normalize Oracle schema
 temp_oracle_df = oracle_df.withColumn("SOURCE", lit("oracle"))
 temp_oracle_df = temp_oracle_df.withColumn(
-    "NORMALIZED_TABLE_NAME",
+    "ORACLE_NORMALIZED_TABLE_NAME",
     lower(
         regexp_replace(
             regexp_replace(col("TABLE_NAME"), "^billingcenter_sys9_", ""),
@@ -92,7 +92,7 @@ temp_oracle_df = temp_oracle_df.withColumn(
     )
 )
 temp_oracle_df = temp_oracle_df.select(
-    col("NORMALIZED_TABLE_NAME"),
+    col("ORACLE_NORMALIZED_TABLE_NAME"),
     col("COLUMN_NAME").alias("ORACLE_COLUMN_NAME"),
     col("DATA_TYPE").alias("ORACLE_DATA_TYPE")
 )
@@ -100,22 +100,22 @@ temp_oracle_df = temp_oracle_df.select(
 # Join Oracle with Replica
 oracle_replica_join = temp_oracle_df.join(
     replica_data,
-    (temp_oracle_df["NORMALIZED_TABLE_NAME"] == replica_data["NORMALIZED_TABLE_NAME"]) &
+    (temp_oracle_df["ORACLE_NORMALIZED_TABLE_NAME"] == replica_data["REPLICA_NORMALIZED_TABLE_NAME"]) &
     (temp_oracle_df["ORACLE_COLUMN_NAME"] == replica_data["REPLICA_COLUMN_NAME"]),
     "full_outer"
-)
+).drop(replica_data["REPLICA_NORMALIZED_TABLE_NAME"])
 
 # Join result with S3
 combined_df = oracle_replica_join.join(
     s3_data,
-    (oracle_replica_join["NORMALIZED_TABLE_NAME"] == s3_data["NORMALIZED_TABLE_NAME"]) &
+    (oracle_replica_join["ORACLE_NORMALIZED_TABLE_NAME"] == s3_data["S3_NORMALIZED_TABLE_NAME"]) &
     (oracle_replica_join["ORACLE_COLUMN_NAME"] == s3_data["S3_COLUMN_NAME"]),
     "full_outer"
-)
+).drop(s3_data["S3_NORMALIZED_TABLE_NAME"])
 
 # Final projection and comparison
 final_df = combined_df.select(
-    col("NORMALIZED_TABLE_NAME").alias("TABLE_NAME"),
+    col("ORACLE_NORMALIZED_TABLE_NAME").alias("TABLE_NAME"),
     col("ORACLE_COLUMN_NAME"), col("ORACLE_DATA_TYPE"),
     col("REPLICA_TABLE_NAME"), col("REPLICA_COLUMN_NAME"), col("REPLICA_DATA_TYPE"),
     col("S3_TABLE_NAME"), col("S3_COLUMN_NAME"), col("S3_DATA_TYPE")
