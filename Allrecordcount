@@ -97,11 +97,29 @@ temp_oracle_df = temp_oracle_df.select(
     col("DATA_TYPE").alias("ORACLE_DATA_TYPE")
 )
 
-# Join all datasets
-combined_df = temp_oracle_df.join(replica_data, ["TABLE_NAME", col("ORACLE_COLUMN_NAME") == col("REPLICA_COLUMN_NAME")], "full_outer") \
-    .join(s3_data, ["TABLE_NAME", col("ORACLE_COLUMN_NAME") == col("S3_COLUMN_NAME")], "full_outer")
+# Join Oracle with Replica
+oracle_replica_join = temp_oracle_df.join(
+    replica_data,
+    (temp_oracle_df["TABLE_NAME"] == replica_data["TABLE_NAME"]) &
+    (temp_oracle_df["ORACLE_COLUMN_NAME"] == replica_data["REPLICA_COLUMN_NAME"]),
+    "full_outer"
+)
 
-final_df = combined_df.withColumn(
+# Join result with S3
+combined_df = oracle_replica_join.join(
+    s3_data,
+    (oracle_replica_join["TABLE_NAME"] == s3_data["TABLE_NAME"]) &
+    (oracle_replica_join["ORACLE_COLUMN_NAME"] == s3_data["S3_COLUMN_NAME"]),
+    "full_outer"
+)
+
+# Final projection and comparison
+final_df = combined_df.select(
+    col("TABLE_NAME"),
+    col("ORACLE_COLUMN_NAME"), col("ORACLE_DATA_TYPE"),
+    col("REPLICA_TABLE_NAME"), col("REPLICA_COLUMN_NAME"), col("REPLICA_DATA_TYPE"),
+    col("S3_TABLE_NAME"), col("S3_COLUMN_NAME"), col("S3_DATA_TYPE")
+).withColumn(
     "COMPARISON_RESULT",
     when(
         col("ORACLE_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNotNull(),
