@@ -1,25 +1,51 @@
--- Set environment for CSV output
+-- Run this using Oracle SQLcl: sql /nolog @export_bcr_tables.sql
+
+-- Set base directory for CSVs
+SET SQLFORMAT csv
 SET FEEDBACK OFF
 SET HEADING ON
-SET COLSEP ','
-SET PAGESIZE 0
-SET LINESIZE 1000
-SET TRIMSPOOL ON
+SET PAGESIZE 50000
 SET TERMOUT OFF
-SET ECHO OFF
+SET TRIMSPOOL ON
 
--- Cursor to generate CSV exports
+SPOOL log_export.txt
+
 BEGIN
-  FOR t IN (
-    SELECT table_name
-    FROM all_tables
-    WHERE owner = 'BCR'
-    ORDER BY table_name
-  ) LOOP
-    -- Construct spool command
-    DBMS_OUTPUT.PUT_LINE('SPOOL C:\exports\' || t.table_name || '.csv');
-    DBMS_OUTPUT.PUT_LINE('SELECT * FROM BCR.' || t.table_name || ';');
-    DBMS_OUTPUT.PUT_LINE('SPOOL OFF');
-  END LOOP;
+   FOR t IN (
+      SELECT table_name
+      FROM all_tables
+      WHERE owner = 'BCR'
+   ) LOOP
+      DECLARE
+         v_has_createtime NUMBER := 0;
+         v_sql VARCHAR2(1000);
+         v_file VARCHAR2(1000);
+      BEGIN
+         SELECT COUNT(*)
+         INTO v_has_createtime
+         FROM all_tab_columns
+         WHERE owner = 'BCR'
+           AND table_name = t.table_name
+           AND column_name = 'CREATETIME';
+
+         v_file := 'bcr_export_' || LOWER(t.table_name) || '.csv';
+
+         IF v_has_createtime > 0 THEN
+            v_sql := 'SPOOL ' || v_file || CHR(10) ||
+                     'SELECT * FROM BCR.' || t.table_name ||
+                     ' WHERE CREATETIME BETWEEN TO_TIMESTAMP(''24-MAR-25 13:00:00.000000000'', ''DD-MON-RR HH24:MI:SS.FF'')' ||
+                     ' AND TO_TIMESTAMP(''25-MAR-25 13:00:00.000000000'', ''DD-MON-RR HH24:MI:SS.FF'');' || CHR(10) ||
+                     'SPOOL OFF';
+         ELSE
+            v_sql := 'SPOOL ' || v_file || CHR(10) ||
+                     'SELECT * FROM BCR.' || t.table_name || ';' || CHR(10) ||
+                     'SPOOL OFF';
+         END IF;
+
+         DBMS_OUTPUT.put_line(v_sql);
+      END;
+   END LOOP;
 END;
 /
+
+SPOOL OFF
