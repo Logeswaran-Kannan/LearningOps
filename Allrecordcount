@@ -25,7 +25,7 @@ oracle_df = (
     .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
     .withColumn("DATA_TYPE", lower(col("MODIFIED_DATA_TYPE")).alias("DATA_TYPE"))
     .filter(~col("TABLE_NAME").rlike("[^a-z0-9_-]"))
-    .filter(~col("COLUMN_NAME").isin("azure_load_date", "dwh_from_date", "dwh_until_date", "ent_flag"))
+    .filter(~col("COLUMN_NAME").isin("AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"))
 )
 
 print(f"Oracle schema records loaded: {oracle_df.count()}")
@@ -47,10 +47,11 @@ if param_table_filter:
     replica_df = replica_df.filter(lower(col("table_name")).isin([tbl.lower() for tbl in param_table_filter]))
 
 replica_data = replica_df.select(
-    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME"),
-    lower(col("column_name")).alias("COLUMN_NAME"),
-    lower(col("data_type")).alias("DATA_TYPE")
-).withColumn("SOURCE", lit("REPLICA"))
+    lower(col("table_name")).alias("REPLICA_TABLE_NAME"),
+    lower(col("column_name")).alias("REPLICA_COLUMN_NAME"),
+    lower(col("full_data_type")).alias("REPLICA_DATA_TYPE"),
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME")
+)
 
 print(f"Extracted {replica_data.count()} columns from REPLICA")
 
@@ -71,17 +72,18 @@ if param_table_filter:
     s3_df = s3_df.filter(lower(col("table_name")).isin([tbl.lower() for tbl in param_table_filter]))
 
 s3_data = s3_df.select(
-    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME"),
-    lower(col("column_name")).alias("COLUMN_NAME"),
-    lower(col("data_type")).alias("DATA_TYPE")
-).withColumn("SOURCE", lit("S3"))
+    lower(col("table_name")).alias("S3_TABLE_NAME"),
+    lower(col("column_name")).alias("S3_COLUMN_NAME"),
+    lower(col("full_data_type")).alias("S3_DATA_TYPE"),
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME")
+)
 
 print(f"Extracted {s3_data.count()} columns from S3")
 
 # Normalize Oracle schema
 temp_oracle_df = oracle_df.withColumn("SOURCE", lit("oracle"))
 temp_oracle_df = temp_oracle_df.withColumn(
-    "NORMALIZED_TABLE_NAME",
+    "TABLE_NAME",
     lower(
         regexp_replace(
             regexp_replace(col("TABLE_NAME"), "^billingcenter_sys9_", ""),
@@ -90,48 +92,41 @@ temp_oracle_df = temp_oracle_df.withColumn(
     )
 )
 temp_oracle_df = temp_oracle_df.select(
-    col("NORMALIZED_TABLE_NAME").alias("TABLE_NAME"), "COLUMN_NAME", "DATA_TYPE", "SOURCE"
+    col("TABLE_NAME"),
+    col("COLUMN_NAME").alias("ORACLE_COLUMN_NAME"),
+    col("DATA_TYPE").alias("ORACLE_DATA_TYPE")
 )
 
-# Combine all sources
-schema = StructType([
-    StructField("TABLE_NAME", StringType(), True),
-    StructField("COLUMN_NAME", StringType(), True),
-    StructField("DATA_TYPE", StringType(), True),
-    StructField("SOURCE", StringType(), True),
-])
+# Join all datasets
+combined_df = temp_oracle_df.join(replica_data, ["TABLE_NAME", col("ORACLE_COLUMN_NAME") == col("REPLICA_COLUMN_NAME")], "full_outer") \
+    .join(s3_data, ["TABLE_NAME", col("ORACLE_COLUMN_NAME") == col("S3_COLUMN_NAME")], "full_outer")
 
-combined_df = replica_data.unionByName(s3_data).unionByName(temp_oracle_df)
-print(f"Total combined records: {combined_df.count()}")
-
-# Pivot and compare
-pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["oracle", "REPLICA", "S3"]).agg({"DATA_TYPE": "first"})
-
-result_df = pivot_df.withColumn(
+final_df = combined_df.withColumn(
     "COMPARISON_RESULT",
     when(
-        col("oracle").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(),
-        when((col("oracle") == col("REPLICA")) & (col("REPLICA") == col("S3")), "MATCH")
+        col("ORACLE_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNotNull(),
+        when((col("ORACLE_DATA_TYPE") == col("REPLICA_DATA_TYPE")) & (col("REPLICA_DATA_TYPE") == col("S3_DATA_TYPE")), "MATCH")
         .otherwise("MISMATCH")
     ).when(
-        col("oracle").isNull() & col("REPLICA").isNull() & col("S3").isNull(), "ALL_MISSING"
+        col("ORACLE_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNull(), "ALL_MISSING"
     ).when(
-        col("oracle").isNotNull() & col("REPLICA").isNull() & col("S3").isNull(), "ORACLE_ONLY"
+        col("ORACLE_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNull(), "ORACLE_ONLY"
     ).when(
-        col("oracle").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "ORACLE_REPLICA_ONLY"
+        col("ORACLE_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNull(), "ORACLE_REPLICA_ONLY"
     ).when(
-        col("oracle").isNotNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "ORACLE_S3_ONLY"
+        col("ORACLE_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNotNull(), "ORACLE_S3_ONLY"
     ).when(
-        col("oracle").isNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "REPLICA_ONLY"
+        col("ORACLE_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNull(), "REPLICA_ONLY"
     ).when(
-        col("oracle").isNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "S3_ONLY"
+        col("ORACLE_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNotNull(), "S3_ONLY"
     ).when(
-        col("oracle").isNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(), "REPLICA_S3_ONLY"
+        col("ORACLE_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNotNull(), "REPLICA_S3_ONLY"
     )
 )
 
-# Write result
-result_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
+# Write result to default schema
+spark.catalog.setCurrentDatabase("default")
+final_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
 
 # Log runtime
 end_time = time.time()
