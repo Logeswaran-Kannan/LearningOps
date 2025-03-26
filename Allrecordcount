@@ -1,49 +1,19 @@
-# Optimized Read Read Replica Tables Code
-
 from pyspark.sql import SparkSession
-from functools import lru_cache
 
-# Initialize Spark session (if not already initialized)
+# Initialize Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# 1. Set catalog and database
-replica_catalog = "core_tst"
-replica_db = "ODS"
-spark.catalog.setCurrentCatalog(replica_catalog)
-spark.catalog.setCurrentDatabase(replica_db)
+# Define catalog and database
+catalog = "core_tst"
+database = "ODS"
 
-# 2. Define parameterized filter list (lowercase for consistent matching)
-param_table_filter = set([
-    "billingcenter_sys9_pvw_change_bc_address",
-    "billingcenter_sys9_bc_address",
-    "billingcenter_sys9_pvw_change_bc_billinginstruction",
-    "billingcenter_sys9_bc_billinginstruction"
-])
+# Set catalog and database
+spark.catalog.setCurrentCatalog(catalog)
+spark.catalog.setCurrentDatabase(database)
 
-# 3. Cache listTables to avoid re-evaluation (performance optimization)
-@lru_cache(maxsize=1)
-def get_tables():
-    return spark.catalog.listTables()
+# Efficiently list all table names
+table_names = [table.name for table in spark.catalog.listTables(database)]
 
-replica_tables = get_tables()
-
-# 4. Precompile prefixes and conditions for performance
-valid_prefixes = ("billingcenter_", "policycenter_", "claimcenter_")
-
-# 5. Use efficient list comprehension
-replica_filtered = [
-    t.name for t in replica_tables
-    if (
-        t.name.startswith(valid_prefixes)
-        and "_sys9_" in t.name
-        and not t.name.startswith("claimcenter_") or "claimcenter_" in t.name
-        and "_pvw_change_" not in t.name
-        and "_delta" not in t.name
-    )
-]
-
-# 6. Optional filter application (case-insensitive match with set)
-if param_table_filter:
-    replica_filtered = [tbl for tbl in replica_filtered if tbl.lower() in param_table_filter]
-
-print(f"Filtered Read Replica tables: {len(replica_filtered)}")
+print(f"Total tables in {catalog}.{database}: {len(table_names)}")
+for name in table_names:
+    print(name)
