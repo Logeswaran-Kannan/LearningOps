@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, upper, regexp_replace, lit, when
+from pyspark.sql.functions import col, lower, regexp_replace, lit, when
 from pyspark.sql.types import StructType, StructField, StringType
 import time
 
@@ -9,18 +9,23 @@ spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
 start_time = time.time()
 
 # Parameters for testing
-param_table_filter = ["ACCOUNT", "CLAIM"]  # Add desired normalized table names for filtering
+param_table_filter = [
+    "billingcenter_sys9_pvw_change_bc_address",
+    "billingcenter_sys9_bc_address",
+    "billingcenter_sys9_pvw_change_bc_billinginstruction",
+    "billingcenter_sys9_bc_billinginstruction"
+]  # Use lowercase for matching
 
 # 1. Load Oracle schema CSV
 oracle_schema_path = "/mnt/data/oracle_schema.csv"
 oracle_df = (
     spark.read.option("header", True).csv(oracle_schema_path)
-    .filter(upper(col("IN_SCOPE")) == "TRUE")
-    .withColumn("TABLE_NAME", upper(col("TABLE_NAME")))
-    .withColumn("COLUMN_NAME", upper(col("COLUMN_NAME")))
-    .withColumn("DATA_TYPE", upper(col("MODIFIED_DATA_TYPE")).alias("DATA_TYPE"))
-    .filter(~col("TABLE_NAME").rlike("[^A-Z0-9_-]"))
-    .filter(~col("COLUMN_NAME").isin("AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"))
+    .filter(lower(col("IN_SCOPE")) == "true")
+    .withColumn("TABLE_NAME", lower(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
+    .withColumn("DATA_TYPE", lower(col("MODIFIED_DATA_TYPE")).alias("DATA_TYPE"))
+    .filter(~col("TABLE_NAME").rlike("[^a-z0-9_-]"))
+    .filter(~col("COLUMN_NAME").isin("azure_load_date", "dwh_from_date", "dwh_until_date", "ent_flag"))
 )
 
 print(f"Oracle schema records loaded: {oracle_df.count()}")
@@ -39,6 +44,8 @@ replica_filtered = [
         or t.name.startswith("claimcenter_")
     ) and not ("_pvw_change_" in t.name or "_delta" in t.name)
 ]
+if param_table_filter:
+    replica_filtered = [tbl for tbl in replica_filtered if tbl.lower() in param_table_filter]
 print(f"Filtered Read Replica tables: {len(replica_filtered)}")
 
 # 3. Read S3 tables
@@ -55,6 +62,8 @@ s3_filtered = [
         or t.name.startswith("claimcenter_")
     ) and not ("_pvw_change_" in t.name or "_delta" in t.name)
 ]
+if param_table_filter:
+    s3_filtered = [tbl for tbl in s3_filtered if tbl.lower() in param_table_filter]
 print(f"Filtered S3 tables: {len(s3_filtered)}")
 
 def extract_columns(catalog, db, tables, source):
@@ -66,15 +75,15 @@ def extract_columns(catalog, db, tables, source):
             df = spark.read.table(f"{catalog}.{db}.{tbl}").selectExpr("* LIMIT 1")  # Faster metadata read
             schema_fields = df.schema.fields
             for field in schema_fields:
-                if field.name.upper() not in ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]:
+                if field.name.lower() not in ["azure_load_date", "dwh_from_date", "dwh_until_date", "ent_flag"]:
                     normalized_name = (
                         tbl.replace("billingcenter_sys9_", "")
                         .replace("policycenter_sys9_", "")
                         .replace("claimcenter_", "")
-                        .upper()
+                        .lower()
                     )
-                    if normalized_name in param_table_filter:
-                        rows.append((normalized_name, field.name.upper(), field.dataType.simpleString().upper(), source))
+                    if not param_table_filter or tbl.lower() in param_table_filter:
+                        rows.append((normalized_name, field.name.lower(), field.dataType.simpleString().lower(), source))
         except Exception as e:
             print(f"Failed to read table {tbl}: {e}")
     print(f"Extracted {len(rows)} columns from {source}")
@@ -83,13 +92,13 @@ def extract_columns(catalog, db, tables, source):
 replica_data = extract_columns(replica_catalog, replica_db, replica_filtered, "REPLICA")
 s3_data = extract_columns(s3_catalog, s3_db, s3_filtered, "S3")
 
-oracle_data = oracle_df.withColumn("SOURCE", lit("ORACLE"))
+oracle_data = oracle_df.withColumn("SOURCE", lit("oracle"))
 oracle_data = oracle_data.withColumn(
     "NORMALIZED_TABLE_NAME",
-    upper(
+    lower(
         regexp_replace(
-            regexp_replace(col("TABLE_NAME"), "^BILLINGCENTER_SYS9_", ""),
-            "^POLICYCENTER_SYS9_|^CLAIMCENTER_", ""
+            regexp_replace(col("TABLE_NAME"), "^billingcenter_sys9_", ""),
+            "^policycenter_sys9_|^claimcenter_", ""
         )
     )
 )
@@ -108,7 +117,7 @@ combined_df = spark.createDataFrame(replica_data + s3_data, schema).unionByName(
 print(f"Total combined records: {combined_df.count()}")
 
 # Pivot the table
-pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["ORACLE", "REPLICA", "S3"]).agg(
+pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["oracle", "REPLICA", "S3"]).agg(
     {"DATA_TYPE": "first"}
 )
 
@@ -116,23 +125,23 @@ pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["OR
 result_df = pivot_df.withColumn(
     "COMPARISON_RESULT",
     when(
-        col("ORACLE").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(),
-        when((col("ORACLE") == col("REPLICA")) & (col("REPLICA") == col("S3")), "MATCH")
+        col("oracle").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(),
+        when((col("oracle") == col("REPLICA")) & (col("REPLICA") == col("S3")), "MATCH")
         .otherwise("MISMATCH")
     ).when(
-        col("ORACLE").isNull() & col("REPLICA").isNull() & col("S3").isNull(), "ALL_MISSING"
+        col("oracle").isNull() & col("REPLICA").isNull() & col("S3").isNull(), "ALL_MISSING"
     ).when(
-        col("ORACLE").isNotNull() & col("REPLICA").isNull() & col("S3").isNull(), "ORACLE_ONLY"
+        col("oracle").isNotNull() & col("REPLICA").isNull() & col("S3").isNull(), "ORACLE_ONLY"
     ).when(
-        col("ORACLE").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "ORACLE_REPLICA_ONLY"
+        col("oracle").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "ORACLE_REPLICA_ONLY"
     ).when(
-        col("ORACLE").isNotNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "ORACLE_S3_ONLY"
+        col("oracle").isNotNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "ORACLE_S3_ONLY"
     ).when(
-        col("ORACLE").isNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "REPLICA_ONLY"
+        col("oracle").isNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "REPLICA_ONLY"
     ).when(
-        col("ORACLE").isNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "S3_ONLY"
+        col("oracle").isNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "S3_ONLY"
     ).when(
-        col("ORACLE").isNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(), "REPLICA_S3_ONLY"
+        col("oracle").isNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(), "REPLICA_S3_ONLY"
     )
 )
 
