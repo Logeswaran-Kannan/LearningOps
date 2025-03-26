@@ -1,39 +1,17 @@
-from pyspark.sql.functions import col, when, regexp_replace, expr, lit, concat
-from pyspark.sql import functions as F
-import re
-
-# Load the data from the original table
-source_table = "core_tst_sys9.default.bcr_schema_file"
-df = spark.table(source_table)
-
-# Filter out table names containing special characters except underscore (_)
-df_filtered = df.filter(~col("TABLE_NAME").rlike("[^A-Za-z0-9_]+"))
-
-# Add modified_datatype column based on logic
-df_transformed = df_filtered.withColumn(
-    "modified_datatype",
-    when(col("DATA_TYPE") == "VARCHAR2", "STRING")
-    .when(col("DATA_TYPE") == "TIMESTAMP(6)", "TIMESTAMP")
-    .when(col("DATA_TYPE") == "SDO_GEOMETRY", "STRING")
-    .when(
-        (col("DATA_TYPE") == "NUMBER") & 
-        col("DATA_PRECISION").isNotNull() & col("DATA_SCALE").isNotNull() &
-        (col("DATA_PRECISION") > 0) & (col("DATA_SCALE") > 0),
-        concat(lit("DECIMAL("), col("DATA_PRECISION").cast("string"), lit(","), col("DATA_SCALE").cast("string"), lit(")"))
-    )
-    .when(col("DATA_TYPE") == "NUMBER", "DOUBLE")
-    .when(col("DATA_TYPE") == "CLOB", "STRING")
-    .when(col("DATA_TYPE") == "CHAR", "STRING")
-    .otherwise(col("DATA_TYPE"))
-)
-
-# Add IN_SCOPE column (setting it to True as default, customize as needed)
-df_transformed = df_transformed.withColumn("IN_SCOPE", F.lit(True))
-
-# Define the name of the target table
-target_table = "core_tst_sys9.default.bcr_schema_file_copy"
-
-# Write the transformed DataFrame to the new table
-df_transformed.write.mode("overwrite").saveAsTable(target_table)
-
-print(f"Table '{target_table}' created successfully with transformed data.")
+SELECT
+    acc.OWNER,
+    acc.TABLE_NAME,
+    acc.COLUMN_NAME,
+    acc.POSITION
+FROM
+    ALL_CONS_COLUMNS acc
+JOIN
+    ALL_CONSTRAINTS ac
+    ON acc.OWNER = ac.OWNER
+    AND acc.CONSTRAINT_NAME = ac.CONSTRAINT_NAME
+WHERE
+    ac.CONSTRAINT_TYPE = 'P'  -- Primary Key
+    AND acc.TABLE_NAME = 'YOUR_TABLE_NAME'  -- uppercase
+    AND acc.OWNER = 'YOUR_SCHEMA_NAME'
+ORDER BY
+    acc.POSITION;
