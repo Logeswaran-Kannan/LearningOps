@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, upper, regexp_replace, lit
+from pyspark.sql.functions import col, upper, regexp_replace, lit, when
 from pyspark.sql.types import StructType, StructField, StringType
 
 spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
@@ -25,7 +25,9 @@ oracle_df = oracle_df.filter(~col("COLUMN_NAME").isin(exclude_columns))
 # 2. Read Read Replica tables
 replica_catalog = "core_tst"
 replica_db = "ODS"
-replica_tables = spark.catalog.listTables(dbName=replica_db, catalogName=replica_catalog)
+spark.catalog.setCurrentCatalog(replica_catalog)
+spark.catalog.setCurrentDatabase(replica_db)
+replica_tables = spark.catalog.listTables()
 
 replica_filtered = [
     t.name for t in replica_tables
@@ -38,7 +40,9 @@ replica_filtered = [
 # 3. Read S3 tables
 s3_catalog = "core_tst_sys9"
 s3_db = "ODS"
-s3_tables = spark.catalog.listTables(dbName=s3_db, catalogName=s3_catalog)
+spark.catalog.setCurrentCatalog(s3_catalog)
+spark.catalog.setCurrentDatabase(s3_db)
+s3_tables = spark.catalog.listTables()
 
 s3_filtered = [
     t.name for t in s3_tables
@@ -50,6 +54,8 @@ s3_filtered = [
 
 def extract_columns(catalog, db, tables, source):
     rows = []
+    spark.catalog.setCurrentCatalog(catalog)
+    spark.catalog.setCurrentDatabase(db)
     for tbl in tables:
         try:
             df = spark.read.table(f"{catalog}.{db}.{tbl}")
@@ -101,7 +107,6 @@ pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["OR
 # Add comparison result
 result_df = pivot_df.withColumn(
     "COMPARISON_RESULT",
-    
     when(
         col("ORACLE").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(),
         when((col("ORACLE") == col("REPLICA")) & (col("REPLICA") == col("S3")), "MATCH")
