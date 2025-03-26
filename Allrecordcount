@@ -1,4 +1,3 @@
-I don’t have any concerns with this approach. Based on the discussion with Paul yesterday, he confirmed there’s an alternate way for us to access data from the read replica in Databricks via the staging layer.
+Ideally, I don’t have any concerns with this. Based on yesterday’s discussion with Paul, he confirmed that there’s an alternate approach to access data from the read replica in Databricks via the staging layer.
 
-For manual access to PostgreSQL, I believe this tool should work without issues.
-Could we go ahead and raise a request to get this tool installed on our machines?
+For manual testing, accessing PostgreSQL through this tool shouldn’t be an issue — it should work similarly to how we access on-premises Oracle databases. I assume we’ll be provided with a separate jump server environment with this tool pre-installed.
