@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lower, regexp_replace, expr, lit
+from pyspark.sql.functions import col, lower, regexp_replace, expr, lit, when, coalesce, concat_ws
 from pyspark.sql.types import StructType, StructField, StringType
 
 # Initialize Spark session
@@ -45,11 +45,15 @@ def load_filtered_tables(catalog_name, db_name, prefix_filter):
 
     all_columns = []
     for tbl in table_list:
-        df = spark.table(f"{catalog_name}.{db_name}.{tbl}")
-        for field in df.schema.fields:
-            if field.name.upper() not in ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]:
-                norm_tbl = normalize_name(tbl)
-                all_columns.append((norm_tbl, field.name.upper(), field.dataType.simpleString().upper()))
+        try:
+            df = spark.table(f"{catalog_name}.{db_name}.{tbl}")
+            for field in df.schema.fields:
+                if field.name.upper() not in ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]:
+                    norm_tbl = normalize_name(tbl)
+                    all_columns.append((norm_tbl, field.name.upper(), field.dataType.simpleString().upper()))
+        except Exception as e:
+            print(f"Error reading table {tbl}: {e}")
+            continue
 
     return spark.createDataFrame(all_columns, ["TABLE_NAME", "COLUMN_NAME", "DATA_TYPE"])
 
@@ -69,18 +73,38 @@ comparison_df = schema_df.alias("schema") \
     .join(read_replica_df.alias("replica"), ["TABLE_NAME", "COLUMN_NAME"], "outer") \
     .join(s3_df.alias("s3"), ["TABLE_NAME", "COLUMN_NAME"], "outer") \
     .select(
-        col("schema.TABLE_NAME").alias("TABLE_NAME"),
-        col("schema.COLUMN_NAME").alias("COLUMN_NAME"),
+        coalesce(col("schema.TABLE_NAME"), col("replica.TABLE_NAME"), col("s3.TABLE_NAME")).alias("TABLE_NAME"),
+        coalesce(col("schema.COLUMN_NAME"), col("replica.COLUMN_NAME"), col("s3.COLUMN_NAME")).alias("COLUMN_NAME"),
         col("schema.DATA_TYPE").alias("SCHEMA_DATA_TYPE"),
         col("replica.DATA_TYPE").alias("REPLICA_DATA_TYPE"),
         col("s3.DATA_TYPE").alias("S3_DATA_TYPE")
     )
 
-# Add comparison result
-comparison_df = comparison_df.withColumn(
-    "RESULT",
-    expr("CASE WHEN SCHEMA_DATA_TYPE = REPLICA_DATA_TYPE AND REPLICA_DATA_TYPE = S3_DATA_TYPE THEN 'MATCH' ELSE 'MISMATCH' END")
-)
+# Add comparison result and mismatch detail
+comparison_df = comparison_df \
+    .withColumn(
+        "RESULT",
+        when(col("SCHEMA_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNull(), "ALL_MISSING")
+        .when(col("SCHEMA_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNull(), "ONLY_SCHEMA_PRESENT")
+        .when(col("SCHEMA_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNotNull(), "SCHEMA_AND_S3")
+        .when(col("SCHEMA_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNull(), "SCHEMA_AND_REPLICA")
+        .when(col("SCHEMA_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNull(), "ONLY_REPLICA_PRESENT")
+        .when(col("SCHEMA_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNull() & col("S3_DATA_TYPE").isNotNull(), "ONLY_S3_PRESENT")
+        .when(col("SCHEMA_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNotNull() & col("S3_DATA_TYPE").isNotNull() &
+              (col("SCHEMA_DATA_TYPE") == col("REPLICA_DATA_TYPE")) &
+              (col("REPLICA_DATA_TYPE") == col("S3_DATA_TYPE")), "MATCH")
+        .otherwise("MISMATCH")
+    ) \
+    .withColumn(
+        "MISMATCH_DETAIL",
+        when(col("RESULT") != "MATCH",
+             concat_ws(" | ",
+                 when(col("SCHEMA_DATA_TYPE").isNull(), lit("SCHEMA: MISSING")).otherwise(concat_ws(": ", lit("SCHEMA"), col("SCHEMA_DATA_TYPE"))),
+                 when(col("REPLICA_DATA_TYPE").isNull(), lit("REPLICA: MISSING")).otherwise(concat_ws(": ", lit("REPLICA"), col("REPLICA_DATA_TYPE"))),
+                 when(col("S3_DATA_TYPE").isNull(), lit("S3: MISSING")).otherwise(concat_ws(": ", lit("S3"), col("S3_DATA_TYPE")))
+             )
+        ).otherwise(lit(""))
+    )
 
 # Write output to a Delta table
 comparison_df.write.format("delta").mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
