@@ -151,3 +151,10 @@ result_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
 # Log runtime
 end_time = time.time()
 print(f"DDL comparison completed in {round(end_time - start_time, 2)} seconds")
+
+
+
+Ideally, this shouldn't be an issue—as per our discussion with Paul yesterday, he confirmed that there's an alternate approach to access data from the read replica in Databricks via the staging layer.
+
+For manual access to PostgreSQL, it should work fine using this tool.
+Can we go ahead and raise a request to have this tool installed on our machines?
