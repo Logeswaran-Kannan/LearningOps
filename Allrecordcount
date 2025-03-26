@@ -1,17 +1,86 @@
-SELECT
-    acc.OWNER,
-    acc.TABLE_NAME,
-    acc.COLUMN_NAME,
-    acc.POSITION
-FROM
-    ALL_CONS_COLUMNS acc
-JOIN
-    ALL_CONSTRAINTS ac
-    ON acc.OWNER = ac.OWNER
-    AND acc.CONSTRAINT_NAME = ac.CONSTRAINT_NAME
-WHERE
-    ac.CONSTRAINT_TYPE = 'P'  -- Primary Key
-    AND acc.TABLE_NAME = 'YOUR_TABLE_NAME'  -- uppercase
-    AND acc.OWNER = 'YOUR_SCHEMA_NAME'
-ORDER BY
-    acc.POSITION;
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lower, regexp_replace, expr, lit
+from pyspark.sql.types import StructType, StructField, StringType
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
+
+# Parameters for testing
+test_tables = ["some_table_1", "some_table_2"]  # Add your test table names here
+
+# Load CSV schema file
+schema_df = (
+    spark.read.option("header", True).csv("/path/to/schema_file.csv")
+    .filter(col("IN_SCOPE") == "true")
+    .filter(~col("TABLE_NAME").rlike("[^\w-]"))
+    .select("TABLE_NAME", "COLUMN_NAME", col("MODIFIED_DATA_TYPE").alias("DATA_TYPE"))
+)
+
+# Function to filter and normalize tables from a given catalog and database
+def load_filtered_tables(catalog_name, db_name, prefix_filter):
+    tables = spark.sql(f"SHOW TABLES IN {catalog_name}.{db_name}")
+
+    filtered_tables = tables.filter(
+        (
+            (col("tableName").startswith("billingcenter_") & col("tableName").contains("_sys9_")) |
+            (col("tableName").startswith("policycenter_") & col("tableName").contains("_sys9_")) |
+            col("tableName").startswith("claimcenter_")
+        ) & ~col("tableName").rlike("_pvw_change_|_delta")
+    )
+
+    # Apply test table filter after normalization
+    def normalize_name(name):
+        return name.replace("billingcenter_sys9_", "")\
+                   .replace("policycenter_sys9_", "")\
+                   .replace("claimcenter_", "")
+
+    normalize_udf = expr(f"CASE WHEN tableName LIKE 'billingcenter\\_sys9\\_%' THEN regexp_replace(tableName, 'billingcenter_sys9_', '') "
+                         f"WHEN tableName LIKE 'policycenter\\_sys9\\_%' THEN regexp_replace(tableName, 'policycenter_sys9_', '') "
+                         f"WHEN tableName LIKE 'claimcenter\\_%' THEN regexp_replace(tableName, 'claimcenter_', '') ELSE tableName END")
+
+    filtered_tables = filtered_tables.withColumn("NORMALIZED_NAME", normalize_udf)
+    filtered_tables = filtered_tables.filter(col("NORMALIZED_NAME").isin(test_tables))
+
+    table_list = [row["tableName"] for row in filtered_tables.select("tableName").collect()]
+
+    all_columns = []
+    for tbl in table_list:
+        df = spark.table(f"{catalog_name}.{db_name}.{tbl}")
+        for field in df.schema.fields:
+            if field.name.upper() not in ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]:
+                norm_tbl = normalize_name(tbl)
+                all_columns.append((norm_tbl, field.name.upper(), field.dataType.simpleString().upper()))
+
+    return spark.createDataFrame(all_columns, ["TABLE_NAME", "COLUMN_NAME", "DATA_TYPE"])
+
+# Load data from Read Replica
+read_replica_df = load_filtered_tables("core_tst", "ODS", ["billingcenter_", "policycenter_", "claimcenter_"])
+
+# Load data from S3
+s3_df = load_filtered_tables("core_tst_sys9", "ODS", ["billingcenter_", "policycenter_", "claimcenter_"])
+
+# Normalize and deduplicate all sources
+schema_df = schema_df.dropDuplicates(["TABLE_NAME", "COLUMN_NAME", "DATA_TYPE"])
+read_replica_df = read_replica_df.dropDuplicates()
+s3_df = s3_df.dropDuplicates()
+
+# Join all three datasets for comparison
+comparison_df = schema_df.alias("schema") \
+    .join(read_replica_df.alias("replica"), ["TABLE_NAME", "COLUMN_NAME"], "outer") \
+    .join(s3_df.alias("s3"), ["TABLE_NAME", "COLUMN_NAME"], "outer") \
+    .select(
+        col("schema.TABLE_NAME").alias("TABLE_NAME"),
+        col("schema.COLUMN_NAME").alias("COLUMN_NAME"),
+        col("schema.DATA_TYPE").alias("SCHEMA_DATA_TYPE"),
+        col("replica.DATA_TYPE").alias("REPLICA_DATA_TYPE"),
+        col("s3.DATA_TYPE").alias("S3_DATA_TYPE")
+    )
+
+# Add comparison result
+comparison_df = comparison_df.withColumn(
+    "RESULT",
+    expr("CASE WHEN SCHEMA_DATA_TYPE = REPLICA_DATA_TYPE AND REPLICA_DATA_TYPE = S3_DATA_TYPE THEN 'MATCH' ELSE 'MISMATCH' END")
+)
+
+# Write output to a Delta table
+comparison_df.write.format("delta").mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
