@@ -1,19 +1,25 @@
-from pyspark.sql import SparkSession
+-- Set environment for CSV output
+SET FEEDBACK OFF
+SET HEADING ON
+SET COLSEP ','
+SET PAGESIZE 0
+SET LINESIZE 1000
+SET TRIMSPOOL ON
+SET TERMOUT OFF
+SET ECHO OFF
 
-# Initialize Spark session
-spark = SparkSession.builder.getOrCreate()
-
-# Define catalog and database
-catalog = "core_tst"
-database = "ODS"
-
-# Set catalog and database
-spark.catalog.setCurrentCatalog(catalog)
-spark.catalog.setCurrentDatabase(database)
-
-# Efficiently list all table names
-table_names = [table.name for table in spark.catalog.listTables(database)]
-
-print(f"Total tables in {catalog}.{database}: {len(table_names)}")
-for name in table_names:
-    print(name)
+-- Cursor to generate CSV exports
+BEGIN
+  FOR t IN (
+    SELECT table_name
+    FROM all_tables
+    WHERE owner = 'BCR'
+    ORDER BY table_name
+  ) LOOP
+    -- Construct spool command
+    DBMS_OUTPUT.PUT_LINE('SPOOL C:\exports\' || t.table_name || '.csv');
+    DBMS_OUTPUT.PUT_LINE('SELECT * FROM BCR.' || t.table_name || ';');
+    DBMS_OUTPUT.PUT_LINE('SPOOL OFF');
+  END LOOP;
+END;
+/
