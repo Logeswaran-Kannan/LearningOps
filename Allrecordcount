@@ -1,13 +1,138 @@
-SELECT t.table_name,
-       CASE 
-           WHEN EXISTS (
-               SELECT 1 
-               FROM all_tab_columns 
-               WHERE owner = 'BCR' 
-                 AND table_name = t.table_name 
-                 AND column_name = 'CREATETIME'
-           ) THEN 'Y'
-           ELSE 'N'
-       END AS has_createtime
-FROM all_tables t
-WHERE t.owner = 'BCR';
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lower, regexp_replace, lit, when
+from pyspark.sql.types import StructType, StructField, StringType
+import time
+
+spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
+
+# Start timer
+start_time = time.time()
+
+# Parameters for testing
+param_table_filter = [
+    "billingcenter_sys9_pvw_change_bc_address",
+    "billingcenter_sys9_bc_address",
+    "billingcenter_sys9_pvw_change_bc_billinginstruction",
+    "billingcenter_sys9_bc_billinginstruction"
+]  # Use lowercase for matching
+
+# 1. Load Oracle schema CSV
+oracle_schema_path = "/mnt/data/oracle_schema.csv"
+oracle_df = (
+    spark.read.option("header", True).csv(oracle_schema_path)
+    .filter(lower(col("IN_SCOPE")) == "true")
+    .withColumn("TABLE_NAME", lower(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
+    .withColumn("DATA_TYPE", lower(col("MODIFIED_DATA_TYPE")).alias("DATA_TYPE"))
+    .filter(~col("TABLE_NAME").rlike("[^a-z0-9_-]"))
+    .filter(~col("COLUMN_NAME").isin("azure_load_date", "dwh_from_date", "dwh_until_date", "ent_flag"))
+)
+
+print(f"Oracle schema records loaded: {oracle_df.count()}")
+
+# 2. Read Read Replica table metadata from information_schema
+replica_catalog = "core_tst"
+replica_db = "ODS"
+spark.catalog.setCurrentCatalog(replica_catalog)
+spark.catalog.setCurrentDatabase(replica_db)
+
+replica_df = spark.read.table("information_schema.columns").filter(
+    (lower(col("table_schema")) == replica_db.lower()) &
+    ((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
+     col("table_name").contains("_sys9_")) |
+    (col("table_name").startswith("claimcenter_"))
+).filter(~col("table_name").contains("_pvw_change_") & ~col("table_name").contains("_delta"))
+
+if param_table_filter:
+    replica_df = replica_df.filter(lower(col("table_name")).isin([tbl.lower() for tbl in param_table_filter]))
+
+replica_data = replica_df.select(
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME"),
+    lower(col("column_name")).alias("COLUMN_NAME"),
+    lower(col("data_type")).alias("DATA_TYPE")
+).withColumn("SOURCE", lit("REPLICA"))
+
+print(f"Extracted {replica_data.count()} columns from REPLICA")
+
+# 3. Read S3 table metadata from information_schema
+s3_catalog = "core_tst_sys9"
+s3_db = "ODS"
+spark.catalog.setCurrentCatalog(s3_catalog)
+spark.catalog.setCurrentDatabase(s3_db)
+
+s3_df = spark.read.table("information_schema.columns").filter(
+    (lower(col("table_schema")) == s3_db.lower()) &
+    ((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
+     col("table_name").contains("_")) |
+    (col("table_name").startswith("claimcenter_"))
+).filter(~col("table_name").contains("_pvw_change_") & ~col("table_name").contains("_delta"))
+
+if param_table_filter:
+    s3_df = s3_df.filter(lower(col("table_name")).isin([tbl.lower() for tbl in param_table_filter]))
+
+s3_data = s3_df.select(
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("TABLE_NAME"),
+    lower(col("column_name")).alias("COLUMN_NAME"),
+    lower(col("data_type")).alias("DATA_TYPE")
+).withColumn("SOURCE", lit("S3"))
+
+print(f"Extracted {s3_data.count()} columns from S3")
+
+# Normalize Oracle schema
+temp_oracle_df = oracle_df.withColumn("SOURCE", lit("oracle"))
+temp_oracle_df = temp_oracle_df.withColumn(
+    "NORMALIZED_TABLE_NAME",
+    lower(
+        regexp_replace(
+            regexp_replace(col("TABLE_NAME"), "^billingcenter_sys9_", ""),
+            "^policycenter_sys9_|^claimcenter_", ""
+        )
+    )
+)
+temp_oracle_df = temp_oracle_df.select(
+    col("NORMALIZED_TABLE_NAME").alias("TABLE_NAME"), "COLUMN_NAME", "DATA_TYPE", "SOURCE"
+)
+
+# Combine all sources
+schema = StructType([
+    StructField("TABLE_NAME", StringType(), True),
+    StructField("COLUMN_NAME", StringType(), True),
+    StructField("DATA_TYPE", StringType(), True),
+    StructField("SOURCE", StringType(), True),
+])
+
+combined_df = replica_data.unionByName(s3_data).unionByName(temp_oracle_df)
+print(f"Total combined records: {combined_df.count()}")
+
+# Pivot and compare
+pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["oracle", "REPLICA", "S3"]).agg({"DATA_TYPE": "first"})
+
+result_df = pivot_df.withColumn(
+    "COMPARISON_RESULT",
+    when(
+        col("oracle").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(),
+        when((col("oracle") == col("REPLICA")) & (col("REPLICA") == col("S3")), "MATCH")
+        .otherwise("MISMATCH")
+    ).when(
+        col("oracle").isNull() & col("REPLICA").isNull() & col("S3").isNull(), "ALL_MISSING"
+    ).when(
+        col("oracle").isNotNull() & col("REPLICA").isNull() & col("S3").isNull(), "ORACLE_ONLY"
+    ).when(
+        col("oracle").isNotNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "ORACLE_REPLICA_ONLY"
+    ).when(
+        col("oracle").isNotNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "ORACLE_S3_ONLY"
+    ).when(
+        col("oracle").isNull() & col("REPLICA").isNotNull() & col("S3").isNull(), "REPLICA_ONLY"
+    ).when(
+        col("oracle").isNull() & col("REPLICA").isNull() & col("S3").isNotNull(), "S3_ONLY"
+    ).when(
+        col("oracle").isNull() & col("REPLICA").isNotNull() & col("S3").isNotNull(), "REPLICA_S3_ONLY"
+    )
+)
+
+# Write result
+result_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
+
+# Log runtime
+end_time = time.time()
+print(f"DDL comparison completed in {round(end_time - start_time, 2)} seconds")
