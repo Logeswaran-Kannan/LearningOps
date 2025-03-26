@@ -1,8 +1,12 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, upper, regexp_replace, lit, when
 from pyspark.sql.types import StructType, StructField, StringType
+import time
 
 spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
+
+# Start timer
+start_time = time.time()
 
 # Parameters for testing
 param_table_filter = ["ACCOUNT", "CLAIM"]  # Add desired normalized table names for filtering
@@ -16,11 +20,10 @@ oracle_df = (
     .withColumn("COLUMN_NAME", upper(col("COLUMN_NAME")))
     .withColumn("DATA_TYPE", upper(col("MODIFIED_DATA_TYPE")).alias("DATA_TYPE"))
     .filter(~col("TABLE_NAME").rlike("[^A-Z0-9_-]"))
+    .filter(~col("COLUMN_NAME").isin("AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"))
 )
 
-# Common cleanup for columns
-exclude_columns = ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]
-oracle_df = oracle_df.filter(~col("COLUMN_NAME").isin(exclude_columns))
+print(f"Oracle schema records loaded: {oracle_df.count()}")
 
 # 2. Read Read Replica tables
 replica_catalog = "core_tst"
@@ -36,6 +39,7 @@ replica_filtered = [
         or t.name.startswith("claimcenter_")
     ) and not ("_pvw_change_" in t.name or "_delta" in t.name)
 ]
+print(f"Filtered Read Replica tables: {len(replica_filtered)}")
 
 # 3. Read S3 tables
 s3_catalog = "core_tst_sys9"
@@ -51,16 +55,18 @@ s3_filtered = [
         or t.name.startswith("claimcenter_")
     ) and not ("_pvw_change_" in t.name or "_delta" in t.name)
 ]
+print(f"Filtered S3 tables: {len(s3_filtered)}")
 
 def extract_columns(catalog, db, tables, source):
-    rows = []
     spark.catalog.setCurrentCatalog(catalog)
     spark.catalog.setCurrentDatabase(db)
+    rows = []
     for tbl in tables:
         try:
-            df = spark.read.table(f"{catalog}.{db}.{tbl}")
-            for field in df.schema.fields:
-                if field.name.upper() not in exclude_columns:
+            df = spark.read.table(f"{catalog}.{db}.{tbl}").selectExpr("* LIMIT 1")  # Faster metadata read
+            schema_fields = df.schema.fields
+            for field in schema_fields:
+                if field.name.upper() not in ["AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"]:
                     normalized_name = (
                         tbl.replace("billingcenter_sys9_", "")
                         .replace("policycenter_sys9_", "")
@@ -71,6 +77,7 @@ def extract_columns(catalog, db, tables, source):
                         rows.append((normalized_name, field.name.upper(), field.dataType.simpleString().upper(), source))
         except Exception as e:
             print(f"Failed to read table {tbl}: {e}")
+    print(f"Extracted {len(rows)} columns from {source}")
     return rows
 
 replica_data = extract_columns(replica_catalog, replica_db, replica_filtered, "REPLICA")
@@ -98,6 +105,7 @@ schema = StructType([
 ])
 
 combined_df = spark.createDataFrame(replica_data + s3_data, schema).unionByName(oracle_data)
+print(f"Total combined records: {combined_df.count()}")
 
 # Pivot the table
 pivot_df = combined_df.groupBy("TABLE_NAME", "COLUMN_NAME").pivot("SOURCE", ["ORACLE", "REPLICA", "S3"]).agg(
@@ -130,3 +138,7 @@ result_df = pivot_df.withColumn(
 
 # 4. Write result to DDL_COMPARE_TABLE
 result_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_TABLE")
+
+# Log runtime
+end_time = time.time()
+print(f"DDL comparison completed in {round(end_time - start_time, 2)} seconds")
