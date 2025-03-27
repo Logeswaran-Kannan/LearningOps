@@ -1,14 +1,2 @@
-# Step 1: Set CSV file path
-csv_path = "/dbfs/FileStore/sample_metadata.csv"  # or "dbfs:/FileStore/sample_metadata.csv"
-
-# Step 2: Read CSV into DataFrame
-df = spark.read.format("csv").option("header", "true").load(csv_path)
-
-# Step 3: Convert DataFrame to list of tuples
-data = [tuple(row) for row in df.collect()]
-
-# Optional: Print in Python list format for insert-like structure
-print("data = [")
-for row in data:
-    print(f"    {row},")
-print("]")
+ata Access Approach (Short Summary):
+Connect to AWS S3 where Parquet files are processed and organized into schema-based folders. Access the data in Databricks using a specific cluster configuration. Paul will provide the required details for setup.
