@@ -1,16 +1,12 @@
 import requests
-import json
 import base64
-from pyspark.sql import SparkSession
 
-# --- Setup Jira Credentials ---
+# === Required Jira Credentials ===
 JIRA_EMAIL = "your-email@example.com"
 JIRA_TOKEN = "your-jira-api-token"
-JIRA_DOMAIN = "yourcompany.atlassian.net"
-JIRA_PROJECT_KEY = "DATA"
-JIRA_ISSUE_TYPE = "Task"
+JIRA_DOMAIN = "yourcompany.atlassian.net"  # No https://
 
-# Encode credentials
+# === Encode Auth for Basic Auth ===
 auth_string = f"{JIRA_EMAIL}:{JIRA_TOKEN}"
 auth_token = base64.b64encode(auth_string.encode()).decode()
 
@@ -19,42 +15,16 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# --- Step 1: Query SQL Data ---
-# You can replace this with your actual SQL
-query = """
-SELECT column1, column2
-FROM your_table
-LIMIT 5
-"""
+# === Test API Call ===
+# We'll hit the "myself" endpoint to confirm credentials
+test_url = f"https://{JIRA_DOMAIN}/rest/api/3/myself"
 
-df = spark.sql(query)
-rows = df.collect()
+response = requests.get(test_url, headers=headers)
 
-# Format data into a readable string for Jira description
-data_text = "\n".join([f"{row['column1']} - {row['column2']}" for row in rows])
-
-# --- Step 2: Create Jira Ticket ---
-jira_url = f"https://{JIRA_DOMAIN}/rest/api/3/issue"
-
-issue_data = {
-    "fields": {
-        "project": {
-            "key": JIRA_PROJECT_KEY
-        },
-        "summary": "Auto-created Jira Ticket with Databricks SQL Results",
-        "description": f"Pulled from Databricks:\n{data_text}",
-        "issuetype": {
-            "name": JIRA_ISSUE_TYPE
-        }
-    }
-}
-
-response = requests.post(jira_url, headers=headers, data=json.dumps(issue_data))
-
-# --- Step 3: Confirm Status ---
-if response.status_code == 201:
-    issue_key = response.json().get("key")
-    print(f"✅ Jira ticket created: {issue_key}")
+# === Check the result ===
+if response.status_code == 200:
+    user = response.json()
+    print(f"✅ Jira connection successful. Authenticated as: {user['displayName']}")
 else:
-    print(f"❌ Failed to create ticket: {response.status_code}")
+    print(f"❌ Jira connection failed. Status: {response.status_code}")
     print(response.text)
