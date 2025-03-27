@@ -1,2 +1,19 @@
-import socket
-socket.gethostbyname("jira.group.net")
+import requests
+import base64
+
+JIRA_EMAIL = "your-email@example.com"
+JIRA_TOKEN = "your-jira-api-token"
+JIRA_DOMAIN = "jira.group.net"  # or your actual domain
+
+auth_string = f"{JIRA_EMAIL}:{JIRA_TOKEN}"
+auth_token = base64.b64encode(auth_string.encode()).decode()
+
+headers = {
+    "Authorization": f"Basic {auth_token}",
+    "Content-Type": "application/json"
+}
+
+response = requests.get(f"https://{JIRA_DOMAIN}/rest/api/2/serverInfo", headers=headers)
+
+print(response.status_code)
+print(response.text)
