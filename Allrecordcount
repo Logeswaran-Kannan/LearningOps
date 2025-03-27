@@ -1,24 +1,14 @@
-import csv
+# Step 1: Set CSV file path
+csv_path = "/dbfs/FileStore/sample_metadata.csv"  # or "dbfs:/FileStore/sample_metadata.csv"
 
-# DBFS path to your uploaded CSV
-csv_file_path = '/dbfs/FileStore/tables/sample_schema.csv'
+# Step 2: Read CSV into DataFrame
+df = spark.read.format("csv").option("header", "true").load(csv_path)
 
-# Output list
-data = []
+# Step 3: Convert DataFrame to list of tuples
+data = [tuple(row) for row in df.collect()]
 
-# Open and read the CSV
-with open(csv_file_path, mode='r', newline='', encoding='utf-8') as file:
-    reader = csv.DictReader(file)
-    for row in reader:
-        data.append((
-            row['TABLE_NAME'],
-            row['COLUMN_NAME'],
-            row['MODIFIED_DATA_TYPE'],
-            row['IN_SCOPE']
-        ))
-
-# Output the list in required format
+# Optional: Print in Python list format for insert-like structure
 print("data = [")
-for item in data:
-    print(f"    {item},")
+for row in data:
+    print(f"    {row},")
 print("]")
