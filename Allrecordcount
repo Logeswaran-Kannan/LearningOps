@@ -1,2 +1,5 @@
-ata Access Approach (Short Summary):
-Connect to AWS S3 where Parquet files are processed and organized into schema-based folders. Access the data in Databricks using a specific cluster configuration. Paul will provide the required details for setup.
+The general automation pack should ideally include the Gold layer. I can add it as a skippable task for now — if time permits, we’ll run it during test execution. Otherwise, it will be part of the daily flow eventually, since it just involves plugging in the script.
+
+I’m optimistic that the current optimization efforts will give us the bandwidth to validate the Gold layer as well.
+
+Regarding ER/Studio — if it's license-restricted, I’ll explore an alternate route by referencing the existing manual scripts. As suggested, I’ll connect with Munish or Graham for a quick KT session.
