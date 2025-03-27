@@ -1,25 +1,26 @@
 import csv
 
-# Provide your CSV file path
-csv_file_path = 'path/to/your/file.csv'
+# Example DBFS path (update with your actual filename)
+csv_file_path = '/dbfs/FileStore/tables/sample_schema.csv'
 
-# Container to hold the converted values
 data = []
 
-# Read and convert CSV rows to tuple format
-with open(csv_file_path, mode='r', newline='', encoding='utf-8') as file:
-    reader = csv.DictReader(file)
-    for row in reader:
-        # Convert each row to a tuple (preserve string format)
-        data.append((
-            row['TABLE_NAME'],
-            row['COLUMN_NAME'],
-            row['MODIFIED_DATA_TYPE'],
-            row['IN_SCOPE']
-        ))
+try:
+    with open(csv_file_path, mode='r', newline='', encoding='utf-8') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            data.append((
+                row['TABLE_NAME'],
+                row['COLUMN_NAME'],
+                row['MODIFIED_DATA_TYPE'],
+                row['IN_SCOPE']
+            ))
 
-# Print the resulting data list
-print("data = [")
-for item in data:
-    print(f"    {item},")
-print("]")
+    # Print output
+    print("data = [")
+    for item in data:
+        print(f"    {item},")
+    print("]")
+
+except FileNotFoundError:
+    print(f"❌ File not found: {csv_file_path}")
