@@ -1,26 +1,24 @@
 import csv
 
-# Example DBFS path (update with your actual filename)
+# DBFS path to your uploaded CSV
 csv_file_path = '/dbfs/FileStore/tables/sample_schema.csv'
 
+# Output list
 data = []
 
-try:
-    with open(csv_file_path, mode='r', newline='', encoding='utf-8') as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            data.append((
-                row['TABLE_NAME'],
-                row['COLUMN_NAME'],
-                row['MODIFIED_DATA_TYPE'],
-                row['IN_SCOPE']
-            ))
+# Open and read the CSV
+with open(csv_file_path, mode='r', newline='', encoding='utf-8') as file:
+    reader = csv.DictReader(file)
+    for row in reader:
+        data.append((
+            row['TABLE_NAME'],
+            row['COLUMN_NAME'],
+            row['MODIFIED_DATA_TYPE'],
+            row['IN_SCOPE']
+        ))
 
-    # Print output
-    print("data = [")
-    for item in data:
-        print(f"    {item},")
-    print("]")
-
-except FileNotFoundError:
-    print(f"❌ File not found: {csv_file_path}")
+# Output the list in required format
+print("data = [")
+for item in data:
+    print(f"    {item},")
+print("]")
