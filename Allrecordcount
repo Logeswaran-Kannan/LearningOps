@@ -1,19 +1,30 @@
-import requests
-import base64
+1. 💻 Target Environments
+Application Component	Target Environment
+PolicyCenter (PC)	SYS9
+BillingCenter (BC)	SYS9
+ClaimCenter (CC)	UAT4
 
-JIRA_EMAIL = "your-email@example.com"
-JIRA_TOKEN = "your-jira-api-token"
-JIRA_DOMAIN = "jira.group.net"  # or your actual domain
 
-auth_string = f"{JIRA_EMAIL}:{JIRA_TOKEN}"
-auth_token = base64.b64encode(auth_string.encode()).decode()
 
-headers = {
-    "Authorization": f"Basic {auth_token}",
-    "Content-Type": "application/json"
-}
+Test Environment Requirements – Guidewire On-Premises to Cloud Migration
 
-response = requests.get(f"https://{JIRA_DOMAIN}/rest/api/2/serverInfo", headers=headers)
+Based on the information provided by Graham, the designated environments are as follows:
 
-print(response.status_code)
-print(response.text)
+PolicyCenter (PC) and BillingCenter (BC): sys9
+
+ClaimCenter (CC): UAT4
+
+Below are the connection details shared for these environments.
+
+As part of the migration validation, our expectation is to receive three versions of each table for parallel comparison:
+
+Source Oracle (on-prem)
+
+Oracle Read Replica (cloud)
+
+S3-based extract (cloud)
+
+This setup will enable three-way parallel comparison of data.
+
+Clear and consistent naming conventions should be defined for each version of the tables to avoid confusion during testing and analysis.
+
