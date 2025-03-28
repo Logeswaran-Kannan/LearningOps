@@ -28,3 +28,6 @@ This setup will enable three-way parallel comparison of data.
 
 Clear and consistent naming conventions should be defined for each version of the tables to avoid confusion during testing and analysis.
 
+Based on the information shared by Graham, the environments are as follows: SYS9 for PC and BC, and UAT4 for CC. Below are the connection details provided.
+
+Our expectation is to receive three versions of each table — from Oracle, Read Replica, and S3 — to enable a three-way parallel comparison. Naming conventions for each version will need to be clearly defined.
