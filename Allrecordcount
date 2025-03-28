@@ -1,33 +1,17 @@
-1. 💻 Target Environments
-Application Component	Target Environment
-PolicyCenter (PC)	SYS9
-BillingCenter (BC)	SYS9
-ClaimCenter (CC)	UAT4
+Subject: Schedule KT Session – Silver Layer Table Identification
 
+Hi Team,
 
+I'd like to schedule a knowledge transfer (KT) session to discuss the identification of Silver Layer tables for our automation pipeline.
 
-Test Environment Requirements – Guidewire On-Premises to Cloud Migration
+During the session, it would be helpful to review:
 
-Based on the information provided by Graham, the designated environments are as follows:
+Any existing test scripts related to the Silver Layer
 
-PolicyCenter (PC) and BillingCenter (BC): sys9
+Any available LLD (Low-Level Design) documents
 
-ClaimCenter (CC): UAT4
+Other relevant documentation or details that could support the inclusion of the Silver Layer into the automation flow
 
-Below are the connection details shared for these environments.
+Please share your availability so we can set up a time that works for everyone.
 
-As part of the migration validation, our expectation is to receive three versions of each table for parallel comparison:
-
-Source Oracle (on-prem)
-
-Oracle Read Replica (cloud)
-
-S3-based extract (cloud)
-
-This setup will enable three-way parallel comparison of data.
-
-Clear and consistent naming conventions should be defined for each version of the tables to avoid confusion during testing and analysis.
-
-Based on the information shared by Graham, the environments are as follows: SYS9 for PC and BC, and UAT4 for CC. Below are the connection details provided.
-
-Our expectation is to receive three versions of each table — from Oracle, Read Replica, and S3 — to enable a three-way parallel comparison. Naming conventions for each version will need to be clearly defined.
+Thanks!
