@@ -1,0 +1,128 @@
+4. Out of Scope (QA)
+This section outlines the items that are not included in the scope of the automation system integration testing for the Guidewire data ingestion migration project. The exclusions are defined based on project constraints, infrastructure limitations, team responsibilities, and pre-agreed assumptions with stakeholders.
+
+4.1 Data and Validation Exclusions
+Historical Data Validation
+Historical data is assumed to have already been migrated to the target environment.
+The automation testing framework will only validate delta (incremental) data loads (typically one-day loads).
+Validation of past or cumulative data sets is out of scope.
+
+Test Data Creation
+Creation of test data for validation is not within the scope of the automation framework.
+Test data is expected to be created and seeded into source systems (Guidewire, Read Replica, CDA) by the manual QA team and UI automation team.
+
+Test Scenario Design
+Business logic design of test scenarios and test coverage matrix mapping is excluded.
+The framework will only execute validations based on provided in-scope tables and workflows.
+
+Business Logic Validation for Silver, Gold, and Outbound Layers
+
+Silver and Gold Layers: Only risk-based validation of transformation-heavy tables will be done.
+Deep business rule validation is not included.
+
+Outbound Feeds: The framework will only check if the output files are generated in the expected location.
+Content-level validation or downstream process validation is out of scope.
+
+4.2 Technical Exclusions
+Cost Analysis
+Cost comparison or billing analysis between ADF and Databricks pipelines is not possible due to restricted access to cost insights and reporting tools.
+
+Full Performance Testing
+Only high-level ingestion performance (based on data load time for one-day delta) will be validated.
+Deep performance tuning, memory profiling, and optimization of jobs are not covered.
+
+Schema Mapping Document Review
+Mapping document validations between source and target schemas will not be reviewed by the automation team.
+The framework assumes that source-to-target alignment is pre-verified by the development and data engineering teams.
+
+End-to-End Workflow Validation
+The automation testing does not cover validation of entire Guidewire functional workflows, UI components, or user journeys.
+
+4.3 Environmental and Access Limitations
+Integration with JIRA
+As JIRA is self-hosted and Databricks is cloud-based, direct integration is not supported due to firewall restrictions.
+Automation test metrics and results will be exported manually and updated to JIRA by the QA team.
+
+Access to Downstream Systems
+Any validation of downstream systems, external dashboards, reporting tools, or third-party consumers is out of scope for this automation framework.
+
+Code Change Regression Testing
+The data migration is considered a technical re-pointing of ingestion pipelines.
+Since no new transformation logic is introduced, regression testing of existing transformation code is not required.
+
+------------------------------------------
+
+Section 4: Out of Scope for Test Automation Framework
+This section clearly delineates items, data scenarios, activities, and validations explicitly excluded from the automation testing scope, aligned with stakeholder agreements, current technical constraints, and the strategic testing approach.
+4.1 Data Validation Out of Scope
+•	Historical Data Validation:
+o	Validation of historical data, already present in Azure Data Lake, is not within the scope of this automation framework. The automation explicitly covers only the delta (incremental) load data for one-day or daily incremental data ingestion scenarios.
+•	Legacy or Existing Data Issues:
+o	Any known data integrity issues, quality defects, or anomalies already present in the legacy or existing environment prior to migration are not within the automation scope.
+ 
+4.2 Functional and Business Validation Out of Scope
+•	Existing Business Logic Validation:
+o	Detailed validation of existing transformation business logic or previously identified defects in Silver, Gold, and Outbound layers is explicitly not covered under this automation framework.
+o	Only risk-based validations of critical transformations and reference tables are performed; comprehensive business rule validation is out of scope.
+•	Outbound Feed Data Content:
+o	Automation will only validate that outbound files are generated and available in expected locations. Detailed validation of outbound file content correctness or downstream consumption is out of scope.
+ 
+4.3 Technical Validation Out of Scope
+•	Cost Analysis and Optimization:
+o	Cost analytics, comparative cost assessment between Azure Data Factory (ADF) and Databricks pipelines execution, and cost-optimization assessments are explicitly out of scope due to lack of required access and tools.
+•	Comprehensive Performance Engineering:
+o	Deep performance profiling, tuning, and long-term performance trend analysis are excluded. Only high-level performance benchmarking (ADF vs. Databricks ingestion times) will be conducted based on available daily incremental data.
+•	Code-Level Regression Testing:
+o	The automation framework explicitly does not perform regression testing on existing stable transformation logic, code, or ingestion mechanisms not affected by this migration.
+•	Source to Target Mapping Validation:
+o	Detailed validation of source-to-target mappings, business intent verification, or transformation logic documentation validation is out of scope.
+ 
+4.4 Environment and Integration Validation Out of Scope
+•	Downstream Application Integration:
+o	Validation or testing of data usage within downstream applications, analytics dashboards, or third-party data consumers is explicitly excluded.
+•	UI or Front-End Validation:
+o	Functional or UI-level validation of the Guidewire applications (PolicyCenter, BillingCenter, ClaimCenter) or related front-end workflows is out of scope.
+•	Integration with Self-Hosted Systems:
+o	Direct automation integration or updates into self-hosted systems such as JIRA is not possible due to network and firewall constraints. Metrics will be manually updated in JIRA as required.
+ 
+4.5 Automation Framework Limitations
+•	Firewall and Access Restrictions:
+o	Cross-platform integration between cloud-based Databricks and certain internal/self-hosted systems is restricted, limiting automation framework direct integration and real-time updates into certain tools.
+
+------------------------------
+This section outlines the boundaries and exclusions applicable to the automation framework designed for validating the ingestion of Guidewire data (PolicyCenter, BillingCenter, ClaimCenter) into Azure Data Lake. The automation framework is scoped to technically validate delta loads during the cloud migration process and does not extend to business-level or manual QA validations.
+ 
+4.1 Data and Functional Exclusions
+•	Historical Data Validation
+Historical data already present in the Azure Data Lake (Bronze/Silver/Gold) is not in scope for validation.
+The automation framework is limited to delta load validation only (typically one-day data loads).
+•	Test Data Creation
+Creation, injection, or provisioning of test data required for validating ingestion pipelines is out of scope for the automation framework.
+The expectation is that the required delta data will be prepared by the manual QA team and the UI automation team prior to execution.
+•	Test Scenario Design and Manual Test Case Development
+Defining test scenarios or authoring manual test cases is not within the automation framework’s scope. These are expected to be driven by the manual QA planning track.
+•	Cost Analysis
+Cost benchmarking or pipeline execution cost comparison (e.g., ADF vs Databricks) is not included due to lack of access to Azure billing and usage reports.
+ 
+4.2 Platform, Layer & Environment Exclusions
+•	Silver & Gold Layers (Full Validation)
+Only risk-based testing will be performed on transformation-heavy Silver/Gold tables.
+Full validation of transformation logic or business rules in these layers is excluded.
+•	Outbound Feed Content Validation
+The framework will validate only the presence of expected outbound files in their respective mount points or folders.
+File content, layout, and downstream impact validations are out of scope.
+•	Downstream System Integration
+Any testing that involves validation of integration or consumption of data by downstream applications, dashboards, or reporting layers is not covered.
+•	Source to Target Mapping Document Validation
+The framework will not reference or validate any mapping documents or data transformation logic. This is a technical migration, and data is expected to follow the same logic as the legacy system.
+•	UI or Business Process Testing
+Functional workflows through Guidewire UI (PolicyCenter, BillingCenter, ClaimCenter) and end-user scenarios are excluded.
+ 
+4.3 Technical and Operational Exclusions
+•	Performance Optimization & Tuning
+While basic ingestion performance metrics will be captured (based on one-day delta loads), detailed pipeline performance tuning and stress testing are not part of this scope.
+•	Code or Workflow Regression Testing
+No regression testing of existing transformation pipelines will be executed since the ingestion change is source-focused only (Read Replica → CDA). Logic within ADF or Databricks pipelines is assumed to remain unchanged.
+•	Firewall-Restricted Integrations (e.g., Jira)
+Due to firewall limitations between self-hosted JIRA and Databricks (cloud), there will be no direct automation-to-JIRA integration.
+Test outcomes may be exported and manually updated in JIRA.
