@@ -1,1 +1,44 @@
-Thanks for sharing the tracker. However, I don’t currently have access to the SharePoint link — could you please grant me access?
+Jira Task 1: Automation Framework – Test Plan Creation
+Title:
+Create Automation Framework Test Plan
+
+Description:
+Develop a detailed Test Plan for the SIT Automation Framework, aligned with the proof of concept (POC) and proposed validation approach.
+Activities include:
+
+Identifying scope of automation
+
+Listing test scenarios and validation types (e.g., count, null check, duplicates)
+
+Environment setup overview
+
+Tool and technology stack involved (Databricks, PySpark, DevOps, etc.)
+
+Documenting schedule, dependencies, and risks
+
+Publishing in Confluence for collaboration and sign-off
+
+Definition of Done (DoD):
+Test Plan documented, reviewed, and signed off by stakeholders in Confluence.
+
+🔹 Jira Task 2: Automation Framework – Test Strategy Definition
+Title:
+Define Test Strategy for Automation Framework
+
+Description:
+Create a high-level test strategy that outlines the overall testing approach for the automation framework across SIT layers (Source, ODS, Silver, Gold).
+Activities include:
+
+Identifying validation techniques for different data layers
+
+Test coverage model for each type (batch, streaming, CDC)
+
+Approach for test data preparation and usage
+
+Integration strategy with CI/CD pipeline
+
+Alignment with business rules and stakeholder expectations
+
+Definition of Done (DoD):
+Test Strategy document finalized and shared for stakeholder alignment and reference in Confluence.
+
