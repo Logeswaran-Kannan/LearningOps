@@ -1,5 +1,1 @@
-Thanks, Hazel, for setting up the platform to discuss this. This is related to the Guidewire data migration validation in the downstream data warehouse. The goal is to feed a sample set of scenarios into both the Guidewire cloud and the existing base system, then compare the outcomes between the two.
-
-As we discussed last week, we’re trying to identify any existing automated test scenarios used for UI automation. Suraj has a specific set of scenarios that need to be covered as part of the test data creation, so if we can reuse existing ones and just map them, we’ll only need to add anything new if required.
-
-I’m also planning to sync with Vinay to understand the timeline and approach for creating test data through automation — especially to estimate the volume of test cases we’ll need to handle.
+Automation scripts are orchestrated and executed as Databricks Workflows to ensure systematic, automated, and repeatable test execution.
