@@ -1,50 +1,41 @@
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
+from pyspark.sql.functions import col, when, upper, lit, concat
+from pyspark.sql import functions as F
 
-# Define the schema
-schema = StructType([
-    StructField("TABLE_NAME", StringType(), True),
-    StructField("COLUMN_NAME", StringType(), True),
-    StructField("DATA_TYPE", StringType(), True),
-    StructField("MODIFIED_DATA_TYPE", StringType(), True),
-    StructField("IN_SCOPE", StringType(), True),
-    StructField("DATA_LENGTH", IntegerType(), True),
-    StructField("DATA_PRECISION", IntegerType(), True),
-    StructField("DATA_SCALE", IntegerType(), True),
-    StructField("NULLABLE", StringType(), True),
-    StructField("COLUMN_ID", IntegerType(), True),
-    StructField("DEFAULT_LENGTH", IntegerType(), True),
-    StructField("DATA_DEFAULT", StringType(), True),
-    StructField("LAST_ANALYZED", StringType(), True),
-    StructField("CHARACTER_SET_NAME", StringType(), True),
-    StructField("CHAR_COL_DECL_LENGTH", IntegerType(), True),
-    StructField("AVG_COL_LEN", DoubleType(), True),
-    StructField("CHAR_LENGTH", IntegerType(), True),
-    StructField("CHAR_USED", StringType(), True)
-])
+# Load the data from the original table
+source_table = "core_tst_sys9.default.readreplica_schema_file"
+df = spark.table(source_table)
 
-# Sample data (simulate insert-like values as a Python list of tuples)
-# Replace this list with actual values as needed
-data = [
-    ("EMP", "EMP_ID", "NUMBER", "NUMBER", "Y", 10, 10, 0, "N", 1, None, None, "2023-01-01", None, 10, 4.0, 10, None),
-    ("EMP", "EMP_NAME", "VARCHAR2", "STRING", "Y", 100, None, None, "Y", 2, None, None, "2023-01-01", "AL32UTF8", 100, 20.0, 100, "C"),
-    # Add more rows as needed
-]
+# Filter out table names containing special characters except underscore (_)
+df_filtered = df.filter(~col("TABLE_NAME").rlike("[^A-Za-z0-9_]+"))
 
-# Create DataFrame
-df = spark.createDataFrame(data, schema)
+# Add MODIFIED_COLUMN based on logic
+udt_upper = upper(col("udt_name"))
+df_transformed = df_filtered.withColumn(
+    "MODIFIED_COLUMN",
+    when(udt_upper == "VARCHAR", "VARCHAR2")
+    .when(udt_upper == "TIMESTAMP", "TIMESTAMP(6)")
+    .when(udt_upper == "GEOGRAPHY", "SDO_GEOMETRY")
+    .when(
+        udt_upper.like("%NUMERIC%") &
+        col("numeric_precision").isNotNull() & col("numeric_scale").isNotNull() &
+        (col("numeric_precision") > 0) & (col("numeric_scale") > 0),
+        concat(lit("DECIMAL("), col("numeric_precision").cast("string"), lit(","), col("numeric_scale").cast("string"), lit(")"))
+    )
+    .when(udt_upper.like("%NUMERIC%"), "DOUBLE")
+    .when(udt_upper == "TEXT", "CLOB")
+    .when(udt_upper == "BYTEA", "BLOB")
+    .when(udt_upper == "BOOL", "CHAR")
+    .when(udt_upper.like("%INT%"), "NUMBER")
+    .otherwise(col("udt_name"))
+)
 
-# Register as temporary view
-df.createOrReplaceTempView("ora_schema_comp")
+# Add IN_SCOPE column (setting it to True by default, customize as needed)
+df_transformed = df_transformed.withColumn("IN_SCOPE", lit(True))
 
-print(" Temporary table 'ora_schema_comp' created.")
+# Define the name of the target table
+target_table = "core_tst_sys9.default.readreplica_schema_file_copy"
 
--------------------------------------------------
+# Write the transformed DataFrame to the new table
+df_transformed.write.mode("overwrite").saveAsTable(target_table)
 
-%run ./create_ora_schema_comp_table
-
-------------------------------------------------
-
-# Example usage in another notebook
-df2 = spark.sql("SELECT * FROM ora_schema_comp WHERE IN_SCOPE = 'Y'")
-df2.show()
-
+print(f"Table '{target_table}' created successfully with transformed data.")
