@@ -1,24 +1,8 @@
-# Step 1: Read from table
-table_name = "your_table_name"  # Change this
-columns = ["col1", "col2", "col3"]  # Specify the column order you want
+# Path to the CSV in DBFS
+csv_path = "dbfs:/FileStore/output/selected_columns.csv"
 
-# Read only the selected columns
-df = spark.table(table_name).select(columns)
+# Read CSV as Spark DataFrame
+df_read = spark.read.option("header", True).csv(csv_path)
 
-# Step 2: Convert to list of tuples
-tuple_list = [tuple(row[col] for col in columns) for row in df.collect()]
-
-# Step 3: Print in Python list format for INSERT-like structure
-print("Data to insert:")
-print(tuple_list)
-
-# Optional: formatted version
-print("\nFormatted for SQL-style INSERT:")
-for tup in tuple_list:
-    print(f"{tup},")
-
-# Step 4: Save as CSV in DBFS (FileStore)
-output_path = "dbfs:/FileStore/output/selected_columns.csv"
-df.write.mode("overwrite").option("header", True).csv(output_path)
-
-print(f"\nCSV saved at: {output_path}")
+# Show the data
+df_read.show()
