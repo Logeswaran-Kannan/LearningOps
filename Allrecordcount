@@ -1,8 +1,50 @@
-# Path to the CSV in DBFS
-csv_path = "dbfs:/FileStore/output/selected_columns.csv"
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
 
-# Read CSV as Spark DataFrame
-df_read = spark.read.option("header", True).csv(csv_path)
+# Define the schema
+schema = StructType([
+    StructField("TABLE_NAME", StringType(), True),
+    StructField("COLUMN_NAME", StringType(), True),
+    StructField("DATA_TYPE", StringType(), True),
+    StructField("MODIFIED_DATA_TYPE", StringType(), True),
+    StructField("IN_SCOPE", StringType(), True),
+    StructField("DATA_LENGTH", IntegerType(), True),
+    StructField("DATA_PRECISION", IntegerType(), True),
+    StructField("DATA_SCALE", IntegerType(), True),
+    StructField("NULLABLE", StringType(), True),
+    StructField("COLUMN_ID", IntegerType(), True),
+    StructField("DEFAULT_LENGTH", IntegerType(), True),
+    StructField("DATA_DEFAULT", StringType(), True),
+    StructField("LAST_ANALYZED", StringType(), True),
+    StructField("CHARACTER_SET_NAME", StringType(), True),
+    StructField("CHAR_COL_DECL_LENGTH", IntegerType(), True),
+    StructField("AVG_COL_LEN", DoubleType(), True),
+    StructField("CHAR_LENGTH", IntegerType(), True),
+    StructField("CHAR_USED", StringType(), True)
+])
 
-# Show the data
-df_read.show()
+# Sample data (simulate insert-like values as a Python list of tuples)
+# Replace this list with actual values as needed
+data = [
+    ("EMP", "EMP_ID", "NUMBER", "NUMBER", "Y", 10, 10, 0, "N", 1, None, None, "2023-01-01", None, 10, 4.0, 10, None),
+    ("EMP", "EMP_NAME", "VARCHAR2", "STRING", "Y", 100, None, None, "Y", 2, None, None, "2023-01-01", "AL32UTF8", 100, 20.0, 100, "C"),
+    # Add more rows as needed
+]
+
+# Create DataFrame
+df = spark.createDataFrame(data, schema)
+
+# Register as temporary view
+df.createOrReplaceTempView("ora_schema_comp")
+
+print(" Temporary table 'ora_schema_comp' created.")
+
+-------------------------------------------------
+
+%run ./create_ora_schema_comp_table
+
+------------------------------------------------
+
+# Example usage in another notebook
+df2 = spark.sql("SELECT * FROM ora_schema_comp WHERE IN_SCOPE = 'Y'")
+df2.show()
+
