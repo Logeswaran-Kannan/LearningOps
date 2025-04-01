@@ -1,105 +1,24 @@
-Section 2: Automation Framework – Test Objectives, Key Goals, and Scope
-2.1 Test Objectives
-The primary objective of the Automation Framework for Guidewire Data Migration validation is to ensure data correctness, completeness, accuracy, and structural integrity during migration from on-premise Oracle databases to the Azure Data Lake environment. The automation framework will specifically validate new ingestion pathways—Read Replica (PostgreSQL) as an interim solution and CDA (Cloud Data Access) files via Amazon S3 as the target solution—into the Azure Data Lake Bronze Layer.
+# Step 1: Read from table
+table_name = "your_table_name"  # Change this
+columns = ["col1", "col2", "col3"]  # Specify the column order you want
 
-The automation aims to provide robust, repeatable, and scalable validation mechanisms, ensuring minimal manual intervention during regression and incremental data validations.
+# Read only the selected columns
+df = spark.table(table_name).select(columns)
 
-2.2 Key Goals
-The key goals of the automation framework include:
+# Step 2: Convert to list of tuples
+tuple_list = [tuple(row[col] for col in columns) for row in df.collect()]
 
-Parallel Testing of Ingestion Flows:
-Perform parallel validation of Read Replica and CDA ingestion methods when both sources are available simultaneously during the test design and execution period.
-If parallel execution is not feasible due to CDA availability constraints, priority will be explicitly placed on validating the Read Replica ingestion first.
+# Step 3: Print in Python list format for INSERT-like structure
+print("Data to insert:")
+print(tuple_list)
 
-Three-Way Data Reconciliation:
-Validate and reconcile the data across the legacy on-premise Oracle database, interim PostgreSQL Read Replica, and the CDA files from AWS S3, ensuring data consistency across all sources.
+# Optional: formatted version
+print("\nFormatted for SQL-style INSERT:")
+for tup in tuple_list:
+    print(f"{tup},")
 
-Schema and Structural Validation:
-Validate schema conformity including table structures, column data types, nullability, and database constraints between staging layers (Read Replica/CDA) and target Azure Data Lake Bronze schemas.
+# Step 4: Save as CSV in DBFS (FileStore)
+output_path = "dbfs:/FileStore/output/selected_columns.csv"
+df.write.mode("overwrite").option("header", True).csv(output_path)
 
-High-Level Performance Benchmarking:
-Perform basic performance benchmarking by comparing data ingestion times between the existing Azure Data Factory (ADF) pipelines and the new Databricks ingestion pipelines for a one-day delta load.
-
-Orchestrated Automation via Databricks Workflow:
-Automation scripts are orchestrated and executed as Databricks Workflows to ensure systematic, automated, and repeatable test execution.
-
-Integration with Azure DevOps:
-Utilize Azure DevOps for version control, continuous integration and deployment (CI/CD) pipeline management of the automation code base. This ensures controlled and tracked deployment and execution of test scripts.
-
-Results Reporting and Dashboard Generation:
-Generate comprehensive dashboards within Databricks to visualize and monitor test execution results, metrics, and validation outcomes clearly and transparently.
-
-Traceability and Auditability:
-Maintain a clear, traceable record of executed tests, generated queries, validation logic, test results, and metrics that can be manually ported into JIRA due to firewall and access limitations.
-
-2.3 Scope of Automation Framework Testing
-The Automation Framework will cover the following testing activities:
-
-In-Scope Items:
-Approved Tables Only:
-Only the tables explicitly agreed upon and provided by the Data Engineering team will be considered for automation test coverage across Bronze, Silver, and Gold layers.
-
-Data Layers Validation:
-
-Bronze Layer:
-Complete validation including schema, data accuracy, row count, referential integrity, and duplicate record checks.
-
-Silver and Gold Layers:
-Validation conducted will be limited to risk-based testing for transformation-involved tables.
-Reference tables will be fully validated across Silver and Gold layers.
-
-Performance Testing (High-level):
-Execution time comparison between the existing Azure Data Factory (ADF) ingestion pipelines and Databricks ingestion pipelines based on a one-day delta data load from a production or production-like environment.
-
-Outbound Feeds:
-Validate only the successful generation and availability of files in the specified outbound storage area or mount location, assuming Databricks has sufficient access. Content-level validation is explicitly out of scope.
-
-Delta Load Validation Only:
-Automated testing will exclusively validate delta (incremental) data loads, not historical data.
-
-Explicitly Out-of-Scope Items:
-Historical Data:
-Validation of historical data already existing within the Azure Data Lake is explicitly out of scope.
-
-Cost Analysis:
-Cost analytics and cost comparison between ADF and Databricks pipeline executions are excluded from the automation scope due to restricted access to billing tools.
-
-Detailed Performance Tuning:
-Performance testing is limited to high-level execution time benchmarks; detailed performance profiling and tuning are not included.
-
-Business Logic Validation in Silver, Gold, and Outbound Layers:
-Validation of existing business logic or previously documented defects at Silver, Gold, and Outbound feed layers is explicitly out of scope.
-
-UI Testing and Workflow Validation:
-Functional validation of Guidewire application UIs or manual workflows will not be covered by this automation framework.
-
-Downstream Application Testing:
-Integration validation with downstream applications or reports is outside the scope.
-
-2.4 Automation Framework Orchestration and DevOps Integration
-Databricks Workflow:
-The automation framework is orchestrated using Databricks Workflows, ensuring seamless execution, monitoring, logging, and reporting within the Databricks ecosystem.
-
-Azure DevOps Integration:
-Azure DevOps will manage:
-
-Version Control: Maintaining automation scripts and notebooks.
-
-Continuous Integration/Continuous Deployment (CI/CD): Automating deployments into target testing environments and ensuring consistent execution.
-
-Deployment Management: Traceable deployments across Development, Testing, and Production environments.
-
-Result Processing:
-Validation outcomes are stored in Delta Live Tables, transformed into easily accessible views, and subsequently visualized through automated dashboards.
-
-Reporting and Traceability:
-Automation test results, metrics, and generated SQL validation queries will be documented clearly, facilitating manual JIRA updates due to firewall restrictions between cloud-based Databricks and self-hosted JIRA instances.
-
-Let me know if you'd like to proceed to Section 5: Assumptions or require further detail or adjustments to this section.
-
-
-
-
-
-
-
+print(f"\nCSV saved at: {output_path}")
