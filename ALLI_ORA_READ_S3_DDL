@@ -1,0 +1,180 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lower, regexp_replace, lit, when, coalesce
+from pyspark.sql.types import StructType, StructField, StringType
+import time
+
+spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
+
+# Start timer
+start_time = time.time()
+
+# Parameters for testing
+param_table_filter = [
+    "billingcenter_sys9_pvw_change_bc_address",
+    "billingcenter_sys9_bc_address",
+    "billingcenter_sys9_pvw_change_bc_billinginstruction",
+    "billingcenter_sys9_bc_billinginstruction"
+]  # Use lowercase for matching
+
+# 1. Load Oracle schema CSV
+oracle_schema_path = "/mnt/data/oracle_schema.csv"
+oracle_df = (
+    spark.read.option("header", True).csv(oracle_schema_path)
+    .filter(lower(col("IN_SCOPE")) == "true")
+    .withColumn("TABLE_NAME", lower(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
+    .withColumn("DATA_TYPE", lower(col("MODIFIED_DATA_TYPE")).alias("DATA_TYPE"))
+    .filter(~col("TABLE_NAME").rlike("[^a-z0-9_-]"))
+    .filter(~col("COLUMN_NAME").isin("AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"))
+)
+
+print(f"Oracle schema records loaded: {oracle_df.count()}")
+
+# 2. Read Read Replica table metadata from information_schema
+replica_catalog = "core_tst"
+replica_db = "ODS"
+spark.catalog.setCurrentCatalog(replica_catalog)
+spark.catalog.setCurrentDatabase(replica_db)
+
+replica_df = spark.read.table("information_schema.columns").filter(
+    (lower(col("table_schema")) == replica_db.lower()) &
+    (((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
+      col("table_name").contains("_sys9_")) |
+     (col("table_name").startswith("claimcenter_")))
+).filter(~col("table_name").contains("_pvw_change_") & ~col("table_name").contains("_delta"))
+
+if param_table_filter:
+    replica_df = replica_df.filter(lower(col("table_name")).isin([tbl.lower() for tbl in param_table_filter]))
+
+replica_data = replica_df.select(
+    lower(col("table_name")).alias("REPLICA_TABLE_NAME"),
+    lower(col("column_name")).alias("REPLICA_COLUMN_NAME"),
+    lower(col("full_data_type")).alias("REPLICA_DATA_TYPE"),
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("REPLICA_NORMALIZED_TABLE_NAME")
+)
+
+print(f"Extracted {replica_data.count()} columns from REPLICA")
+
+# 3. Read S3 table metadata from information_schema
+s3_catalog = "core_tst_sys9"
+s3_db = "ods_stg_copy"
+spark.catalog.setCurrentCatalog(s3_catalog)
+spark.catalog.setCurrentDatabase(s3_db)
+
+s3_df = spark.read.table("information_schema.columns").filter(
+    (lower(col("table_schema")) == s3_db.lower()) &
+    (((col("table_name").startswith("billingcenter_") | col("table_name").startswith("policycenter_")) &
+      col("table_name").contains("_")) |
+     (col("table_name").startswith("claimcenter_")))
+).filter(~col("table_name").contains("_pvw_change_") & ~col("table_name").contains("_delta"))
+
+if param_table_filter:
+    s3_df = s3_df.filter(lower(col("table_name")).isin([tbl.lower() for tbl in param_table_filter]))
+
+s3_data = s3_df.select(
+    lower(col("table_name")).alias("S3_TABLE_NAME"),
+    lower(col("column_name")).alias("S3_COLUMN_NAME"),
+    lower(col("full_data_type")).alias("S3_DATA_TYPE"),
+    lower(regexp_replace(regexp_replace(col("table_name"), "^billingcenter_sys9_", ""), "^policycenter_sys9_|^claimcenter_", "")).alias("S3_NORMALIZED_TABLE_NAME")
+)
+
+print(f"Extracted {s3_data.count()} columns from S3")
+
+# Normalize Oracle schema
+temp_oracle_df = oracle_df.withColumn("SOURCE", lit("oracle"))
+temp_oracle_df = temp_oracle_df.withColumn(
+    "ORACLE_NORMALIZED_TABLE_NAME",
+    lower(
+        regexp_replace(
+            regexp_replace(col("TABLE_NAME"), "^billingcenter_sys9_", ""),
+            "^policycenter_sys9_|^claimcenter_", ""
+        )
+    )
+)
+temp_oracle_df = temp_oracle_df.select(
+    col("ORACLE_NORMALIZED_TABLE_NAME"),
+    col("TABLE_NAME").alias("ORACLE_TABLE_NAME"),
+    col("COLUMN_NAME").alias("ORACLE_COLUMN_NAME"),
+    col("DATA_TYPE").alias("ORACLE_DATA_TYPE")
+)
+
+# Join Oracle with Replica
+oracle_replica_join = temp_oracle_df.join(
+    replica_data,
+    (temp_oracle_df["ORACLE_NORMALIZED_TABLE_NAME"] == replica_data["REPLICA_NORMALIZED_TABLE_NAME"]) &
+    (temp_oracle_df["ORACLE_COLUMN_NAME"] == replica_data["REPLICA_COLUMN_NAME"]),
+    "full_outer"
+).drop(replica_data["REPLICA_NORMALIZED_TABLE_NAME"])
+
+# Join result with S3
+combined_df = oracle_replica_join.join(
+    s3_data,
+    (oracle_replica_join["ORACLE_NORMALIZED_TABLE_NAME"] == s3_data["S3_NORMALIZED_TABLE_NAME"]) &
+    (oracle_replica_join["ORACLE_COLUMN_NAME"] == s3_data["S3_COLUMN_NAME"]),
+    "full_outer"
+).drop(s3_data["S3_NORMALIZED_TABLE_NAME"])
+
+# Resolve table name from any source
+final_df = combined_df.withColumn(
+    "TABLE_NAME_RESOLVED",
+    coalesce(
+        col("ORACLE_NORMALIZED_TABLE_NAME"),
+        col("REPLICA_NORMALIZED_TABLE_NAME"),
+        col("S3_NORMALIZED_TABLE_NAME")
+    )
+)
+
+# Get list of distinct normalized table names for each source
+oracle_tables = temp_oracle_df.select("ORACLE_NORMALIZED_TABLE_NAME").distinct()
+replica_tables = replica_data.select("REPLICA_NORMALIZED_TABLE_NAME").distinct()
+s3_tables = s3_data.select("S3_NORMALIZED_TABLE_NAME").distinct()
+
+# Define updated comparison logic
+final_df = final_df.withColumn(
+    "COMPARISON_RESULT",
+    when(
+        col("ORACLE_COLUMN_NAME").isNull() & col("TABLE_NAME_RESOLVED").isin([r[0] for r in oracle_tables.collect()]),
+        "COLUMN_MISSING_IN_ORACLE"
+    ).when(
+        col("ORACLE_COLUMN_NAME").isNull() & ~col("TABLE_NAME_RESOLVED").isin([r[0] for r in oracle_tables.collect()]),
+        "TABLE_MISSING_IN_ORACLE"
+    ).when(
+        col("REPLICA_COLUMN_NAME").isNull() & col("TABLE_NAME_RESOLVED").isin([r[0] for r in replica_tables.collect()]),
+        "COLUMN_MISSING_IN_REPLICA"
+    ).when(
+        col("REPLICA_COLUMN_NAME").isNull() & ~col("TABLE_NAME_RESOLVED").isin([r[0] for r in replica_tables.collect()]),
+        "TABLE_MISSING_IN_REPLICA"
+    ).when(
+        col("S3_COLUMN_NAME").isNull() & col("TABLE_NAME_RESOLVED").isin([r[0] for r in s3_tables.collect()]),
+        "COLUMN_MISSING_IN_S3"
+    ).when(
+        col("S3_COLUMN_NAME").isNull() & ~col("TABLE_NAME_RESOLVED").isin([r[0] for r in s3_tables.collect()]),
+        "TABLE_MISSING_IN_S3"
+    ).otherwise(col("COMPARISON_RESULT"))
+)
+
+# Reorder columns
+final_df = final_df.select(
+    "TABLE_NAME_RESOLVED",
+    "ORACLE_TABLE_NAME", "ORACLE_COLUMN_NAME", "ORACLE_DATA_TYPE",
+    "REPLICA_TABLE_NAME", "REPLICA_COLUMN_NAME", "REPLICA_DATA_TYPE",
+    "S3_TABLE_NAME", "S3_COLUMN_NAME", "S3_DATA_TYPE",
+    "COMPARISON_RESULT"
+)
+
+# Write result to core_tst.default schema
+if 'final_df' in locals():
+    spark.catalog.setCurrentCatalog("core_tst")
+    spark.catalog.setCurrentDatabase("default")
+    try:
+        spark.sql("DROP TABLE IF EXISTS DDL_COMPARE_TABLE")
+        final_df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable("DDL_COMPARE_TABLE")
+        print("Delta table DDL_COMPARE_TABLE created and overwritten successfully.")
+    except Exception as e:
+        print("Failed to create or overwrite delta table: ", e)
+else:
+    print("final_df is not defined. Join or transformation may have failed.")
+
+# Log runtime
+end_time = time.time()
+print(f"DDL comparison completed in {round(end_time - start_time, 2)} seconds")
