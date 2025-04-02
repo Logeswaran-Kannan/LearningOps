@@ -104,7 +104,7 @@ oracle_replica_join = temp_oracle_df.join(
     (temp_oracle_df["ORACLE_NORMALIZED_TABLE_NAME"] == replica_data["REPLICA_NORMALIZED_TABLE_NAME"]) &
     (temp_oracle_df["ORACLE_COLUMN_NAME"] == replica_data["REPLICA_COLUMN_NAME"]),
     "full_outer"
-).drop(replica_data["REPLICA_NORMALIZED_TABLE_NAME"])
+)
 
 # Join result with S3
 combined_df = oracle_replica_join.join(
@@ -112,7 +112,7 @@ combined_df = oracle_replica_join.join(
     (oracle_replica_join["ORACLE_NORMALIZED_TABLE_NAME"] == s3_data["S3_NORMALIZED_TABLE_NAME"]) &
     (oracle_replica_join["ORACLE_COLUMN_NAME"] == s3_data["S3_COLUMN_NAME"]),
     "full_outer"
-).drop(s3_data["S3_NORMALIZED_TABLE_NAME"])
+)
 
 # Resolve table name from any source
 final_df = combined_df.withColumn(
@@ -133,6 +133,14 @@ s3_tables = s3_data.select("S3_NORMALIZED_TABLE_NAME").distinct()
 final_df = final_df.withColumn(
     "COMPARISON_RESULT",
     when(
+        col("ORACLE_COLUMN_NAME").isNotNull() &
+        col("REPLICA_COLUMN_NAME").isNotNull() &
+        col("S3_COLUMN_NAME").isNotNull(),
+        when(
+            (col("ORACLE_DATA_TYPE") == col("REPLICA_DATA_TYPE")) & (col("REPLICA_DATA_TYPE") == col("S3_DATA_TYPE")),
+            "MATCH"
+        ).otherwise("DATA_TYPE_MISMATCH")
+    ).when(
         col("ORACLE_COLUMN_NAME").isNull() & col("TABLE_NAME_RESOLVED").isin([r[0] for r in oracle_tables.collect()]),
         "COLUMN_MISSING_IN_ORACLE"
     ).when(
@@ -150,7 +158,7 @@ final_df = final_df.withColumn(
     ).when(
         col("S3_COLUMN_NAME").isNull() & ~col("TABLE_NAME_RESOLVED").isin([r[0] for r in s3_tables.collect()]),
         "TABLE_MISSING_IN_S3"
-    ).otherwise(col("COMPARISON_RESULT"))
+    ).otherwise("DATA_TYPE_MISMATCH")
 )
 
 # Reorder columns
