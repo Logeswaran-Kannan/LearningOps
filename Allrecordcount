@@ -1,3 +1,86 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lower, lit, when, coalesce, current_timestamp
+import time
+
+spark = SparkSession.builder.appName("DDLReconciliationOracleReadReplica").getOrCreate()
+
+start_time = time.time()
+
+# Table filter for scope
+param_table_filter = [
+    "billingcenter_sys9_pvw_change_bc_address",
+    "billingcenter_sys9_bc_address",
+    "billingcenter_sys9_pvw_change_bc_billinginstruction",
+    "billingcenter_sys9_bc_billinginstruction"
+]
+
+# Load Oracle schema from CSV
+oracle_schema_path = "file:/Workspace/UKS_SIT_DW_E2E/REFERENCE_FILE/ora_schema.csv"
+oracle_df = (
+    spark.read.option("header", True).csv(oracle_schema_path)
+    .filter(lower(col("IN_SCOPE")) == "true")
+    .withColumn("TABLE_NAME", lower(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
+    .withColumn("DATA_TYPE", lower(col("DATA_TYPE")))
+    .withColumn("DATA_PRECISION", col("DATA_PRECISION"))
+    .withColumn("DATA_SCALE", col("DATA_SCALE"))
+    .filter(~col("TABLE_NAME").rlike("[^a-z0-9_-]"))
+    .filter(~col("COLUMN_NAME").isin("AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"))
+)
+
+if param_table_filter:
+    oracle_df = oracle_df.filter(lower(col("TABLE_NAME")).isin([tbl.lower() for tbl in param_table_filter]))
+
+# Load Read Replica schema from CSV
+readreplica_schema_path = "file:/Workspace/UKS_SIT_DW_E2E/REFERENCE_FILE/readreplica_schema.csv"
+replica_df = (
+    spark.read.option("header", True).csv(readreplica_schema_path)
+    .withColumn("TABLE_NAME", lower(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
+    .withColumn("MODIFIED_COLUMN", lower(col("MODIFIED_COLUMN")))
+    .withColumn("NUMERIC_PRECISION", col("NUMERIC_PRECISION"))
+    .withColumn("NUMERIC_SCALE", col("NUMERIC_SCALE"))
+)
+
+if param_table_filter:
+    replica_df = replica_df.filter(lower(col("TABLE_NAME")).isin([tbl.lower() for tbl in param_table_filter]))
+
+# Join Oracle with Replica
+ddl_comparison_df = oracle_df.join(
+    replica_df,
+    (oracle_df["TABLE_NAME"] == replica_df["TABLE_NAME"]) &
+    (oracle_df["COLUMN_NAME"] == replica_df["COLUMN_NAME"]),
+    "full_outer"
+).select(
+    coalesce(oracle_df["TABLE_NAME"], replica_df["TABLE_NAME"]).alias("TABLE_NAME_RESOLVED"),
+    oracle_df["TABLE_NAME"].alias("ORACLE_TABLE_NAME"),
+    replica_df["TABLE_NAME"].alias("REPLICA_TABLE_NAME"),
+    oracle_df["COLUMN_NAME"].alias("ORACLE_COLUMN_NAME"),
+    oracle_df["DATA_TYPE"].alias("ORACLE_DATA_TYPE"),
+    oracle_df["DATA_PRECISION"],
+    oracle_df["DATA_SCALE"],
+    replica_df["COLUMN_NAME"].alias("REPLICA_COLUMN_NAME"),
+    replica_df["MODIFIED_COLUMN"].alias("REPLICA_DATA_TYPE"),
+    replica_df["NUMERIC_PRECISION"],
+    replica_df["NUMERIC_SCALE"],
+    current_timestamp().alias("LOAD_TIMESTAMP")
+).withColumn(
+    "COMPARISON_RESULT",
+    when(col("ORACLE_TABLE_NAME").isNull(), "TABLE MISSING IN ORACLE")
+    .when(col("REPLICA_TABLE_NAME").isNull(), "TABLE MISSING IN REPLICA")
+    .when(col("ORACLE_COLUMN_NAME").isNull(), "COLUMN MISSING IN ORACLE")
+    .when(col("REPLICA_COLUMN_NAME").isNull(), "COLUMN MISSING IN REPLICA")
+    .when((col("ORACLE_DATA_TYPE") != col("REPLICA_DATA_TYPE")), "DATATYPE MISMATCH")
+    .when((col("DATA_PRECISION") != col("NUMERIC_PRECISION")) | (col("DATA_SCALE") != col("NUMERIC_SCALE")), "PRECISION OR SCALE MISMATCH")
+    .otherwise("MATCH")
+)
+
+# Save result as managed Delta table if it doesn't exist
+spark.catalog.setCurrentCatalog("core_tst")
+spark.catalog.setCurrentDatabase("default")
+
+target_table = "DDL_COMPARE_SOURCE_LEVEL"
+
 try:
     spark.sql(f"TRUNCATE TABLE {target_table}")
 except Exception as e:
