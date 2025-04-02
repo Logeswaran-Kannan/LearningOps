@@ -1,41 +1,76 @@
-from pyspark.sql.functions import col, when, upper, lit, concat
-from pyspark.sql import functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lower, lit, when, coalesce
+import time
 
-# Load the data from the original table
-source_table = "core_tst_sys9.default.readreplica_schema_file"
-df = spark.table(source_table)
+spark = SparkSession.builder.appName("DDLReconciliationOracleReadReplica").getOrCreate()
 
-# Filter out table names containing special characters except underscore (_)
-df_filtered = df.filter(~col("TABLE_NAME").rlike("[^A-Za-z0-9_]+"))
+start_time = time.time()
 
-# Add MODIFIED_COLUMN based on logic
-udt_upper = upper(col("udt_name"))
-df_transformed = df_filtered.withColumn(
-    "MODIFIED_COLUMN",
-    when(udt_upper == "VARCHAR", "VARCHAR2")
-    .when(udt_upper == "TIMESTAMP", "TIMESTAMP(6)")
-    .when(udt_upper == "GEOGRAPHY", "SDO_GEOMETRY")
-    .when(
-        udt_upper.like("%NUMERIC%") &
-        col("numeric_precision").isNotNull() & col("numeric_scale").isNotNull() &
-        (col("numeric_precision") > 0) & (col("numeric_scale") > 0),
-        concat(lit("DECIMAL("), col("numeric_precision").cast("string"), lit(","), col("numeric_scale").cast("string"), lit(")"))
-    )
-    .when(udt_upper.like("%NUMERIC%"), "DOUBLE")
-    .when(udt_upper == "TEXT", "CLOB")
-    .when(udt_upper == "BYTEA", "BLOB")
-    .when(udt_upper == "BOOL", "CHAR")
-    .when(udt_upper.like("%INT%"), "NUMBER")
-    .otherwise(col("udt_name"))
+# Table filter for scope
+param_table_filter = [
+    "billingcenter_sys9_pvw_change_bc_address",
+    "billingcenter_sys9_bc_address",
+    "billingcenter_sys9_pvw_change_bc_billinginstruction",
+    "billingcenter_sys9_bc_billinginstruction"
+]
+
+# Load Oracle schema from CSV
+oracle_schema_path = "file:/Workspace/UKS_SIT_DW_E2E/REFERENCE_FILE/ora_schema.csv"
+oracle_df = (
+    spark.read.option("header", True).csv(oracle_schema_path)
+    .filter(lower(col("IN_SCOPE")) == "true")
+    .withColumn("TABLE_NAME", lower(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
+    .withColumn("DATA_TYPE", lower(col("DATA_TYPE")))
+    .filter(~col("TABLE_NAME").rlike("[^a-z0-9_-]"))
+    .filter(~col("COLUMN_NAME").isin("AZURE_LOAD_DATE", "DWH_FROM_DATE", "DWH_UNTIL_DATE", "ENT_FLAG"))
 )
 
-# Add IN_SCOPE column (setting it to True by default, customize as needed)
-df_transformed = df_transformed.withColumn("IN_SCOPE", lit(True))
+if param_table_filter:
+    oracle_df = oracle_df.filter(lower(col("TABLE_NAME")).isin([tbl.lower() for tbl in param_table_filter]))
 
-# Define the name of the target table
-target_table = "core_tst_sys9.default.readreplica_schema_file_copy"
+# Load Read Replica schema from CSV
+readreplica_schema_path = "file:/Workspace/UKS_SIT_DW_E2E/REFERENCE_FILE/readreplica_schema.csv"
+replica_df = (
+    spark.read.option("header", True).csv(readreplica_schema_path)
+    .withColumn("TABLE_NAME", lower(col("TABLE_NAME")))
+    .withColumn("COLUMN_NAME", lower(col("COLUMN_NAME")))
+    .withColumn("MODIFIED_COLUMN", lower(col("MODIFIED_COLUMN")))
+)
 
-# Write the transformed DataFrame to the new table
-df_transformed.write.mode("overwrite").saveAsTable(target_table)
+if param_table_filter:
+    replica_df = replica_df.filter(lower(col("TABLE_NAME")).isin([tbl.lower() for tbl in param_table_filter]))
 
-print(f"Table '{target_table}' created successfully with transformed data.")
+# Join Oracle with Replica
+ddl_comparison_df = oracle_df.join(
+    replica_df,
+    (oracle_df["TABLE_NAME"] == replica_df["TABLE_NAME"]) &
+    (oracle_df["COLUMN_NAME"] == replica_df["COLUMN_NAME"]),
+    "full_outer"
+).select(
+    coalesce(oracle_df["TABLE_NAME"], replica_df["TABLE_NAME"]).alias("TABLE_NAME_RESOLVED"),
+    oracle_df["TABLE_NAME"].alias("ORACLE_TABLE_NAME"),
+    replica_df["TABLE_NAME"].alias("REPLICA_TABLE_NAME"),
+    oracle_df["COLUMN_NAME"].alias("ORACLE_COLUMN_NAME"),
+    oracle_df["DATA_TYPE"].alias("ORACLE_DATA_TYPE"),
+    replica_df["COLUMN_NAME"].alias("REPLICA_COLUMN_NAME"),
+    replica_df["MODIFIED_COLUMN"].alias("REPLICA_DATA_TYPE")
+).withColumn(
+    "COMPARISON_RESULT",
+    when(
+        col("ORACLE_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNotNull(),
+        when(col("ORACLE_DATA_TYPE") == col("REPLICA_DATA_TYPE"), "MATCH").otherwise("MISMATCH")
+    ).when(
+        col("ORACLE_DATA_TYPE").isNotNull() & col("REPLICA_DATA_TYPE").isNull(), "ORACLE_ONLY"
+    ).when(
+        col("ORACLE_DATA_TYPE").isNull() & col("REPLICA_DATA_TYPE").isNotNull(), "REPLICA_ONLY"
+    ).otherwise("UNKNOWN")
+)
+
+# Save result
+spark.catalog.setCurrentCatalog("core_tst")
+spark.catalog.setCurrentDatabase("default")
+ddl_comparison_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_SOURCE_LEVEL")
+
+end_time = time.time()
+print(f"DDL comparison completed in {round(end_time - start_time, 2)} seconds")
