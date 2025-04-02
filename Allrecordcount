@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lower, lit, when, coalesce, current_timestamp
+from pyspark.sql.functions import col, lower, lit, when, coalesce, current_timestamp, array_contains, collect_set
 import time
 
 spark = SparkSession.builder.appName("DDLReconciliationOracleReadReplica").getOrCreate()
@@ -45,6 +45,10 @@ replica_df = (
 if param_table_filter:
     replica_df = replica_df.filter(lower(col("TABLE_NAME")).isin([tbl.lower() for tbl in param_table_filter]))
 
+# Get distinct table names for existence check
+distinct_oracle_tables = [row.TABLE_NAME for row in oracle_df.select("TABLE_NAME").distinct().collect()]
+distinct_replica_tables = [row.TABLE_NAME for row in replica_df.select("TABLE_NAME").distinct().collect()]
+
 # Join Oracle with Replica
 ddl_comparison_df = oracle_df.join(
     replica_df,
@@ -64,27 +68,35 @@ ddl_comparison_df = oracle_df.join(
     replica_df["NUMERIC_PRECISION"],
     replica_df["NUMERIC_SCALE"],
     current_timestamp().alias("LOAD_TIMESTAMP")
-).withColumn(
+)
+
+# Convert to DataFrame for further logic
+oracle_table_set = set(distinct_oracle_tables)
+replica_table_set = set(distinct_replica_tables)
+
+# Add comparison result
+ddl_comparison_df = ddl_comparison_df.withColumn(
     "COMPARISON_RESULT",
     when(
-        col("ORACLE_TABLE_NAME").isNull() & col("ORACLE_COLUMN_NAME").isNull() &
-        col("REPLICA_TABLE_NAME").isNotNull() & col("REPLICA_COLUMN_NAME").isNotNull() &
-        (col("TABLE_NAME_RESOLVED") == col("REPLICA_TABLE_NAME")),
+        col("ORACLE_TABLE_NAME").isNull() & col("ORACLE_COLUMN_NAME").isNull() & col("TABLE_NAME_RESOLVED").isin(oracle_table_set),
         "COLUMN MISSING IN ORACLE"
     ).when(
-        col("REPLICA_TABLE_NAME").isNull() & col("REPLICA_COLUMN_NAME").isNull() &
-        col("ORACLE_TABLE_NAME").isNotNull() & col("ORACLE_COLUMN_NAME").isNotNull() &
-        (col("TABLE_NAME_RESOLVED") == col("ORACLE_TABLE_NAME")),
+        col("REPLICA_TABLE_NAME").isNull() & col("REPLICA_COLUMN_NAME").isNull() & col("TABLE_NAME_RESOLVED").isin(replica_table_set),
         "COLUMN MISSING IN REPLICA"
-    ).when(col("ORACLE_TABLE_NAME").isNull(), "TABLE MISSING IN ORACLE")
-    .when(col("REPLICA_TABLE_NAME").isNull(), "TABLE MISSING IN REPLICA")
-    .when(col("ORACLE_DATA_TYPE") != col("REPLICA_DATA_TYPE"), "DATATYPE MISMATCH")
-    .when(
+    ).when(
+        col("ORACLE_TABLE_NAME").isNull() & ~col("TABLE_NAME_RESOLVED").isin(oracle_table_set),
+        "TABLE MISSING IN ORACLE"
+    ).when(
+        col("REPLICA_TABLE_NAME").isNull() & ~col("TABLE_NAME_RESOLVED").isin(replica_table_set),
+        "TABLE MISSING IN REPLICA"
+    ).when(
+        col("ORACLE_DATA_TYPE") != col("REPLICA_DATA_TYPE"),
+        "DATATYPE MISMATCH"
+    ).when(
         (col("DATA_PRECISION").cast("int") > 0) &
         ((col("DATA_PRECISION") != col("NUMERIC_PRECISION")) | (col("DATA_SCALE") != col("NUMERIC_SCALE"))),
         "PRECISION OR SCALE MISMATCH"
-    )
-    .otherwise("MATCH")
+    ).otherwise("MATCH")
 )
 
 # Save result as managed Delta table if it doesn't exist
