@@ -66,12 +66,16 @@ ddl_comparison_df = oracle_df.join(
     current_timestamp().alias("LOAD_TIMESTAMP")
 ).withColumn(
     "COMPARISON_RESULT",
-    when(col("ORACLE_TABLE_NAME").isNull(), "TABLE MISSING IN ORACLE")
-    .when(col("REPLICA_TABLE_NAME").isNull(), "TABLE MISSING IN REPLICA")
-    .when(col("ORACLE_COLUMN_NAME").isNull(), "COLUMN MISSING IN ORACLE")
-    .when(col("REPLICA_COLUMN_NAME").isNull(), "COLUMN MISSING IN REPLICA")
-    .when((col("ORACLE_DATA_TYPE") != col("REPLICA_DATA_TYPE")), "DATATYPE MISMATCH")
-    .when((col("DATA_PRECISION") != col("NUMERIC_PRECISION")) | (col("DATA_SCALE") != col("NUMERIC_SCALE")), "PRECISION OR SCALE MISMATCH")
+    when(col("ORACLE_TABLE_NAME").isNull() & col("TABLE_NAME_RESOLVED").isNotNull(), "TABLE MISSING IN ORACLE")
+    .when(col("REPLICA_TABLE_NAME").isNull() & col("TABLE_NAME_RESOLVED").isNotNull(), "TABLE MISSING IN REPLICA")
+    .when(col("ORACLE_COLUMN_NAME").isNull() & col("REPLICA_COLUMN_NAME").isNotNull(), "COLUMN MISSING IN ORACLE")
+    .when(col("REPLICA_COLUMN_NAME").isNull() & col("ORACLE_COLUMN_NAME").isNotNull(), "COLUMN MISSING IN REPLICA")
+    .when(col("ORACLE_DATA_TYPE") != col("REPLICA_DATA_TYPE"), "DATATYPE MISMATCH")
+    .when(
+        (col("DATA_PRECISION").cast("int") > 0) &
+        ((col("DATA_PRECISION") != col("NUMERIC_PRECISION")) | (col("DATA_SCALE") != col("NUMERIC_SCALE"))),
+        "PRECISION OR SCALE MISMATCH"
+    )
     .otherwise("MATCH")
 )
 
