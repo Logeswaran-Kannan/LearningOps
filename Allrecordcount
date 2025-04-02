@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lower, lit, when, coalesce
+from pyspark.sql.functions import col, lower, lit, when, coalesce, current_timestamp
 import time
 
 spark = SparkSession.builder.appName("DDLReconciliationOracleReadReplica").getOrCreate()
@@ -54,7 +54,8 @@ ddl_comparison_df = oracle_df.join(
     oracle_df["COLUMN_NAME"].alias("ORACLE_COLUMN_NAME"),
     oracle_df["DATA_TYPE"].alias("ORACLE_DATA_TYPE"),
     replica_df["COLUMN_NAME"].alias("REPLICA_COLUMN_NAME"),
-    replica_df["MODIFIED_COLUMN"].alias("REPLICA_DATA_TYPE")
+    replica_df["MODIFIED_COLUMN"].alias("REPLICA_DATA_TYPE"),
+    current_timestamp().alias("LOAD_TIMESTAMP")
 ).withColumn(
     "COMPARISON_RESULT",
     when(
@@ -67,10 +68,22 @@ ddl_comparison_df = oracle_df.join(
     ).otherwise("UNKNOWN")
 )
 
-# Save result
+# Save result as managed Delta table if it doesn't exist
 spark.catalog.setCurrentCatalog("core_tst")
 spark.catalog.setCurrentDatabase("default")
-ddl_comparison_df.write.mode("overwrite").saveAsTable("DDL_COMPARE_SOURCE_LEVEL")
+
+target_table = "DDL_COMPARE_SOURCE_LEVEL"
+
+tables = spark.catalog.listTables("default")
+table_names = [tbl.name for tbl in tables]
+
+if target_table not in table_names:
+    ddl_comparison_df.limit(0).write.format("delta").saveAsTable(target_table)
+    print(f"Created new Delta table: {target_table}")
+
+# Truncate and load table
+spark.sql(f"TRUNCATE TABLE {target_table}")
+ddl_comparison_df.write.mode("append").saveAsTable(target_table)
 
 end_time = time.time()
 print(f"DDL comparison completed in {round(end_time - start_time, 2)} seconds")
