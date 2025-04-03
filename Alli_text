@@ -1,0 +1,57 @@
+Jira Task 1: DDL Mismatch Analysis – Oracle vs Read Replica
+Title:
+Analyze DDL Mismatches Between Oracle and Read Replica
+
+Description:
+As part of the automation pack validation, analyze and identify any DDL (schema) mismatches between the on-prem Oracle source and the Read Replica.
+Activities include:
+
+Comparing table structures (column names, data types, constraints)
+
+Documenting mismatches
+
+Coordinating with Data Engineering to resolve discrepancies or note acceptable deltas
+
+Definition of Done (DoD):
+DDL comparison completed and documented; all mismatches reviewed and tracked for resolution or exception.
+
+✅ Jira Task 2: Test Environment Readiness Checklist
+Title:
+Create and Track Test Environment Readiness Checklist
+
+Description:
+Build a checklist covering all components required for SIT test execution readiness.
+Items include:
+
+Access to Read Replica, S3 buckets, and staging layers
+
+VPN connectivity
+
+Cluster configuration in Databricks
+
+Table availability and data volume validation
+
+Connectivity to CI/CD and Jira integrations (if applicable)
+
+Definition of Done (DoD):
+All checklist items verified, documented, and confirmed ready for test execution kickoff.
+
+✅ Jira Task 3: Silver Table Scope Identification for Automation
+Title:
+Identify Silver Layer Tables to Include in Automation Scope
+
+Description:
+Finalize the list of Silver layer tables to be included in the SIT automation framework.
+Tasks include:
+
+Reviewing available Silver layer tables
+
+Mapping them to business-critical flows (e.g., Policy, Claims)
+
+Shortlisting based on validation feasibility
+
+Getting stakeholder sign-off on inclusion
+
+Definition of Done (DoD):
+Finalized list of Silver layer tables documented, reviewed, and approved for automation coverage.
+
