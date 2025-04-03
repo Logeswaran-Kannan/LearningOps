@@ -1,34 +1,11 @@
-Subject: Thanks for Yesterday's Connect – Request for Feedback & Sign-off
-
-Hi [Recipient's Name],
-
-Thanks for connecting yesterday—it was great to walk through the demo together.
-
-As discussed, I've attached the Confluence link and the workbook details used during the demo session. Could you please take a moment to review these materials?
-
-I'd appreciate your feedback and sign-off if everything looks good.
-
-Thanks again, and please let me know if you need anything further.
-
-
-
-)---------------
-
-
-Subject: Thank You – Demo Materials Attached for Review and Sign-Off
-
-Hi Team,
-
-Thanks for connecting yesterday—it was great discussing and demonstrating our progress.
-
-As discussed, I've attached the Confluence documentation and workbook details used during the demo. Could you please review these materials and provide your feedback? If everything looks good, kindly share your sign-off.
-
-Feel free to reach out if you have any questions or need additional information.
-
-Thanks again for your support!
-
-Best regards,
-[Your Name]
-
-Best regards,
-[Your Name]
+Scenario ID	Business Scenario	Description	Key Entities / Tables Involved	Expected Outcome / Validation Focus
+CC-001	FNOL – First Notice of Loss	A customer initiates a new claim for a loss incident	Claim, Exposure, LossLocation, ClaimContact, ClaimInfo	New claim record created with appropriate claim number, policy link, and status = ‘Open’
+CC-002	Claim Assignment to Adjuster	Claim is auto/rule-assigned to internal adjuster/team	ClaimAssignment, User, Group, Activity	Assigned adjuster ID present; assignment date/time populated; activity created
+CC-003	Loss Party – Third Party Involvement	Claim involves third party – e.g., a witness or liable party	Contact, ClaimContact, ExposurePartyInvolvement	Party type is ‘Third Party’; relationship mapping is accurate
+CC-004	Indemnity Payment Approval	A payment is requested and approved for claimant	Payment, FinancialTransaction, Reserve, Exposure	Status changes from ‘Requested’ to ‘Approved’; transaction reference matches exposure
+CC-005	Reserve Allocation	Reserve is created against claim exposure	Reserve, Exposure, ClaimFinancials	Reserve line item created with valid cost type/subtype; sufficient reserve balance
+CC-006	Recovery Collection	Recoverable amount tracked for subrogation or salvage	Recovery, Claim, Exposure, RecoveryReserve	Recovered amount and open recovery reserve match expected recovery logic
+CC-007	Claim Status Progression	Claim progresses from Open → Pending → Closed	Claim, Activity, StatusHistory	Status updates logged correctly; activity closure triggers progression
+CC-008	Litigation Tracking	Claim is marked as litigated and lawyer is assigned	Litigation, Contact, ClaimContact, Exposure	Litigation flag = TRUE; assigned counsel contact recorded
+CC-009	Reopen Closed Claim	Closed claim is reopened due to further investigation	Claim, ClaimStatusHistory	Status changed to ‘Reopened’; reason code logged
+CC-010	Duplicate Claim Detection	System flags possible duplicate during FNOL	Claim, DuplicateClaimCheck	Duplicate flag set; similarity score evaluated; cross-reference recorded
