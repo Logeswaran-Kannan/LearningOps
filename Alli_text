@@ -1,35 +1,5 @@
-Scenario ID	Business Scenario	Description	Key Entities / Tables Involved	Expected Outcome / Validation Focus
-CC-001	FNOL – First Notice of Loss	A customer initiates a new claim for a loss incident	Claim, Exposure, LossLocation, ClaimContact, ClaimInfo	New claim record created with appropriate claim number, policy link, and status = ‘Open’
-CC-002	Claim Assignment to Adjuster	Claim is auto/rule-assigned to internal adjuster/team	ClaimAssignment, User, Group, Activity	Assigned adjuster ID present; assignment date/time populated; activity created
-CC-003	Loss Party – Third Party Involvement	Claim involves third party – e.g., a witness or liable party	Contact, ClaimContact, ExposurePartyInvolvement	Party type is ‘Third Party’; relationship mapping is accurate
-CC-004	Indemnity Payment Approval	A payment is requested and approved for claimant	Payment, FinancialTransaction, Reserve, Exposure	Status changes from ‘Requested’ to ‘Approved’; transaction reference matches exposure
-CC-005	Reserve Allocation	Reserve is created against claim exposure	Reserve, Exposure, ClaimFinancials	Reserve line item created with valid cost type/subtype; sufficient reserve balance
-CC-006	Recovery Collection	Recoverable amount tracked for subrogation or salvage	Recovery, Claim, Exposure, RecoveryReserve	Recovered amount and open recovery reserve match expected recovery logic
-CC-007	Claim Status Progression	Claim progresses from Open → Pending → Closed	Claim, Activity, StatusHistory	Status updates logged correctly; activity closure triggers progression
-CC-008	Litigation Tracking	Claim is marked as litigated and lawyer is assigned	Litigation, Contact, ClaimContact, Exposure	Litigation flag = TRUE; assigned counsel contact recorded
-CC-009	Reopen Closed Claim	Closed claim is reopened due to further investigation	Claim, ClaimStatusHistory	Status changed to ‘Reopened’; reason code logged
-CC-010	Duplicate Claim Detection	System flags possible duplicate during FNOL	Claim, DuplicateClaimCheck	Duplicate flag set; similarity score evaluated; cross-reference recorded
-------------------------------------
+Hi Team,
 
+I’ve put together a few basic claim-related scenarios that came to mind for ClaimCenter. I’m guessing most of these might already be covered by the Automation UI team as part of the claim validation, but thought it’s worth checking to confirm.
 
-Guidewire ClaimCenter – Personal Lines Business Data Validation Scenarios
-Scenario ID	Business Scenario	Description / Validation Focus
-CC01	High-Value Claim Validation	Validate high claim amounts (threshold-based), check currency, approvals, and limits.
-CC02	First Notice of Loss (FNOL)	Validate end-to-end FNOL record creation: time stamps, claim intake channel, initial status.
-CC03	Loss Detail Validation	Check loss date, location, cause of loss, impacted parties, time of incident.
-CC04	Associated Claims	Verify related claim linkages, claim history, and grouping for shared incident references.
-CC05	Litigation Flag	Validate claims tagged for legal proceedings, ensure legal contact and litigation reason fields are populated.
-CC06	Claim Payments	Validate payment records: amounts, payees, recovery, payment method, and transaction status.
-CC07	Special Investigation Unit (SIU) Flag	Check whether SIU indicator is set for suspected fraud claims; validate related notes and user assignments.
-CC08	Multiple Claims Per Policy	Validate scenarios where multiple claims exist under the same policy; confirm unique claim IDs and coverage splits.
-CC09	Vehicle-Related Losses	Validate details for vehicle claims: VIN, make, model, damage codes, repair status.
-CC10	Property Damage Claims	Validate insured property details, structure type, content loss, total loss indicator, rebuild flags.
-CC11	Multi-Car Policy with Claim	Validate that the correct covered vehicle under multi-car policy is tagged against the claim.
-CC12	Insured Loss vs. Third-Party Loss	Validate correct classification of claim loss as insured vs. third-party; check liability split and coverage allocation.
-CC13	Third-Party Liability Claim	Validate claims filed by third parties; verify liability assessment, adjuster notes, and policy reference.
-CC14	No Claim Discount (NCD) Impact	Verify that NCD rating is updated based on claim severity/type post-resolution.
-CC15	Liable FNOL Scenarios	Validate FNOL claims where insured is marked liable; ensure liability reason codes are populated.
-CC16	Previous Claim History	Validate claim history retrieval for same policyholder or risk item; ensure linkage and historical accuracy.
-CC17	Negotiation Outcome Tracking	Validate negotiation records, final settlement amounts, negotiation stage and date trail.
-CC18	Fault Rating Calculation	Verify fault rating algorithm output (insured / partial / 3rd party) aligns with liability investigation.
-CC19	Third-Party Injury Claim	Validate medical codes, injury severity, treatment plan, compensation offered for 3rd-party bodily injury.
+Thanks!
