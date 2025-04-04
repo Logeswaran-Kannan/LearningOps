@@ -1,5 +1,10 @@
-Hi Team,
-
-I’ve put together a few basic claim-related scenarios that came to mind for ClaimCenter. I’m guessing most of these might already be covered by the Automation UI team as part of the claim validation, but thought it’s worth checking to confirm.
-
-Thanks!
+curl -H "Content-Type: application/json" \
+     -d '{
+           "@type": "MessageCard",
+           "@context": "http://schema.org/extensions",
+           "summary": "Test Alert",
+           "themeColor": "0078D7",
+           "title": "🚨 Test Alert from Databricks",
+           "text": "This is a test alert sent via webhook."
+         }' \
+     https://outlook.office.com/webhook/your-webhook-url
