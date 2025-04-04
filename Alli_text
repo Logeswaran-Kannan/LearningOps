@@ -1,10 +1,25 @@
-curl -H "Content-Type: application/json" \
-     -d '{
-           "@type": "MessageCard",
-           "@context": "http://schema.org/extensions",
-           "summary": "Test Alert",
-           "themeColor": "0078D7",
-           "title": "🚨 Test Alert from Databricks",
-           "text": "This is a test alert sent via webhook."
-         }' \
-     https://outlook.office.com/webhook/your-webhook-url
+import requests
+import json
+
+# Your Teams webhook URL
+teams_webhook_url = "https://outlook.office.com/webhook/your-webhook-url"
+
+# Message payload (MessageCard format)
+payload = {
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "summary": "Databricks Alert",
+    "themeColor": "FF0000",
+    "title": "🚨 Databricks Notebook Alert",
+    "text": "This is a test message from a Databricks notebook."
+}
+
+# Send POST request to Teams
+response = requests.post(teams_webhook_url, data=json.dumps(payload), headers={"Content-Type": "application/json"})
+
+# Check response
+if response.status_code == 200:
+    print("✅ Message sent to Teams successfully!")
+else:
+    print(f"❌ Failed to send message. Status code: {response.status_code}")
+    print(response.text)
