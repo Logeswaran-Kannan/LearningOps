@@ -1,2 +1,13 @@
-Hey Hazel, if you're free around 11:30, we can connect then.
-Sorry — the IT team is currently running a Visual Studio upgrade on my system, but it should be done shortly!
+SELECT 
+    r.session_id,
+    r.status,
+    r.start_time,
+    r.cpu_time,
+    r.total_elapsed_time,
+    t.text AS query_text,
+    qp.query_plan
+FROM sys.dm_exec_requests r
+JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
+CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
+OUTER APPLY sys.dm_exec_query_plan(r.plan_handle) qp
+WHERE r.status = 'running';
