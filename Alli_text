@@ -1,25 +1,37 @@
-import requests
-import json
+✅ Jira Ticket 1: Webhook Message Integration from Databricks to Teams Channel
+Title:
+Integrate Webhook Notifications from Databricks to Teams Channel
 
-# Your Teams webhook URL
-teams_webhook_url = "https://outlook.office.com/webhook/your-webhook-url"
+Description:
+Set up a webhook integration to send automated notifications from Databricks to a designated Microsoft Teams channel. This will help keep the team updated on automation run statuses, test results, or failures in real time.
+Tasks include:
 
-# Message payload (MessageCard format)
-payload = {
-    "@type": "MessageCard",
-    "@context": "http://schema.org/extensions",
-    "summary": "Databricks Alert",
-    "themeColor": "FF0000",
-    "title": "🚨 Databricks Notebook Alert",
-    "text": "This is a test message from a Databricks notebook."
-}
+Creating an incoming webhook in the Teams channel
 
-# Send POST request to Teams
-response = requests.post(teams_webhook_url, data=json.dumps(payload), headers={"Content-Type": "application/json"})
+Configuring Databricks to trigger POST messages to the webhook
 
-# Check response
-if response.status_code == 200:
-    print("✅ Message sent to Teams successfully!")
-else:
-    print(f"❌ Failed to send message. Status code: {response.status_code}")
-    print(response.text)
+Formatting the message payload with relevant details (e.g., job name, status, timestamp)
+
+Validating the message flow and formatting
+
+Definition of Done (DoD):
+Webhook successfully sends test results or job status from Databricks to the Teams channel with correct formatting and real-time updates.
+
+✅ Jira Ticket 2: Automate Test Case Creation into Jira or Azure DevOps
+Title:
+Automate Test Case Creation in Jira/Azure DevOps from Automation Framework
+
+Description:
+Explore and implement an automated solution to push test cases and results from the automation framework directly into Jira or Azure DevOps. This will help streamline test coverage tracking and defect linkage.
+Activities include:
+
+Identifying APIs for Jira/Xray or Azure DevOps Test Plans
+
+Mapping framework test cases to required fields (title, steps, expected result)
+
+Implementing Python (or REST) scripts to create test cases and update results
+
+Logging execution status and response for audit/debug purposes
+
+Definition of Done (DoD):
+Test cases and execution results are successfully pushed to Jira or Azure DevOps from the automation framework with proper field mapping and verification.
