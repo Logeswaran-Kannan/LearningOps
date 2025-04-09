@@ -1,1 +1,1 @@
-=IF(AND(B2<100, C2<TODAY()), "Delayed", "On Track")
+=IF(AND(TODAY() > [@EndDate], [@Progress] < 100), "Delayed", "On Track")
