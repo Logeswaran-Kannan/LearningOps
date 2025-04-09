@@ -1,1 +1,40 @@
-=IF(AND(A2<=TODAY()+7-WEEKDAY(TODAY()), B2>=TODAY()-WEEKDAY(TODAY())+1), "Yes", "No")
+🧪 Current Week – Testing Team Focus (Automation Framework)
+T2.3 – Extend Test Coverage for Silver/Gold Layer
+We're working on adding more automated validations to the Silver and Gold layers to ensure broader coverage of business logic.
+
+T2.5 – Add Coverage for Outbound Feeds
+We're automating test scenarios to validate outbound feed integrity — this includes both format and content checks.
+
+T3.2 – VPN Access from Databricks to AWS S3
+The focus is on resolving VPN connectivity so we can read CDA parquet files from S3 as part of the automation flow.
+
+T3.4 – Read Replica Access
+We're following up on DB access and jump server readiness to allow validations against Read Replica sources.
+
+T3.10 – New Test Environments Setup
+Collaborating with the infra team to confirm new test environments are provisioned and ready for execution.
+
+T4.1.x Series – Data Validation Scripts
+Automation scripts are in progress for checks like string length, decimal precision, scientific notations, and referential integrity to flag any anomalies during runs.
+
+T6.1 – Create Controlled Test Data
+This week we’re also focusing on creating clean, controlled datasets that simulate real-world inputs for automation scenarios.
+
+T6.3 – Test Data Scenario Identification Support
+Working with Suraj and QA teams to define and map relevant business scenarios that need to be automated.
+
+T11.2 – Defect Logging and Re-Testing
+Enhancing our automation flow to auto-log failures and enable smooth re-testing, reducing manual intervention.
+
+T11.3 – Test Cycle Creation
+Starting to map test cycles into Jira/Azure DevOps to keep execution organized and reportable.
+
+T12.3 – Missing Columns Analysis (Oracle vs Read Replica)
+Running scripts to identify mismatched columns and flag discrepancies to ensure schema alignment for downstream testing.
+
+
+On the Databricks to Teams webhook integration (Jira Ticket 1), I’d say I’m about 70% done. I was able to test sending messages from Databricks and confirmed they’re getting reflected in the Teams channel as alerts. Just a bit of cleanup and final validation left — I’m aiming to wrap that up by today.
+
+For Jira Ticket 2 — automating test case creation into Jira or Azure DevOps — I haven’t made much progress on that yet, but it’s on my radar for today. The plan is to push it forward and get it closed by Friday.
+
+On the DDL mismatch analysis, I’ve compiled the list of mismatches based on the CSV file we received. What’s pending is getting the latest DDL details from the PostgreSQL (read replica) side. Hopefully, once I get jump server access, I can compare schemas and finalize that analysis between Oracle and the replica.
