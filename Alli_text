@@ -1,5 +1,1 @@
-=IF(AND(B2<TODAY(), C2<1), "RISK",
- IF(AND(B2<TODAY(), C2=1), "DONE",
- IF(AND(TODAY()-A2>=0.5*(B2-A2), C2<0.5), "DELAYED",
- IF(AND(TODAY()-A2>=0.5*(B2-A2), C2>=0.5), "ON TRACK", "")
- )))
+=IF(AND(TODAY()>=A2, TODAY()<=B2), "Yes", "No")
