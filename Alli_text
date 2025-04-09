@@ -1,1 +1,1 @@
-=IF(AND(TODAY()>=A2, TODAY()<=B2), "Yes", "No")
+=IF(AND(A2<=TODAY()+7-WEEKDAY(TODAY()), B2>=TODAY()-WEEKDAY(TODAY())+1), "Yes", "No")
