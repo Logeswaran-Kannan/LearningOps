@@ -1,34 +1,6 @@
-import requests
-from requests.auth import HTTPBasicAuth
-
-# === Fill in your actual values ===
-organization = "your-org-name"            # e.g. 'contoso'
-project = "your-project-name"             # e.g. 'MyTestProject'
-pat = "your-personal-access-token"        # use dbutils.secrets for real usage
-
-# === API Configuration ===
-url = f"https://dev.azure.com/{organization}/{project}/_apis/testplan/plans?api-version=7.1"
-auth = HTTPBasicAuth('', pat)
-headers = {
-    "Content-Type": "application/json"
-}
-
-# === Payload for test plan ===
 payload = {
     "name": "Databricks Test Plan",
     "area": {
-        "path": project
-    },
-    "iteration": f"{project}\\Iteration 1"
+        "path": "YourProjectName"
+    }
 }
-
-# === Make the API call ===
-response = requests.post(url, auth=auth, headers=headers, json=payload)
-
-# === Output the result ===
-if response.status_code in [200, 201]:
-    print("✅ Test plan created successfully!")
-    print("Test Plan ID:", response.json().get("id"))
-else:
-    print(f"❌ Failed to create test plan. Status code: {response.status_code}")
-    print(response.text)
