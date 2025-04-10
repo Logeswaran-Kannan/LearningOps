@@ -1,3 +1,77 @@
+# Databricks Job: Create Test Run and Execute Pass/Fail Results in Azure DevOps
+
+import requests
+from requests.auth import HTTPBasicAuth
+from pyspark.sql import SparkSession
+import pandas as pd
+
+# === CONFIG ===
+organization = "your-org"
+project = "your-project"
+pat = "your-pat"  # Ideally from Databricks secret scope
+azdo_base = f"https://dev.azure.com/{organization}/{project}"
+auth = HTTPBasicAuth('', pat)
+headers = {"Content-Type": "application/json"}
+
+# === Spark Session ===
+spark = SparkSession.builder.getOrCreate()
+
+# === Create Sample Test Data ===
+sample_data = [
+    {"title": "Login Functionality Test", "status": "Pass"},
+    {"title": "Signup Validation Test", "status": "Fail"}
+]
+sample_df = spark.createDataFrame(sample_data)
+sample_df.write.mode("overwrite").format("delta").saveAsTable("dlt.test_results")
+
+# === Load test result data from Delta Live Table ===
+df = spark.read.format("delta").table("dlt.test_results")
+test_data = df.toPandas()
+
+# === Helper Functions ===
+def safe_json(resp):
+    try:
+        return resp.json()
+    except Exception:
+        print("Invalid JSON Response", resp.status_code, resp.text)
+        return {}
+
+def create_test_run():
+    url = f"{azdo_base}/_apis/test/runs?api-version=7.1"
+    payload = {
+        "name": "Automated Test Run",
+        "automated": True
+    }
+    resp = requests.post(url, auth=auth, headers=headers, json=payload)
+    run_id = safe_json(resp).get("id")
+    print(f"▶️ Created Test Run ID: {run_id}")
+    return run_id
+
+def post_test_result(run_id, title, outcome):
+    url = f"{azdo_base}/_apis/test/Runs/{run_id}/results?api-version=7.1"
+    payload = [{
+        "automatedTestName": title,
+        "outcome": outcome,
+        "state": "Completed",
+        "testCaseTitle": title
+    }]
+    resp = requests.post(url, auth=auth, headers=headers, json=payload)
+    if resp.status_code in [200, 201]:
+        print(f"✅ Posted result for '{title}' with outcome: {outcome}")
+    else:
+        print(f"❌ Failed to post result for '{title}' - {resp.status_code}: {resp.text}")
+
+def complete_test_run(run_id):
+    url = f"{azdo_base}/_apis/test/runs/{run_id}?api-version=7.1"
+    payload = {
+        "state": "Completed"
+    }
+    resp = requests.patch(url, auth=auth, headers=headers, json=payload)
+    if resp.status_code in [200, 204]:
+        print(f"✅ Test run {run_id} marked as Completed.")
+    else:
+        print(f"❌ Failed to complete test run: {resp.status_code} - {resp.text}")
+
 def delete_test_run(run_id):
     url = f"{azdo_base}/_apis/test/runs/{run_id}?api-version=7.1"
     resp = requests.delete(url, auth=auth, headers=headers)
@@ -5,3 +79,13 @@ def delete_test_run(run_id):
         print(f"🗑️ Test run {run_id} deleted.")
     else:
         print(f"❌ Failed to delete test run {run_id}: {resp.status_code}, {resp.text}")
+
+# === Execute Flow ===
+run_id = create_test_run()
+
+for _, row in test_data.iterrows():
+    post_test_result(run_id, row['title'], row['status'])
+
+complete_test_run(run_id)
+
+print("✅ Test run execution completed.")
