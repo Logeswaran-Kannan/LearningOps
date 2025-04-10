@@ -1,40 +1,7 @@
-# === Helper Functions ===
-def safe_json(resp):
-    try:
-        return resp.json()
-    except Exception:
-        print("Invalid JSON Response", resp.status_code, resp.text)
-        return {}
-
-def create_test_run():
-    url = f"{azdo_base}/_apis/test/runs?api-version=7.1"
-    payload = {
-        "name": "Automated Test Run",
-        "automated": True
-    }
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    run_id = safe_json(resp).get("id")
-    print(f"▶️ Created Test Run ID: {run_id}")
-    return run_id
-
-def post_test_result(run_id, title, outcome):
-    url = f"{azdo_base}/_apis/test/Runs/{run_id}/results?api-version=7.1"
-    payload = [{
-        "automatedTestName": title,
-        "outcome": outcome,
-        "state": "Completed",
-        "testCaseTitle": title
-    }]
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    if resp.status_code in [200, 201]:
-        print(f"✅ Posted result for '{title}' with outcome: {outcome}")
+def delete_test_run(run_id):
+    url = f"{azdo_base}/_apis/test/runs/{run_id}?api-version=7.1"
+    resp = requests.delete(url, auth=auth, headers=headers)
+    if resp.status_code == 200:
+        print(f"🗑️ Test run {run_id} deleted.")
     else:
-        print(f"❌ Failed to post result for '{title}' - {resp.status_code}: {resp.text}")
-
-# === Execute Flow ===
-run_id = create_test_run()
-
-for _, row in test_data.iterrows():
-    post_test_result(run_id, row['title'], row['status'])
-
-print("✅ Test run execution completed.")
+        print(f"❌ Failed to delete test run {run_id}: {resp.status_code}, {resp.text}")
