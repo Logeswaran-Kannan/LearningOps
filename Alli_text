@@ -4,3 +4,13 @@ payload = {
         "path": "YourProjectName"
     }
 }
+
+
+url = f"https://dev.azure.com/{organization}/_apis/projects?api-version=7.1"
+response = requests.get(url, auth=HTTPBasicAuth('', pat))
+
+if response.status_code == 200:
+    for proj in response.json()['value']:
+        print(f"Project name: {proj['name']}")
+else:
+    print("Error:", response.status_code, response.text)
