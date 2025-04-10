@@ -26,17 +26,26 @@ sample_df.write.mode("overwrite").format("delta").saveAsTable("dlt.test_results"
 df = spark.read.format("delta").table("dlt.test_results")
 test_cases = df.toPandas()
 
+def safe_json_response(response):
+    try:
+        return response.json()
+    except ValueError:
+        print(f"Failed to decode JSON. Status Code: {response.status_code}, Response Text: {response.text}")
+        return {}
+
 def create_test_case(title):
     url = f"{AZURE_ORG_URL}/{PROJECT}/_apis/test/testcases?api-version=7.1-preview.1"
     payload = {"name": title, "project": PROJECT}
     response = requests.post(url, auth=auth, headers=headers, json=payload)
-    return response.json().get("id")
+    result = safe_json_response(response)
+    return result.get("id")
 
 def create_test_run(cycle_id):
     url = f"{AZURE_ORG_URL}/{PROJECT}/_apis/test/runs?api-version=7.1-preview.2"
     payload = {"name": f"Run for {cycle_id}", "automated": True}
     response = requests.post(url, auth=auth, headers=headers, json=payload)
-    return response.json().get("id")
+    result = safe_json_response(response)
+    return result.get("id")
 
 def update_test_result(run_id, test_case_id, outcome):
     url = f"{AZURE_ORG_URL}/{PROJECT}/_apis/test/Runs/{run_id}/results?api-version=7.1-preview.6"
@@ -46,6 +55,8 @@ def update_test_result(run_id, test_case_id, outcome):
         "automatedTestName": f"AutoTest-{test_case_id}"
     }]
     response = requests.post(url, auth=auth, headers=headers, json=payload)
+    if response.status_code != 200:
+        print(f"Failed to update test result for {test_case_id}: {response.status_code}, {response.text}")
     return response.status_code
 
 def create_bug(title, error_message):
@@ -56,7 +67,8 @@ def create_bug(title, error_message):
         {"op": "add", "path": "/fields/System.Description", "value": error_message},
     ]
     response = requests.post(url, auth=auth, headers=headers, json=payload)
-    return response.json().get("id")
+    result = safe_json_response(response)
+    return result.get("id")
 
 def link_bug_to_test_case(bug_id, test_case_id):
     url = f"{AZURE_ORG_URL}/{PROJECT}/_apis/wit/workitems/{bug_id}?api-version=7.1-preview.3"
@@ -69,16 +81,27 @@ def link_bug_to_test_case(bug_id, test_case_id):
         }
     }]
     response = requests.patch(url, auth=auth, headers=headers, json=payload)
+    if response.status_code != 200:
+        print(f"Failed to link bug {bug_id} to test case {test_case_id}: {response.status_code}, {response.text}")
     return response.status_code
 
 # Process Each Row
 for _, row in test_cases.iterrows():
     test_case_id = create_test_case(row['title'])
+    if not test_case_id:
+        print(f"Skipping test case creation for: {row['title']}")
+        continue
+
     run_id = create_test_run(row['cycle_id'])
+    if not run_id:
+        print(f"Skipping test run creation for cycle: {row['cycle_id']}")
+        continue
+
     update_test_result(run_id, test_case_id, row['status'])
 
     if row['status'] == "Fail":
         bug_id = create_bug(row['title'], row['error_message'])
-        link_bug_to_test_case(bug_id, test_case_id)
+        if bug_id:
+            link_bug_to_test_case(bug_id, test_case_id)
 
 print("Job completed.")
