@@ -1,3 +1,4 @@
+# === Helper Functions ===
 def safe_json(resp):
     try:
         return resp.json()
@@ -5,56 +6,10 @@ def safe_json(resp):
         print("Invalid JSON Response", resp.status_code, resp.text)
         return {}
 
-def create_test_plan(plan_name):
-    url = f"{azdo_base}/_apis/testplan/plans?api-version=7.1"
-    payload = {"name": plan_name, "area": {"path": project}}
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    plan_id = safe_json(resp).get("id")
-    print(f"✅ Created Test Plan ID: {plan_id}")
-    return plan_id
-
-def create_build_definition(name):
-    url = f"https://dev.azure.com/{organization}/_apis/build/builds?api-version=7.1"
-    payload = {
-        "definition": {"id": 1},  # replace with your real build definition ID
-        "project": project,
-        "sourceBranch": "refs/heads/main"
-    }
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    build_id = safe_json(resp).get("id")
-    print(f"🔨 Created Build ID: {build_id}")
-    return build_id
-
-def create_test_suite(plan_id, suite_name):
-    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites?api-version=7.1"
-    payload = {"name": suite_name, "suiteType": "StaticTestSuite"}
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    suite_id = safe_json(resp).get("id")
-    print(f"✅ Created Test Suite ID: {suite_id}")
-    return suite_id
-
-def create_test_case(title):
-    url = f"{azdo_base}/_apis/wit/workitems/$Test%20Case?api-version=7.1"
-    headers_patch = headers.copy()
-    headers_patch["Content-Type"] = "application/json-patch+json"
-    payload = [
-        {"op": "add", "path": "/fields/System.Title", "value": title}
-    ]
-    resp = requests.post(url, auth=auth, headers=headers_patch, json=payload)
-    case_id = safe_json(resp).get("id")
-    print(f"📄 Created Test Case ID: {case_id} - {title}")
-    return case_id
-
-def add_test_case_to_suite(plan_id, suite_id, test_case_id):
-    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/testcases/{test_case_id}?api-version=7.1"
-    resp = requests.post(url, auth=auth, headers=headers)
-    return resp.status_code
-
-def create_test_run(plan_id, suite_id):
+def create_test_run():
     url = f"{azdo_base}/_apis/test/runs?api-version=7.1"
     payload = {
-        "name": f"Run for plan {plan_id}",
-        "plan": {"id": plan_id},
+        "name": "Automated Test Run",
         "automated": True
     }
     resp = requests.post(url, auth=auth, headers=headers, json=payload)
@@ -62,55 +17,24 @@ def create_test_run(plan_id, suite_id):
     print(f"▶️ Created Test Run ID: {run_id}")
     return run_id
 
-def post_test_result(run_id, test_case_id, outcome):
+def post_test_result(run_id, title, outcome):
     url = f"{azdo_base}/_apis/test/Runs/{run_id}/results?api-version=7.1"
     payload = [{
-        "testCase": {"id": test_case_id},
+        "automatedTestName": title,
         "outcome": outcome,
-        "automatedTestName": f"AutoTest-{test_case_id}"
+        "state": "Completed",
+        "testCaseTitle": title
     }]
     resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    return resp.status_code
-
-def create_bug(title, description):
-    url = f"{azdo_base}/_apis/wit/workitems/$Bug?api-version=7.1"
-    headers_patch = headers.copy()
-    headers_patch["Content-Type"] = "application/json-patch+json"
-    payload = [
-        {"op": "add", "path": "/fields/System.Title", "value": f"Bug: {title}"},
-        {"op": "add", "path": "/fields/System.Description", "value": description}
-    ]
-    resp = requests.post(url, auth=auth, headers=headers_patch, json=payload)
-    return safe_json(resp).get("id")
-
-def link_bug_to_test_case(bug_id, test_case_id):
-    url = f"{azdo_base}/_apis/wit/workitems/{bug_id}?api-version=7.1"
-    headers_patch = headers.copy()
-    headers_patch["Content-Type"] = "application/json-patch+json"
-    payload = [{
-        "op": "add",
-        "path": "/relations/-",
-        "value": {
-            "rel": "System.LinkTypes.Related",
-            "url": f"https://dev.azure.com/{organization}/_apis/wit/workitems/{test_case_id}"
-        }
-    }]
-    resp = requests.patch(url, auth=auth, headers=headers_patch, json=payload)
-    return resp.status_code
+    if resp.status_code in [200, 201]:
+        print(f"✅ Posted result for '{title}' with outcome: {outcome}")
+    else:
+        print(f"❌ Failed to post result for '{title}' - {resp.status_code}: {resp.text}")
 
 # === Execute Flow ===
-plan_id = create_test_plan("Automated Test Plan")
-build_id = create_build_definition("Sample Build")
-suite_id = create_test_suite(plan_id, "Automated Test Suite")
-run_id = create_test_run(plan_id, suite_id)
+run_id = create_test_run()
 
 for _, row in test_data.iterrows():
-    test_case_id = create_test_case(row['title'])
-    add_test_case_to_suite(plan_id, suite_id, test_case_id)
-    post_test_result(run_id, test_case_id, row['status'])
+    post_test_result(run_id, row['title'], row['status'])
 
-    if row['status'] == "Fail":
-        bug_id = create_bug(row['title'], row['error_message'])
-        link_bug_to_test_case(bug_id, test_case_id)
-
-print("✅ Automation job completed successfully.")
+print("✅ Test run execution completed.")
