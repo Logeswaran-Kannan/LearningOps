@@ -7,34 +7,44 @@ df = spark.read.table("core_tst_sys9.default.ddl_compare_source_level")
 # Step 2: Convert to Pandas for processing
 df_pd = df.select("comparison_result", "table_name").dropna().toPandas()
 
-# Step 3: Normalize status into 'Match' and 'Mismatch'
-df_pd["status_group"] = df_pd["comparison_result"].apply(lambda x: "Match" if x.lower() == "match" else "Mismatch")
-
-# Step 4: Calculate value counts and percentages
-value_counts = df_pd["status_group"].value_counts()
+# Step 3: Calculate value counts and percentages
+value_counts = df_pd["comparison_result"].value_counts()
 percentages = (value_counts / value_counts.sum()) * 100
 
-# Step 5: Create a summary table with conditional coloring and distinct table counts per result
+# Step 4: Create a summary table with conditional coloring and distinct table counts per result
 ddl_table = (
-    "| 🧪 Comparison Result | 📋 Distinct Tables | 🔢 Count | 📊 Percentage |\n"
-    "|----------------------|--------------------|----------|----------------|
+    "| 🧪 **Comparison Result** | 📋 **Distinct Tables** | 🔢 **Count** | 📊 **Percentage** |
+"
+    "|--------------------------|-----------------------|-------------|-------------------|
 "
 )
 progress_bar_ddl = ""
 
-distinct_tables = df_pd.groupby("status_group")["table_name"].nunique()
+distinct_tables = df_pd.groupby("comparison_result")["table_name"].nunique()
 
-for result, count in value_counts.items():
-    percent = percentages[result]
-    icon = "✅" if result == "Match" else "❌"
-    color = "#28a745" if result == "Match" else "#dc3545"
-    tables = distinct_tables.get(result, 0)
-    ddl_table += f"| {icon} <span style='color:{color}'><b>{result}</b></span> | {tables} | {count} | {percent:.2f}% |\n"
+# Create simplified match/mismatch aggregation for progress bar
+df_pd["status_group"] = df_pd["comparison_result"].apply(lambda x: "Match" if x.lower() == "match" else "Mismatch")
+status_group_counts = df_pd["status_group"].value_counts()
+total = status_group_counts.sum()
+
+for status_group, count in status_group_counts.items():
+    percent = (count / total) * 100
+    icon = "✅" if status_group == "Match" else "❌"
+    color = "#28a745" if status_group == "Match" else "#dc3545"
     progress_bar_ddl += f"<div style='background:#e0e0e0;border-radius:5px;width:100%;margin-bottom:5px;'>"
     progress_bar_ddl += f"<div style='width:{percent:.2f}%;background:{color};color:white;padding:2px 5px;border-radius:5px;font-size:12px;'>"
-    progress_bar_ddl += f"{icon} {result} - {percent:.2f}%" + "</div></div>"
+    progress_bar_ddl += f"{icon} {status_group} - {percent:.2f}%" + "</div></div>"
 
-# Step 6: Use SQL to get latest validation data
+# Populate full DDL table
+for result, count in value_counts.items():
+    percent = percentages[result]
+    icon = "✅" if result.lower() == "match" else "❌"
+    color = "#28a745" if result.lower() == "match" else "#dc3545"
+    tables = distinct_tables.get(result, 0)
+    ddl_table += f"| {icon} <span style='color:{color}'><b>{result}</b></span> | <b>{tables}</b> | <b>{count}</b> | <b>{percent:.2f}%</b> |
+"
+
+# Step 5: Use SQL to get latest validation data
 query = """
 SELECT
   validation_timestamp,
@@ -54,13 +64,14 @@ latest_pd = spark.sql(query).toPandas()
 latest_run_id = latest_pd["run_id"].iloc[0] if not latest_pd.empty else "N/A"
 latest_validation_timestamp = latest_pd["validation_timestamp"].iloc[0] if not latest_pd.empty else "N/A"
 
-# Step 7: Calculate status percentages for validation
+# Step 6: Calculate status percentages for validation
 status_counts = latest_pd['status'].value_counts()
 status_percentages = (status_counts / status_counts.sum()) * 100
 
 validation_summary_table = (
-    "| 📌 Status | 🔢 Count | 📊 Percentage |\n"
-    "|-----------|----------|----------------|
+    "| 📌 **Status** | 🔢 **Count** | 📊 **Percentage** |
+"
+    "|---------------|-------------|-------------------|
 "
 )
 progress_bar = ""
@@ -72,9 +83,10 @@ for status, count in status_counts.items():
     progress_bar += f"<div style='background:#e0e0e0;border-radius:5px;width:100%;margin-bottom:5px;'>"
     progress_bar += f"<div style='width:{percent:.2f}%;background:{color};color:white;padding:2px 5px;border-radius:5px;font-size:12px;'>"
     progress_bar += f"{icon} {status} - {percent:.2f}%" + "</div></div>"
-    validation_summary_table += f"| {icon} <span style='color:{color}'><b>{status}</b></span> | {count} | {percent:.2f}% |\n"
+    validation_summary_table += f"| {icon} <span style='color:{color}'><b>{status}</b></span> | <b>{count}</b> | <b>{percent:.2f}%</b> |
+"
 
-# Step 8: Build Teams MessageCard payload
+# Step 7: Build Teams MessageCard payload
 teams_webhook_url = "https://outlook.office.com/webhook/..."  # Replace with your Teams webhook
 
 payload = {
@@ -92,7 +104,7 @@ payload = {
     ]
 }
 
-# Step 9: Send to Teams
+# Step 8: Send to Teams
 response = requests.post(teams_webhook_url, json=payload)
 
 # Check HTTP response from Teams
