@@ -51,10 +51,16 @@ validation_summary_table = (
     "| 📌 **Status** | 🔢 **Count** | 📊 **Percentage** |\n"
     "|---------------|-------------|-------------------|\n"
 )
+progress_bar = ""
+
 for status, count in status_counts.items():
     percent = status_percentages[status]
     icon = "✅" if status.lower() == "pass" else "❌"
     color = "#28a745" if status.lower() == "pass" else "#dc3545"
+    width = int(percent // 5)  # Scale 100% to 20 chars
+    progress_bar += f"<div style='background:#e0e0e0;border-radius:5px;width:100%;margin-bottom:5px;'>"
+    progress_bar += f"<div style='width:{percent:.2f}%;background:{color};color:white;padding:2px 5px;border-radius:5px;font-size:12px;'>"
+    progress_bar += f"{icon} {status} - {percent:.2f}%" + "</div></div>"
     validation_summary_table += f"| {icon} <span style='color:{color}'><b>{status}</b></span> | <b>{count}</b> | <b>{percent:.2f}%</b> |\n"
 
 # Step 7: Build Teams MessageCard payload
@@ -70,7 +76,7 @@ payload = {
             "text": f"### 🧮 **DDL Comparison Metrics**\n🕒 Validation Timestamp: **{latest_validation_timestamp}**\n🆔 Run ID: **{latest_run_id}**\n\n{ddl_table}"
         },
         {
-            "text": f"### 📋 **Data Validation Status Summary**\n{validation_summary_table}"
+            "text": f"### 📋 **Data Validation Status Summary**\n{validation_summary_table}\n\n**Progress Overview:**<br>{progress_bar}"
         }
     ]
 }
