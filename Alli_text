@@ -1,7 +1,68 @@
-Depending on the feasibility, they’ll try to include those in the extended scenario pack. From our side, we’re expecting that update by Wednesday.
+import pandas as pd
+import matplotlib.pyplot as plt
+import requests
+import base64
+from io import BytesIO
 
-For any cases that can’t be included, Graham will help prioritize whether they should be descoped or still kept. If they’re still required, then Suraj will handle those manually.
+# Step 1: Read from DLT table
+spark_df = spark.read.table("core_tst_sys9.default.ddl_compare_source")
+df = spark_df.select("comparison_result").dropna().toPandas()
 
-In terms of timeline — Suraj is reaching out to Nick’s team today to get confirmation on feasibility. Then by Wednesday, Nick’s team should confirm which extra scenarios they can cover. From Thursday onward, the expectation is that Nick’s team will be ready with the automation package for test data creation.
+# Step 2: Calculate percentage distribution
+value_counts = df["comparison_result"].value_counts()
+percentages = (value_counts / value_counts.sum() * 100).round(2)
+summary_df = pd.DataFrame({
+    "Value": value_counts.index,
+    "Count": value_counts.values,
+    "Percentage": percentages.values
+})
 
-In parallel, Suraj will align his manual coverage plan based on how many scenarios Nick’s team can or can’t include.
+# Step 3: Create pie chart
+plt.figure(figsize=(6, 6))
+plt.pie(summary_df["Count"], labels=summary_df["Value"], autopct='%1.1f%%', startangle=140)
+plt.title("Comparison Result Distribution")
+plt.tight_layout()
+
+# Save pie chart to buffer
+buf = BytesIO()
+plt.savefig(buf, format="png")
+buf.seek(0)
+image_base64 = base64.b64encode(buf.read()).decode('utf-8')
+
+# Step 4: Format Teams webhook card
+teams_webhook_url = "<YOUR_TEAMS_WEBHOOK_URL>"
+
+card_payload = {
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "summary": "DLT Table Comparison Result",
+    "title": "📊 DLT Table Comparison Summary",
+    "sections": [
+        {
+            "activityTitle": "Pie Chart of Comparison Results",
+            "images": [
+                {
+                    "image": f"data:image/png;base64,{image_base64}"
+                }
+            ]
+        },
+        {
+            "facts": [
+                {"name": row["Value"], "value": f"{row['Count']} ({row['Percentage']}%)"}
+                for _, row in summary_df.iterrows()
+            ]
+        }
+    ]
+}
+
+# Step 5: Send to Teams
+response = requests.post(
+    teams_webhook_url,
+    json=card_payload,
+    headers={"Content-Type": "application/json"}
+)
+
+if response.status_code == 200:
+    print("✅ Report sent to Teams!")
+else:
+    print(f"❌ Failed to send: {response.status_code}\n{response.text}")
