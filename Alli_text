@@ -16,9 +16,8 @@ percentages = (value_counts / value_counts.sum()) * 100
 
 # Step 5: Create a summary table with conditional coloring and distinct table counts per result
 ddl_table = (
-    "| 🧪 **Comparison Result** | 📋 **Distinct Tables** | 🔢 **Count** | 📊 **Percentage** |
-"
-    "|--------------------------|-----------------------|-------------|-------------------|
+    "| 🧪 Comparison Result | 📋 Distinct Tables | 🔢 Count | 📊 Percentage |\n"
+    "|----------------------|--------------------|----------|----------------|
 "
 )
 progress_bar_ddl = ""
@@ -30,8 +29,7 @@ for result, count in value_counts.items():
     icon = "✅" if result == "Match" else "❌"
     color = "#28a745" if result == "Match" else "#dc3545"
     tables = distinct_tables.get(result, 0)
-    ddl_table += f"| {icon} <span style='color:{color}'><b>{result}</b></span> | <b>{tables}</b> | <b>{count}</b> | <b>{percent:.2f}%</b> |
-"
+    ddl_table += f"| {icon} <span style='color:{color}'><b>{result}</b></span> | {tables} | {count} | {percent:.2f}% |\n"
     progress_bar_ddl += f"<div style='background:#e0e0e0;border-radius:5px;width:100%;margin-bottom:5px;'>"
     progress_bar_ddl += f"<div style='width:{percent:.2f}%;background:{color};color:white;padding:2px 5px;border-radius:5px;font-size:12px;'>"
     progress_bar_ddl += f"{icon} {result} - {percent:.2f}%" + "</div></div>"
@@ -61,9 +59,8 @@ status_counts = latest_pd['status'].value_counts()
 status_percentages = (status_counts / status_counts.sum()) * 100
 
 validation_summary_table = (
-    "| 📌 **Status** | 🔢 **Count** | 📊 **Percentage** |
-"
-    "|---------------|-------------|-------------------|
+    "| 📌 Status | 🔢 Count | 📊 Percentage |\n"
+    "|-----------|----------|----------------|
 "
 )
 progress_bar = ""
@@ -75,8 +72,7 @@ for status, count in status_counts.items():
     progress_bar += f"<div style='background:#e0e0e0;border-radius:5px;width:100%;margin-bottom:5px;'>"
     progress_bar += f"<div style='width:{percent:.2f}%;background:{color};color:white;padding:2px 5px;border-radius:5px;font-size:12px;'>"
     progress_bar += f"{icon} {status} - {percent:.2f}%" + "</div></div>"
-    validation_summary_table += f"| {icon} <span style='color:{color}'><b>{status}</b></span> | <b>{count}</b> | <b>{percent:.2f}%</b> |
-"
+    validation_summary_table += f"| {icon} <span style='color:{color}'><b>{status}</b></span> | {count} | {percent:.2f}% |\n"
 
 # Step 8: Build Teams MessageCard payload
 teams_webhook_url = "https://outlook.office.com/webhook/..."  # Replace with your Teams webhook
