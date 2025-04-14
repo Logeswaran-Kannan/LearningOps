@@ -4,65 +4,70 @@ import requests
 import base64
 from io import BytesIO
 
-# Step 1: Read from DLT table
-spark_df = spark.read.table("core_tst_sys9.default.ddl_compare_source")
-df = spark_df.select("comparison_result").dropna().toPandas()
+# Step 1: Read from DLT Table (Databricks SQL table)
+df = spark.read.table("core_tst_sys9.default.ddl_compare_source")
 
-# Step 2: Calculate percentage distribution
-value_counts = df["comparison_result"].value_counts()
-percentages = (value_counts / value_counts.sum() * 100).round(2)
-summary_df = pd.DataFrame({
-    "Value": value_counts.index,
+# Step 2: Convert to Pandas for processing
+df_pd = df.select("comparison_result").dropna().toPandas()
+
+# Step 3: Calculate value counts and percentages
+value_counts = df_pd["comparison_result"].value_counts()
+percentages = (value_counts / value_counts.sum()) * 100
+
+# Step 4: Create a summary table
+table_df = pd.DataFrame({
+    "Result": value_counts.index,
     "Count": value_counts.values,
-    "Percentage": percentages.values
+    "Percentage": percentages.round(2).values
 })
 
-# Step 3: Create pie chart
-plt.figure(figsize=(6, 6))
-plt.pie(summary_df["Count"], labels=summary_df["Value"], autopct='%1.1f%%', startangle=140)
+# Step 5: Plot pie chart
+fig, ax = plt.subplots()
+ax.pie(value_counts, labels=value_counts.index, autopct='%1.1f%%', startangle=90)
+ax.axis('equal')  # Equal aspect ratio for a perfect pie
 plt.title("Comparison Result Distribution")
-plt.tight_layout()
 
-# Save pie chart to buffer
+# Save chart to buffer
 buf = BytesIO()
-plt.savefig(buf, format="png")
+plt.savefig(buf, format='png')
 buf.seek(0)
-image_base64 = base64.b64encode(buf.read()).decode('utf-8')
 
-# Step 4: Format Teams webhook card
-teams_webhook_url = "<YOUR_TEAMS_WEBHOOK_URL>"
+# Encode image to base64 for Teams message
+img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+buf.close()
 
-card_payload = {
+# Step 6: Format markdown-style summary table
+markdown_table = "| Result | Count | Percentage |\n|--------|-------|------------|\n"
+for index, row in table_df.iterrows():
+    markdown_table += f"| {row['Result']} | {row['Count']} | {row['Percentage']}% |\n"
+
+# Step 7: Build Teams MessageCard payload
+teams_webhook_url = "https://outlook.office.com/webhook/..."  # Replace with your Teams webhook
+
+payload = {
     "@type": "MessageCard",
     "@context": "http://schema.org/extensions",
-    "summary": "DLT Table Comparison Result",
-    "title": "📊 DLT Table Comparison Summary",
+    "summary": "DLT Comparison Result Summary",
+    "title": "📊 DLT Table - Comparison Result Summary",
     "sections": [
         {
-            "activityTitle": "Pie Chart of Comparison Results",
+            "activityTitle": "Pie Chart Overview",
             "images": [
                 {
-                    "image": f"data:image/png;base64,{image_base64}"
+                    "image": f"data:image/png;base64,{img_base64}"
                 }
             ]
         },
         {
-            "facts": [
-                {"name": row["Value"], "value": f"{row['Count']} ({row['Percentage']}%)"}
-                for _, row in summary_df.iterrows()
-            ]
+            "text": f"Summary Table:\n\n{markdown_table}"
         }
     ]
 }
 
-# Step 5: Send to Teams
-response = requests.post(
-    teams_webhook_url,
-    json=card_payload,
-    headers={"Content-Type": "application/json"}
-)
+# Step 8: Send to Teams
+response = requests.post(teams_webhook_url, json=payload)
 
 if response.status_code == 200:
-    print("✅ Report sent to Teams!")
+    print("✅ Message sent to Teams!")
 else:
-    print(f"❌ Failed to send: {response.status_code}\n{response.text}")
+    print(f"❌ Failed to send message. Status: {response.status_code}\n{response.text}")
