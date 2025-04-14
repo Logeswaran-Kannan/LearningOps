@@ -11,29 +11,54 @@ df_pd = df.select("comparison_result").dropna().toPandas()
 value_counts = df_pd["comparison_result"].value_counts()
 percentages = (value_counts / value_counts.sum()) * 100
 
-# Step 4: Create a summary table with conditional coloring
-markdown_table = "| Result | Count | Percentage |\n|--------|-------|------------|\n"
+# Step 4: Create a summary table with conditional coloring for DDL
+ddl_table = "| **Comparison Result** | **Count** | **Percentage** |
+|----------------------|---------|-------------|
+"
 for result, count in value_counts.items():
     percent = percentages[result]
     color = "#28a745" if result.lower() == "match" else "#dc3545"
-    markdown_table += f"| <span style='color:{color}'><b>{result}</b></span> | <b>{count}</b> | <b>{percent:.2f}%</b> |\n"
+    ddl_table += f"| <span style='color:{color}'><b>{result}</b></span> | <b>{count}</b> | <b>{percent:.2f}%</b> |
+"
 
-# Step 5: Build Teams MessageCard payload
+# Step 5: Read latest run from dashboard_data_migration_results
+val_df = spark.read.table("core_tst_sys9.default.dashboard_data_migration_results")
+latest_run_id = val_df.agg({"run_id": "max"}).collect()[0][0]
+latest_df = val_df.filter(val_df.run_id == latest_run_id)
+selected_cols = [
+    "validation_timestamp", "table_name", "src_count", "tgt_count", "status",
+    "comment", "time_taken_seconds", "test_case_detail", "outcome"
+]
+latest_pd = latest_df.select(*selected_cols).toPandas()
+
+# Step 6: Format second table for validation results
+validation_table = "| **Timestamp** | **Table** | **Src** | **Tgt** | **Status** | **Comment** | **Time(s)** | **Test Case** | **Outcome** |
+|--------------|---------|--------|--------|------------|-----------|------------|-------------|-----------|
+"
+for _, row in latest_pd.iterrows():
+    color = "#28a745" if row['status'].lower() == "pass" else "#dc3545"
+    validation_table += f"| {row['validation_timestamp']} | {row['table_name']} | {row['src_count']} | {row['tgt_count']} | <span style='color:{color}'><b>{row['status']}</b></span> | {row['comment']} | {row['time_taken_seconds']} | {row['test_case_detail']} | {row['outcome']} |
+"
+
+# Step 7: Build Teams MessageCard payload
 teams_webhook_url = "https://outlook.office.com/webhook/..."  # Replace with your Teams webhook
 
 payload = {
     "@type": "MessageCard",
     "@context": "http://schema.org/extensions",
-    "summary": "DLT Comparison Result Summary",
-    "title": "📊 DLT Table - Comparison Result Summary",
+    "summary": "DLT and Validation Metrics",
+    "title": "📊 DLT Table & Data Validation Summary",
     "sections": [
         {
-            "text": f"### Summary Table\n\n{markdown_table}"
+            "text": f"### 🧮 DDL Comparison Metrics\n\n{ddl_table}"
+        },
+        {
+            "text": f"### ✅ Data Validation Results (Latest Run ID: {latest_run_id})\n\n{validation_table}"
         }
     ]
 }
 
-# Step 6: Send to Teams
+# Step 8: Send to Teams
 response = requests.post(teams_webhook_url, json=payload)
 
 # Check HTTP response from Teams
