@@ -14,7 +14,12 @@ for result, count in value_counts.items():
 
 # Step 5: Read latest run from dashboard_data_migration_results
 val_df = spark.read.table("core_tst_sys9.default.dashboard_data_migration_results")
-latest_run_id = val_df.agg({"run_id": "max"}).collect()[0][0]
+latest_run_id_row = val_df.agg(max("run_id").alias("latest_run_id")).collect()
+
+if not latest_run_id_row or latest_run_id_row[0]["latest_run_id"] is None:
+    raise ValueError("No run_id found in dashboard_data_migration_results")
+
+latest_run_id = latest_run_id_row[0]["latest_run_id"]
 latest_df = val_df.filter(val_df.run_id == latest_run_id)
 selected_cols = [
     "validation_timestamp", "table_name", "src_count", "tgt_count", "status",
