@@ -21,21 +21,24 @@ table_df = pd.DataFrame({
     "Percentage": percentages.round(2).values
 })
 
-# Step 5: Plot doughnut chart
-fig, ax = plt.subplots()
+# Step 5: Plot doughnut chart with optimized size
+fig, ax = plt.subplots(figsize=(5, 5), dpi=100)  # Smaller size and DPI for lower image size
 wedges, texts, autotexts = ax.pie(
     value_counts,
     labels=value_counts.index,
     autopct='%1.1f%%',
     startangle=90,
-    wedgeprops=dict(width=0.3)  # This creates the doughnut effect
+    wedgeprops=dict(width=0.4)  # Doughnut effect
 )
+# Add a white circle in the middle
+centre_circle = plt.Circle((0, 0), 0.70, fc='white')
+fig.gca().add_artist(centre_circle)
 ax.axis('equal')
 plt.title("Comparison Result Distribution (Doughnut)")
 
-# Save chart to buffer
+# Save chart to buffer with optimization
 buf = BytesIO()
-plt.savefig(buf, format='png')
+plt.savefig(buf, format='png', bbox_inches='tight', optimize=True)
 buf.seek(0)
 
 # Encode image to base64 for Teams message
@@ -78,6 +81,9 @@ print(f"Status Code: {response.status_code}")
 print(f"Response Text: {response.text}")
 
 if response.status_code == 200:
-    print("✅ Message sent to Teams!")
+    if "message delivery failed" in response.text.lower():
+        print("❌ Message delivery failed even though request succeeded.")
+    else:
+        print("✅ Message sent to Teams!")
 else:
-    print(f"❌ Failed to send message.")
+    print("❌ Failed to send message.")
