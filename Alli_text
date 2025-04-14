@@ -1,46 +1,60 @@
 import pandas as pd
 import requests
-from pyspark.sql.functions import col, max as spark_max
 
 # Step 1: Read from DLT Table (Databricks SQL table)
 df = spark.read.table("core_tst_sys9.default.ddl_compare_source")
 
-# Step 2: Calculate value counts and percentages using PySpark
-df_filtered = df.select("comparison_result").where(col("comparison_result").isNotNull())
-summary_df = df_filtered.groupBy("comparison_result").count()
-total_count = summary_df.agg({"count": "sum"}).collect()[0][0]
-summary_df = summary_df.withColumn("percentage", (col("count") / total_count) * 100)
-summary_pd = summary_df.toPandas()
+# Step 2: Convert to Pandas for processing
+df_pd = df.select("comparison_result").dropna().toPandas()
 
-# Step 3: Create a summary table with conditional coloring for DDL
+# Step 3: Calculate value counts and percentages
+value_counts = df_pd["comparison_result"].value_counts()
+percentages = (value_counts / value_counts.sum()) * 100
+
+# Step 4: Create a summary table with conditional coloring for DDL
 ddl_table = (
     "| **Comparison Result** | **Count** | **Percentage** |\n"
     "|----------------------|---------|-------------|\n"
 )
-for _, row in summary_pd.iterrows():
-    color = "#28a745" if row['comparison_result'].lower() == "match" else "#dc3545"
-    ddl_table += f"| <span style='color:{color}'><b>{row['comparison_result']}</b></span> | <b>{row['count']}</b> | <b>{row['percentage']:.2f}%</b> |\n"
+for result, count in value_counts.items():
+    percent = percentages[result]
+    color = "#28a745" if result.lower() == "match" else "#dc3545"
+    ddl_table += f"| <span style='color:{color}'><b>{result}</b></span> | <b>{count}</b> | <b>{percent:.2f}%</b> |\n"
 
-# Step 4: Get latest validation data using PySpark
-val_df = spark.read.table("core_tst_sys9.default.dashboard_data_migration_results")
-latest_run_id = val_df.agg(spark_max("run_id").alias("latest_run_id")).collect()[0]["latest_run_id"]
-latest_df = val_df.filter(col("run_id") == latest_run_id)
-selected_cols = [
-    "validation_timestamp", "table_name", "src_count", "tgt_count", "status",
-    "comment", "time_taken_seconds", "test_case_detail", "outcome"
-]
-latest_pd = latest_df.select(*selected_cols).toPandas()
+# Step 5: Use SQL to get latest validation data
+query = """
+SELECT
+  validation_timestamp,
+  table_name,
+  src_count,
+  tgt_count,
+  status,
+  comment,
+  time_taken_seconds,
+  test_case_detail,
+  outcome,
+  run_id
+FROM core_tst_sys9.default.dashboard_data_migration_results
+WHERE run_id = (SELECT MAX(run_id) FROM core_tst_sys9.default.dashboard_data_migration_results)
+"""
 
-# Step 5: Format second table for validation results
-validation_table = (
-    "| **Timestamp** | **Table** | **Src** | **Tgt** | **Status** | **Comment** | **Time(s)** | **Test Case** | **Outcome** |\n"
-    "|--------------|---------|--------|--------|------------|-----------|------------|-------------|-----------|\n"
+latest_pd = spark.sql(query).toPandas()
+latest_run_id = latest_pd["run_id"].iloc[0] if not latest_pd.empty else "N/A"
+
+# Step 6: Calculate status percentages for validation
+status_counts = latest_pd['status'].value_counts()
+status_percentages = (status_counts / status_counts.sum()) * 100
+
+validation_summary_table = (
+    "| **Status** | **Count** | **Percentage** |\n"
+    "|------------|----------|---------------|\n"
 )
-for _, row in latest_pd.iterrows():
-    color = "#28a745" if row['status'].lower() == "pass" else "#dc3545"
-    validation_table += f"| {row['validation_timestamp']} | {row['table_name']} | {row['src_count']} | {row['tgt_count']} | <span style='color:{color}'><b>{row['status']}</b></span> | {row['comment']} | {row['time_taken_seconds']} | {row['test_case_detail']} | {row['outcome']} |\n"
+for status, count in status_counts.items():
+    percent = status_percentages[status]
+    color = "#28a745" if status.lower() == "pass" else "#dc3545"
+    validation_summary_table += f"| <span style='color:{color}'><b>{status}</b></span> | <b>{count}</b> | <b>{percent:.2f}%</b> |\n"
 
-# Step 6: Build Teams MessageCard payload
+# Step 7: Build Teams MessageCard payload
 teams_webhook_url = "https://outlook.office.com/webhook/..."  # Replace with your Teams webhook
 
 payload = {
@@ -53,12 +67,12 @@ payload = {
             "text": f"### 🧮 DDL Comparison Metrics\n\n{ddl_table}"
         },
         {
-            "text": f"### ✅ Data Validation Results (Latest Run ID: {latest_run_id})\n\n{validation_table}"
+            "text": f"### ✅ Data Validation Status Summary (Latest Run ID: {latest_run_id})\n\n{validation_summary_table}"
         }
     ]
 }
 
-# Step 7: Send to Teams
+# Step 8: Send to Teams
 response = requests.post(teams_webhook_url, json=payload)
 
 # Check HTTP response from Teams
