@@ -21,11 +21,17 @@ table_df = pd.DataFrame({
     "Percentage": percentages.round(2).values
 })
 
-# Step 5: Plot pie chart
+# Step 5: Plot doughnut chart
 fig, ax = plt.subplots()
-ax.pie(value_counts, labels=value_counts.index, autopct='%1.1f%%', startangle=90)
-ax.axis('equal')  # Equal aspect ratio for a perfect pie
-plt.title("Comparison Result Distribution")
+wedges, texts, autotexts = ax.pie(
+    value_counts,
+    labels=value_counts.index,
+    autopct='%1.1f%%',
+    startangle=90,
+    wedgeprops=dict(width=0.3)  # This creates the doughnut effect
+)
+ax.axis('equal')
+plt.title("Comparison Result Distribution (Doughnut)")
 
 # Save chart to buffer
 buf = BytesIO()
@@ -51,7 +57,7 @@ payload = {
     "title": "📊 DLT Table - Comparison Result Summary",
     "sections": [
         {
-            "activityTitle": "Pie Chart Overview",
+            "activityTitle": "Doughnut Chart Overview",
             "images": [
                 {
                     "image": f"data:image/png;base64,{img_base64}"
@@ -67,7 +73,11 @@ payload = {
 # Step 8: Send to Teams
 response = requests.post(teams_webhook_url, json=payload)
 
+# Check HTTP response from Teams
+print(f"Status Code: {response.status_code}")
+print(f"Response Text: {response.text}")
+
 if response.status_code == 200:
     print("✅ Message sent to Teams!")
 else:
-    print(f"❌ Failed to send message. Status: {response.status_code}\n{response.text}")
+    print(f"❌ Failed to send message.")
