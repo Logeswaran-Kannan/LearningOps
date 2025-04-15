@@ -51,7 +51,10 @@ def get_default_test_configuration_id():
         payload = {
             "name": "Default Configuration",
             "description": "Auto-created by Databricks job",
-            "state": "Active"
+            "state": "Active",
+            "values": [
+                {"name": "Operating System", "value": "Windows"}
+            ]
         }
         create_resp = requests.post(create_url, auth=auth, headers=headers, json=payload)
         new_config = safe_json(create_resp)
