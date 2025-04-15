@@ -172,6 +172,9 @@ def complete_test_run(run_id):
         print(f"❌ Failed to complete test run: {resp.status_code} - {resp.text}")
 
 # === Execute Full Test Cycle ===
+
+# Show available configurations before test cycle
+list_test_configurations()
 plan_id = create_test_plan("Databricks Test Plan")
 if not plan_id:
     raise ValueError("❌ Test plan creation failed. plan_id is None.")
