@@ -45,29 +45,38 @@ Framework Integration: The remaining components — Teams channel notifications 
 ---------------
 
 
-Welcome & Context Setting – Quick overview of the automation framework progress so far
+📅 Meeting Invite: Automation Framework – Demo Session
+Subject:
+Demo: Automated Test Case Creation in Azure DevOps & Teams Notification Integration
 
-Teams Notification Trigger
+Date & Time:
+[Insert Date & Time]
 
-Live demo of automated alerts from Databricks to the Teams channel
+Location:
+[Teams Meeting Link / Room]
 
-Use cases for monitoring and real-time feedback during test runs
+Attendees:
+Test Team, Robert’s Team (Pricing Project), Automation & DevOps Teams
 
-Azure DevOps Integration
+📝 Agenda:
+Overview of Automation Framework Integration Progress
 
-Demo of automated test case creation and test run execution directly from the framework
+Demo: Automated Test Case Creation in Azure DevOps
 
-Sample unit testing and system integration regression test scenarios
+Creating test cases programmatically
 
-Capturing and updating test results (Pass/Fail)
+Test run creation with pass/fail status updates
 
-Discussion
+Coverage across unit testing and system integration regression testing
+(Main agenda item)
 
-Feedback and Q&A
+Demo: Teams Channel Notification Trigger
 
-Opportunity for Robert’s team to assess use for the pricing project
+Real-time test run alerts in the Teams channel
 
-Next Steps
+Integration approach and configuration overview
 
-Rollout plan and further collaboration
+Q&A and Next Steps
 
+Note:
+This session is intended to showcase the end-to-end automation flow and gather feedback before integration into the wider testing process.
