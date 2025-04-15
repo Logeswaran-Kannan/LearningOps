@@ -63,6 +63,10 @@ def get_default_test_configuration_id():
             print(f"✅ Created default test configuration ID: {config_id}")
             return config_id
         else:
+            print(f"❌ Failed to create test configuration. Response: {new_config}")
+            print(f"✅ Created default test configuration ID: {config_id}")
+            return config_id
+        else:
             raise ValueError("❌ Failed to create default test configuration.")
 
 def create_test_plan(plan_name):
