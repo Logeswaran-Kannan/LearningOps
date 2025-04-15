@@ -1,10 +1,10 @@
-
 # Databricks Job: Create Test Plan, Test Cases, Test Run and Execute Pass/Fail Results in Azure DevOps
 
 import requests
 from requests.auth import HTTPBasicAuth
 from pyspark.sql import SparkSession
 import pandas as pd
+import time
 
 # === CONFIG ===
 organization = "your-org"
@@ -70,11 +70,17 @@ def add_test_case_to_suite(plan_id, suite_id, test_case_id):
     resp = requests.post(url, auth=auth, headers=headers)
     return resp.status_code
 
-def get_test_points(plan_id, suite_id):
+def get_test_points(plan_id, suite_id, retries=5, delay=2):
     url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/points?api-version=7.1"
-    resp = requests.get(url, auth=auth, headers=headers)
-    points = safe_json(resp).get("value", [])
-    return {p['testCase']['id']: p['id'] for p in points}
+    for attempt in range(retries):
+        resp = requests.get(url, auth=auth, headers=headers)
+        points = safe_json(resp).get("value", [])
+        if points:
+            return {str(p['testCase']['id']): p['id'] for p in points}
+        print(f"⏳ Waiting for test points to be available (attempt {attempt + 1})...")
+        time.sleep(delay)
+    print("❌ Failed to retrieve test points after retries.")
+    return {}
 
 def create_test_run(plan_id):
     url = f"{azdo_base}/_apis/test/runs?api-version=7.1"
@@ -116,6 +122,10 @@ def complete_test_run(run_id):
 # === Execute Full Test Cycle ===
 plan_id = create_test_plan("Databricks Test Plan")
 suite_id = create_test_suite(plan_id, "Databricks Suite")
+
+if not suite_id:
+    raise ValueError("❌ Test suite creation failed. suite_id is None.")
+
 test_case_ids = []
 test_case_titles = []
 
@@ -125,7 +135,7 @@ for _, row in test_data.iterrows():
     test_case_ids.append(case_id)
     test_case_titles.append(row['title'])
 
-# Fetch test points now that test cases are linked to suite
+# Fetch test points with retry logic
 test_points = get_test_points(plan_id, suite_id)
 
 # Create test run
