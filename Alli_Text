@@ -41,31 +41,12 @@ def get_default_test_configuration_id():
     url = f"{azdo_base}/_apis/test/configurations?api-version=7.1"
     resp = requests.get(url, auth=auth, headers=headers)
     configs = safe_json(resp).get("value", [])
-    if configs:
-        config_id = configs[0]['id']
-        print(f"🛠️ Using default test configuration ID: {config_id}")
-        return config_id
-    else:
-        print("⚠️ No test configurations found. Creating a default one...")
-        create_url = f"{azdo_base}/_apis/test/configurations?api-version=7.1"
-        payload = {
-            "name": "Default Configuration",
-            "description": "Auto-created by Databricks job",
-            "state": "Active",
-            "values": [
-                {"name": "Operating System", "value": "Windows"}
-            ]
-        }
-        create_resp = requests.post(create_url, auth=auth, headers=headers, json=payload)
-        print(f"Response from Azure DevOps: {create_resp.status_code} - {create_resp.text}")
-        new_config = safe_json(create_resp)
-        config_id = new_config.get("id")
-        if config_id:
-            print(f"✅ Created default test configuration ID: {config_id}")
+    for cfg in configs:
+        if cfg.get("name") == "Windows 10":
+            config_id = cfg.get("id")
+            print(f"🛠️ Using test configuration 'Windows 10' with ID: {config_id}")
             return config_id
-        else:
-            print(f"❌ Failed to create test configuration. Response: {new_config}")
-            raise ValueError("❌ Failed to create default test configuration.")
+    raise ValueError("❌ Test configuration named 'Windows 10' not found in Azure DevOps.")
 
 def create_test_plan(plan_name):
     url = f"{azdo_base}/_apis/testplan/plans?api-version=7.1"
