@@ -1,0 +1,44 @@
+# Databricks notebook content for running pytest and publishing results in Azure DevOps
+
+import pandas as pd
+import pytest
+import os
+
+# Sample test data creation with duplicates and null values
+def create_test_data():
+    data = {
+        'id': [1, 2, 2, 4, 5, None],
+        'name': ['Alice', 'Bob', 'Bob', 'David', 'Eve', 'Frank'],
+        'age': [25, 30, 30, 22, 29, None]
+    }
+    df = pd.DataFrame(data)
+    return df
+
+# Test Cases using pytest
+def test_no_null_values():
+    df = create_test_data()
+    # This test should fail because there are nulls
+    assert df.isnull().sum().sum() == 0, "DataFrame contains null values."
+
+def test_duplicate_rows():
+    df = create_test_data()
+    # This test should pass: we do have duplicate rows by 'id'
+    duplicate_count = df.duplicated(subset=['id']).sum()
+    assert duplicate_count > 0, "No duplicate rows found, but expected some."
+
+def test_unique_ids():
+    df = create_test_data()
+    # This test should fail because there are duplicate 'id' values
+    assert df['id'].is_unique, "IDs are not unique."
+
+def test_all_ages_positive():
+    df = create_test_data()
+    # This test should pass (excluding nulls, all ages are positive)
+    assert (df['age'].dropna() > 0).all(), "There are non-positive ages."
+
+# Entry point for pytest (for local/automated runs)
+if __name__ == "__main__":
+    pytest.main([
+        "--junitxml=artifacts/test-results.xml",  # output test results for Azure DevOps
+        "--tb=short"
+    ])
