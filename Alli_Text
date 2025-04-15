@@ -42,3 +42,32 @@ Test Plan & Strategy: Graham has reviewed it and provided feedback, especially a
 
 Framework Integration: The remaining components — Teams channel notifications and automated test case run capture in Azure DevOps — are now completed for the sample set. I’m planning a demo for the test team soon. Robert’s team has also shown interest from the pricing project side, so I’ll include them as well. With this, the automation framework integration is nearly complete.
 
+---------------
+
+
+Welcome & Context Setting – Quick overview of the automation framework progress so far
+
+Teams Notification Trigger
+
+Live demo of automated alerts from Databricks to the Teams channel
+
+Use cases for monitoring and real-time feedback during test runs
+
+Azure DevOps Integration
+
+Demo of automated test case creation and test run execution directly from the framework
+
+Sample unit testing and system integration regression test scenarios
+
+Capturing and updating test results (Pass/Fail)
+
+Discussion
+
+Feedback and Q&A
+
+Opportunity for Robert’s team to assess use for the pricing project
+
+Next Steps
+
+Rollout plan and further collaboration
+
