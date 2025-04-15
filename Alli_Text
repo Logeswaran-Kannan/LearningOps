@@ -30,6 +30,17 @@ df = spark.read.format("delta").table("dlt.test_results")
 test_data = df.toPandas()
 
 # === Helper Functions ===
+
+def list_test_configurations():
+    url = f"{azdo_base}/_apis/test/configurations?api-version=7.1"
+    resp = requests.get(url, auth=auth, headers=headers)
+    configs = safe_json(resp).get("value", [])
+    if configs:
+        print("📋 Available test configurations:")
+        for cfg in configs:
+            print(f" - ID: {cfg['id']}, Name: {cfg['name']}, State: {cfg['state']}")
+    else:
+        print("❌ No test configurations found.")
 def safe_json(resp):
     try:
         return resp.json()
