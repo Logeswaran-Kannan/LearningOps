@@ -37,6 +37,17 @@ def safe_json(resp):
         print("Invalid JSON Response", resp.status_code, resp.text)
         return {}
 
+def get_default_test_configuration_id():
+    url = f"{azdo_base}/_apis/test/configurations?api-version=7.1"
+    resp = requests.get(url, auth=auth, headers=headers)
+    configs = safe_json(resp).get("value", [])
+    if configs:
+        config_id = configs[0]['id']
+        print(f"🛠️ Using default test configuration ID: {config_id}")
+        return config_id
+    else:
+        raise ValueError("❌ No test configurations found in Azure DevOps.")
+
 def create_test_plan(plan_name):
     url = f"{azdo_base}/_apis/testplan/plans?api-version=7.1"
     payload = {"name": plan_name, "area": {"path": project}}
@@ -83,9 +94,12 @@ def create_test_case(title):
     print(f"📄 Created Test Case ID: {case_id} - {title}")
     return case_id
 
-def add_test_case_to_suite(plan_id, suite_id, test_case_id):
+def add_test_case_to_suite(plan_id, suite_id, test_case_id, configuration_id):
     url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/testcases/{test_case_id}?api-version=7.1"
-    resp = requests.post(url, auth=auth, headers=headers)
+    payload = {
+        "configurationIds": [configuration_id]
+    }
+    resp = requests.post(url, auth=auth, headers=headers, json=payload)
     return resp.status_code
 
 def get_test_points(plan_id, suite_id, retries=5, delay=2):
@@ -139,21 +153,21 @@ def complete_test_run(run_id):
 
 # === Execute Full Test Cycle ===
 plan_id = create_test_plan("Databricks Test Plan")
-
 if not plan_id:
     raise ValueError("❌ Test plan creation failed. plan_id is None.")
 
 suite_id = create_test_suite(plan_id, "Databricks Suite")
-
 if not suite_id:
     raise ValueError("❌ Test suite creation failed. suite_id is None.")
+
+config_id = get_default_test_configuration_id()
 
 test_case_ids = []
 test_case_titles = []
 
 for _, row in test_data.iterrows():
     case_id = create_test_case(row['title'])
-    add_test_case_to_suite(plan_id, suite_id, case_id)
+    add_test_case_to_suite(plan_id, suite_id, case_id, config_id)
     test_case_ids.append(case_id)
     test_case_titles.append(row['title'])
 
