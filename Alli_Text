@@ -49,8 +49,12 @@ def create_test_suite(plan_id, suite_name):
     url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites?api-version=7.1"
     payload = {"name": suite_name, "suiteType": "StaticTestSuite"}
     resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    suite_id = safe_json(resp).get("id")
-    print(f"✅ Created Test Suite ID: {suite_id}")
+    suite_data = safe_json(resp)
+    suite_id = suite_data.get("id")
+    if suite_id:
+        print(f"✅ Created Test Suite ID: {suite_id}")
+    else:
+        print(f"❌ Failed to create test suite. Response: {suite_data}")
     return suite_id
 
 def create_test_case(title):
@@ -121,6 +125,10 @@ def complete_test_run(run_id):
 
 # === Execute Full Test Cycle ===
 plan_id = create_test_plan("Databricks Test Plan")
+
+if not plan_id:
+    raise ValueError("❌ Test plan creation failed. plan_id is None.")
+
 suite_id = create_test_suite(plan_id, "Databricks Suite")
 
 if not suite_id:
