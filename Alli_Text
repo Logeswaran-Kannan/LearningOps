@@ -94,11 +94,16 @@ def create_test_case(title):
     return case_id
 
 def add_test_case_to_suite(plan_id, suite_id, test_case_id, configuration_id):
-    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/testcases/{test_case_id}?api-version=7.1"
+    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/testcases?api-version=7.1"
     payload = {
+        "ids": [test_case_id],
         "configurationIds": [configuration_id]
     }
     resp = requests.post(url, auth=auth, headers=headers, json=payload)
+    if resp.status_code not in [200, 201]:
+        print(f"❌ Failed to add test case {test_case_id} to suite {suite_id}. Response: {resp.status_code} - {resp.text}")
+    else:
+        print(f"✅ Added test case {test_case_id} to suite {suite_id} with config {configuration_id}")
     return resp.status_code
 
 def get_test_points(plan_id, suite_id, retries=10, delay=3):
@@ -110,6 +115,10 @@ def get_test_points(plan_id, suite_id, retries=10, delay=3):
             return {str(p['testCase']['id']): p['id'] for p in points}
         print(f"⏳ Waiting for test points to be available (attempt {attempt + 1})...")
         print(f"Response: {resp.status_code} - {resp.text}")
+        try:
+            print("Raw test point response JSON:", resp.json())
+        except Exception:
+            print("(No JSON in response)")
         time.sleep(delay)
     print("❌ Failed to retrieve test points after retries.")
     return {}
