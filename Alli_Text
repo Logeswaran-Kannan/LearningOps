@@ -57,6 +57,7 @@ def get_default_test_configuration_id():
             ]
         }
         create_resp = requests.post(create_url, auth=auth, headers=headers, json=payload)
+        print(f"Response from Azure DevOps: {create_resp.status_code} - {create_resp.text}")
         new_config = safe_json(create_resp)
         config_id = new_config.get("id")
         if config_id:
@@ -120,7 +121,7 @@ def add_test_case_to_suite(plan_id, suite_id, test_case_id, configuration_id):
     resp = requests.post(url, auth=auth, headers=headers, json=payload)
     return resp.status_code
 
-def get_test_points(plan_id, suite_id, retries=5, delay=2):
+def get_test_points(plan_id, suite_id, retries=10, delay=3):
     url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/points?api-version=7.1"
     for attempt in range(retries):
         resp = requests.get(url, auth=auth, headers=headers)
@@ -128,6 +129,7 @@ def get_test_points(plan_id, suite_id, retries=5, delay=2):
         if points:
             return {str(p['testCase']['id']): p['id'] for p in points}
         print(f"⏳ Waiting for test points to be available (attempt {attempt + 1})...")
+        print(f"Response: {resp.status_code} - {resp.text}")
         time.sleep(delay)
     print("❌ Failed to retrieve test points after retries.")
     return {}
@@ -188,6 +190,9 @@ for _, row in test_data.iterrows():
     add_test_case_to_suite(plan_id, suite_id, case_id, config_id)
     test_case_ids.append(case_id)
     test_case_titles.append(row['title'])
+
+print("⏸ Waiting 10 seconds to allow Azure DevOps to generate test points...")
+time.sleep(10)
 
 # Fetch test points with retry logic
 test_points = get_test_points(plan_id, suite_id)
