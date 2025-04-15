@@ -31,3 +31,14 @@ Test Execution – Mani has started a mock run for the Oracle staging layer vs. 
 
 Blockers/Risks – The key risk to starting execution on 22nd April is the availability of the test environment and test data — both are still dependent on the Read Replica setup. I believe Paul and Hazel are actively following up with the Guidewire team on that front.
 
+----------------
+
+
+I won’t be able to join today’s connect as I have a medical phone appointment.
+
+Quick update from my side:
+
+Test Plan & Strategy: Graham has reviewed it and provided feedback, especially around the order of execution. I’ll be updating that section in the Confluence page accordingly.
+
+Framework Integration: The remaining components — Teams channel notifications and automated test case run capture in Azure DevOps — are now completed for the sample set. I’m planning a demo for the test team soon. Robert’s team has also shown interest from the pricing project side, so I’ll include them as well. With this, the automation framework integration is nearly complete.
+
