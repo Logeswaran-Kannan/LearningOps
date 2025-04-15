@@ -38,22 +38,9 @@ def safe_json(resp):
         return {}
 
 def get_default_test_configuration_id():
-    url = f"{azdo_base}/_apis/test/configurations?api-version=7.1"
-    resp = requests.get(url, auth=auth, headers=headers)
-    configs = safe_json(resp).get("value", [])
-
-    if not configs:
-        raise ValueError("❌ No test configurations found in Azure DevOps.")
-
-    print("📋 Available test configurations:")
-    for cfg in configs:
-        print(f" - {cfg.get('name')} (ID: {cfg.get('id')})")
-
-    for cfg in configs:
-        if cfg.get("name") == "SIT_CONFIG":
-            config_id = cfg.get("id")
-            print(f"🛠️ Using test configuration 'SIT_CONFIG' with ID: {config_id}")
-            return config_id
+    config_id = 48  # Hardcoded known configuration ID
+    print(f"🛠️ Using test configuration ID: {config_id} (manually assigned)")
+    return config_id
 
     # fallback to first available config
     config_id = configs[0]['id']
