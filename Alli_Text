@@ -1,197 +1,22 @@
-# Databricks Job: Create Test Plan, Test Cases, Test Run and Execute Pass/Fail Results in Azure DevOps
-
-import requests
-from requests.auth import HTTPBasicAuth
-from pyspark.sql import SparkSession
-import pandas as pd
-import time
-
-# === CONFIG ===
-organization = "your-org"
-project = "your-project"
-pat = "your-pat"  # Secure via secret scope in production
-azdo_base = f"https://dev.azure.com/{organization}/{project}"
-auth = HTTPBasicAuth('', pat)
-headers = {"Content-Type": "application/json"}
-
-# === Spark Session ===
-spark = SparkSession.builder.getOrCreate()
-
-# === Create Sample Test Data ===
-sample_data = [
-    {"title": "Login Functionality Test", "status": "Passed"},
-    {"title": "Signup Validation Test", "status": "Failed"}
-]
-sample_df = spark.createDataFrame(sample_data)
-sample_df.write.mode("overwrite").format("delta").saveAsTable("dlt.test_results")
-
-# === Load test result data from Delta Live Table ===
-df = spark.read.format("delta").table("dlt.test_results")
-test_data = df.toPandas()
-
-# === Helper Functions ===
-def safe_json(resp):
-    try:
-        return resp.json()
-    except Exception:
-        print("Invalid JSON Response", resp.status_code, resp.text)
-        return {}
-
 def get_default_test_configuration_id():
     url = f"{azdo_base}/_apis/test/configurations?api-version=7.1"
     resp = requests.get(url, auth=auth, headers=headers)
     configs = safe_json(resp).get("value", [])
+
+    if not configs:
+        raise ValueError("❌ No test configurations found in Azure DevOps.")
+
+    print("📋 Available test configurations:")
+    for cfg in configs:
+        print(f" - {cfg.get('name')} (ID: {cfg.get('id')})")
+
     for cfg in configs:
         if cfg.get("name") == "Windows 10":
             config_id = cfg.get("id")
             print(f"🛠️ Using test configuration 'Windows 10' with ID: {config_id}")
             return config_id
-    raise ValueError("❌ Test configuration named 'Windows 10' not found in Azure DevOps.")
 
-def create_test_plan(plan_name):
-    url = f"{azdo_base}/_apis/testplan/plans?api-version=7.1"
-    payload = {"name": plan_name, "area": {"path": project}}
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    plan_id = safe_json(resp).get("id")
-    print(f"✅ Created Test Plan ID: {plan_id}")
-    return plan_id
-
-def create_test_suite(plan_id, suite_name):
-    # First, get the root suite ID of the test plan
-    plan_url = f"{azdo_base}/_apis/testplan/plans/{plan_id}?api-version=7.1"
-    plan_resp = requests.get(plan_url, auth=auth, headers=headers)
-    root_suite_id = safe_json(plan_resp).get("rootSuite", {}).get("id")
-
-    if not root_suite_id:
-        print("❌ Could not retrieve root suite ID for test plan.")
-        return None
-
-    # Then create suite under root
-    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites?api-version=7.1"
-    payload = {
-        "name": suite_name,
-        "suiteType": "StaticTestSuite",
-        "parentSuite": {"id": root_suite_id}
-    }
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    suite_data = safe_json(resp)
-    suite_id = suite_data.get("id")
-    if suite_id:
-        print(f"✅ Created Test Suite ID: {suite_id}")
-    else:
-        print(f"❌ Failed to create test suite. Response: {suite_data}")
-    return suite_id
-
-def create_test_case(title):
-    url = f"{azdo_base}/_apis/wit/workitems/$Test%20Case?api-version=7.1"
-    headers_patch = headers.copy()
-    headers_patch["Content-Type"] = "application/json-patch+json"
-    payload = [
-        {"op": "add", "path": "/fields/System.Title", "value": title}
-    ]
-    resp = requests.post(url, auth=auth, headers=headers_patch, json=payload)
-    case_id = safe_json(resp).get("id")
-    print(f"📄 Created Test Case ID: {case_id} - {title}")
-    return case_id
-
-def add_test_case_to_suite(plan_id, suite_id, test_case_id, configuration_id):
-    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/testcases/{test_case_id}?api-version=7.1"
-    payload = {
-        "configurationIds": [configuration_id]
-    }
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    return resp.status_code
-
-def get_test_points(plan_id, suite_id, retries=10, delay=3):
-    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/points?api-version=7.1"
-    for attempt in range(retries):
-        resp = requests.get(url, auth=auth, headers=headers)
-        points = safe_json(resp).get("value", [])
-        if points:
-            return {str(p['testCase']['id']): p['id'] for p in points}
-        print(f"⏳ Waiting for test points to be available (attempt {attempt + 1})...")
-        print(f"Response: {resp.status_code} - {resp.text}")
-        time.sleep(delay)
-    print("❌ Failed to retrieve test points after retries.")
-    return {}
-
-def create_test_run(plan_id):
-    url = f"{azdo_base}/_apis/test/runs?api-version=7.1"
-    payload = {
-        "name": "Automated Test Run",
-        "plan": {"id": plan_id},
-        "automated": True
-    }
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    run_id = safe_json(resp).get("id")
-    print(f"▶️ Created Test Run ID: {run_id}")
-    return run_id
-
-def post_test_result(run_id, test_point_id, test_case_id, outcome, title):
-    url = f"{azdo_base}/_apis/test/Runs/{run_id}/results?api-version=7.1"
-    payload = [{
-        "testCase": {"id": test_case_id},
-        "testPoint": {"id": test_point_id},
-        "testCaseTitle": title,
-        "outcome": outcome,
-        "state": "Completed",
-        "automatedTestName": f"AutoTest-{test_case_id}"
-    }]
-    resp = requests.post(url, auth=auth, headers=headers, json=payload)
-    if resp.status_code in [200, 201]:
-        print(f"✅ Posted result for test case {test_case_id} with outcome: {outcome}")
-    else:
-        print(f"❌ Failed to post result: {resp.status_code} - {resp.text}")
-
-def complete_test_run(run_id):
-    url = f"{azdo_base}/_apis/test/runs/{run_id}?api-version=7.1"
-    payload = {"state": "Completed"}
-    resp = requests.patch(url, auth=auth, headers=headers, json=payload)
-    if resp.status_code in [200, 204]:
-        print(f"✅ Test run {run_id} marked as Completed.")
-    else:
-        print(f"❌ Failed to complete test run: {resp.status_code} - {resp.text}")
-
-# === Execute Full Test Cycle ===
-plan_id = create_test_plan("Databricks Test Plan")
-if not plan_id:
-    raise ValueError("❌ Test plan creation failed. plan_id is None.")
-
-suite_id = create_test_suite(plan_id, "Databricks Suite")
-if not suite_id:
-    raise ValueError("❌ Test suite creation failed. suite_id is None.")
-
-config_id = get_default_test_configuration_id()
-
-test_case_ids = []
-test_case_titles = []
-
-for _, row in test_data.iterrows():
-    case_id = create_test_case(row['title'])
-    add_test_case_to_suite(plan_id, suite_id, case_id, config_id)
-    test_case_ids.append(case_id)
-    test_case_titles.append(row['title'])
-
-print("⏸ Waiting 10 seconds to allow Azure DevOps to generate test points...")
-time.sleep(10)
-
-# Fetch test points with retry logic
-test_points = get_test_points(plan_id, suite_id)
-
-# Create test run
-run_id = create_test_run(plan_id)
-
-# Post results using test points
-for i, row in test_data.iterrows():
-    test_case_id = test_case_ids[i]
-    title = test_case_titles[i]
-    test_point_id = test_points.get(str(test_case_id))
-    if test_point_id:
-        post_test_result(run_id, test_point_id, test_case_id, row['status'], title)
-    else:
-        print(f"⚠️ No test point found for test case {test_case_id}. Skipping result.")
-
-# Complete run
-complete_test_run(run_id)
-
-print("✅ Full test cycle completed successfully.")
+    # fallback to first available config
+    config_id = configs[0]['id']
+    print(f"⚠️ 'Windows 10' not found. Using first available configuration: {configs[0]['name']} (ID: {config_id})")
+    return config_id
