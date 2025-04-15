@@ -46,11 +46,21 @@ def create_test_plan(plan_name):
     return plan_id
 
 def create_test_suite(plan_id, suite_name):
+    # First, get the root suite ID of the test plan
+    plan_url = f"{azdo_base}/_apis/testplan/plans/{plan_id}?api-version=7.1"
+    plan_resp = requests.get(plan_url, auth=auth, headers=headers)
+    root_suite_id = safe_json(plan_resp).get("rootSuite", {}).get("id")
+
+    if not root_suite_id:
+        print("❌ Could not retrieve root suite ID for test plan.")
+        return None
+
+    # Then create suite under root
     url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites?api-version=7.1"
     payload = {
         "name": suite_name,
-        "suiteType": "StaticTestSuite"
-        # no parentSuite — root suite is implicit
+        "suiteType": "StaticTestSuite",
+        "parentSuite": {"id": root_suite_id}
     }
     resp = requests.post(url, auth=auth, headers=headers, json=payload)
     suite_data = safe_json(resp)
