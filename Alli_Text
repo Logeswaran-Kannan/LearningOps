@@ -31,6 +31,19 @@ test_data = df.toPandas()
 
 # === Helper Functions ===
 
+def get_configuration_details(config_id):
+    url = f"{azdo_base}/_apis/test/configurations/{config_id}?api-version=5.0-preview.2"
+    resp = requests.get(url, auth=auth, headers=headers)
+    if resp.status_code == 200:
+        config = safe_json(resp)
+        print(f"🔍 Configuration Details for ID {config_id}:")
+        print(f" - Name: {config.get('name')}")
+        print(f" - State: {config.get('state')}")
+        print(f" - Description: {config.get('description')}")
+        print(f" - Values: {config.get('values')}")
+    else:
+        print(f"❌ Failed to fetch configuration details for ID {config_id}. Response: {resp.status_code} - {resp.text}")
+
 def list_test_configurations():
     url = f"{azdo_base}/_apis/test/configurations?api-version=7.1"
     resp = requests.get(url, auth=auth, headers=headers)
