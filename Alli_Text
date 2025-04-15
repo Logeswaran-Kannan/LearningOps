@@ -94,16 +94,16 @@ def create_test_case(title):
     return case_id
 
 def add_test_case_to_suite(plan_id, suite_id, test_case_id, configuration_id):
-    url = f"{azdo_base}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points?api-version=7.1"
+    url = f"{azdo_base}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}/testcases?api-version=7.1"
     payload = {
-        "configurationIds": [configuration_id],
-        "testCaseIds": [test_case_id]
+        "ids": [test_case_id],
+        "configurationIds": [configuration_id]
     }
     resp = requests.post(url, auth=auth, headers=headers, json=payload)
     if resp.status_code not in [200, 201]:
-        print(f"❌ Failed to create test point for test case {test_case_id}. Response: {resp.status_code} - {resp.text}")
+        print(f"❌ Failed to assign test case {test_case_id} to suite {suite_id} with config {configuration_id}. Response: {resp.status_code} - {resp.text}")
     else:
-        print(f"✅ Created test point for test case {test_case_id} with config {configuration_id}")
+        print(f"✅ Assigned test case {test_case_id} to suite {suite_id} with config {configuration_id}")
     return resp.status_code
 
 def get_test_points(plan_id, suite_id, retries=10, delay=3):
