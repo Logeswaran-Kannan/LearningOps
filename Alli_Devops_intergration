@@ -90,6 +90,9 @@ def get_available_configurations():
         response.raise_for_status()
         configs = response.json().get("value", [])
         if configs:
+            print("Available configurations:")
+            for cfg in configs:
+                print(f" - ID: {cfg.get('id')}, Name: {cfg.get('name')}")
             config_id = configs[0].get("id")
             print(f"Using available test configuration ID: {config_id}")
             return config_id
