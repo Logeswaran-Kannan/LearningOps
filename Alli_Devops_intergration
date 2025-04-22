@@ -33,10 +33,15 @@ devops_organization = "https://dev.azure.com/LVAnalytics"
 project = "BICoE"
 test_plan_id = 12330
 test_suite_id = 12332
-personal_access_token = dbutils.secrets.get(scope="devops", key="pat")  # stored securely
+
+# TEMP: Hardcoded Personal Access Token (Use secrets in production!)
+personal_access_token = "YOUR_PAT_TOKEN_HERE"  # ⚠️ Replace this with actual PAT
+import base64
+encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
+
 headers = {
     'Content-Type': 'application/json',
-    'Authorization': f'Basic {personal_access_token}'
+    'Authorization': f'Basic {encoded_pat}'
 }
 
 def create_test_case(title, steps):
