@@ -40,20 +40,18 @@ import base64
 encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
 
 headers = {
-    'Content-Type': 'application/json',
+    'Content-Type': 'application/json-patch+json',
     'Authorization': f'Basic {encoded_pat}'
 }
 
 def create_test_case(title, steps):
     try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases?api-version=7.1-preview.2"
-        payload = {
-            "testCase": {
-                "name": title,
-                "steps": steps
-            }
-        }
-        response = requests.post(url, headers=headers, json=payload)
+        url = f"{devops_organization}/{project}/_apis/wit/workitems/$Test%20Case?api-version=7.1-preview.3"
+        patch_data = [
+            {"op": "add", "path": "/fields/System.Title", "value": title},
+            {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps", "value": steps}
+        ]
+        response = requests.post(url, headers=headers, json=patch_data)
         response.raise_for_status()
         print(f"Created test case: {title}")
         return response.json()
