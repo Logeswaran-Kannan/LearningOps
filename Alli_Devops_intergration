@@ -60,7 +60,7 @@ def create_test_case(title, steps):
 
 def add_test_case_to_suite(test_case_id):
     try:
-        url = f"{devops_organization}/{project}/_apis/testplan/Plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
+        url = f"{devops_organization}/{project}/_apis/test/Plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
         response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'})
         response.raise_for_status()
         print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
@@ -69,7 +69,7 @@ def add_test_case_to_suite(test_case_id):
 
 def get_test_point_id(test_case_id):
     try:
-        url = f"{devops_organization}/{project}/_apis/testplan/Plans/{test_plan_id}/suites/{test_suite_id}/points?testCaseId={test_case_id}&api-version=7.1-preview.3"
+        url = f"{devops_organization}/{project}/_apis/test/Plans/{test_plan_id}/suites/{test_suite_id}/points?testCaseId={test_case_id}&api-version=7.1-preview.3"
         response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
         response.raise_for_status()
         points = response.json().get("value", [])
