@@ -70,6 +70,36 @@ def add_test_case_to_suite(test_case_id):
     except Exception as e:
         print(f"Error linking test case to suite: {e}")
 
+def assign_configuration_to_suite(configuration_id):
+    try:
+        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}?api-version=7.1-preview.3"
+        payload = {
+            "inheritDefaultConfigurations": False,
+            "configurationIds": [configuration_id]
+        }
+        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
+        response.raise_for_status()
+        print(f"Assigned test configuration ID {configuration_id} to suite {test_suite_id}.")
+    except Exception as e:
+        print(f"Error assigning configuration: {e}")
+
+def get_available_configurations():
+    try:
+        url = f"{devops_organization}/{project}/_apis/test/configurations?api-version=7.1-preview.2"
+        response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
+        response.raise_for_status()
+        configs = response.json().get("value", [])
+        if configs:
+            config_id = configs[0].get("id")
+            print(f"Using available test configuration ID: {config_id}")
+            return config_id
+        else:
+            print("No test configurations found.")
+            return None
+    except Exception as e:
+        print(f"Error fetching test configurations: {e}")
+        return None
+
 def get_test_point_id(test_case_id):
     try:
         url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/points?includePointDetails=true&api-version=7.1-preview.1"
