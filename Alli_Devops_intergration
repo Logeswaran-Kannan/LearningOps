@@ -1,49 +1,58 @@
-# Databricks Notebook: PyTest Integration with Azure DevOps (Single Notebook)
+# Databricks Notebook: Test Case Execution and Reporting for Azure DevOps
 
-# STEP 1: Install pytest from Volumes path
-# Replace <catalog>, <schema>, <volume> with your actual values
+# Step 1: Upload the pytest .whl file to DBFS
+# In Databricks UI, navigate to 'Data' > 'DBFS' > 'Upload', and upload the file to `/dbfs/tmp/pytest.whl`
 
-%pip install /Volumes/<catalog>/<schema>/<volume>/pytest-7.4.0-py3-none-any.whl
+# Step 2: Install the wheel file (run in a notebook cell)
+%pip install /dbfs/tmp/pytest.whl
 
-# STEP 2: Create test directory and test file with both pass and fail cases
+# Step 3: Create a test script
+# Save the following content as a Python file in DBFS, e.g., `/dbfs/tmp/test_data_validation.py`
 
-import os
-
-# Use DBFS path to store test suite
-test_dir = "/dbfs/tmp/test_suite"
-os.makedirs(test_dir, exist_ok=True)
-
-# Sample test cases
-# Includes: Null check (fail), Duplicate check (fail), Simple pass
-
-test_code = '''
+import pytest
 import pandas as pd
 
-def test_check_nulls():
-    df = pd.DataFrame({
-        "id": [1, 2, 3],
-        "name": ["Alice", "Bob", None]  # Intentional null
+# Sample DataFrame creation with duplicates and nulls
+def get_test_data():
+    return pd.DataFrame({
+        'id': [1, 2, 2, 4, None],
+        'value': ['A', 'B', 'B', 'D', 'E']
     })
-    assert df["name"].isnull().sum() == 0, "Null value found in 'name' column"  # FAIL
 
-def test_check_duplicates():
-    df = pd.DataFrame({
-        "id": [1, 2, 2, 3],
-        "name": ["Alice", "Bob", "Bob", "Charlie"]
-    })
-    assert df.duplicated(subset=['id']).sum() == 0, "Duplicate IDs found"  # FAIL
+# Test for duplicates
+def test_no_duplicates():
+    df = get_test_data()
+    assert df.duplicated().sum() == 0, "Data contains duplicates"
 
-def test_simple_pass():
-    assert 1 + 1 == 2  # PASS
-'''
+# Test for null values in 'id'
+def test_no_null_ids():
+    df = get_test_data()
+    assert df['id'].isnull().sum() == 0, "Null values found in 'id' column"
 
-# Write test file
-with open(f"{test_dir}/test_sample.py", "w") as f:
-    f.write(test_code)
+# Test that should pass
+def test_column_exists():
+    df = get_test_data()
+    assert 'value' in df.columns
 
-# STEP 3: Run PyTest and generate JUnit XML result in DBFS
+# Step 4: Run pytest and export results
+# Use a Databricks notebook cell with the below shell command to run the tests and save XML output
 
-!pytest /dbfs/tmp/test_suite --junitxml=/dbfs/tmp/test_results/results.xml
+%sh
+mkdir -p /dbfs/tmp/test_results
+pytest /dbfs/tmp/test_data_validation.py --junitxml=/dbfs/tmp/test_results/results.xml
 
-# STEP 4: (Info) Path to output file for Azure DevOps
-print("Test results saved to: dbfs:/tmp/test_results/results.xml")
+# Step 5: Azure DevOps pipeline YAML snippet to publish test results
+# In your azure-pipelines.yml
+
+# - task: PublishTestResults@2
+#   inputs:
+#     testResultsFiles: '**/test_results/results.xml'
+#     testRunTitle: 'Data Validation Tests on Databricks'
+#     searchFolder: '$(Build.ArtifactStagingDirectory)'
+#   condition: succeededOrFailed()
+
+# Optional: Use a Databricks CLI or API call in pipeline to download the results.xml from DBFS to staging directory
+# Example shell command in pipeline:
+# databricks fs cp dbfs:/tmp/test_results/results.xml results.xml
+# mkdir -p $(Build.ArtifactStagingDirectory)/test_results
+# mv results.xml $(Build.ArtifactStagingDirectory)/test_results
