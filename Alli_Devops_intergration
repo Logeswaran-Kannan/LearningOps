@@ -1,13 +1,5 @@
-steps:
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: '3.8'
+Hi Amritha,
 
-- script: |
-    databricks fs cp dbfs:/tmp/test-results.xml test-results.xml
-  displayName: 'Copy test result XML from DBFS'
+I don’t have access to record in the Teams channel at the moment — I had raised a ticket for it a while back, but since I’m on an LV laptop, there are some restrictions.
 
-- task: PublishTestResults@2
-  inputs:
-    testResultsFiles: 'test-results.xml'
-    testRunTitle: 'Databricks Pytest Results'
+The main session was recorded earlier, and I’ll share that link with you. But if you have recording access on your end, I’m happy to run through the session again today so you can record it for future reference — if that works for you.
