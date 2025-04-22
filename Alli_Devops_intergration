@@ -1,130 +1,49 @@
-# Databricks notebook pseudo-code for integrating Delta Live Table with Azure DevOps Test Plans
-# Assumes PySpark environment with access to Azure DevOps REST API
+# Databricks Notebook: PyTest Integration with Azure DevOps (Single Notebook)
 
-from pyspark.sql.functions import col
-import requests
-import json
-import time
+# STEP 1: Install pytest from Volumes path
+# Replace <catalog>, <schema>, <volume> with your actual values
 
-# 0. Create sample test case table if not exists
-schema = "core_tst_sys9.default"
-table = "devopsintergration"
-full_table_name = f"{schema}.{table}"
+%pip install /Volumes/<catalog>/<schema>/<volume>/pytest-7.4.0-py3-none-any.whl
 
-if not spark._jsparkSession.catalog().tableExists(full_table_name):
-    print(f"Creating table {full_table_name} with sample test cases...")
-    sample_data = [
-        ("TC001", "Login Test - Success", "1. Navigate to login\n2. Enter credentials\n3. Click Login", "pass", False),
-        ("TC002", "Login Test - Invalid Password", "1. Navigate to login\n2. Enter invalid password\n3. Click Login", "fail", True),
-        ("TC003", "Access Dashboard Without Login", "1. Go to dashboard URL directly", "blocked", False),
-        ("TC004", "User Logout", "1. Login\n2. Click logout button", "no run", False)
-    ]
-    columns = ["test_case_id", "title", "steps", "status", "defect_required"]
-    df_sample = spark.createDataFrame(sample_data, columns)
-    df_sample.write.format("delta").saveAsTable(full_table_name)
-    print("Sample test case table created.")
-else:
-    print(f"Table {full_table_name} already exists.")
+# STEP 2: Create test directory and test file with both pass and fail cases
 
-# 1. Load Sample Test Cases from Delta Live Table
-df = spark.read.format("delta").table(full_table_name)
+import os
 
-# 2. Azure DevOps Configuration
-devops_organization = "https://dev.azure.com/LVAnalytics"
-project = "BICoE"
-test_plan_id = 12330
-test_suite_id = 12332
+# Use DBFS path to store test suite
+test_dir = "/dbfs/tmp/test_suite"
+os.makedirs(test_dir, exist_ok=True)
 
-# TEMP: Hardcoded Personal Access Token (Use secrets in production!)
-personal_access_token = "YOUR_PAT_TOKEN_HERE"  # ⚠️ Replace this with actual PAT
-import base64
-encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
+# Sample test cases
+# Includes: Null check (fail), Duplicate check (fail), Simple pass
 
-headers = {
-    'Authorization': f'Basic {encoded_pat}'
-}
+test_code = '''
+import pandas as pd
 
-def create_test_case(title, steps):
-    try:
-        url = f"{devops_organization}/{project}/_apis/wit/workitems/$Test%20Case?api-version=7.1-preview.3"
-        patch_data = [
-            {"op": "add", "path": "/fields/System.Title", "value": title},
-            {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps", "value": steps}
-        ]
-        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
-        response.raise_for_status()
-        print(f"Created test case: {title}")
-        return response.json()
-    except Exception as e:
-        print(f"Error creating test case '{title}': {e}")
-        return {}
+def test_check_nulls():
+    df = pd.DataFrame({
+        "id": [1, 2, 3],
+        "name": ["Alice", "Bob", None]  # Intentional null
+    })
+    assert df["name"].isnull().sum() == 0, "Null value found in 'name' column"  # FAIL
 
-def add_test_case_to_suite(test_case_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
-        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'})
-        if response.status_code == 200 or response.status_code == 204:
-            print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
-        else:
-            print(f"Failed to link test case {test_case_id}. Status: {response.status_code}, Response: {response.text}")
-    except Exception as e:
-        print(f"Error linking test case to suite: {e}")
+def test_check_duplicates():
+    df = pd.DataFrame({
+        "id": [1, 2, 2, 3],
+        "name": ["Alice", "Bob", "Bob", "Charlie"]
+    })
+    assert df.duplicated(subset=['id']).sum() == 0, "Duplicate IDs found"  # FAIL
 
-def assign_configuration_to_suite(configuration_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}?api-version=7.1-preview.3"
-        payload = {
-            "inheritDefaultConfigurations": False,
-            "configurationIds": [configuration_id]
-        }
-        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
-        response.raise_for_status()
-        print(f"Assigned test configuration ID {configuration_id} to suite {test_suite_id}.")
-    except Exception as e:
-        print(f"Error assigning configuration: {e}")
+def test_simple_pass():
+    assert 1 + 1 == 2  # PASS
+'''
 
-def get_available_configurations():
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/configurations?api-version=7.1-preview.2"
-        response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
-        response.raise_for_status()
-        configs = response.json().get("value", [])
-        if configs:
-            print("Available configurations:")
-            for cfg in configs:
-                print(f" - ID: {cfg.get('id')}, Name: {cfg.get('name')}")
-            config_id = configs[0].get("id")
-            print(f"Using available test configuration ID: {config_id}")
-            return config_id
-        else:
-            print("No test configurations found.")
-            return None
-    except Exception as e:
-        print(f"Error fetching test configurations: {e}")
-        return None
+# Write test file
+with open(f"{test_dir}/test_sample.py", "w") as f:
+    f.write(test_code)
 
-def get_test_point_id(test_case_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/points?includePointDetails=true&api-version=7.1-preview.1"
-        for attempt in range(5):
-            response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
-            if response.status_code == 200:
-                points = response.json().get("value", [])
-                for pt in points:
-                    if pt.get("testCase", {}).get("id") == str(test_case_id):
-                        print(f"Found test point for test case {test_case_id} on attempt {attempt + 1}.")
-                        return pt.get("id")
-                print(f"Attempt {attempt + 1}: test case {test_case_id} not found in test points. Retrying...")
-                time.sleep(3)
-            else:
-                print(f"Attempt {attempt + 1}: Error getting test points. Status: {response.status_code}, Response: {response.text}")
-                time.sleep(3)
-    except Exception as e:
-        print(f"Exception retrieving test point for test case {test_case_id}: {e}")
-    print(f"Failed to retrieve test point for test case {test_case_id} after multiple attempts.")
-    return None
+# STEP 3: Run PyTest and generate JUnit XML result in DBFS
 
-# Assign configuration before processing test cases
-config_id = get_available_configurations()
-if config_id:
-    assign_configuration_to_suite(config_id)
+!pytest /dbfs/tmp/test_suite --junitxml=/dbfs/tmp/test_results/results.xml
+
+# STEP 4: (Info) Path to output file for Azure DevOps
+print("Test results saved to: dbfs:/tmp/test_results/results.xml")
