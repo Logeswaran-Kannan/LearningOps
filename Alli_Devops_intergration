@@ -1,0 +1,122 @@
+# Databricks notebook pseudo-code for integrating Delta Live Table with Azure DevOps Test Plans
+# Assumes PySpark environment with access to Azure DevOps REST API
+
+from pyspark.sql.functions import col
+import requests
+import json
+
+# 0. Create sample test case table if not exists
+schema = "core_tst_sys9.default"
+table = "devopsintergration"
+full_table_name = f"{schema}.{table}"
+
+if not spark._jsparkSession.catalog().tableExists(full_table_name):
+    print(f"Creating table {full_table_name} with sample test cases...")
+    sample_data = [
+        ("TC001", "Login Test - Success", "1. Navigate to login\n2. Enter credentials\n3. Click Login", "pass", False),
+        ("TC002", "Login Test - Invalid Password", "1. Navigate to login\n2. Enter invalid password\n3. Click Login", "fail", True),
+        ("TC003", "Access Dashboard Without Login", "1. Go to dashboard URL directly", "blocked", False),
+        ("TC004", "User Logout", "1. Login\n2. Click logout button", "no run", False)
+    ]
+    columns = ["test_case_id", "title", "steps", "status", "defect_required"]
+    df_sample = spark.createDataFrame(sample_data, columns)
+    df_sample.write.format("delta").saveAsTable(full_table_name)
+    print("Sample test case table created.")
+else:
+    print(f"Table {full_table_name} already exists.")
+
+# 1. Load Sample Test Cases from Delta Live Table
+df = spark.read.format("delta").table(full_table_name)
+
+# 2. Azure DevOps Configuration
+devops_organization = "https://dev.azure.com/LVAnalytics"
+project = "BICoE"
+test_plan_id = 12330
+test_suite_id = 12332
+personal_access_token = dbutils.secrets.get(scope="devops", key="pat")  # stored securely
+headers = {
+    'Content-Type': 'application/json',
+    'Authorization': f'Basic {personal_access_token}'
+}
+
+def create_test_case(title, steps):
+    try:
+        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases?api-version=7.1-preview.2"
+        payload = {
+            "testCase": {
+                "name": title,
+                "steps": steps
+            }
+        }
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        print(f"Created test case: {title}")
+        return response.json()
+    except Exception as e:
+        print(f"Error creating test case '{title}': {e}")
+        return {}
+
+def update_test_result(test_case_id, outcome):
+    try:
+        run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1-preview.3"
+        test_run_payload = {
+            "name": "Automated Run",
+            "plan": {"id": test_plan_id},
+            "pointIds": [test_case_id]
+        }
+        run_response = requests.post(run_url, headers=headers, json=test_run_payload)
+        run_response.raise_for_status()
+        run_id = run_response.json().get("id")
+
+        result_url = f"{devops_organization}/{project}/_apis/test/Runs/{run_id}/results?api-version=7.1-preview.3"
+        result_payload = [{
+            "testCase": {"id": test_case_id},
+            "outcome": outcome,
+            "state": "Completed"
+        }]
+        result_response = requests.post(result_url, headers=headers, json=result_payload)
+        result_response.raise_for_status()
+        print(f"Updated result for test case {test_case_id} to {outcome}.")
+    except Exception as e:
+        print(f"Error updating result for test case '{test_case_id}': {e}")
+
+def create_defect(title, associated_test_case):
+    try:
+        defect_url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
+        patch_data = [
+            {"op": "add", "path": "/fields/System.Title", "value": title},
+            {"op": "add", "path": "/relations/-", "value": {
+                "rel": "System.LinkTypes.Hierarchy-Reverse",
+                "url": f"{devops_organization}/{project}/_apis/test/testCases/{associated_test_case}",
+                "attributes": {"comment": "Linked failed test case"}
+            }}
+        ]
+        response = requests.patch(defect_url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
+        response.raise_for_status()
+        print(f"Defect created for test case {associated_test_case}: {title}")
+        return response.json()
+    except Exception as e:
+        print(f"Error creating defect for test case '{associated_test_case}': {e}")
+        return {}
+
+# 3. Processing the Delta Table
+test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
+for row in test_data:
+    test_case_id = row['test_case_id']
+    title = row['title']
+    steps = row['steps']
+    status = row['status']
+    defect_required = row['defect_required']
+
+    azure_test_case = create_test_case(title, steps)
+    azure_test_case_id = azure_test_case.get("id")
+
+    if azure_test_case_id and status in ["pass", "fail"]:
+        outcome = "Passed" if status == "pass" else "Failed"
+        update_test_result(azure_test_case_id, outcome)
+
+        if status == "fail" and defect_required:
+            defect_title = f"Defect: {title}"
+            create_defect(defect_title, azure_test_case_id)
+
+print("Test case table checked/created and test case sync completed.")
