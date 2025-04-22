@@ -1,58 +1,13 @@
-# Databricks Notebook: Test Case Execution and Reporting for Azure DevOps
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.8'
 
-# Step 1: Upload the pytest .whl file to DBFS
-# In Databricks UI, navigate to 'Data' > 'DBFS' > 'Upload', and upload the file to `/dbfs/tmp/pytest.whl`
+- script: |
+    databricks fs cp dbfs:/tmp/test-results.xml test-results.xml
+  displayName: 'Copy test result XML from DBFS'
 
-# Step 2: Install the wheel file (run in a notebook cell)
-%pip install /dbfs/tmp/pytest.whl
-
-# Step 3: Create a test script
-# Save the following content as a Python file in DBFS, e.g., `/dbfs/tmp/test_data_validation.py`
-
-import pytest
-import pandas as pd
-
-# Sample DataFrame creation with duplicates and nulls
-def get_test_data():
-    return pd.DataFrame({
-        'id': [1, 2, 2, 4, None],
-        'value': ['A', 'B', 'B', 'D', 'E']
-    })
-
-# Test for duplicates
-def test_no_duplicates():
-    df = get_test_data()
-    assert df.duplicated().sum() == 0, "Data contains duplicates"
-
-# Test for null values in 'id'
-def test_no_null_ids():
-    df = get_test_data()
-    assert df['id'].isnull().sum() == 0, "Null values found in 'id' column"
-
-# Test that should pass
-def test_column_exists():
-    df = get_test_data()
-    assert 'value' in df.columns
-
-# Step 4: Run pytest and export results
-# Use a Databricks notebook cell with the below shell command to run the tests and save XML output
-
-%sh
-mkdir -p /dbfs/tmp/test_results
-pytest /dbfs/tmp/test_data_validation.py --junitxml=/dbfs/tmp/test_results/results.xml
-
-# Step 5: Azure DevOps pipeline YAML snippet to publish test results
-# In your azure-pipelines.yml
-
-# - task: PublishTestResults@2
-#   inputs:
-#     testResultsFiles: '**/test_results/results.xml'
-#     testRunTitle: 'Data Validation Tests on Databricks'
-#     searchFolder: '$(Build.ArtifactStagingDirectory)'
-#   condition: succeededOrFailed()
-
-# Optional: Use a Databricks CLI or API call in pipeline to download the results.xml from DBFS to staging directory
-# Example shell command in pipeline:
-# databricks fs cp dbfs:/tmp/test_results/results.xml results.xml
-# mkdir -p $(Build.ArtifactStagingDirectory)/test_results
-# mv results.xml $(Build.ArtifactStagingDirectory)/test_results
+- task: PublishTestResults@2
+  inputs:
+    testResultsFiles: 'test-results.xml'
+    testRunTitle: 'Databricks Pytest Results'
