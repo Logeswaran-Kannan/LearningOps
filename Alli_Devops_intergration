@@ -40,7 +40,6 @@ import base64
 encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
 
 headers = {
-    'Content-Type': 'application/json-patch+json',
     'Authorization': f'Basic {encoded_pat}'
 }
 
@@ -51,7 +50,7 @@ def create_test_case(title, steps):
             {"op": "add", "path": "/fields/System.Title", "value": title},
             {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps", "value": steps}
         ]
-        response = requests.post(url, headers=headers, json=patch_data)
+        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
         response.raise_for_status()
         print(f"Created test case: {title}")
         return response.json()
@@ -67,7 +66,7 @@ def update_test_result(test_case_id, outcome):
             "plan": {"id": test_plan_id},
             "pointIds": [test_case_id]
         }
-        run_response = requests.post(run_url, headers=headers, json=test_run_payload)
+        run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
         run_response.raise_for_status()
         run_id = run_response.json().get("id")
 
@@ -77,7 +76,7 @@ def update_test_result(test_case_id, outcome):
             "outcome": outcome,
             "state": "Completed"
         }]
-        result_response = requests.post(result_url, headers=headers, json=result_payload)
+        result_response = requests.post(result_url, headers={**headers, 'Content-Type': 'application/json'}, json=result_payload)
         result_response.raise_for_status()
         print(f"Updated result for test case {test_case_id} to {outcome}.")
     except Exception as e:
