@@ -1,3 +1,6 @@
+# Databricks notebook pseudo-code for integrating Delta Live Table with Azure DevOps Test Plans
+# Assumes PySpark environment with access to Azure DevOps REST API
+
 from pyspark.sql.functions import col
 import requests
 import json
@@ -58,7 +61,7 @@ def create_test_case(title, steps):
 
 def add_test_case_to_suite(test_case_id):
     try:
-        url = f"{devops_organization}/{project}/_apis/testplan/Plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
+        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
         response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'})
         if response.status_code == 200 or response.status_code == 204:
             print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
@@ -66,3 +69,5 @@ def add_test_case_to_suite(test_case_id):
             print(f"Failed to link test case {test_case_id}. Status: {response.status_code}, Response: {response.text}")
     except Exception as e:
         print(f"Error linking test case to suite: {e}")
+
+# (unchanged get_test_point_id, update_test_result, create_defect, and main logic follow...)
