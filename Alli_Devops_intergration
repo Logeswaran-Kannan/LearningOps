@@ -120,3 +120,8 @@ def get_test_point_id(test_case_id):
         print(f"Exception retrieving test point for test case {test_case_id}: {e}")
     print(f"Failed to retrieve test point for test case {test_case_id} after multiple attempts.")
     return None
+
+# Assign configuration before processing test cases
+config_id = get_available_configurations()
+if config_id:
+    assign_configuration_to_suite(config_id)
