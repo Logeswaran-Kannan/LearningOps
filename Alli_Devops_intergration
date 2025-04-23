@@ -1,54 +1,12 @@
-import requests
-from requests.auth import HTTPBasicAuth
+Hi Team,
 
-# Configuration
-organization = "your-org"             # e.g., "mycompany"
-project = "your-project"              # e.g., "MyProject"
-pat = "your-personal-access-token"
-assigned_to = "adm.sug.na"
+Thanks for sharing the details earlier!
 
-# Auth and headers
-auth = HTTPBasicAuth("", pat)
-headers = {
-    "Content-Type": "application/json"
-}
+I was able to connect to the jump server successfully, and then tried accessing the read replica using pgAdmin 4 with the information I found in the email thread below. However, the connection isn’t going through, and some of the details seem a bit unclear.
 
-# Step 1: Query work items assigned to user
-wiql_query = {
-    "query": f"SELECT [System.Id] FROM WorkItems WHERE [System.AssignedTo] CONTAINS '{assigned_to}' AND [System.TeamProject] = '{project}'"
-}
-query_url = f"https://dev.azure.com/{organization}/{project}/_apis/wit/wiql?api-version=7.1-preview.2"
-response = requests.post(query_url, headers=headers, auth=auth, json=wiql_query)
+Could someone please confirm if I’m using the correct approach to connect to the server? I’ve tried with the details below, but haven’t had any luck so far.
 
-deleted_items = []
+Thanks in advance for your help!
 
-if response.status_code == 200:
-    work_items = response.json().get("workItems", [])
-    print(f"Found {len(work_items)} work items assigned to {assigned_to}.\n")
-
-    for item in work_items:
-        wid = item["id"]
-
-        # Step 2: Validate the work item exists
-        validate_url = f"https://dev.azure.com/{organization}/_apis/wit/workitems/{wid}?api-version=7.1-preview.2"
-        validate_response = requests.get(validate_url, headers=headers, auth=auth)
-
-        if validate_response.status_code == 200:
-            # Step 3: Soft delete the work item
-            delete_url = f"https://dev.azure.com/{organization}/_apis/wit/workitems/{wid}?api-version=7.1-preview.2"
-            del_response = requests.delete(delete_url, headers=headers, auth=auth)
-
-            if del_response.status_code in [200, 204]:
-                print(f"✅ Deleted Work Item ID: {wid}")
-                deleted_items.append(wid)
-            else:
-                print(f"⚠️ Failed to delete ID {wid} - Status: {del_response.status_code}")
-        else:
-            print(f"❌ Work Item ID {wid} not found or inaccessible. Skipping...")
-
-else:
-    print(f"❌ Failed to retrieve work items. Status: {response.status_code}")
-    print(response.text)
-
-# Final summary
-print("\n🗑️ Deleted Work Items:", deleted_items)
+Best,
+[Your Name]
