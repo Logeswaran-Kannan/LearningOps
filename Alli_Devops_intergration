@@ -1,19 +1,32 @@
-def get_test_point_list():
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/points?includePointDetails=true&api-version=7.1-preview.1"
-        response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
-        response.raise_for_status()
-        points = response.json().get("value", [])
-        print(f"Total test points found: {len(points)}")
-        for pt in points:
-            print(f"Test Point ID: {pt.get('id')}, Test Case ID: {pt.get('testCase', {}).get('id')}, Configuration ID: {pt.get('configuration', {}).get('id')}")
-        return points
-    except Exception as e:
-        print(f"Error fetching test points list: {e}")
-        return []
+import requests
+from requests.auth import HTTPBasicAuth
 
-# Assign configuration before processing test cases
-config_id = get_available_configurations()
-if config_id:
-    assign_configuration_to_suite(config_id)
-    get_test_point_list()
+# Set your variables
+organization = "your-org"
+project = "your-project"
+pat = "your-personal-access-token"
+exclude_ids = [12330, 11]
+
+# Auth and headers
+auth = HTTPBasicAuth("", pat)
+headers = {
+    "Content-Type": "application/json"
+}
+
+# Step 1: Get all test plans
+list_url = f"https://dev.azure.com/{organization}/{project}/_apis/test/plans?api-version=7.1-preview.2"
+response = requests.get(list_url, headers=headers, auth=auth)
+
+if response.status_code == 200:
+    plans = response.json().get("value", [])
+    for plan in plans:
+        plan_id = plan["id"]
+        if plan_id not in exclude_ids:
+            delete_url = f"https://dev.azure.com/{organization}/{project}/_apis/test/plans/{plan_id}?api-version=7.1-preview.2"
+            del_response = requests.delete(delete_url, headers=headers, auth=auth)
+            if del_response.status_code == 200:
+                print(f"Deleted Test Plan ID: {plan_id}")
+            else:
+                print(f"Failed to delete Test Plan ID: {plan_id} - {del_response.status_code}")
+else:
+    print(f"Failed to retrieve test plans: {response.status_code}")
