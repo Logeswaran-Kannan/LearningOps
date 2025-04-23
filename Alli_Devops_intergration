@@ -1,7 +1,7 @@
-Thanks for the help!
-It looks like there isn’t an existing server connection set up for BC — at least I couldn’t find it in my pgAdmin tool. Not sure if that’s the case for everyone else as well, but thought I’d flag it just in case.
+Thanks for the info!
 
-Appreciate any guidance on this!
+It looks like there isn’t any existing server connection set up for BC, at least from what I can see on my end — I’m not finding it in pgAdmin. Not sure if that’s the case for everyone or just me.
 
-Best,
-[Your Name]
+I was checking in the highlighted area where I expected the connection details to be listed, but it seems to be blank at the moment. Totally possible I’m looking in the wrong place — happy to be pointed in the right direction if so!
+
+Appreciate your help!
