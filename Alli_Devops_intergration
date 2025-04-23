@@ -1,32 +1,34 @@
 import requests
 from requests.auth import HTTPBasicAuth
 
-# Set your variables
+# Configurable inputs
 organization = "your-org"
 project = "your-project"
 pat = "your-personal-access-token"
-exclude_ids = [12330, 11]
+excluded_ids = [12330, 11]
 
-# Auth and headers
-auth = HTTPBasicAuth("", pat)
+# Headers and auth
 headers = {
     "Content-Type": "application/json"
 }
+auth = HTTPBasicAuth("", pat)
 
-# Step 1: Get all test plans
-list_url = f"https://dev.azure.com/{organization}/{project}/_apis/test/plans?api-version=7.1-preview.2"
-response = requests.get(list_url, headers=headers, auth=auth)
+# Step 1: Get all test cases
+url = f"https://dev.azure.com/{organization}/{project}/_apis/test/testcases?api-version=7.1-preview.1"
+response = requests.get(url, headers=headers, auth=auth)
 
 if response.status_code == 200:
-    plans = response.json().get("value", [])
-    for plan in plans:
-        plan_id = plan["id"]
-        if plan_id not in exclude_ids:
-            delete_url = f"https://dev.azure.com/{organization}/{project}/_apis/test/plans/{plan_id}?api-version=7.1-preview.2"
-            del_response = requests.delete(delete_url, headers=headers, auth=auth)
-            if del_response.status_code == 200:
-                print(f"Deleted Test Plan ID: {plan_id}")
+    test_cases = response.json().get("value", [])
+    for case in test_cases:
+        case_id = case['id']
+        if case_id not in excluded_ids:
+            # Step 2: Delete test case
+            del_url = f"https://dev.azure.com/{organization}/{project}/_apis/test/testcases/{case_id}?api-version=7.1-preview.1"
+            del_response = requests.delete(del_url, headers=headers, auth=auth)
+            if del_response.status_code in [200, 204]:
+                print(f"Deleted Test Case ID: {case_id}")
             else:
-                print(f"Failed to delete Test Plan ID: {plan_id} - {del_response.status_code}")
+                print(f"Failed to delete Test Case ID: {case_id} - {del_response.status_code}")
 else:
-    print(f"Failed to retrieve test plans: {response.status_code}")
+    print(f"Failed to retrieve test cases: {response.status_code}")
+    print(response.text)
