@@ -1,34 +1,43 @@
 import requests
 from requests.auth import HTTPBasicAuth
 
-# Configurable inputs
+# Configuration
 organization = "your-org"
 project = "your-project"
-pat = "your-personal-access-token"
-excluded_ids = [12330, 11]
+pat = "your-pat"
+assigned_to = "adm.sug.na"
 
-# Headers and auth
+# Auth setup
+auth = HTTPBasicAuth("", pat)
 headers = {
     "Content-Type": "application/json"
 }
-auth = HTTPBasicAuth("", pat)
 
-# Step 1: Get all test cases
-url = f"https://dev.azure.com/{organization}/{project}/_apis/test/testcases?api-version=7.1-preview.1"
-response = requests.get(url, headers=headers, auth=auth)
+# Step 1: Get work items assigned to adm.sug.na
+wiql_query = {
+    "query": f"SELECT [System.Id] FROM WorkItems WHERE [System.AssignedTo] CONTAINS '{assigned_to}' AND [System.TeamProject] = '{project}'"
+}
+
+query_url = f"https://dev.azure.com/{organization}/{project}/_apis/wit/wiql?api-version=7.1-preview.2"
+response = requests.post(query_url, headers=headers, auth=auth, json=wiql_query)
+
+deleted_items = []
 
 if response.status_code == 200:
-    test_cases = response.json().get("value", [])
-    for case in test_cases:
-        case_id = case['id']
-        if case_id not in excluded_ids:
-            # Step 2: Delete test case
-            del_url = f"https://dev.azure.com/{organization}/{project}/_apis/test/testcases/{case_id}?api-version=7.1-preview.1"
-            del_response = requests.delete(del_url, headers=headers, auth=auth)
-            if del_response.status_code in [200, 204]:
-                print(f"Deleted Test Case ID: {case_id}")
-            else:
-                print(f"Failed to delete Test Case ID: {case_id} - {del_response.status_code}")
+    work_items = response.json().get("workItems", [])
+    for item in work_items:
+        wid = item["id"]
+        delete_url = f"https://dev.azure.com/{organization}/_apis/wit/workitems/{wid}?api-version=7.1-preview.2"
+        del_response = requests.delete(delete_url, headers=headers, auth=auth)
+
+        if del_response.status_code in [200, 204]:
+            deleted_items.append(wid)
+            print(f"Deleted (soft) Work Item ID: {wid}")
+        else:
+            print(f"Failed to delete Work Item ID: {wid} - {del_response.status_code}")
 else:
-    print(f"Failed to retrieve test cases: {response.status_code}")
-    print(response.text)
+    print("Failed to query work items.")
+    print(response.status_code, response.text)
+
+# Final list of deleted items
+print("\n✅ Deleted Work Items:", deleted_items)
