@@ -1,34 +1,69 @@
-import requests
-from requests.auth import HTTPBasicAuth
-import json
+import base64
+encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
 
-# Replace with your values
-organization = "your-org"
-project = "your-project"
-run_id = "12345"  # ID of the test run to stop
-pat = "your_personal_access_token"
-
-# Azure DevOps API URL
-url = f"https://dev.azure.com/{organization}/{project}/_apis/test/runs/{run_id}?api-version=7.1-preview.3"
-
-# Headers and auth
 headers = {
-    "Content-Type": "application/json"
-}
-auth = HTTPBasicAuth("", pat)  # Username can be blank, PAT as password
-
-# Body to abort the run
-data = {
-    "state": "Aborted"
+    'Authorization': f'Basic {encoded_pat}'
 }
 
-# API call
-response = requests.patch(url, headers=headers, auth=auth, data=json.dumps(data))
+# --- Azure DevOps Helper Functions ---
 
-# Output result
-if response.status_code == 200:
-    print(f"Test run {run_id} aborted successfully.")
-else:
-    print(f"Failed to abort test run {run_id}.")
-    print(f"Status Code: {response.status_code}")
-    print(response.text)
+def create_test_case(title, steps):
+    try:
+        url = f"{devops_organization}/{project}/_apis/wit/workitems/$Test%20Case?api-version=7.1-preview.3"
+        patch_data = [
+            {"op": "add", "path": "/fields/System.Title", "value": title},
+            {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps", "value": steps}
+        ]
+        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
+        response.raise_for_status()
+        print(f"Created test case: {title}")
+        return response.json()
+    except Exception as e:
+        print(f"Error creating test case '{title}': {e}")
+        return {}
+
+def add_test_case_to_suite(test_case_id):
+    try:
+        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
+        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'})
+        if response.status_code == 200 or response.status_code == 204:
+            print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
+        else:
+            print(f"Failed to link test case {test_case_id}. Status: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        print(f"Error linking test case to suite: {e}")
+
+def assign_configuration_to_suite(configuration_id):
+    try:
+        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}?api-version=7.1-preview.3"
+        payload = {
+            "inheritDefaultConfigurations": False,
+            "configurationIds": [configuration_id]
+        }
+        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
+        response.raise_for_status()
+        print(f"Assigned test configuration ID {configuration_id} to suite {test_suite_id}.")
+    except Exception as e:
+        print(f"Error assigning configuration: {e}")
+
+def get_available_configurations():
+    try:
+        url = f"{devops_organization}/{project}/_apis/test/configurations?api-version=5.0-preview.2"
+        response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
+        if response.status_code != 200:
+            print(f"Unexpected status: {response.status_code}, response: {response.text}")
+        response.raise_for_status()
+        configs = response.json().get("value", [])
+        if configs:
+            print("Available configurations:")
+            for cfg in configs:
+                print(f" - ID: {cfg.get('id')}, Name: {cfg.get('name')}")
+            config_id = configs[0].get("id")
+            print(f"Using available test configuration ID: {config_id}")
+            return config_id
+        else:
+            print("No test configurations found.")
+            return None
+    except Exception as e:
+        print(f"Error fetching test configurations: {e}")
+        return None
