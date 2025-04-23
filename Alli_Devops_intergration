@@ -1,12 +1,7 @@
-Hi Team,
+Thanks for the help!
+It looks like there isn’t an existing server connection set up for BC — at least I couldn’t find it in my pgAdmin tool. Not sure if that’s the case for everyone else as well, but thought I’d flag it just in case.
 
-Thanks for sharing the details earlier!
-
-I was able to connect to the jump server successfully, and then tried accessing the read replica using pgAdmin 4 with the information I found in the email thread below. However, the connection isn’t going through, and some of the details seem a bit unclear.
-
-Could someone please confirm if I’m using the correct approach to connect to the server? I’ve tried with the details below, but haven’t had any luck so far.
-
-Thanks in advance for your help!
+Appreciate any guidance on this!
 
 Best,
 [Your Name]
