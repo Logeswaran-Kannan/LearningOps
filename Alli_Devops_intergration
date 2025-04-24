@@ -1,3 +1,121 @@
-I finally managed to connect to PC and BC from pgAdmin. Looks like the server names in the emails were a bit outdated — had to update with the latest details to get it working.
+🔧 PostgreSQL Read Replica Connection Guide via Jump Server (mprd-jmp5032)
+🧑‍💻 Purpose
+This document provides a step-by-step guide for users to connect to a PostgreSQL read replica database using pgAdmin 4, accessed through the internal jump server (mprd-jmp5032). This applies to connecting to databases like Billing Center (BC), Policy Center (PC), and Claim Center (CC).
 
-One issue though: the jump server keeps disconnecting frequently, seems like it might be running into some space problems. PC and BC connections are fine now, I can see the tables — just about to check CC next.
+📍 Pre-Requisites
+Before starting, ensure you have:
+
+Access to mprd-jmp5032 jump server (via your ADM credentials).
+
+Your assigned PostgreSQL username and password (request from Project Manager / Test Lead / Dev Lead if not available).
+
+The server host/IP address and port number (usually provided in project-specific communication).
+
+Basic familiarity with using pgAdmin.
+
+🚀 Steps to Connect to PostgreSQL via pgAdmin 4
+🔑 Step 1: Log in to the Jump Server
+Use Remote Desktop (RDP) to log in to the jump server:
+Server Name: mprd-jmp5032
+Credentials: Your ADM username and password
+
+(e.g., via mstsc or corporate RDP access)
+
+🧭 Step 2: Launch pgAdmin 4
+Once logged into the jump server, click Start or search for pgAdmin 4.
+
+Open the application.
+
+You’ll be presented with the pgAdmin dashboard (screenshot below if available).
+
+📁 Step 3: Register a New Server
+In the Object Explorer (left-hand panel), right-click on Servers.
+
+Click Register > Server.
+
+A new pop-up window titled "Create - Server" will appear.
+
+✍️ Step 4: Fill in Server Details
+🔹 General Tab
+Name: Enter a name for the connection.
+Example:
+
+For Billing Center: BC
+
+For Policy Center: PC
+
+For Claim Center: CC
+
+This is just a label; it does not affect the actual connection.
+
+🔹 Connection Tab
+Provide the following:
+
+
+Field	Value
+Host name/address	e.g., azuk-insuranceplatform-dev-rdrep-1.czj8pblukekm.eu-west-2.rds.amazonaws.com (or internal IP like 10.4.48.179 if inside VPN)
+Port	2000 (or as specified for your environment)
+Maintenance database	Use the appropriate DB name (see below)
+Username	Your PostgreSQL username (e.g., azuk_gwcpdev_std001_bc_ext)
+Password	Password (request from PM/Test Lead/Dev Lead)
+✅ Save Password	Tick to save the password for future sessions
+📝 Database Name Rule:
+Remove _ext from the username to get the database name.
+Example:
+
+Username: azuk_gwcpdev_std001_bc_ext
+
+Database: azuk_gwcpdev_std001_bc
+
+🔄 For PC or CC, simply replace bc with pc or cc in both the username and DB name.
+
+💾 Step 5: Save and Connect
+Click Save.
+
+pgAdmin will attempt to connect to the server.
+
+If successful, the server will appear under Servers in the Object Explorer.
+
+🧪 Step 6: Explore the Database
+Expand the connected server → Databases.
+
+Click the appropriate database.
+
+To run queries:
+
+Right-click on the Database
+
+Choose Query Tool
+
+A SQL editor will open where you can run queries on tables.
+
+📸 Screenshot References (if available)
+Include sample screenshots for:
+
+pgAdmin launch
+
+Register server window
+
+Connection tab filled in
+
+Query tool interface
+
+🔐 Access Notes
+If you receive connection timeout or "unable to connect" errors:
+
+Ensure you're connected to the jump server (not over direct VPN).
+
+Confirm port 2000 is open and the host/IP is reachable.
+
+Contact infrastructure or DBA for assistance.
+
+❓ Questions or Issues?
+If you're unsure about:
+
+The username/password
+
+The exact host/IP
+
+Or encounter connectivity errors
+
+➡️ Please reach out to your Project Manager, Test Lead, or Dev Lead.
