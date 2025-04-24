@@ -1,3 +1,3 @@
-I'm from the BICOE data team — just reaching out regarding the connection setup for the read replica DB using pgAdmin. Saif mentioned that you were able to get it working successfully, so thought I’d check in with you.
+I finally managed to connect to PC and BC from pgAdmin. Looks like the server names in the emails were a bit outdated — had to update with the latest details to get it working.
 
-Would you mind walking us through how you managed to connect pgAdmin to the PostgreSQL read replica? Let me know when you're free — happy to jump on a quick call to discuss.
+One issue though: the jump server keeps disconnecting frequently, seems like it might be running into some space problems. PC and BC connections are fine now, I can see the tables — just about to check CC next.
