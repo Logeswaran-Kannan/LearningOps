@@ -1,7 +1,3 @@
-Thanks for the info!
+Good morning Hazel,
 
-It looks like there isn’t any existing server connection set up for BC, at least from what I can see on my end — I’m not finding it in pgAdmin. Not sure if that’s the case for everyone or just me.
-
-I was checking in the highlighted area where I expected the connection details to be listed, but it seems to be blank at the moment. Totally possible I’m looking in the wrong place — happy to be pointed in the right direction if so!
-
-Appreciate your help!
+Would it be possible to get the unmasked password for these databases? I’d like to test the connection in pgAdmin.
