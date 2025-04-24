@@ -119,3 +119,71 @@ The exact host/IP
 Or encounter connectivity errors
 
 ➡️ Please reach out to your Project Manager, Test Lead, or Dev Lead.
+
+
+
+
+-----------------
+
+
+## Connecting to PostgreSQL Read Replica Database from Jump Server (mprd-jmp5032)
+
+This document provides detailed steps on how to connect to the PostgreSQL Read Replica databases (e.g., Billing Center (BC), Policy Center (PC), and Claim Center (CC)) from the jump server **mprd-jmp5032** using the **pgAdmin 4** application.
+
+### Prerequisites
+
+- **Jump Server Access**: You must have your ADM username and password ready.
+- **pgAdmin 4**: Installed and accessible on the jump server.
+- **Database Passwords**: Obtain the necessary database passwords from your Project Manager, Test Lead, or Development Lead.
+
+### Step-by-Step Guide
+
+#### 1. Access Jump Server
+- Use Remote Desktop Connection (RDP) to connect to the jump server **mprd-jmp5032** using your ADM credentials.
+
+#### 2. Open pgAdmin 4 Application
+- After logging into the jump server, locate the **pgAdmin 4** application from the Windows start menu or by typing "pgAdmin 4" in the search bar.
+- Open the pgAdmin 4 application.
+
+#### 3. Registering the PostgreSQL Server
+- Upon launching pgAdmin 4, you'll see an **Object Explorer** pane on the left side of the screen.
+- Within the Object Explorer, locate and expand the **Servers** menu.
+- Right-click on **Servers** → hover over **Register** → click on **Server**.
+
+#### 4. Configuring Server Connection
+- A dialog box titled **Create - Server** will appear.
+
+##### General Tab:
+- In the **Name** field, enter the relevant server name. For example:
+  - For Billing Center, enter: **BC**
+  - For Policy Center, enter: **PC**
+  - For Claim Center, enter: **CC**
+
+##### Connection Tab:
+- Switch to the **Connection** tab in the same dialog box.
+- Enter the following connection details:
+  - **Hostname/address**: Provide the PostgreSQL Read Replica server address as shared by your DBA/Project Manager.
+  - **Port**: Usually set to **5432** unless specified otherwise.
+  - **Maintenance database**: Typically the same as your database name (e.g., `bc`, `pc`, `cc`). Confirm this detail from your Project Lead.
+  - **Username**: Provided username (e.g., `adm_bc_user`, `adm_pc_user`, or `adm_cc_user`).
+  - **Password**: Obtain this securely from your Project Manager, Test Lead, or Development Lead.
+- Check the **Save Password** checkbox to avoid repeated prompts for the password.
+
+#### 5. Establishing the Connection
+- Click **Save** at the bottom of the dialog box.
+- Once saved, your new server entry will appear under the **Servers** menu in the Object Explorer pane.
+- Expand your server entry to see available databases.
+
+#### 6. Accessing Database Components
+- Expand the specific database (e.g., BC, PC, CC) to view available tables, schemas, and other components.
+
+#### 7. Querying the Database
+- Right-click on your database and select **Query Tool** from the context menu.
+- A query window will open, allowing you to write and execute SQL queries directly against the connected database.
+
+### Notes
+- For other database centers, replace the term **BC** with the appropriate center initials (**PC** or **CC**) and provide the corresponding passwords.
+- If connection issues occur, verify server details, ports, credentials, and ensure network connectivity from the jump server.
+
+### Support
+- Contact your Project Manager or IT support team for further assistance with connection details or troubleshooting any issues.
