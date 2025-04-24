@@ -1,3 +1,1 @@
-Good morning Hazel,
-
-Would it be possible to get the unmasked password for these databases? I’d like to test the connection in pgAdmin.
+I’ve tried multiple approaches, but nothing seems to be working. Even a simple ping to the remote server isn’t responding — it’s timing out when attempting to reach the target IP.
