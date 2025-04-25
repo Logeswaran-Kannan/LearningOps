@@ -3,40 +3,42 @@ import json
 import base64
 import pandas as pd
 
-# Input your values here
-organization = "your_org"           # Replace with your Azure DevOps org name
-project = "your_project"            # Replace with your Azure DevOps project name
+# Input your values
+organization = "your_org"           # e.g. "myorg"
+project = "your_project"            # e.g. "myproject"
 test_plan_id = 12520
 test_suite_id = 12521
-pat_token = "your_pat_token"        # Replace with your Azure DevOps PAT token
+pat_token = "your_pat_token"        # Secure your token!
 
-# Build the API request
+# API setup
 url = f"https://dev.azure.com/{organization}/{project}/_apis/test/Plans/{test_plan_id}/suites/{test_suite_id}/points?api-version=7.1-preview.2"
-
-# Encode PAT and setup headers
 headers = {
     'Content-Type': 'application/json',
     'Authorization': 'Basic ' + base64.b64encode(f':{pat_token}'.encode()).decode()
 }
 
-# Send the request
+# Call API
 response = requests.get(url, headers=headers)
 
-# Parse and display the result
+# Handle the response
 if response.status_code == 200:
     test_points = response.json().get("value", [])
     
-    results = []
-    for point in test_points:
-        results.append({
-            "Test Point ID": point['id'],
-            "Test Case ID": point['testCase']['id'],
-            "Configuration": point['configuration']['name'],
-            "Tester": point.get('assignedTo', {}).get('displayName', 'Unassigned'),
-            "State": point['state']
-        })
+    # Guard clause if empty
+    if not test_points:
+        print("No test points found in the specified test suite.")
+    else:
+        rows = []
+        for point in test_points:
+            rows.append({
+                "Test Point ID": point.get("id"),
+                "Test Case ID": point.get("testCase", {}).get("id", "N/A"),
+                "Configuration": point.get("configuration", {}).get("name", "N/A"),
+                "Tester": point.get("assignedTo", {}).get("displayName", "Unassigned"),
+                "State": point.get("state", "Unknown")
+            })
 
-    df = pd.DataFrame(results)
-    display(df)  # Databricks display
+        df = pd.DataFrame(rows)
+        display(df)
 else:
-    print(f"Error: {response.status_code} - {response.text}")
+    print(f"Error fetching test points: {response.status_code} - {response.text}")
