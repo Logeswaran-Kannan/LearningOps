@@ -1,86 +1,83 @@
 import requests
+import base64
 import json
 
-# -------------------- Config --------------------
-devops_organization = "https://dev.azure.com/BICoE"  # Replace with your org URL
-project = "LVAnalytics"
+# Constants
+devops_organization = "https://dev.azure.com/BICoE"  # Update to your real org URL
+project = "LVAnalytics"                              # Update to your actual project name
 test_plan_id = 12520
 test_suite_id = 12521
-pat_token = "your_pat_token"
+pat_token = "your_pat_token_here"
 
+# Auth Headers
 headers = {
-    "Authorization": f"Basic {base64.b64encode(f':{pat_token}'.encode()).decode()}",
-    "Content-Type": "application/json"
+    "Authorization": "Basic " + base64.b64encode(f":{pat_token}".encode()).decode()
 }
-# ------------------------------------------------
 
-
-# ✅ Get Test Point for a Test Case
-def get_test_point_list_for_case(test_case_id):
+# ✅ Get Test Point for a Given Test Case (using `testCaseReference.id`)
+def get_test_point_id(test_case_id):
     try:
-        url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoints?testCaseId={test_case_id}&api-version=7.1-preview.2"
+        url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoints?includePointDetails=true&api-version=7.1"
         response = requests.get(url, headers=headers)
         response.raise_for_status()
+
         points = response.json().get("value", [])
         for pt in points:
-            print(f"🔗 Test Point for Case {test_case_id}: ID {pt.get('id')} (Config: {pt.get('configuration', {}).get('id')})")
-        return points
+            if pt.get("testCaseReference", {}).get("id") == test_case_id:
+                print(f"✅ Found Test Point ID {pt['id']} for Test Case {test_case_id}")
+                return pt['id']
+        print(f"⚠️ No test point found for Test Case {test_case_id}")
+        return None
     except Exception as e:
-        print(f"❌ Error fetching test point for test case {test_case_id}: {e}")
-        return []
-
+        print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
+        return None
 
 # ✅ Update Test Result
 def update_test_result(test_point_id, test_case_id, outcome):
     try:
-        # 1. Create test run
         run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1-preview.3"
         test_run_payload = {
             "name": "Automated Run",
             "plan": {"id": test_plan_id},
             "pointIds": [test_point_id]
         }
-        run_response = requests.post(run_url, headers=headers, json=test_run_payload)
+        run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
         run_response.raise_for_status()
         run_id = run_response.json().get("id")
 
-        # 2. Post test result
-        result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1-preview.3"
+        result_url = f"{devops_organization}/{project}/_apis/test/Runs/{run_id}/results?api-version=7.1-preview.3"
         result_payload = [{
             "testCase": {"id": test_case_id},
             "outcome": outcome,
             "state": "Completed"
         }]
-        result_response = requests.post(result_url, headers=headers, json=result_payload)
+        result_response = requests.post(result_url, headers={**headers, 'Content-Type': 'application/json'}, json=result_payload)
         result_response.raise_for_status()
-
-        print(f"✅ Test Case {test_case_id} updated to {outcome}")
+        print(f"✅ Updated result for test case {test_case_id} to {outcome}")
     except Exception as e:
-        print(f"❌ Error updating result for test case {test_case_id}: {e}")
+        print(f"❌ Error updating result for test case '{test_case_id}': {e}")
 
-
-# ✅ Create Defect Linked to Test Case
-def create_defect(title, associated_test_case_id):
+# ✅ Create Defect and Link to Test Case
+def create_defect(title, associated_test_case):
     try:
         defect_url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
         patch_data = [
             {"op": "add", "path": "/fields/System.Title", "value": title},
             {"op": "add", "path": "/relations/-", "value": {
                 "rel": "System.LinkTypes.Hierarchy-Reverse",
-                "url": f"{devops_organization}/{project}/_apis/test/testCases/{associated_test_case_id}",
+                "url": f"{devops_organization}/{project}/_apis/test/testCases/{associated_test_case}",
                 "attributes": {"comment": "Linked failed test case"}
             }}
         ]
         response = requests.patch(defect_url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
         response.raise_for_status()
-        print(f"🐞 Defect created for Test Case {associated_test_case_id}: {title}")
+        print(f"🐞 Defect created for test case {associated_test_case}: {title}")
         return response.json()
     except Exception as e:
-        print(f"❌ Error creating defect for Test Case {associated_test_case_id}: {e}")
+        print(f"❌ Error creating defect for test case '{associated_test_case}': {e}")
         return {}
 
-
-# ✅ Example Test Case Sync from Delta Table
+# 🔁 Sample Loop (Processing Test Data)
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
 
 for row in test_data:
@@ -90,22 +87,17 @@ for row in test_data:
     status = row['status']
     defect_required = row['defect_required']
 
-    # 🔗 Get Test Point
-    test_points = get_test_point_list_for_case(test_case_id)
-    if not test_points:
-        print(f"⚠️ Skipping Test Case {test_case_id} - No test point found.")
-        continue
+    # Assume test case already created and linked
+    azure_test_case_id = test_case_id
 
-    # Use first test point
-    test_point_id = test_points[0].get("id")
+    test_point_id = get_test_point_id(azure_test_case_id)
 
-    # 🧪 Update Result
-    if status.lower() in ["pass", "fail"]:
-        outcome = "Passed" if status.lower() == "pass" else "Failed"
-        update_test_result(test_point_id, test_case_id, outcome)
+    if test_point_id and status in ["pass", "fail"]:
+        outcome = "Passed" if status == "pass" else "Failed"
+        update_test_result(test_point_id, azure_test_case_id, outcome)
 
-        # 🐞 Create Defect if required
-        if status.lower() == "fail" and defect_required:
-            create_defect(f"Defect: {title}", test_case_id)
+        if status == "fail" and defect_required:
+            defect_title = f"Defect: {title}"
+            create_defect(defect_title, azure_test_case_id)
 
-print("✅ Test case sync completed.")
+print("✅ Test execution + result update + defect linkage complete.")
