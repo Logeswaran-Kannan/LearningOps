@@ -1,1 +1,3 @@
-I’m still connected to the jump server at the moment, but some folks on the team aren’t able to get in via remote connection. Even on my end, I’m seeing frequent disconnects — looks like it could be a storage issue. Might be worth flagging if it's due to low space or maybe the server's hitting a limit on how many users it can handle at once.
+Also, just to flag — a few of us on the team are having trouble connecting to the remote server, regardless of location. I’m also noticing frequent disconnects from the jump server, which might be due to low storage or maybe it’s limiting the number of active users.
+
+Not sure if that’s the root cause, but thought I’d call it out in case it’s not already on the radar.
