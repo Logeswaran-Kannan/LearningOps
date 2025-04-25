@@ -115,7 +115,6 @@ def get_test_point_id(test_case_id):
         url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
         response = requests.get(url, headers=headers)
         response.raise_for_status()
-
         points = response.json().get("value", [])
         for pt in points:
             if pt.get("testCaseReference", {}).get("id") == test_case_id:
@@ -133,7 +132,8 @@ def update_test_result(test_point_id, test_case_id, outcome):
         test_run_payload = {
             "name": "Automated Run",
             "plan": {"id": test_plan_id},
-            "pointIds": [test_point_id]
+            "pointIds": [test_point_id],
+            "automated": True
         }
         run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
         run_response.raise_for_status()
@@ -141,34 +141,17 @@ def update_test_result(test_point_id, test_case_id, outcome):
 
         result_url = f"{devops_organization}/{project}/_apis/test/Runs/{run_id}/results?api-version=7.1-preview.3"
         result_payload = [{
-            "testCase": {"id": test_case_id},
+            "testCase": {"id": str(test_case_id)},
             "outcome": outcome,
-            "state": "Completed"
+            "state": "Completed",
+            "automatedTestType": "UnitTest",
+            "automatedTestName": f"TestCase_{test_case_id}"
         }]
         result_response = requests.post(result_url, headers={**headers, 'Content-Type': 'application/json'}, json=result_payload)
         result_response.raise_for_status()
         print(f"Updated result for test case {test_case_id} to {outcome}.")
     except Exception as e:
         print(f"Error updating result for test case '{test_case_id}': {e}")
-
-def create_defect(title, associated_test_case):
-    try:
-        defect_url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
-        patch_data = [
-            {"op": "add", "path": "/fields/System.Title", "value": title},
-            {"op": "add", "path": "/relations/-", "value": {
-                "rel": "System.LinkTypes.Hierarchy-Reverse",
-                "url": f"{devops_organization}/{project}/_apis/test/testCases/{associated_test_case}",
-                "attributes": {"comment": "Linked failed test case"}
-            }}
-        ]
-        response = requests.patch(defect_url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
-        response.raise_for_status()
-        print(f"Defect created for test case {associated_test_case}: {title}")
-        return response.json()
-    except Exception as e:
-        print(f"Error creating defect for test case '{associated_test_case}': {e}")
-        return {}
 
 # Assign configuration before processing test cases
 config_id = get_available_configurations()
