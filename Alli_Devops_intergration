@@ -1,31 +1,45 @@
 import requests
 import json
+import base64
+import pandas as pd
 
-# Define parameters
-organization = "your_org"  # Replace with your Azure DevOps organization
-project = "your_project"  # Replace with your Azure DevOps project
+# Configuration
+organization = "your_org"          # Replace with your Azure DevOps organization name
+project = "your_project"           # Replace with your Azure DevOps project name
 test_plan_id = 12520
 test_suite_id = 12521
-pat_token = "your_pat_token"  # Replace with your Personal Access Token
+pat_token = "your_pat_token"       # Replace with your Azure DevOps Personal Access Token
 
-# Base64 encode the PAT
-import base64
+# Headers for authentication
 headers = {
     'Content-Type': 'application/json',
     'Authorization': 'Basic ' + base64.b64encode(f':{pat_token}'.encode()).decode()
 }
 
-# Define the API URL
+# REST API endpoint to get test points
 url = f"https://dev.azure.com/{organization}/{project}/_apis/test/Plans/{test_plan_id}/suites/{test_suite_id}/points?api-version=7.1-preview.2"
 
-# Make the GET request
+# Send request
 response = requests.get(url, headers=headers)
 
-# Parse the response
+# Handle response
 if response.status_code == 200:
     data = response.json()
-    test_points = data.get('value', [])
+    test_points = data.get("value", [])
+    
+    # Extract relevant details
+    rows = []
     for point in test_points:
-        print(f"Test Point ID: {point['id']}, Test Case ID: {point['testCase']['id']}, Configuration: {point['configuration']['name']}")
+        rows.append({
+            "Test Point ID": point.get("id"),
+            "Test Case ID": point.get("testCase", {}).get("id"),
+            "Configuration": point.get("configuration", {}).get("name"),
+            "Tester": point.get("assignedTo", {}).get("displayName") if point.get("assignedTo") else None,
+            "State": point.get("state")
+        })
+
+    # Convert to DataFrame and display
+    df = pd.DataFrame(rows)
+    import ace_tools as tools; tools.display_dataframe_to_user(name="Test Points and Cases", dataframe=df)
 else:
-    print(f"Failed to retrieve test points: {response.status_code} - {response.text}")
+    print(f"Error: {response.status_code} - {response.text}")
