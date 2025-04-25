@@ -1,7 +1,1 @@
-Thanks, Saif and Pratik, for sharing the details — Graham and I were able to connect to the servers just fine.
-
-However, Suraj and Mani, who are connecting from offshore via VPN, are still facing issues — even the jump server isn't working for them and they're getting an error. Would it be possible to redirect this to the right person who can look into it?
-
-Also, I believe Pratik already flagged the issue with the jump server frequently disconnecting due to low storage — hopefully that's already on the radar.
-
-Appreciate the support!
+I’m still connected to the jump server at the moment, but some folks on the team aren’t able to get in via remote connection. Even on my end, I’m seeing frequent disconnects — looks like it could be a storage issue. Might be worth flagging if it's due to low space or maybe the server's hitting a limit on how many users it can handle at once.
