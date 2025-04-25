@@ -3,42 +3,49 @@ import json
 import base64
 import pandas as pd
 
-# Input your values
-organization = "your_org"           # e.g. "myorg"
-project = "your_project"            # e.g. "myproject"
+# Replace with your actual values
+organization = "your_org"         # e.g., "myorg"
+project = "your_project"          # e.g., "myproject"
 test_plan_id = 12520
 test_suite_id = 12521
-pat_token = "your_pat_token"        # Secure your token!
+pat_token = "your_pat_token"      # Ensure this is secure
 
-# API setup
-url = f"https://dev.azure.com/{organization}/{project}/_apis/test/Plans/{test_plan_id}/suites/{test_suite_id}/points?api-version=7.1-preview.2"
+# Encode PAT for Basic Auth
+encoded_pat = base64.b64encode(f":{pat_token}".encode()).decode()
+
+# API URL based on official docs
+url = f"https://dev.azure.com/{organization}/{project}/_apis/testplan/Plans/{test_plan_id}/Suites/{test_suite_id}/points?api-version=7.1-preview.2"
+
 headers = {
     'Content-Type': 'application/json',
-    'Authorization': 'Basic ' + base64.b64encode(f':{pat_token}'.encode()).decode()
+    'Authorization': f'Basic {encoded_pat}'
 }
 
-# Call API
+# Make API call
 response = requests.get(url, headers=headers)
 
-# Handle the response
+# Process response
 if response.status_code == 200:
     test_points = response.json().get("value", [])
-    
-    # Guard clause if empty
+
     if not test_points:
         print("No test points found in the specified test suite.")
     else:
-        rows = []
+        # Collect relevant data fields
+        records = []
         for point in test_points:
-            rows.append({
+            records.append({
                 "Test Point ID": point.get("id"),
-                "Test Case ID": point.get("testCase", {}).get("id", "N/A"),
-                "Configuration": point.get("configuration", {}).get("name", "N/A"),
+                "Test Case ID": point.get("testCase", {}).get("id"),
+                "Test Case Name": point.get("testCase", {}).get("name"),
+                "Configuration": point.get("configuration", {}).get("name"),
                 "Tester": point.get("assignedTo", {}).get("displayName", "Unassigned"),
+                "Outcome": point.get("outcome", "Unknown"),
                 "State": point.get("state", "Unknown")
             })
 
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame(records)
         display(df)
+
 else:
-    print(f"Error fetching test points: {response.status_code} - {response.text}")
+    print(f"Error: {response.status_code} - {response.text}")
