@@ -139,16 +139,21 @@ def update_test_result(test_point_id, test_case_id, outcome):
         run_response.raise_for_status()
         run = run_response.json()
         run_id = run.get("id")
+
+        print(f"⏳ Waiting 10 seconds for test run {run_id} to be ready...")
+        time.sleep(10)
+
         result_url = f"{devops_organization}/{project}/_apis/test/Runs/{run_id}/results?api-version=7.1"
 
         result_payload = [{
+            "id": 1,
             "testCase": {"id": str(test_case_id)},
             "outcome": outcome,
             "state": "Completed",
             "automatedTestType": "UnitTest",
             "automatedTestName": f"TestCase_{test_case_id}"
         }]
-        result_response = requests.post(result_url, headers={**headers, 'Content-Type': 'application/json'}, json=result_payload)
+        result_response = requests.patch(result_url, headers={**headers, 'Content-Type': 'application/json'}, json=result_payload)
         result_response.raise_for_status()
         print(f"✅ Updated result for test case {test_case_id} to {outcome}.")
     except Exception as e:
