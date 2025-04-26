@@ -47,6 +47,13 @@ headers = {
 
 # --- Azure DevOps Helper Functions ---
 
+def safe_json(response):
+    try:
+        return response.json()
+    except ValueError:
+        print(f"❌ Failed to parse JSON. Status: {response.status_code}, Body: {response.text}")
+        raise
+
 def create_test_case(title, steps):
     try:
         url = f"{devops_organization}/{project}/_apis/wit/workitems/$Test%20Case?api-version=7.1-preview.3"
@@ -56,8 +63,7 @@ def create_test_case(title, steps):
         ]
         response = requests.post(url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
         response.raise_for_status()
-        print(f"Created test case: {title}")
-        return response.json()
+        return safe_json(response)
     except Exception as e:
         print(f"Error creating test case '{title}': {e}")
         return {}
@@ -78,15 +84,13 @@ def get_test_point_id(test_case_id):
         url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
         response = requests.get(url, headers=headers)
         response.raise_for_status()
-        points = response.json().get("value", [])
+        points = safe_json(response).get("value", [])
         for pt in points:
             if pt.get("testCaseReference", {}).get("id") == test_case_id:
-                print(f"✅ Found Test Point ID {pt['id']} for Test Case {test_case_id}")
                 return pt['id']
-        print(f"⚠️ No test point found for Test Case {test_case_id}")
         return None
     except Exception as e:
-        print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
+        print(f"Error fetching test point list: {e}")
         return None
 
 def update_test_result(run_id, result_id, outcome, test_case_id):
@@ -103,23 +107,17 @@ def update_test_result(run_id, result_id, outcome, test_case_id):
         }]
         patch_response = requests.patch(patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
         patch_response.raise_for_status()
-        print(f"✅ Updated result for test case {test_case_id} to {outcome}.")
     except Exception as e:
-        print(f"❌ Error updating result for test case '{test_case_id}': {e}")
+        print(f"Error updating result for test case '{test_case_id}': {e}")
 
-# 3. Processing the Delta Table
+# 3. Processing Test Cases
 
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
 test_point_ids = []
 test_case_map = {}
 
-# Step 1: Create test cases and collect point IDs
 for row in test_data:
-    test_case_id = row['test_case_id']
-    title = row['title']
-    steps = row['steps']
-
-    azure_test_case = create_test_case(title, steps)
+    azure_test_case = create_test_case(row['title'], row['steps'])
     azure_test_case_id = azure_test_case.get("id")
 
     if azure_test_case_id:
@@ -129,27 +127,27 @@ for row in test_data:
             test_point_ids.append(test_point_id)
             test_case_map[test_point_id] = (azure_test_case_id, row['status'], row['defect_required'])
 
-# Step 2: Create one test run for all points
+# Create one test run
 run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
 test_run_payload = {
-    "name": "Automated Run - Single Cycle",
+    "name": f"Automated Run {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
     "plan": {"id": test_plan_id},
     "pointIds": test_point_ids,
     "automated": True
 }
 run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
 run_response.raise_for_status()
-run = run_response.json()
+run = safe_json(run_response)
 run_id = run.get("id")
 
-print(f"⏳ Waiting 10 seconds for test run {run_id} to be ready...")
+print(f"Waiting 10 seconds for test run {run_id} to stabilize...")
 time.sleep(10)
 
-# Step 3: Update all test results
+# Update results
 result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
 result_response = requests.get(result_url, headers=headers)
 result_response.raise_for_status()
-results = result_response.json().get("value", [])
+results = safe_json(result_response).get("value", [])
 
 for result in results:
     point_id = result.get("testPoint", {}).get("id")
@@ -160,11 +158,11 @@ for result in results:
             outcome = "Passed" if status == "pass" else "Failed"
             update_test_result(run_id, result_id, outcome, azure_test_case_id)
 
-# Step 4: Complete the test run
+# Complete the test run
 complete_run_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}?api-version=7.1"
 complete_run_payload = {
     "state": "Completed"
 }
 complete_response = requests.patch(complete_run_url, headers={**headers, 'Content-Type': 'application/json'}, json=complete_run_payload)
 complete_response.raise_for_status()
-print(f"✅ Test run {run_id} marked as Completed.")
+print(f"✅ Test run {run_id} completed successfully.")
