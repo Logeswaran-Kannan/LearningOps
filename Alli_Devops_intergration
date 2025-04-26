@@ -5,6 +5,7 @@ from pyspark.sql.functions import col
 import requests
 import json
 import time
+from datetime import datetime
 
 # 0. Create sample test case table if not exists
 schema = "core_tst_sys9.default"
@@ -91,10 +92,12 @@ def get_test_point_id(test_case_id):
 def update_test_result(run_id, result_id, outcome, test_case_id):
     try:
         patch_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+        completed_datetime = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
         patch_payload = [{
             "id": result_id,
             "outcome": outcome,
             "state": "Completed",
+            "completedDate": completed_datetime,
             "automatedTestType": "UnitTest",
             "automatedTestName": f"TestCase_{test_case_id}"
         }]
