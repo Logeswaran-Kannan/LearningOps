@@ -1,152 +1,20 @@
-# Databricks notebook pseudo-code for integrating Delta Live Table with Azure DevOps Test Plans
-# Assumes PySpark environment with access to Azure DevOps REST API
-
-from pyspark.sql.functions import col
-import requests
-import json
-import time
-from datetime import datetime
-
-# 0. Create sample test case table if not exists
-schema = "core_tst_sys9.default"
-table = "devopsintergration"
-full_table_name = f"{schema}.{table}"
-
-if not spark._jsparkSession.catalog().tableExists(full_table_name):
-    print(f"Creating table {full_table_name} with sample test cases...")
-    sample_data = [
-        ("TC001", "Login Test - Success", "1. Navigate to login\n2. Enter credentials\n3. Click Login", "pass", False),
-        ("TC002", "Login Test - Invalid Password", "1. Navigate to login\n2. Enter invalid password\n3. Click Login", "fail", True),
-        ("TC003", "Access Dashboard Without Login", "1. Go to dashboard URL directly", "blocked", False),
-        ("TC004", "User Logout", "1. Login\n2. Click logout button", "no run", False)
-    ]
-    columns = ["test_case_id", "title", "steps", "status", "defect_required"]
-    df_sample = spark.createDataFrame(sample_data, columns)
-    df_sample.write.format("delta").saveAsTable(full_table_name)
-    print("Sample test case table created.")
-else:
-    print(f"Table {full_table_name} already exists.")
-
-# 1. Load Sample Test Cases from Delta Live Table
-df = spark.read.format("delta").table(full_table_name)
-
-# 2. Azure DevOps Configuration
-devops_organization = "https://dev.azure.com/LVAnalytics"
-project = "BICoE"
-test_plan_id = 12330
-test_suite_id = 12332
-
-# TEMP: Hardcoded Personal Access Token (Use secrets in production!)
-personal_access_token = "YOUR_PAT_TOKEN_HERE"
-import base64
-encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
-
-headers = {
-    'Authorization': f'Basic {encoded_pat}'
-}
-
-# --- Azure DevOps Helper Functions ---
-
-def create_test_case(title, steps):
-    try:
-        url = f"{devops_organization}/{project}/_apis/wit/workitems/$Test%20Case?api-version=7.1-preview.3"
-        patch_data = [
-            {"op": "add", "path": "/fields/System.Title", "value": title},
-            {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps", "value": steps}
-        ]
-        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"Error creating test case '{title}': {e}")
-        return {}
-
-def add_test_case_to_suite(test_case_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
-        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'})
-        if response.status_code in [200, 204]:
-            print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
-    except Exception as e:
-        print(f"Error linking test case to suite: {e}")
-
-def get_test_point_id(test_case_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        points = response.json().get("value", [])
-        for pt in points:
-            if pt.get("testCaseReference", {}).get("id") == test_case_id:
-                return pt['id']
-        return None
-    except Exception as e:
-        print(f"Error fetching test point for test case {test_case_id}: {e}")
-        return None
-
-def update_test_result(run_id, result_id, outcome):
+def update_test_result(run_id, result_id, test_case_id, test_point_id, outcome):
     try:
         completed_datetime = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
         patch_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
         patch_payload = [{
             "id": result_id,
+            "testCase": { "id": str(test_case_id) },
+            "testRun": { "id": str(run_id) },
+            "testPoint": { "id": str(test_point_id) },
             "outcome": outcome,
             "state": "Completed",
-            "completedDate": completed_datetime
+            "completedDate": completed_datetime,
+            "automatedTestType": "UnitTest",
+            "automatedTestName": f"TestCase_{test_case_id}"
         }]
         response = requests.patch(patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
         response.raise_for_status()
+        print(f"✅ Updated result for TestCase {test_case_id} to {outcome}")
     except Exception as e:
-        print(f"Error updating test result {result_id}: {e}")
-
-# --- MAIN LOGIC ---
-
-# Step 1: Create test cases and gather point IDs
-test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
-test_points = []
-test_status_map = {}
-
-for row in test_data:
-    azure_test_case = create_test_case(row['title'], row['steps'])
-    azure_test_case_id = azure_test_case.get("id")
-    if azure_test_case_id:
-        add_test_case_to_suite(azure_test_case_id)
-        point_id = get_test_point_id(azure_test_case_id)
-        if point_id:
-            test_points.append(point_id)
-            test_status_map[point_id] = row['status']
-
-# Step 2: Create single test run for all points
-run_payload = {
-    "name": "Automated Test Cycle",
-    "plan": {"id": test_plan_id},
-    "pointIds": test_points,
-    "automated": True
-}
-run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
-run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=run_payload)
-run_response.raise_for_status()
-run_id = run_response.json().get("id")
-
-print(f"⏳ Waiting for test run {run_id} to stabilize...")
-time.sleep(10)
-
-# Step 3: Update all test results
-results_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
-results_response = requests.get(results_url, headers=headers)
-results_response.raise_for_status()
-results = results_response.json().get("value", [])
-
-for result in results:
-    point_id = result.get("testPoint", {}).get("id")
-    result_id = result.get("id")
-    if point_id in test_status_map:
-        outcome = "Passed" if test_status_map[point_id] == "pass" else "Failed"
-        update_test_result(run_id, result_id, outcome)
-
-# Step 4: Complete the test run
-complete_run_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}?api-version=7.1"
-complete_run_payload = {"state": "Completed"}
-requests.patch(complete_run_url, headers={**headers, 'Content-Type': 'application/json'}, json=complete_run_payload)
-
-print(f"✅ Test run {run_id} completed!")
+        print(f"❌ Error updating test result {result_id}: {e}")
