@@ -36,7 +36,7 @@ test_plan_id = 12330
 test_suite_id = 12332
 
 # TEMP: Hardcoded Personal Access Token (Use secrets in production!)
-personal_access_token = "YOUR_PAT_TOKEN_HERE"  # ⚠️ Replace this with actual PAT
+personal_access_token = "YOUR_PAT_TOKEN_HERE"
 import base64
 encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
 
@@ -65,7 +65,7 @@ def add_test_case_to_suite(test_case_id):
     try:
         url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
         response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'})
-        if response.status_code == 200 or response.status_code == 204:
+        if response.status_code in [200, 204]:
             print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
         else:
             print(f"Failed to link test case {test_case_id}. Status: {response.status_code}, Response: {response.text}")
@@ -89,8 +89,6 @@ def get_available_configurations():
     try:
         url = f"{devops_organization}/{project}/_apis/test/configurations?api-version=5.0-preview.2"
         response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
-        if response.status_code != 200:
-            print(f"Unexpected status: {response.status_code}, response: {response.text}")
         response.raise_for_status()
         configs = response.json().get("value", [])
         if configs:
@@ -100,9 +98,7 @@ def get_available_configurations():
             if any(cfg.get("id") == 9 for cfg in configs):
                 print("Configuration ID 9 is present. Using it.")
                 return 9
-            config_id = configs[0].get("id")
-            print(f"Using first available test configuration ID: {config_id}")
-            return config_id
+            return configs[0].get("id")
         else:
             print("No test configurations found.")
             return None
@@ -143,18 +139,29 @@ def update_test_result(test_point_id, test_case_id, outcome):
         print(f"⏳ Waiting 10 seconds for test run {run_id} to be ready...")
         time.sleep(10)
 
-        result_url = f"{devops_organization}/{project}/_apis/test/Runs/{run_id}/results?api-version=7.1"
+        # Fetch test result ID
+        get_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+        get_result_response = requests.get(get_result_url, headers=headers)
+        get_result_response.raise_for_status()
+        results = get_result_response.json().get("value", [])
 
-        result_payload = [{
-            "id": 1,
-            "testCase": {"id": str(test_case_id)},
+        if not results:
+            print(f"❌ No test results found for run {run_id}")
+            return
+
+        result_id = results[0].get("id")
+
+        # Patch the test result
+        patch_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+        patch_payload = [{
+            "id": result_id,
             "outcome": outcome,
             "state": "Completed",
             "automatedTestType": "UnitTest",
             "automatedTestName": f"TestCase_{test_case_id}"
         }]
-        result_response = requests.patch(result_url, headers={**headers, 'Content-Type': 'application/json'}, json=result_payload)
-        result_response.raise_for_status()
+        patch_response = requests.patch(patch_result_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
+        patch_response.raise_for_status()
         print(f"✅ Updated result for test case {test_case_id} to {outcome}.")
     except Exception as e:
         print(f"❌ Error updating result for test case '{test_case_id}': {e}")
