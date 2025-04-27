@@ -99,13 +99,14 @@ def update_test_result(run_id, result_id, outcome, test_case_id):
         "automatedTestType": "UnitTest",
         "automatedTestName": f"TestCase_{test_case_id}"
     }]
-    response = requests.patch(patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
-    response.raise_for_status()
+    patch_response = requests.patch(patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
+    patch_response.raise_for_status()
 
 def update_test_point(point_id, outcome):
     url = f"{devops_organization}/{project}/_apis/test/Plans/{test_plan_id}/Suites/{test_suite_id}/Points/{point_id}?api-version=7.1-preview.2"
     payload = {
-        "outcome": outcome
+        "outcome": outcome,
+        "state": "Completed"
     }
     response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
     response.raise_for_status()
@@ -162,21 +163,6 @@ for result in results:
         if outcome == "Failed" and info['defect_required']:
             create_defect(f"Defect: {info['title']}", info['azure_test_case_id'])
 
-# Final patch: individually complete each result
-for result in results:
-    point_id = result.get("testPoint", {}).get("id")
-    result_id = result.get("id")
-    if point_id and result_id and point_id in point_id_map:
-        info = point_id_map[point_id]
-        outcome = "Passed" if info['status'] == "pass" else "Failed"
-        patch_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
-        patch_payload = [{
-            "id": result_id,
-            "outcome": outcome,
-            "state": "Completed"
-        }]
-        patch_response = requests.patch(patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
-        patch_response.raise_for_status()
 print(f"✅ All test results marked completed successfully.")
 
 # Complete run
