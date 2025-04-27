@@ -119,34 +119,8 @@ def get_test_point_id(test_case_id):
         print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
         return None
 
-def update_test_result(test_point_id, test_case_id, outcome):
+def update_test_result(run_id, result_id, test_case_id, outcome):
     try:
-        run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
-        test_run_payload = {
-            "name": "Automated Run",
-            "plan": {"id": test_plan_id},
-            "pointIds": [test_point_id],
-            "automated": True
-        }
-        run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
-        run_response.raise_for_status()
-        run = run_response.json()
-        run_id = run.get("id")
-
-        print(f"⏳ Waiting 10 seconds for test run {run_id} to be ready...")
-        time.sleep(10)
-
-        get_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
-        get_result_response = requests.get(get_result_url, headers=headers)
-        get_result_response.raise_for_status()
-        results = get_result_response.json().get("value", [])
-
-        if not results:
-            print(f"❌ No test results found for run {run_id}")
-            return
-
-        result_id = results[0].get("id")
-
         patch_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
         patch_payload = [{
             "id": result_id,
@@ -185,6 +159,19 @@ config_id = get_available_configurations()
 if config_id:
     assign_configuration_to_suite(config_id)
 
+# Create a single test run
+run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
+test_run_payload = {
+    "name": "Automated Run",
+    "plan": {"id": test_plan_id},
+    "automated": True
+}
+run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
+run_response.raise_for_status()
+run = run_response.json()
+run_id = run.get("id")
+print(f"Created Test Run ID: {run_id}")
+
 # 3. Processing the Delta Table
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
 for row in test_data:
@@ -202,11 +189,20 @@ for row in test_data:
         test_point_id = get_test_point_id(azure_test_case_id)
 
         if test_point_id and status in ["pass", "fail"]:
-            outcome = "Passed" if status == "pass" else "Failed"
-            update_test_result(test_point_id, azure_test_case_id, outcome)
+            time.sleep(3)  # Minor wait for point creation to sync
+            # Get result ID
+            get_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+            get_result_response = requests.get(get_result_url, headers=headers)
+            get_result_response.raise_for_status()
+            results = get_result_response.json().get("value", [])
 
-            if status == "fail" and defect_required:
-                defect_title = f"Defect: {title}"
-                create_defect(defect_title, azure_test_case_id)
+            if results:
+                result_id = results[0].get("id")
+                outcome = "Passed" if status == "pass" else "Failed"
+                update_test_result(run_id, result_id, azure_test_case_id, outcome)
+
+                if status == "fail" and defect_required:
+                    defect_title = f"Defect: {title}"
+                    create_defect(defect_title, azure_test_case_id)
 
 print("Test case table checked/created and test case sync completed.")
