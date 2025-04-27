@@ -102,6 +102,14 @@ def update_test_result(run_id, result_id, outcome, test_case_id):
     response = requests.patch(patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
     response.raise_for_status()
 
+def update_test_point(point_id, outcome):
+    url = f"{devops_organization}/{project}/_apis/test/Plans/{test_plan_id}/Suites/{test_suite_id}/Points/{point_id}?api-version=7.1-preview.2"
+    payload = {
+        "outcome": outcome
+    }
+    response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
+    response.raise_for_status()
+
 # 3. Main Logic
 
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
@@ -150,6 +158,7 @@ for result in results:
         info = point_id_map[point_id]
         outcome = "Passed" if info['status'] == "pass" else "Failed"
         update_test_result(run_id, result_id, outcome, info['azure_test_case_id'])
+        update_test_point(point_id, outcome)
         if outcome == "Failed" and info['defect_required']:
             create_defect(f"Defect: {info['title']}", info['azure_test_case_id'])
 
