@@ -17,6 +17,9 @@ if run_id:
     test_results_payload = []
     for result in result_list:
         automated_test_name = result.get("automatedTestName")
+        if not automated_test_name:
+            continue  # Skip if no test name available
+
         test_case_id_from_name = automated_test_name.split("_")[-1]
         matching_row = next((r for r in test_data if r['test_case_id'] == test_case_id_from_name), None)
 
