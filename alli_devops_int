@@ -1,6 +1,3 @@
-# Databricks notebook pseudo-code for integrating Delta Live Table with Azure DevOps Test Plans
-# Assumes PySpark environment with access to Azure DevOps REST API
-
 from pyspark.sql.functions import col
 import requests
 import json
@@ -36,6 +33,7 @@ project = "BICoE"
 test_plan_id = 12330
 test_suite_id = 12332
 
+# TEMP: Hardcoded Personal Access Token (Use secrets in production!)
 personal_access_token = "YOUR_PAT_TOKEN_HERE"
 encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
 
@@ -60,25 +58,6 @@ def create_test_case(title, steps):
         print(f"Error creating test case '{title}': {e}")
         return {}
 
-def create_defect(title, associated_test_case):
-    try:
-        defect_url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
-        patch_data = [
-            {"op": "add", "path": "/fields/System.Title", "value": title},
-            {"op": "add", "path": "/relations/-", "value": {
-                "rel": "System.LinkTypes.Hierarchy-Reverse",
-                "url": f"{devops_organization}/{project}/_apis/test/testCases/{associated_test_case}",
-                "attributes": {"comment": "Linked failed test case"}
-            }}
-        ]
-        response = requests.patch(defect_url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
-        response.raise_for_status()
-        print(f"Defect created for test case {associated_test_case}: {title}")
-        return response.json()
-    except Exception as e:
-        print(f"Error creating defect for test case '{associated_test_case}': {e}")
-        return {}
-
 def add_test_case_to_suite(test_case_id):
     try:
         url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
@@ -87,12 +66,21 @@ def add_test_case_to_suite(test_case_id):
             print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
         else:
             print(f"Failed to link test case {test_case_id}. Status: {response.status_code}, Response: {response.text}")
-            create_defect(f"Failed to link test case {test_case_id}", test_case_id)
     except Exception as e:
         print(f"Error linking test case to suite: {e}")
-        create_defect(f"Exception linking test case {test_case_id}", test_case_id)
 
-# assign_configuration_to_suite removed because PATCH is not allowed directly on suite
+def assign_configuration_to_suite(configuration_id):
+    try:
+        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}?api-version=7.1-preview.3"
+        payload = {
+            "inheritDefaultConfigurations": False,
+            "configurationIds": [configuration_id]
+        }
+        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
+        response.raise_for_status()
+        print(f"Assigned test configuration ID {configuration_id} to suite {test_suite_id}.")
+    except Exception as e:
+        print(f"Error assigning configuration: {e}")
 
 def get_available_configurations():
     try:
@@ -115,42 +103,110 @@ def get_available_configurations():
         print(f"Error fetching test configurations: {e}")
         return None
 
-def get_test_point_id(test_case_id, retries=3, wait_seconds=10):
-    for attempt in range(retries):
-        try:
-            url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            points = response.json().get("value", [])
-            for pt in points:
-                if pt.get("testCaseReference", {}).get("id") == test_case_id:
-                    print(f"✅ Found Test Point ID {pt['id']} for Test Case {test_case_id}")
-                    return pt['id']
-            print(f"⚠️ No test point found for Test Case {test_case_id} on attempt {attempt+1}")
-            if attempt < retries - 1:
-                print(f"⏳ Retrying after {wait_seconds} seconds...")
-                time.sleep(wait_seconds)
-        except Exception as e:
-            print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
-    print(f"❌ No test point found after {retries} attempts. Creating defect.")
-    create_defect(f"Test point missing for test case {test_case_id}", test_case_id)
-    return None
-
-def update_test_results_in_batch(run_id, results):
+def get_test_point_id(test_case_id):
     try:
-        for result in results:
-            result_id = result["id"]
-            patch_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results/{result_id}?api-version=7.1"
-            patch_payload = {
-                "outcome": result["outcome"],
-                "state": "Completed",
-                "automatedTestType": "UnitTest",
-                "automatedTestName": result["automatedTestName"]
-            }
-            patch_response = requests.patch(patch_result_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
-            patch_response.raise_for_status()
-            print(f"✅ Updated test result for Test Point ID {result_id} to {result['outcome']}")
+        url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        points = response.json().get("value", [])
+        for pt in points:
+            if pt.get("testCaseReference", {}).get("id") == test_case_id:
+                print(f"✅ Found Test Point ID {pt['id']} for Test Case {test_case_id}")
+                return pt['id']
+        print(f"⚠️ No test point found for Test Case {test_case_id}")
+        return None
     except Exception as e:
-        print(f"❌ Error updating batch test results: {e}")
+        print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
+        return None
 
-# (Remaining code stays the same)
+def update_test_result(test_point_id, test_case_id, outcome):
+    try:
+        run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
+        test_run_payload = {
+            "name": "Automated Run",
+            "plan": {"id": test_plan_id},
+            "pointIds": [test_point_id],
+            "automated": True
+        }
+        run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
+        run_response.raise_for_status()
+        run = run_response.json()
+        run_id = run.get("id")
+
+        print(f"⏳ Waiting 10 seconds for test run {run_id} to be ready...")
+        time.sleep(10)
+
+        get_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+        get_result_response = requests.get(get_result_url, headers=headers)
+        get_result_response.raise_for_status()
+        results = get_result_response.json().get("value", [])
+
+        if not results:
+            print(f"❌ No test results found for run {run_id}")
+            return
+
+        result_id = results[0].get("id")
+
+        patch_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+        patch_payload = [{
+            "id": result_id,
+            "outcome": outcome,
+            "state": "Completed",
+            "automatedTestType": "UnitTest",
+            "automatedTestName": f"TestCase_{test_case_id}"
+        }]
+        patch_response = requests.patch(patch_result_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
+        patch_response.raise_for_status()
+        print(f"✅ Updated result for test case {test_case_id} to {outcome}.")
+    except Exception as e:
+        print(f"❌ Error updating result for test case '{test_case_id}': {e}")
+
+def create_defect(title, associated_test_case):
+    try:
+        defect_url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
+        patch_data = [
+            {"op": "add", "path": "/fields/System.Title", "value": title},
+            {"op": "add", "path": "/relations/-", "value": {
+                "rel": "System.LinkTypes.Hierarchy-Reverse",
+                "url": f"{devops_organization}/{project}/_apis/test/testCases/{associated_test_case}",
+                "attributes": {"comment": "Linked failed test case"}
+            }}
+        ]
+        response = requests.patch(defect_url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
+        response.raise_for_status()
+        print(f"Defect created for test case {associated_test_case}: {title}")
+        return response.json()
+    except Exception as e:
+        print(f"Error creating defect for test case '{associated_test_case}': {e}")
+        return {}
+
+# Assign configuration before processing test cases
+config_id = get_available_configurations()
+if config_id:
+    assign_configuration_to_suite(config_id)
+
+# 3. Processing the Delta Table
+test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
+for row in test_data:
+    test_case_id = row['test_case_id']
+    title = row['title']
+    steps = row['steps']
+    status = row['status']
+    defect_required = row['defect_required']
+
+    azure_test_case = create_test_case(title, steps)
+    azure_test_case_id = azure_test_case.get("id")
+
+    if azure_test_case_id:
+        add_test_case_to_suite(azure_test_case_id)
+        test_point_id = get_test_point_id(azure_test_case_id)
+
+        if test_point_id and status in ["pass", "fail"]:
+            outcome = "Passed" if status == "pass" else "Failed"
+            update_test_result(test_point_id, azure_test_case_id, outcome)
+
+            if status == "fail" and defect_required:
+                defect_title = f"Defect: {title}"
+                create_defect(defect_title, azure_test_case_id)
+
+print("Test case table checked/created and test case sync completed.")
