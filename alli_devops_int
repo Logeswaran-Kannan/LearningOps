@@ -166,6 +166,7 @@ if config_id:
 # 3. Processing the Delta Table
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
 point_id_map = {}
+azure_test_case_id_map = {}
 
 for row in test_data:
     test_case_id = row['test_case_id']
@@ -178,7 +179,7 @@ for row in test_data:
     azure_test_case_id = azure_test_case.get("id")
 
     if azure_test_case_id:
-        row['azure_test_case_id'] = azure_test_case_id
+        azure_test_case_id_map[test_case_id] = azure_test_case_id
         add_test_case_to_suite(azure_test_case_id)
 
         # get test point
@@ -225,7 +226,7 @@ if run_id:
 
             if outcome == "Failed" and matching_row['defect_required']:
                 defect_title = f"Defect: {matching_row['title']}"
-                create_defect(defect_title, matching_row['azure_test_case_id'])
+                create_defect(defect_title, azure_test_case_id_map.get(matching_row['test_case_id']))
 
     if test_results_payload:
         update_test_results(run_id, test_results_payload)
