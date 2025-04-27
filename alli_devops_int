@@ -68,34 +68,16 @@ def add_test_case_to_suite(test_case_id):
     except Exception as e:
         print(f"Error linking test case to suite: {e}")
 
-def assign_configuration_to_suite(configuration_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}?api-version=7.1-preview.3"
-        payload = {"inheritDefaultConfigurations": False, "configurationIds": [configuration_id]}
-        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
-        response.raise_for_status()
-        print(f"Assigned configuration {configuration_id} to suite {test_suite_id}.")
-    except Exception as e:
-        print(f"Error assigning configuration: {e}")
-
-def get_available_configurations():
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/configurations?api-version=5.0-preview.2"
-        response = requests.get(url, headers={**headers, 'Content-Type': 'application/json'})
-        response.raise_for_status()
-        configs = response.json().get("value", [])
-        if configs:
-            return configs[0].get("id")
-        else:
-            return None
-    except Exception as e:
-        print(f"Error fetching configurations: {e}")
-        return None
+def get_test_points():
+    url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.json().get("value", [])
 
 def create_test_run(point_ids):
     try:
         url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
-        payload = {"name": "Consolidated Run", "plan": {"id": test_plan_id}, "pointIds": point_ids, "automated": False, "state": "InProgress"}
+        payload = {"name": "Consolidated Automated Run", "plan": {"id": test_plan_id}, "pointIds": point_ids, "automated": True}
         response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
         response.raise_for_status()
         return response.json().get("id")
@@ -115,7 +97,7 @@ def update_test_results(run_id, test_results):
 def complete_test_run(run_id):
     try:
         url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}?api-version=7.1"
-        payload = {"state": "Completed", "completedDate": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        payload = {"state": "Completed", "isAutomated": True, "completedDate": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
         response.raise_for_status()
         print(f"Run {run_id} marked Completed.")
@@ -136,10 +118,6 @@ def create_defect(title, associated_test_case):
         print(f"Error creating defect for test case {associated_test_case}: {e}")
 
 # Main Sync Logic
-config_id = get_available_configurations()
-if config_id:
-    assign_configuration_to_suite(config_id)
-
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
 point_id_map = {}
 az_test_case_id_map = {}
@@ -151,12 +129,11 @@ for row in test_data:
         az_test_case_id_map[row['test_case_id']] = azure_case_id
         add_test_case_to_suite(azure_case_id)
 
-        url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
-        points_resp = requests.get(url, headers=headers)
-        points_resp.raise_for_status()
-        for pt in points_resp.json().get("value", []):
-            if pt.get("testCaseReference", {}).get("id") == azure_case_id:
-                point_id_map[row['test_case_id']] = pt['id']
+points = get_test_points()
+for row in test_data:
+    for pt in points:
+        if pt.get("testCaseReference", {}).get("id") == az_test_case_id_map[row['test_case_id']]:
+            point_id_map[row['test_case_id']] = pt['id']
 
 run_id = create_test_run(list(point_id_map.values()))
 if run_id:
@@ -173,7 +150,8 @@ if run_id:
         case_id = name.split("_")[-1]
         match = next((r for r in test_data if r['test_case_id'] == case_id), None)
         if match:
-            outcome = "Passed" if match['status'] == "pass" else ("Failed" if match['status'] == "fail" else "NotExecuted")
+            status = match['status']
+            outcome = "Passed" if status == "pass" else ("Failed" if status == "fail" else "NotExecuted")
             patch_payload.append({
                 "id": result["id"],
                 "outcome": outcome,
@@ -181,7 +159,8 @@ if run_id:
                 "automatedTestName": f"TestCase_{match['test_case_id']}",
                 "automatedTestStorage": "AutomatedTesting",
                 "testCaseTitle": match['title'],
-                "durationInMs": 1000
+                "durationInMs": 1000,
+                "isAutomated": True
             })
             if outcome == "Failed" and match['defect_required']:
                 create_defect(f"Defect: {match['title']}", az_test_case_id_map.get(match['test_case_id']))
