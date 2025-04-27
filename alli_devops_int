@@ -83,33 +83,29 @@ def get_test_point_id(test_case_id):
             return pt['id']
     return None
 
-def create_test_run_and_results(test_results):
-    run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
-    test_run_payload = {
-        "name": "Automated Batch Run",
-        "plan": {"id": test_plan_id},
-        "automated": True
-    }
-    run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
-    run_response.raise_for_status()
-    run_id = run_response.json().get("id")
+# Create a single run before updating results
+run_url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
+test_run_payload = {"name": "Automated Run", "plan": {"id": test_plan_id}, "automated": True}
+run_response = requests.post(run_url, headers={**headers, 'Content-Type': 'application/json'}, json=test_run_payload)
+run_response.raise_for_status()
+run_id = run_response.json().get("id")
 
-    time.sleep(10)
+def update_test_result(test_point_id, test_case_id, outcome):
+    try:
+        add_point_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/testpoints/{test_point_id}?api-version=7.1-preview.2"
+        requests.post(add_point_url, headers={**headers, 'Content-Type': 'application/json'})
 
-    patch_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
-    patch_payload = []
-
-    for test_point_id, test_case_id, outcome in test_results:
-        patch_payload.append({
-            "testPoint": {"id": test_point_id},
+        patch_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+        patch_payload = [{
             "outcome": outcome,
             "state": "Completed",
             "automatedTestType": "UnitTest",
             "automatedTestName": f"TestCase_{test_case_id}"
-        })
-
-    patch_response = requests.patch(patch_result_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
-    patch_response.raise_for_status()
+        }]
+        patch_response = requests.patch(patch_result_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
+        patch_response.raise_for_status()
+    except Exception as e:
+        print(f"❌ Error updating result for test case '{test_case_id}': {e}")
 
 def create_defect(title, associated_test_case):
     defect_url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
@@ -132,8 +128,6 @@ if config_id:
 
 # 3. Processing the Delta Table
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
-test_results = []
-
 for row in test_data:
     title, steps, status, defect_required = row['title'], row['steps'], row['status'], row['defect_required']
     azure_test_case = create_test_case(title, steps)
@@ -145,12 +139,9 @@ for row in test_data:
 
         if test_point_id and status in ["pass", "fail"]:
             outcome = "Passed" if status == "pass" else "Failed"
-            test_results.append((test_point_id, azure_test_case_id, outcome))
+            update_test_result(test_point_id, azure_test_case_id, outcome)
 
             if status == "fail" and defect_required:
                 create_defect(f"Defect: {title}", azure_test_case_id)
-
-if test_results:
-    create_test_run_and_results(test_results)
 
 print("Test case table checked/created and test case sync completed.")
