@@ -71,18 +71,7 @@ def add_test_case_to_suite(test_case_id):
     except Exception as e:
         print(f"Error linking test case to suite: {e}")
 
-def assign_configuration_to_suite(configuration_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}?api-version=7.1-preview.3"
-        payload = {
-            "inheritDefaultConfigurations": False,
-            "configurationIds": [configuration_id]
-        }
-        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
-        response.raise_for_status()
-        print(f"Assigned test configuration ID {configuration_id} to suite {test_suite_id}.")
-    except Exception as e:
-        print(f"Error assigning configuration: {e}")
+# assign_configuration_to_suite removed because PATCH is not allowed directly on suite
 
 def get_available_configurations():
     try:
@@ -105,21 +94,24 @@ def get_available_configurations():
         print(f"Error fetching test configurations: {e}")
         return None
 
-def get_test_point_id(test_case_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        points = response.json().get("value", [])
-        for pt in points:
-            if pt.get("testCaseReference", {}).get("id") == test_case_id:
-                print(f"✅ Found Test Point ID {pt['id']} for Test Case {test_case_id}")
-                return pt['id']
-        print(f"⚠️ No test point found for Test Case {test_case_id}")
-        return None
-    except Exception as e:
-        print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
-        return None
+def get_test_point_id(test_case_id, retries=3, wait_seconds=10):
+    for attempt in range(retries):
+        try:
+            url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            points = response.json().get("value", [])
+            for pt in points:
+                if pt.get("testCaseReference", {}).get("id") == test_case_id:
+                    print(f"✅ Found Test Point ID {pt['id']} for Test Case {test_case_id}")
+                    return pt['id']
+            print(f"⚠️ No test point found for Test Case {test_case_id} on attempt {attempt+1}")
+            if attempt < retries - 1:
+                print(f"⏳ Retrying after {wait_seconds} seconds...")
+                time.sleep(wait_seconds)
+        except Exception as e:
+            print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
+    return None
 
 def update_test_results_in_batch(run_id, results):
     try:
