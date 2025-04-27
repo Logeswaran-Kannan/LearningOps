@@ -153,6 +153,13 @@ for result in results:
         if outcome == "Failed" and info['defect_required']:
             create_defect(f"Defect: {info['title']}", info['azure_test_case_id'])
 
+# Final patch to mark all results completed
+final_patch_payload = [{"id": result.get("id"), "state": "Completed"} for result in results if result.get("id")]
+final_patch_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
+final_patch_response = requests.patch(final_patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=final_patch_payload)
+final_patch_response.raise_for_status()
+print(f"✅ All test results marked completed successfully.")
+
 # Complete run
 complete_run_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}?api-version=7.1"
 complete_payload = {"state": "Completed"}
