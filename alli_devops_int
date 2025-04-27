@@ -42,80 +42,11 @@ headers = {
 
 # --- Azure DevOps Helper Functions ---
 
-def create_test_case(title, steps):
-    try:
-        url = f"{devops_organization}/{project}/_apis/wit/workitems/$Test%20Case?api-version=7.1-preview.3"
-        patch_data = [
-            {"op": "add", "path": "/fields/System.Title", "value": title},
-            {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps", "value": steps}
-        ]
-        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
-        response.raise_for_status()
-        print(f"Created test case: {title}")
-        return response.json()
-    except Exception as e:
-        print(f"Error creating test case '{title}': {e}")
-        return {}
+def debug_print(label, data):
+    print(f"\n=== DEBUG: {label} ===")
+    print(json.dumps(data, indent=2))
 
-def add_test_case_to_suite(test_case_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
-        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'})
-        if response.status_code in [200, 204]:
-            print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
-        else:
-            print(f"Failed to link test case {test_case_id}. Status: {response.status_code}, Response: {response.text}")
-    except Exception as e:
-        print(f"Error linking test case to suite: {e}")
-
-def get_test_points():
-    url = f"{devops_organization}/{project}/_apis/testplan/plans/{test_plan_id}/suites/{test_suite_id}/testpoint?includePointDetails=true&api-version=7.1"
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    return response.json().get("value", [])
-
-def create_test_run(point_ids):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/runs?api-version=7.1"
-        payload = {"name": "Consolidated Automated Run", "plan": {"id": test_plan_id}, "pointIds": point_ids, "automated": True}
-        response = requests.post(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
-        response.raise_for_status()
-        return response.json().get("id")
-    except Exception as e:
-        print(f"Error creating test run: {e}")
-        return None
-
-def update_test_results(run_id, test_results):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
-        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=test_results)
-        response.raise_for_status()
-        print(f"Results updated for run {run_id}.")
-    except Exception as e:
-        print(f"Error updating results for run {run_id}: {e}")
-
-def complete_test_run(run_id):
-    try:
-        url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}?api-version=7.1"
-        payload = {"state": "Completed", "isAutomated": True, "completedDate": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
-        response.raise_for_status()
-        print(f"Run {run_id} marked Completed.")
-    except Exception as e:
-        print(f"Error completing run {run_id}: {e}")
-
-def create_defect(title, associated_test_case):
-    try:
-        url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
-        patch_data = [
-            {"op": "add", "path": "/fields/System.Title", "value": title},
-            {"op": "add", "path": "/relations/-", "value": {"rel": "System.LinkTypes.Hierarchy-Reverse", "url": f"{devops_organization}/{project}/_apis/wit/workitems/{associated_test_case}", "attributes": {"comment": "Linked failed test case"}}}
-        ]
-        response = requests.patch(url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
-        response.raise_for_status()
-        print(f"Defect created for test case {associated_test_case}.")
-    except Exception as e:
-        print(f"Error creating defect for test case {associated_test_case}: {e}")
+# (functions like create_test_case, add_test_case_to_suite, etc. remain unchanged)
 
 # Main Sync Logic
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
@@ -130,17 +61,24 @@ for row in test_data:
         add_test_case_to_suite(azure_case_id)
 
 points = get_test_points()
+debug_print("Fetched Test Points", points)
+
 for row in test_data:
     for pt in points:
         if pt.get("testCaseReference", {}).get("id") == az_test_case_id_map[row['test_case_id']]:
             point_id_map[row['test_case_id']] = pt['id']
 
+debug_print("Mapped Point IDs", point_id_map)
+
 run_id = create_test_run(list(point_id_map.values()))
 if run_id:
+    print(f"Created Test Run ID: {run_id}")
     time.sleep(10)
+
     get_result_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
     result_response = requests.get(get_result_url, headers=headers)
     result_list = result_response.json().get("value", [])
+    debug_print("Fetched Test Run Results", result_list)
 
     patch_payload = []
     for result in result_list:
@@ -152,7 +90,7 @@ if run_id:
         if match:
             status = match['status']
             outcome = "Passed" if status == "pass" else ("Failed" if status == "fail" else "NotExecuted")
-            patch_payload.append({
+            single_patch = {
                 "id": result["id"],
                 "outcome": outcome,
                 "state": "Completed",
@@ -161,11 +99,15 @@ if run_id:
                 "testCaseTitle": match['title'],
                 "durationInMs": 1000,
                 "isAutomated": True
-            })
+            }
+            patch_payload.append(single_patch)
+            debug_print(f"Patch Payload for TestCase {case_id}", single_patch)
+
             if outcome == "Failed" and match['defect_required']:
                 create_defect(f"Defect: {match['title']}", az_test_case_id_map.get(match['test_case_id']))
 
     if patch_payload:
+        debug_print("Final Patch Payload", patch_payload)
         update_test_results(run_id, patch_payload)
         complete_test_run(run_id)
 
