@@ -60,6 +60,25 @@ def create_test_case(title, steps):
         print(f"Error creating test case '{title}': {e}")
         return {}
 
+def create_defect(title, associated_test_case):
+    try:
+        defect_url = f"{devops_organization}/{project}/_apis/wit/workitems/$Bug?api-version=7.1-preview.3"
+        patch_data = [
+            {"op": "add", "path": "/fields/System.Title", "value": title},
+            {"op": "add", "path": "/relations/-", "value": {
+                "rel": "System.LinkTypes.Hierarchy-Reverse",
+                "url": f"{devops_organization}/{project}/_apis/test/testCases/{associated_test_case}",
+                "attributes": {"comment": "Linked failed test case"}
+            }}
+        ]
+        response = requests.patch(defect_url, headers={**headers, 'Content-Type': 'application/json-patch+json'}, json=patch_data)
+        response.raise_for_status()
+        print(f"Defect created for test case {associated_test_case}: {title}")
+        return response.json()
+    except Exception as e:
+        print(f"Error creating defect for test case '{associated_test_case}': {e}")
+        return {}
+
 def add_test_case_to_suite(test_case_id):
     try:
         url = f"{devops_organization}/{project}/_apis/test/plans/{test_plan_id}/suites/{test_suite_id}/testcases/{test_case_id}?api-version=7.1-preview.3"
@@ -68,8 +87,10 @@ def add_test_case_to_suite(test_case_id):
             print(f"Linked test case {test_case_id} to suite {test_suite_id}.")
         else:
             print(f"Failed to link test case {test_case_id}. Status: {response.status_code}, Response: {response.text}")
+            create_defect(f"Failed to link test case {test_case_id}", test_case_id)
     except Exception as e:
         print(f"Error linking test case to suite: {e}")
+        create_defect(f"Exception linking test case {test_case_id}", test_case_id)
 
 # assign_configuration_to_suite removed because PATCH is not allowed directly on suite
 
@@ -111,6 +132,8 @@ def get_test_point_id(test_case_id, retries=3, wait_seconds=10):
                 time.sleep(wait_seconds)
         except Exception as e:
             print(f"❌ Error fetching test point list for test case {test_case_id}: {e}")
+    print(f"❌ No test point found after {retries} attempts. Creating defect.")
+    create_defect(f"Test point missing for test case {test_case_id}", test_case_id)
     return None
 
 def update_test_results_in_batch(run_id, results):
