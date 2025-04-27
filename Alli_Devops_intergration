@@ -37,7 +37,6 @@ project = "BICoE"
 test_plan_id = 12330
 test_suite_id = 12332
 
-# TEMP: Hardcoded Personal Access Token (Use secrets in production!)
 personal_access_token = "YOUR_PAT_TOKEN_HERE"
 encoded_pat = base64.b64encode(f":{personal_access_token}".encode()).decode()
 
@@ -45,8 +44,7 @@ headers = {
     'Authorization': f'Basic {encoded_pat}'
 }
 
-# Helper Functions for Azure DevOps
-
+# Helper Functions
 def create_test_case(title, steps):
     url = f"{devops_organization}/{project}/_apis/wit/workitems/$Test%20Case?api-version=7.1-preview.3"
     patch_data = [
@@ -86,18 +84,21 @@ def create_defect(title, associated_test_case):
     response.raise_for_status()
     return response.json()
 
-def update_test_result(run_id, result_id, outcome):
+def update_test_result(run_id, result_id, outcome, test_case_id):
     patch_url = f"{devops_organization}/{project}/_apis/test/runs/{run_id}/results?api-version=7.1"
     patch_payload = [{
         "id": result_id,
         "outcome": outcome,
         "state": "Completed",
-        "completedDate": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        "completedDate": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "automatedTestType": "UnitTest",
+        "automatedTestName": f"TestCase_{test_case_id}",
+        "durationInMs": 1000
     }]
     response = requests.patch(patch_url, headers={**headers, 'Content-Type': 'application/json'}, json=patch_payload)
     response.raise_for_status()
 
-# 3. Main Logic to process all in single test run
+# 3. Main Logic
 
 test_data = df.select("test_case_id", "title", "steps", "status", "defect_required").collect()
 point_id_map = {}
@@ -117,9 +118,9 @@ for row in test_data:
                 'defect_required': row['defect_required']
             }
 
-# Create ONE test run
+# Create single test run
 run_payload = {
-    "name": "Automated Run",
+    "name": f"Automated Run - {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
     "plan": {"id": test_plan_id},
     "pointIds": list(point_id_map.keys()),
     "automated": True
@@ -144,7 +145,7 @@ for result in results:
     if point_id and point_id in point_id_map:
         info = point_id_map[point_id]
         outcome = "Passed" if info['status'] == "pass" else "Failed"
-        update_test_result(run_id, result_id, outcome)
+        update_test_result(run_id, result_id, outcome, info['azure_test_case_id'])
         if outcome == "Failed" and info['defect_required']:
             create_defect(f"Defect: {info['title']}", info['azure_test_case_id'])
 
