@@ -1,64 +1,45 @@
-import pandas as pd
 import requests
 from requests.auth import HTTPBasicAuth
 import json
-from tkinter import Tk
-from tkinter.filedialog import askopenfilename
 
-# Suppress root window
-Tk().withdraw()
+# --- Jira Settings ---
+JIRA_URL = "https://your-domain.atlassian.net"  # Your Jira URL
+EMAIL = "your-email@example.com"                 # Your Jira account email
+API_TOKEN = "your-api-token"                      # Your API token (not password!)
+PROJECT_KEY = "BICOE"                             # Your project key
 
-# Prompt user to select Excel file
-file_path = askopenfilename(title="Select the Excel File with Jira Tasks")
-
-# Read Excel file
-df = pd.read_excel(file_path)
-
-# Jira Configuration (modify your instance URL and credentials here)
-JIRA_URL = "https://your-domain.atlassian.net"  # Change your Jira domain
-JIRA_EMAIL = "your-email@example.com"           # Your Jira email
-JIRA_API_TOKEN = "your-api-token"                # Your Jira API token
-PROJECT_KEY = "BICOE"                            # Your project key
-
-# Result storage
-created_issues = []
-
-# Process each task row
-for index, row in df.iterrows():
-    issue_payload = {
-        "fields": {
-            "project": {"key": PROJECT_KEY},
-            "summary": row['Summary'],
-            "description": row['Detailed Description'],
-            "issuetype": {"name": row['ISSUE_TYPE']},
-            "priority": {"name": row['PRIORITY']},
-            "reporter": {"name": row['REPORTER']},
-            "assignee": {"name": row['ASSIGNEE']},
-            "labels": row['LABELS'].split(","),
-            "customfield_10016": row['Days'],            # Story Points (Check your Jira field ID)
-            "customfield_10015": row['Start Date'],      # Start Date (Check your Jira field ID)
-            "duedate": str(row['End Date'])
+# --- Task Details ---
+issue_data = {
+    "fields": {
+        "project": {
+            "key": PROJECT_KEY
+        },
+        "summary": "Sample Task Created by Python",
+        "description": "This is a simple task created using Jira REST API and Python.",
+        "issuetype": {
+            "name": "Task"  # Example: Task, Bug, Story
+        },
+        "priority": {
+            "name": "Medium"  # Example: High, Medium, Low
         }
     }
+}
 
-    response = requests.post(
-        f"{JIRA_URL}/rest/api/2/issue",
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
-        auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
-        data=json.dumps(issue_payload)
-    )
+# --- Make the API Call ---
+response = requests.post(
+    f"{JIRA_URL}/rest/api/2/issue",
+    headers={
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    },
+    auth=HTTPBasicAuth(EMAIL, API_TOKEN),
+    data=json.dumps(issue_data)
+)
 
-    if response.status_code == 201:
-        issue_key = response.json()['key']
-        print(f"Created: {issue_key}")
-        created_issues.append({"Summary": row['Summary'], "Jira Ticket": issue_key})
-    else:
-        print(f"Failed to create issue for {row['Summary']}: {response.status_code}, {response.text}")
-        created_issues.append({"Summary": row['Summary'], "Jira Ticket": "FAILED"})
-
-# Output Excel generation
-output_df = pd.DataFrame(created_issues)
-output_path = "jira_created_issues_output.xlsx"
-output_df.to_excel(output_path, index=False)
-
-print(f"\nAll done! Output file generated: {output_path}")
+# --- Result ---
+if response.status_code == 201:
+    issue_key = response.json()['key']
+    print(f"Issue created successfully! Issue Key: {issue_key}")
+else:
+    print(f"Failed to create issue. Status Code: {response.status_code}")
+    print(response.text)
