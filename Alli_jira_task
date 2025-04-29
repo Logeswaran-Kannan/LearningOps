@@ -1,3 +1,15 @@
-Right now, these are the ones I believe are able to log in and have their folders created. But from what I heard when we discussed on Friday, Simon’s folder is created, but he’s still not able to connect to the jump server.
+just a quick update on where things stand:
 
-On the bright side, I noticed the C drive space has been increased, which seems to have fixed the frequent disconnect issues for the ones who are already able to connect.
+Test Framework is about 83% complete now — we’ve got the full E2E demo working, covering ingestion, validation, workflow orchestration, defect logging, notifications, and error handling. What’s left is integrating the test scripts and setting up the staging layer, which is currently waiting on Read Replica access and test environment readiness.
+
+Test Design is at 48% completion — we’ve covered the key validations up to the Bronze layer. The rest involves additional quality test cases, which are in progress. We’ve already identified the Silver layer scope tables and are assessing automation feasibility for those. Target is to wrap this up by end of the week.
+
+Test Readiness is sitting at 60% — environment identification, Oracle staging table checks, and table scoping are done. The remaining 40% depends on Read Replica readiness, staging setup for RR, and test data availability.
+
+Test Data Management is around 27% complete — we’ve identified test scenarios for PC, BC, and CC. The next step is creating that data and getting confirmation from the manual QA team that it’s available for smoke testing, which again hinges on RR readiness.
+
+We’ve scheduled the DDL comparison mock test between Oracle and RR for 30th April.
+
+Due to the delays with Read Replica access and environment setup, the test execution start date for Phase 1 has been moved from 22nd April to 5th May.
+
+On the test artifacts side, we’ve reviewed the Test Plan, Test Strategy, Test Data scenarios, and Manual test cases. Test coverage scope and automation scripts are next — those will need to be signed off before we kick off execution.
