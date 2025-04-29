@@ -1,13 +1,1 @@
-Hi Tina,
-
-I’ve added all the tasks related to the testing activities into Jira, including story points and the planned start and end dates. Just a heads-up — these dates are based on the original planned go-live, but since there’s been some delay with environment readiness, the timelines will likely shift. We’ll probably need to discuss and adjust them during the daily calls.
-
-For Mani and Suraj, their automation-related tasks have also been added. You can find everything under the following path or using the Jira query I shared.
-
-A couple of quick clarifications:
-
-I noticed three items were accidentally created as User Stories instead of Tasks. I tried to delete them but couldn’t find a delete option. If deletion isn’t available, how do we normally handle unwanted items to remove them from the scope? If you have access, would you mind deleting those three for me, please?
-
-Also, there are a few tasks we had already completed but hadn’t added to Jira earlier — I’ve added them now. Is it okay if I mark them as complete straight away? Just checking if that would impact the sprint burndown or tracking in any way.
-
-Thanks so much!
+He was mentioning the intermittent connection issue — looks like he’s not able to connect to the jump server at all. I’m assuming the IT team is already looking into it. Once that’s sorted, I’ll catch up with him and help him get connected to the RR databases.
