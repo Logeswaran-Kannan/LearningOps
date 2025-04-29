@@ -1,45 +1,11 @@
-import requests
-from requests.auth import HTTPBasicAuth
-import json
+Hi Tina,
 
-# --- Jira Settings ---
-JIRA_URL = "https://your-domain.atlassian.net"  # Your Jira URL
-EMAIL = "your-email@example.com"                 # Your Jira account email
-API_TOKEN = "your-api-token"                      # Your API token (not password!)
-PROJECT_KEY = "BICOE"                             # Your project key
+I’ve added all the tasks related to the testing activities in Jira now, with story points, planned start and end dates updated. This includes tasks for Mani and Suraj as well that are specific to automation. You can find all the details under the following path or Jira query.
 
-# --- Task Details ---
-issue_data = {
-    "fields": {
-        "project": {
-            "key": PROJECT_KEY
-        },
-        "summary": "Sample Task Created by Python",
-        "description": "This is a simple task created using Jira REST API and Python.",
-        "issuetype": {
-            "name": "Task"  # Example: Task, Bug, Story
-        },
-        "priority": {
-            "name": "Medium"  # Example: High, Medium, Low
-        }
-    }
-}
+Just a couple of clarifications:
 
-# --- Make the API Call ---
-response = requests.post(
-    f"{JIRA_URL}/rest/api/2/issue",
-    headers={
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    },
-    auth=HTTPBasicAuth(EMAIL, API_TOKEN),
-    data=json.dumps(issue_data)
-)
+I noticed there are three items that were accidentally created as user stories instead of tasks. I tried to delete them, but I don’t seem to have the option. In general, if something like this happens, what’s the best way to handle unwanted items if deletion isn’t available? If you have access, could you please help delete these three?
 
-# --- Result ---
-if response.status_code == 201:
-    issue_key = response.json()['key']
-    print(f"Issue created successfully! Issue Key: {issue_key}")
-else:
-    print(f"Failed to create issue. Status Code: {response.status_code}")
-    print(response.text)
+Also, there are a few tasks that were already completed earlier but weren’t logged here. I’ve added them now — can I go ahead and mark them as complete? Just wondering if that would impact the sprint effort burndown.
+
+Thanks so much for your help!
