@@ -1,15 +1,5 @@
-just a quick update on where things stand:
+Test Scenario Review: The review with the UI Automation team is complete. During the discussion, it was identified that additional scenarios will require some manual effort. The Manual QA team is currently assessing the level of effort needed to support those.
 
-Test Framework is about 83% complete now — we’ve got the full E2E demo working, covering ingestion, validation, workflow orchestration, defect logging, notifications, and error handling. What’s left is integrating the test scripts and setting up the staging layer, which is currently waiting on Read Replica access and test environment readiness.
+Jump Server Access: Individual access to the jump server has been received. However, some team members are facing connectivity issues. The current dependency is on resolving those connection errors and enabling access via ADF as well, which is required to progress with staging layer development.
 
-Test Design is at 48% completion — we’ve covered the key validations up to the Bronze layer. The rest involves additional quality test cases, which are in progress. We’ve already identified the Silver layer scope tables and are assessing automation feasibility for those. Target is to wrap this up by end of the week.
-
-Test Readiness is sitting at 60% — environment identification, Oracle staging table checks, and table scoping are done. The remaining 40% depends on Read Replica readiness, staging setup for RR, and test data availability.
-
-Test Data Management is around 27% complete — we’ve identified test scenarios for PC, BC, and CC. The next step is creating that data and getting confirmation from the manual QA team that it’s available for smoke testing, which again hinges on RR readiness.
-
-We’ve scheduled the DDL comparison mock test between Oracle and RR for 30th April.
-
-Due to the delays with Read Replica access and environment setup, the test execution start date for Phase 1 has been moved from 22nd April to 5th May.
-
-On the test artifacts side, we’ve reviewed the Test Plan, Test Strategy, Test Data scenarios, and Manual test cases. Test coverage scope and automation scripts are next — those will need to be signed off before we kick off execution.
+Staging Layer Setup: The Oracle staging layer is in place, though a couple of issues in the process have been identified and are already on the development team's radar. There’s a dependency on resolving these issues and building out a similar staging layer for the Read Replica environment.
