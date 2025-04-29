@@ -1,11 +1,13 @@
 Hi Tina,
 
-I’ve added all the tasks related to the testing activities in Jira now, with story points, planned start and end dates updated. This includes tasks for Mani and Suraj as well that are specific to automation. You can find all the details under the following path or Jira query.
+I’ve added all the tasks related to the testing activities into Jira, including story points and the planned start and end dates. Just a heads-up — these dates are based on the original planned go-live, but since there’s been some delay with environment readiness, the timelines will likely shift. We’ll probably need to discuss and adjust them during the daily calls.
 
-Just a couple of clarifications:
+For Mani and Suraj, their automation-related tasks have also been added. You can find everything under the following path or using the Jira query I shared.
 
-I noticed there are three items that were accidentally created as user stories instead of tasks. I tried to delete them, but I don’t seem to have the option. In general, if something like this happens, what’s the best way to handle unwanted items if deletion isn’t available? If you have access, could you please help delete these three?
+A couple of quick clarifications:
 
-Also, there are a few tasks that were already completed earlier but weren’t logged here. I’ve added them now — can I go ahead and mark them as complete? Just wondering if that would impact the sprint effort burndown.
+I noticed three items were accidentally created as User Stories instead of Tasks. I tried to delete them but couldn’t find a delete option. If deletion isn’t available, how do we normally handle unwanted items to remove them from the scope? If you have access, would you mind deleting those three for me, please?
 
-Thanks so much for your help!
+Also, there are a few tasks we had already completed but hadn’t added to Jira earlier — I’ve added them now. Is it okay if I mark them as complete straight away? Just checking if that would impact the sprint burndown or tracking in any way.
+
+Thanks so much!
