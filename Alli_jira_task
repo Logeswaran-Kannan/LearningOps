@@ -1,5 +1,1 @@
-Test Scenario Review: The review with the UI Automation team is complete. During the discussion, it was identified that additional scenarios will require some manual effort. The Manual QA team is currently assessing the level of effort needed to support those.
-
-Jump Server Access: Individual access to the jump server has been received. However, some team members are facing connectivity issues. The current dependency is on resolving those connection errors and enabling access via ADF as well, which is required to progress with staging layer development.
-
-Staging Layer Setup: The Oracle staging layer is in place, though a couple of issues in the process have been identified and are already on the development team's radar. There’s a dependency on resolving these issues and building out a similar staging layer for the Read Replica environment.
+Thanks, Tina, for making those changes — really appreciate it. Yep, I’ll go ahead and backdate and close those out. Thanks again for the support!
