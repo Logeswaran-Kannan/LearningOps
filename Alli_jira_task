@@ -1,11 +1,9 @@
-Hi [Name],
-
-Just a quick note — going forward, please avoid creating any new Jira tickets without looping me in first. We’re tracking efforts against a dedicated task list that's already been reviewed and signed off with Tina and Graham, and adding tasks outside of that makes it harder to track and justify delays.
-
-If anything new comes up (like a spike or unexpected task), let’s discuss it first and update the effort in the existing ticket where applicable.
-
-Also, just a reminder — all defects should be logged using the ‘Defect’ issue type so we can properly track severity and priority.
-
-I’ll set up a quick walkthrough session for you and Suraj later this week to go over the current task list. In the meantime, please keep me updated on any blockers or changes. Your support is really appreciated to help keep things smooth on the client side.
-
-Thanks!
+SELECT 
+    TABLE_NAME_RESOLVED,
+    CASE 
+        WHEN UPPER(TABLE_NAME_RESOLVED) LIKE 'P%' THEN 'PC'
+        WHEN UPPER(TABLE_NAME_RESOLVED) LIKE 'B%' THEN 'BC'
+        WHEN UPPER(TABLE_NAME_RESOLVED) LIKE 'C%' THEN 'CC'
+        ELSE 'UNKNOWN'
+    END AS table_type
+FROM your_table_name;
