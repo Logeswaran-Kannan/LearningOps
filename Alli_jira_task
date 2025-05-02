@@ -1,4 +1,4 @@
-# Databricks notebook script for data validation between managed tables and views
+# Databricks notebook script for data validation between managed tables, views, and source SQL
 
 from pyspark.sql import SparkSession
 import pandas as pd
@@ -43,18 +43,23 @@ for index, row in scoped_df.iterrows():
         })
         continue
 
-    # Get counts
+    # Get counts from table, view, and SQL
     try:
         table_count = spark.sql(f"SELECT COUNT(*) FROM {table_fqn}").collect()[0][0]
-        view_df = spark.sql(select_sql)
-        view_count = view_df.count()
+        view_count = spark.sql(f"SELECT COUNT(*) FROM {view_fqn}").collect()[0][0]
+        script_count = spark.sql(select_sql).count()
+
+        status = "Match"
+        if len(set([table_count, view_count, script_count])) > 1:
+            status = "Mismatch"
 
         validation_results.append({
             "view": view_fqn,
             "table": table_fqn,
             "table_count": table_count,
             "view_count": view_count,
-            "status": "Match" if table_count == view_count else "Mismatch"
+            "script_count": script_count,
+            "status": status
         })
 
     except Exception as e:
