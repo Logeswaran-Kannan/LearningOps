@@ -1,28 +1,26 @@
 from pyspark.sql.functions import col, lit
 from functools import reduce
 
-# Catalog and schema to scan
+# Define your list of target tables (without catalog/schema)
+input_tables = ["sales_fact", "customer_dim", "inventory_snapshot"]  # 👈 Update this list
+
 catalog = "core_tst"
 schema = "curated_edw"
+full_names = [f"{catalog}.{schema}.{t}" for t in input_tables]
 
 # Load lineage data once
 lineage_df = spark.read.table("system.access.table_lineage")
 
-# Get all table names in the schema
-tables = [row["tableName"] for row in spark.sql(f"SHOW TABLES IN {catalog}.{schema}").collect()]
-
 results = []
 
-for table in tables:
-    full_name = f"{catalog}.{schema}.{table}"
-    
+for full_name in full_names:
     try:
-        # Get table's storage path
+        # Get the physical path of the table
         path = spark.sql(f"DESCRIBE DETAIL {full_name}").select("location").head()[0]
-        
-        # Get upstream: table is the target (data flows INTO it)
+
+        # Find upstream lineage (sources feeding this table)
         upstream = lineage_df.filter(
-            (col("target_table_full_name") == full_name) | 
+            (col("target_table_full_name") == full_name) |
             (col("target_path") == path)
         ).select(
             lit(full_name).alias("table_name"),
@@ -32,9 +30,9 @@ for table in tables:
             col("execution_time")
         )
 
-        # Get downstream: table is the source (data flows FROM it)
+        # Find downstream lineage (targets fed by this table)
         downstream = lineage_df.filter(
-            (col("source_table_full_name") == full_name) | 
+            (col("source_table_full_name") == full_name) |
             (col("source_path") == path)
         ).select(
             lit(full_name).alias("table_name"),
@@ -49,9 +47,9 @@ for table in tables:
     except Exception as e:
         print(f"Skipping {full_name}: {e}")
 
-# Combine and display results
+# Combine and display the lineage results
 if results:
     final_df = reduce(lambda a, b: a.unionByName(b), results)
     display(final_df.orderBy("table_name", "relation_type", "execution_time"))
 else:
-    print("No lineage information found.")
+    print("No lineage information found for input tables.")
