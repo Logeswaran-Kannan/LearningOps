@@ -1,18 +1,48 @@
-Subject: Meeting Invite – PC Domain Schema Clarification & Test Strategy Demo
+# Databricks notebook Python code
+from pyspark.sql.functions import explode, col, lit
 
-Dear Team,
+# Set parameters
+catalog_name = "core_tst"
+database_name = "curated_edw"
 
-You are invited to a session with the following agenda:
+# Load lineage metadata from Unity Catalog
+lineage_df = spark.read.format("delta").table("system.access.lineage")
 
-Agenda:
+# Filter for tables in the given catalog and database
+filtered_df = lineage_df.filter(
+    (col("destination.catalog") == catalog_name) &
+    (col("destination.schema") == database_name)
+)
 
-Clarification on PC domain table schema identification based on the provided list
+# Extract upstream and downstream table names
+upstream_df = filtered_df.select(
+    col("destination.tableName").alias("table_name"),
+    explode("upstreams").alias("upstream")
+).select(
+    "table_name",
+    col("upstream.catalog").alias("upstream_catalog"),
+    col("upstream.schema").alias("upstream_schema"),
+    col("upstream.tableName").alias("upstream_table")
+)
 
-Demonstration of the automation test strategy for one representative table
+downstream_df = filtered_df.select(
+    col("destination.tableName").alias("table_name"),
+    explode("downstreams").alias("downstream")
+).select(
+    "table_name",
+    col("downstream.catalog").alias("downstream_catalog"),
+    col("downstream.schema").alias("downstream_schema"),
+    col("downstream.tableName").alias("downstream_table")
+)
 
-Please come prepared with any questions or inputs related to the schema list and test coverage.
+# Union both datasets to maintain common table_name and different rows for each relation
+combined_df = upstream_df.select(
+    "table_name", lit("upstream").alias("relation_type"), col("upstream_catalog").alias("related_catalog"), col("upstream_schema").alias("related_schema"), col("upstream_table").alias("related_table")
+).union(
+    downstream_df.select(
+        "table_name", lit("downstream").alias("relation_type"), col("downstream_catalog").alias("related_catalog"), col("downstream_schema").alias("related_schema"), col("downstream_table").alias("related_table")
+    )
+)
 
-Looking forward to your participation.
-
-Best regards,
-[Your Name]
+# Display or return the result
+display(combined_df.orderBy("table_name", "relation_type"))
