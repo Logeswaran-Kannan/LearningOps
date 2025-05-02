@@ -1,62 +1,11 @@
-import requests
-import pandas as pd
-from pyspark.sql import SparkSession
-
-# 🔐 Inline token (temporary only!)
-token = "dapiXXXXXXXXXXXXXXXXXXXXXXXX"  # <-- Replace with your actual token
-
-# 🌐 Your workspace URL
-workspace_url = "https://adb-1234567890123456.18.azuredatabricks.net"  # <-- Replace with your workspace URL
-
-# Catalog and schema to scan
-catalog_name = "core_tst"
-schema_name = "curated_edw"
-depth = 3  # Depth of lineage tree (adjust as needed)
-direction = "BOTH"  # Options: "UPSTREAM", "DOWNSTREAM", "BOTH"
-
-# Headers for API calls
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Content-Type": "application/json"
-}
-
-# Function to fetch lineage for a given table
 def get_table_lineage(catalog, schema, table):
-    url = f"{workspace_url}/api/2.0/unity-catalog/lineage-tracking/get-lineage"
+    url = f"{workspace_url}/api/2.0/unity-catalog/lineage"
     payload = {
-        "catalog_name": catalog,
-        "schema_name": schema,
-        "name": table,
+        "name": f"{catalog}.{schema}.{table}",
+        "type": "TABLE",
         "direction": direction,
         "depth": depth
     }
     response = requests.post(url, headers=headers, json=payload)
     response.raise_for_status()
     return response.json()
-
-# Get list of tables in the schema
-tables_df = spark.sql(f"SHOW TABLES IN {catalog_name}.{schema_name}")
-table_names = [row["tableName"] for row in tables_df.collect()]
-
-# Collect lineage data
-results = []
-
-for table_name in table_names:
-    try:
-        lineage = get_table_lineage(catalog_name, schema_name, table_name)
-        for rel_type in ["upstreams", "downstreams"]:
-            if rel_type in lineage:
-                for entry in lineage[rel_type]:
-                    results.append({
-                        "table_name": table_name,
-                        "relation_type": rel_type[:-1],  # remove plural
-                        "related_catalog": entry.get("catalog_name", ""),
-                        "related_schema": entry.get("schema_name", ""),
-                        "related_table": entry.get("name", "")
-                    })
-    except Exception as e:
-        print(f"Failed for table {table_name}: {e}")
-
-# Convert to Spark DataFrame and display
-df = spark.createDataFrame(pd.DataFrame(results))
-display(df.orderBy("table_name", "relation_type"))
