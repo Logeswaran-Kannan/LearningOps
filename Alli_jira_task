@@ -1,74 +1,71 @@
-# Databricks notebook or script to fetch upstream and downstream tables for input tables
-# in catalog `core_tst` and database `curated_edw` using Unity Catalog Lineage API
+# Databricks notebook script for data validation between managed tables and views
 
 from pyspark.sql import SparkSession
 import pandas as pd
-import requests
-import json
+import re
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("LineageFetcher").getOrCreate()
+spark = SparkSession.builder.getOrCreate()
 
-# Input tables
-input_tables = [
-    "table1",
-    "table2"
-    # Add more table names as needed
-]
+# Load the CSV with metadata details
+csv_path = "/dbfs/path/to/your_metadata_file.csv"  # Update this path
+metadata_df = pd.read_csv(csv_path)
 
-# Constants for catalog and database
-catalog = "core_tst"
-database = "curated_edw"
-workspace_url = "https://<your-databricks-workspace>"  # e.g., https://adb-1234567890123456.7.azuredatabricks.net
-token = "<your-databricks-pat-token>"
+# Filter for scope = 'Y'
+scoped_df = metadata_df[metadata_df['Scope'] == 'Y']
 
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Content-Type": "application/json"
-}
-
-results = []
-
-def fetch_lineage(fully_qualified_table_name):
-    lineage_url = f"{workspace_url}/api/2.1/unity-catalog/lineage"
-    payload = {
-        "dataset": fully_qualified_table_name,
-        "direction": "BOTH",
-        "include_table_lineage": True
-    }
-    response = requests.post(lineage_url, headers=headers, json=payload)
-    if response.status_code == 200:
-        return response.json()
+# Function to extract SELECT part from view SQL
+def extract_select(sql):
+    match = re.search(r'create\s+view\s+.*?\s+as\s+(select[\s\S]*)', sql, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
     else:
-        print(f"Failed to fetch lineage for {fully_qualified_table_name}: {response.text}")
-        return {}
+        raise ValueError("Invalid SQL: Unable to extract SELECT statement")
 
-for table in input_tables:
-    full_name = f"{catalog}.{database}.{table}"
-    lineage = fetch_lineage(full_name)
+# Results list
+validation_results = []
 
-    upstreams = lineage.get("upstreams", [])
-    downstreams = lineage.get("downstreams", [])
+# Loop through each scoped entry and perform validation
+for index, row in scoped_df.iterrows():
+    table_fqn = f"{row['table_catalog']}.{row['table_schema']}.{row['table_name']}"
+    view_fqn = f"{row['view_catalog']}.{row['view_schema']}.{row['view_name']}"
 
-    # Add each upstream as a separate row
-    for upstream in upstreams:
-        results.append({
-            "table": table,
-            "direction": "upstream",
-            "related_table": upstream.get("dataset", {}).get("name", "")
+    # Extract SELECT statement from view SQL
+    try:
+        select_sql = extract_select(row['SQL'])
+    except ValueError as ve:
+        validation_results.append({
+            "view": view_fqn,
+            "table": table_fqn,
+            "error": str(ve),
+            "status": "Failed"
+        })
+        continue
+
+    # Get counts
+    try:
+        table_count = spark.sql(f"SELECT COUNT(*) FROM {table_fqn}").collect()[0][0]
+        view_count = spark.sql(select_sql).count()
+
+        validation_results.append({
+            "view": view_fqn,
+            "table": table_fqn,
+            "table_count": table_count,
+            "view_count": view_count,
+            "status": "Match" if table_count == view_count else "Mismatch"
         })
 
-    # Add each downstream as a separate row
-    for downstream in downstreams:
-        results.append({
-            "table": table,
-            "direction": "downstream",
-            "related_table": downstream.get("dataset", {}).get("name", "")
+    except Exception as e:
+        validation_results.append({
+            "view": view_fqn,
+            "table": table_fqn,
+            "error": str(e),
+            "status": "Failed"
         })
 
-# Convert to DataFrame for display only if results exist
-if results:
-    lineage_df = pd.DataFrame(results)
-    display(spark.createDataFrame(lineage_df))
-else:
-    print("No lineage data retrieved. Check API responses and table names.")
+# Convert result to DataFrame and show or save
+results_df = pd.DataFrame(validation_results)
+display(spark.createDataFrame(results_df))
+
+# Optional: Save results to a managed table or CSV
+# results_df.to_csv("/dbfs/path/to/output/validation_results.csv", index=False)
