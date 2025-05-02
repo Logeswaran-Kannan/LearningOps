@@ -1,55 +1,71 @@
-from pyspark.sql.functions import col, lit
-from functools import reduce
+# Databricks notebook or script to fetch upstream and downstream tables for input tables
+# in catalog `core_tst` and database `curated_edw` using Unity Catalog Lineage API
 
-# Define your list of target tables (without catalog/schema)
-input_tables = ["sales_fact", "customer_dim", "inventory_snapshot"]  # 👈 Update this list
+from pyspark.sql import SparkSession
+from delta.tables import *
+import pandas as pd
+import requests
+import json
 
+# Initialize Spark session
+spark = SparkSession.builder.appName("LineageFetcher").getOrCreate()
+
+# Input tables
+input_tables = [
+    "table1",
+    "table2"
+    # Add more table names as needed
+]
+
+# Constants for catalog and database
 catalog = "core_tst"
-schema = "curated_edw"
-full_names = [f"{catalog}.{schema}.{t}" for t in input_tables]
+database = "curated_edw"
+workspace_url = "https://<your-databricks-workspace>"  # e.g., https://adb-1234567890123456.7.azuredatabricks.net
+token = "<your-databricks-pat-token>"
 
-# Load lineage data once
-lineage_df = spark.read.table("system.access.table_lineage")
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json"
+}
 
 results = []
 
-for full_name in full_names:
-    try:
-        # Get the physical path of the table
-        path = spark.sql(f"DESCRIBE DETAIL {full_name}").select("location").head()[0]
+def fetch_lineage(fully_qualified_table_name):
+    lineage_url = f"{workspace_url}/api/2.0/unity-catalog/lineage"
+    payload = {
+        "dataset_full_name": fully_qualified_table_name,
+        "depth": 1
+    }
+    response = requests.get(lineage_url, headers=headers, params=payload)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Failed to fetch lineage for {fully_qualified_table_name}: {response.text}")
+        return {}
 
-        # Find upstream lineage (sources feeding this table)
-        upstream = lineage_df.filter(
-            (col("target_table_full_name") == full_name) |
-            (col("target_path") == path)
-        ).select(
-            lit(full_name).alias("table_name"),
-            lit("upstream").alias("relation_type"),
-            col("source_table_full_name").alias("related_table"),
-            col("source_path").alias("related_path"),
-            col("execution_time")
-        )
+for table in input_tables:
+    full_name = f"{catalog}.{database}.{table}"
+    lineage = fetch_lineage(full_name)
 
-        # Find downstream lineage (targets fed by this table)
-        downstream = lineage_df.filter(
-            (col("source_table_full_name") == full_name) |
-            (col("source_path") == path)
-        ).select(
-            lit(full_name).alias("table_name"),
-            lit("downstream").alias("relation_type"),
-            col("target_table_full_name").alias("related_table"),
-            col("target_path").alias("related_path"),
-            col("execution_time")
-        )
+    upstreams = lineage.get("upstreams", [])
+    downstreams = lineage.get("downstreams", [])
 
-        results.extend([upstream, downstream])
+    # Add each upstream as a separate row
+    for upstream in upstreams:
+        results.append({
+            "table": table,
+            "direction": "upstream",
+            "related_table": upstream.get("dataset", {}).get("name", "")
+        })
 
-    except Exception as e:
-        print(f"Skipping {full_name}: {e}")
+    # Add each downstream as a separate row
+    for downstream in downstreams:
+        results.append({
+            "table": table,
+            "direction": "downstream",
+            "related_table": downstream.get("dataset", {}).get("name", "")
+        })
 
-# Combine and display the lineage results
-if results:
-    final_df = reduce(lambda a, b: a.unionByName(b), results)
-    display(final_df.orderBy("table_name", "relation_type", "execution_time"))
-else:
-    print("No lineage information found for input tables.")
+# Convert to DataFrame for display
+lineage_df = pd.DataFrame(results)
+display(spark.createDataFrame(lineage_df))
