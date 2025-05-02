@@ -1,1 +1,1 @@
-=IF(LEFT(UPPER(A1),1)="P","PC",IF(LEFT(UPPER(A1),1)="B","BC",IF(LEFT(UPPER(A1),1)="C","CC","UNKNOWN")))
+I can see that the PC-backed policies have been created in the RR database based on a quick high-level check.
