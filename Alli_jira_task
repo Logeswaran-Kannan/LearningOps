@@ -1,11 +1,57 @@
-def get_table_lineage(catalog, schema, table):
-    url = f"{workspace_url}/api/2.0/unity-catalog/lineage"
-    payload = {
-        "name": f"{catalog}.{schema}.{table}",
-        "type": "TABLE",
-        "direction": direction,
-        "depth": depth
-    }
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
-    return response.json()
+from pyspark.sql.functions import col, lit
+from functools import reduce
+
+# Catalog and schema to scan
+catalog = "core_tst"
+schema = "curated_edw"
+
+# Load lineage data once
+lineage_df = spark.read.table("system.access.table_lineage")
+
+# Get all table names in the schema
+tables = [row["tableName"] for row in spark.sql(f"SHOW TABLES IN {catalog}.{schema}").collect()]
+
+results = []
+
+for table in tables:
+    full_name = f"{catalog}.{schema}.{table}"
+    
+    try:
+        # Get table's storage path
+        path = spark.sql(f"DESCRIBE DETAIL {full_name}").select("location").head()[0]
+        
+        # Get upstream: table is the target (data flows INTO it)
+        upstream = lineage_df.filter(
+            (col("target_table_full_name") == full_name) | 
+            (col("target_path") == path)
+        ).select(
+            lit(full_name).alias("table_name"),
+            lit("upstream").alias("relation_type"),
+            col("source_table_full_name").alias("related_table"),
+            col("source_path").alias("related_path"),
+            col("execution_time")
+        )
+
+        # Get downstream: table is the source (data flows FROM it)
+        downstream = lineage_df.filter(
+            (col("source_table_full_name") == full_name) | 
+            (col("source_path") == path)
+        ).select(
+            lit(full_name).alias("table_name"),
+            lit("downstream").alias("relation_type"),
+            col("target_table_full_name").alias("related_table"),
+            col("target_path").alias("related_path"),
+            col("execution_time")
+        )
+
+        results.extend([upstream, downstream])
+
+    except Exception as e:
+        print(f"Skipping {full_name}: {e}")
+
+# Combine and display results
+if results:
+    final_df = reduce(lambda a, b: a.unionByName(b), results)
+    display(final_df.orderBy("table_name", "relation_type", "execution_time"))
+else:
+    print("No lineage information found.")
