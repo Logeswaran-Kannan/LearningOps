@@ -16,11 +16,12 @@ scoped_df = metadata_df[metadata_df['Scope'] == 'Y']
 
 # Function to extract SELECT part from view SQL
 def extract_select(sql):
-    match = re.search(r'create\s+view\s+.*?\s+as\s+(select[\s\S]*)', sql, re.IGNORECASE)
+    sql_clean = sql.replace('\n', ' ').replace('\r', ' ')  # Flatten multiline SQL
+    match = re.search(r'(?i)as\s+(select\s+.+)', sql_clean, re.IGNORECASE)
     if match:
         return match.group(1).strip()
     else:
-        raise ValueError("Invalid SQL: Unable to extract SELECT statement")
+        raise ValueError("Could not extract SELECT statement from SQL.")
 
 # Results list
 validation_results = []
@@ -45,7 +46,8 @@ for index, row in scoped_df.iterrows():
     # Get counts
     try:
         table_count = spark.sql(f"SELECT COUNT(*) FROM {table_fqn}").collect()[0][0]
-        view_count = spark.sql(select_sql).count()
+        view_df = spark.sql(select_sql)
+        view_count = view_df.count()
 
         validation_results.append({
             "view": view_fqn,
