@@ -38,6 +38,7 @@ for view in view_list:
 
         # Store lineage
         lineage[view] = {
+            "CREATE_SCRIPT": ddl,
             "UPSTREAM_TABLES": list(tables_used),
             "ODS_TABLES_LIST": ods_tables,
             "CURATED_TABLES_LIST": curated_tables,
@@ -81,6 +82,7 @@ for view, data in lineage.items():
     else:
         records.append({
             "VIEW": view,
+            "CREATE_SCRIPT": data["CREATE_SCRIPT"],
             "UPSTREAM_TABLES": ", ".join(data["UPSTREAM_TABLES"]),
             "ODS_TABLES_LIST": ", ".join(data["ODS_TABLES_LIST"]),
             "CURATED_TABLES_LIST": ", ".join(data["CURATED_TABLES_LIST"]),
