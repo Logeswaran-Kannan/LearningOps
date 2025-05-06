@@ -15,17 +15,27 @@ metadata_df = pd.read_csv(csv_path)
 # Filter for scope = 'Y'
 scoped_df = metadata_df[metadata_df['Scope'] == 'Y']
 
-# Function to extract appropriate SQL
-def extract_sql(sql):
+# Function to extract appropriate SQL based on pattern
+def extract_executable_sql(sql):
     sql_clean = sql.replace('\n', ' ').replace('\r', ' ').strip()
-    if re.match(r'(?i)^create\s+(view|function)', sql_clean):
+    lowered = sql_clean.lower()
+
+    if lowered.startswith("create view"):
         match = re.search(r'(?i)as\s+(select\s+.+)', sql_clean, re.IGNORECASE)
         if match:
             return match.group(1).strip()
         else:
-            raise ValueError("Could not extract SELECT statement from CREATE FUNCTION/VIEW SQL.")
-    else:
+            raise ValueError("Could not extract SELECT statement from CREATE VIEW SQL.")
+    elif lowered.startswith("create function"):
+        match = re.search(r'(select\s+.+)', sql_clean, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        else:
+            raise ValueError("Could not extract SELECT statement from CREATE FUNCTION SQL.")
+    elif lowered.startswith("select") or lowered.startswith("with"):
         return sql_clean
+    else:
+        raise ValueError("SQL format not recognized. Must start with CREATE VIEW, CREATE FUNCTION, SELECT, or WITH.")
 
 # Results list
 validation_results = []
@@ -35,9 +45,9 @@ for index, row in scoped_df.iterrows():
     table_fqn = f"{row['table_catalog']}.{row['table_schema']}.{row['table_name']}"
     view_fqn = f"{row['view_catalog']}.{row['view_schema']}.{row['view_name']}"
 
-    # Extract final SQL to be executed
+    # Extract appropriate SQL
     try:
-        final_sql = extract_sql(row['SQL'])
+        exec_sql = extract_executable_sql(row['SQL'])
     except ValueError as ve:
         validation_results.append({
             "view": view_fqn,
@@ -52,7 +62,7 @@ for index, row in scoped_df.iterrows():
     try:
         table_count = spark.sql(f"SELECT COUNT(*) FROM {table_fqn}").collect()[0][0]
         view_count = spark.sql(f"SELECT COUNT(*) FROM {view_fqn}").collect()[0][0]
-        script_count = spark.sql(final_sql).count()
+        script_count = spark.sql(exec_sql).count()
 
         status = "Match"
         if len(set([table_count, view_count, script_count])) > 1:
@@ -64,7 +74,7 @@ for index, row in scoped_df.iterrows():
             "table_count": table_count,
             "view_count": view_count,
             "script_count": script_count,
-            "script_sql": final_sql,
+            "script_sql": exec_sql,
             "status": status
         })
 
@@ -72,7 +82,7 @@ for index, row in scoped_df.iterrows():
         validation_results.append({
             "view": view_fqn,
             "table": table_fqn,
-            "script_sql": final_sql,
+            "script_sql": exec_sql,
             "error": str(e),
             "status": "Failed"
         })
