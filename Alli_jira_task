@@ -1,1 +1,55 @@
-Hi Graham, just checking if you’ve got a few minutes now to chat about the Silver scope? I was thinking we could move the meeting up if you’re free — I’ve got a few clarifications I need to move things forward.
+# Objective: Automate data lineage tracing (upstream and downstream tables) for a list of views in Databricks.
+# Approach: Use Databricks REST API, Unity Catalog (if available), and Spark SQL parsing.
+
+from pyspark.sql import SparkSession
+import re
+
+# Initialize Spark
+spark = SparkSession.builder.getOrCreate()
+
+# Sample input: List of view names
+view_list = ["schema.view1", "schema.view2"]
+
+# Function to extract table names from view definitions using regex
+def extract_table_names(sql_text):
+    # Simplistic regex for demo purposes
+    tables = re.findall(r'(?:from|join)\s+([\w\.]+)', sql_text, re.IGNORECASE)
+    return set(tables)
+
+# Dictionary to store lineage
+lineage = {}
+
+# Iterate through views
+for view in view_list:
+    try:
+        # Get view definition
+        df = spark.sql(f"SHOW CREATE TABLE {view}")
+        ddl = df.collect()[0][0]
+
+        # Extract table names from SQL
+        tables_used = extract_table_names(ddl)
+
+        # Store lineage
+        lineage[view] = {
+            "upstream_tables": list(tables_used),
+            # Downstream would need full graph traversal or reverse mapping
+        }
+
+    except Exception as e:
+        lineage[view] = {"error": str(e)}
+
+# Optionally: Reverse map to find downstream tables (views that use each table)
+downstream_map = {}
+for view, data in lineage.items():
+    for table in data.get("upstream_tables", []):
+        downstream_map.setdefault(table, []).append(view)
+
+# Add downstream information
+for view in lineage:
+    lineage[view]["downstream_views"] = []
+    for table in lineage[view].get("upstream_tables", []):
+        lineage[view]["downstream_views"].extend(downstream_map.get(view, []))
+
+# Output lineage
+import json
+print(json.dumps(lineage, indent=2))
