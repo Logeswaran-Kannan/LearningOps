@@ -3,6 +3,7 @@
 
 from pyspark.sql import SparkSession
 import re
+import json
 
 # Initialize Spark
 spark = SparkSession.builder.getOrCreate()
@@ -29,27 +30,47 @@ for view in view_list:
         # Extract table names from SQL
         tables_used = extract_table_names(ddl)
 
+        # Categorize tables
+        ods_tables = [t for t in tables_used if t.lower().startswith("ods_")]
+        curated_tables = [t for t in tables_used if t.lower().startswith("curated_")]
+        other_tables = [t for t in tables_used if not (t.lower().startswith("ods_") or t.lower().startswith("curated_"))]
+
         # Store lineage
         lineage[view] = {
-            "upstream_tables": list(tables_used),
-            # Downstream would need full graph traversal or reverse mapping
+            "UPSTREAM_TABLES": list(tables_used),
+            "ODS_TABLES_LIST": ods_tables,
+            "CURATED_TABLES_LIST": curated_tables,
+            "OTHER_TABLES_LIST": other_tables,
+            "DOWNSTREAM_VIEWS": [],
+            "DOWNSTREAM_ODS_TABLES_LIST": [],
+            "DOWNSTREAM_CURATED_TABLES_LIST": [],
+            "DOWNSTREAM_OTHER_TABLES_LIST": []
         }
 
     except Exception as e:
         lineage[view] = {"error": str(e)}
 
-# Optionally: Reverse map to find downstream tables (views that use each table)
+# Reverse map to find downstream views
 downstream_map = {}
 for view, data in lineage.items():
-    for table in data.get("upstream_tables", []):
+    for table in data.get("UPSTREAM_TABLES", []):
         downstream_map.setdefault(table, []).append(view)
 
-# Add downstream information
+# Update downstream information
 for view in lineage:
-    lineage[view]["downstream_views"] = []
-    for table in lineage[view].get("upstream_tables", []):
-        lineage[view]["downstream_views"].extend(downstream_map.get(view, []))
+    downstreams = []
+    for table in lineage[view].get("UPSTREAM_TABLES", []):
+        downstreams.extend(downstream_map.get(view, []))
+    lineage[view]["DOWNSTREAM_VIEWS"] = downstreams
+
+    # Categorize downstreams
+    ods_down = [v for v in downstreams if v.lower().startswith("ods_")]
+    curated_down = [v for v in downstreams if v.lower().startswith("curated_")]
+    other_down = [v for v in downstreams if not (v.lower().startswith("ods_") or v.lower().startswith("curated_"))]
+
+    lineage[view]["DOWNSTREAM_ODS_TABLES_LIST"] = ods_down
+    lineage[view]["DOWNSTREAM_CURATED_TABLES_LIST"] = curated_down
+    lineage[view]["DOWNSTREAM_OTHER_TABLES_LIST"] = other_down
 
 # Output lineage
-import json
 print(json.dumps(lineage, indent=2))
