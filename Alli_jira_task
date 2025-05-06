@@ -1,98 +1,94 @@
-# Objective: Automate data lineage tracing (upstream and downstream tables) for a list of views in Databricks.
-# Approach: Use Databricks REST API, Unity Catalog (if available), and Spark SQL parsing.
+# Databricks notebook script for data validation between managed tables, views, and source SQL
 
 from pyspark.sql import SparkSession
-import re
-import json
 import pandas as pd
+import re
+from pyspark.sql.functions import lit, when
 
-# Initialize Spark
+# Initialize Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Sample input: List of view names
-view_list = ["schema.view1", "schema.view2"]
+# Load the CSV with metadata details
+csv_path = "/dbfs/path/to/your_metadata_file.csv"  # Update this path
+metadata_df = pd.read_csv(csv_path)
 
-# Function to extract table names from view definitions using regex
-def extract_table_names(sql_text):
-    # Simplistic regex for demo purposes
-    tables = re.findall(r'(?:from|join)\s+([\w\.]+)', sql_text, re.IGNORECASE)
-    return set(tables)
+# Filter for scope = 'Y'
+scoped_df = metadata_df[metadata_df['Scope'] == 'Y']
 
-# Dictionary to store lineage
-lineage = {}
-
-# Iterate through views
-for view in view_list:
-    try:
-        # Get view definition
-        df = spark.sql(f"SHOW CREATE TABLE {view}")
-        ddl = df.collect()[0][0]
-
-        # Extract table names from SQL
-        tables_used = extract_table_names(ddl)
-
-        # Categorize tables
-        ods_tables = [t for t in tables_used if t.lower().startswith("ods_")]
-        curated_tables = [t for t in tables_used if t.lower().startswith("curated_")]
-        other_tables = [t for t in tables_used if not (t.lower().startswith("ods_") or t.lower().startswith("curated_"))]
-
-        # Store lineage
-        lineage[view] = {
-            "CREATE_SCRIPT": ddl,
-            "UPSTREAM_TABLES": list(tables_used),
-            "ODS_TABLES_LIST": ods_tables,
-            "CURATED_TABLES_LIST": curated_tables,
-            "OTHER_TABLES_LIST": other_tables,
-            "DOWNSTREAM_VIEWS": [],
-            "DOWNSTREAM_ODS_TABLES_LIST": [],
-            "DOWNSTREAM_CURATED_TABLES_LIST": [],
-            "DOWNSTREAM_OTHER_TABLES_LIST": []
-        }
-
-    except Exception as e:
-        lineage[view] = {"error": str(e)}
-
-# Reverse map to find downstream views
-downstream_map = {}
-for view, data in lineage.items():
-    for table in data.get("UPSTREAM_TABLES", []):
-        downstream_map.setdefault(table, []).append(view)
-
-# Update downstream information
-for view in lineage:
-    downstreams = []
-    for table in lineage[view].get("UPSTREAM_TABLES", []):
-        downstreams.extend(downstream_map.get(view, []))
-    lineage[view]["DOWNSTREAM_VIEWS"] = downstreams
-
-    # Categorize downstreams
-    ods_down = [v for v in downstreams if v.lower().startswith("ods_")]
-    curated_down = [v for v in downstreams if v.lower().startswith("curated_")]
-    other_down = [v for v in downstreams if not (v.lower().startswith("ods_") or v.lower().startswith("curated_"))]
-
-    lineage[view]["DOWNSTREAM_ODS_TABLES_LIST"] = ods_down
-    lineage[view]["DOWNSTREAM_CURATED_TABLES_LIST"] = curated_down
-    lineage[view]["DOWNSTREAM_OTHER_TABLES_LIST"] = other_down
-
-# Convert to tabular format
-records = []
-for view, data in lineage.items():
-    if "error" in data:
-        records.append({"VIEW": view, "ERROR": data["error"]})
+# Function to extract or identify the SELECT part of SQL
+def extract_select(sql):
+    sql_clean = sql.replace('\n', ' ').replace('\r', ' ').strip().lower()
+    
+    if sql_clean.startswith("create view"):
+        match = re.search(r'(?i)as\s+(select\s+.+)', sql, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        else:
+            raise ValueError("Could not extract SELECT statement from CREATE VIEW SQL.")
+    elif sql_clean.startswith("select"):
+        return sql.strip()
     else:
-        records.append({
-            "VIEW": view,
-            "CREATE_SCRIPT": data["CREATE_SCRIPT"],
-            "UPSTREAM_TABLES": ", ".join(data["UPSTREAM_TABLES"]),
-            "ODS_TABLES_LIST": ", ".join(data["ODS_TABLES_LIST"]),
-            "CURATED_TABLES_LIST": ", ".join(data["CURATED_TABLES_LIST"]),
-            "OTHER_TABLES_LIST": ", ".join(data["OTHER_TABLES_LIST"]),
-            "DOWNSTREAM_VIEWS": ", ".join(data["DOWNSTREAM_VIEWS"]),
-            "DOWNSTREAM_ODS_TABLES_LIST": ", ".join(data["DOWNSTREAM_ODS_TABLES_LIST"]),
-            "DOWNSTREAM_CURATED_TABLES_LIST": ", ".join(data["DOWNSTREAM_CURATED_TABLES_LIST"]),
-            "DOWNSTREAM_OTHER_TABLES_LIST": ", ".join(data["DOWNSTREAM_OTHER_TABLES_LIST"])
+        raise ValueError("SQL does not start with CREATE VIEW or SELECT.")
+
+# Results list
+validation_results = []
+
+# Loop through each scoped entry and perform validation
+for index, row in scoped_df.iterrows():
+    table_fqn = f"{row['table_catalog']}.{row['table_schema']}.{row['table_name']}"
+    view_fqn = f"{row['view_catalog']}.{row['view_schema']}.{row['view_name']}"
+
+    # Extract SELECT statement from view SQL
+    try:
+        select_sql = extract_select(row['SQL'])
+    except ValueError as ve:
+        validation_results.append({
+            "view": view_fqn,
+            "table": table_fqn,
+            "script_sql": "ERROR extracting SQL",
+            "error": str(ve),
+            "status": "Failed"
+        })
+        continue
+
+    # Get counts from table, view, and SQL
+    try:
+        table_count = spark.sql(f"SELECT COUNT(*) FROM {table_fqn}").collect()[0][0]
+        view_count = spark.sql(f"SELECT COUNT(*) FROM {view_fqn}").collect()[0][0]
+        script_count = spark.sql(select_sql).count()
+
+        status = "Match"
+        if len(set([table_count, view_count, script_count])) > 1:
+            status = "Mismatch"
+
+        validation_results.append({
+            "view": view_fqn,
+            "table": table_fqn,
+            "table_count": table_count,
+            "view_count": view_count,
+            "script_count": script_count,
+            "script_sql": select_sql,
+            "status": status
         })
 
-# Create pandas DataFrame and show as table
-df_lineage = pd.DataFrame(records)
-print(df_lineage.to_string(index=False))
+    except Exception as e:
+        validation_results.append({
+            "view": view_fqn,
+            "table": table_fqn,
+            "script_sql": select_sql,
+            "error": str(e),
+            "status": "Failed"
+        })
+
+# Convert result to DataFrame
+results_df = pd.DataFrame(validation_results)
+spark_df = spark.createDataFrame(results_df)
+
+# Add color coding (note: display() in notebooks handles this visually with styling tools)
+spark_df = spark_df.withColumn("status_color", when(spark_df.status == "Match", lit("✅ Match")).otherwise(lit("❌ Mismatch/Failed")))
+
+# Display results
+display(spark_df.select("view", "table", "table_count", "view_count", "script_count", "status", "status_color", "script_sql"))
+
+# Optional: Save results to a managed table or CSV
+# results_df.to_csv("/dbfs/path/to/output/validation_results.csv", index=False)
