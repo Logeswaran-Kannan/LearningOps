@@ -4,6 +4,7 @@
 from pyspark.sql import SparkSession
 import re
 import json
+import pandas as pd
 
 # Initialize Spark
 spark = SparkSession.builder.getOrCreate()
@@ -72,5 +73,24 @@ for view in lineage:
     lineage[view]["DOWNSTREAM_CURATED_TABLES_LIST"] = curated_down
     lineage[view]["DOWNSTREAM_OTHER_TABLES_LIST"] = other_down
 
-# Output lineage
-print(json.dumps(lineage, indent=2))
+# Convert to tabular format
+records = []
+for view, data in lineage.items():
+    if "error" in data:
+        records.append({"VIEW": view, "ERROR": data["error"]})
+    else:
+        records.append({
+            "VIEW": view,
+            "UPSTREAM_TABLES": ", ".join(data["UPSTREAM_TABLES"]),
+            "ODS_TABLES_LIST": ", ".join(data["ODS_TABLES_LIST"]),
+            "CURATED_TABLES_LIST": ", ".join(data["CURATED_TABLES_LIST"]),
+            "OTHER_TABLES_LIST": ", ".join(data["OTHER_TABLES_LIST"]),
+            "DOWNSTREAM_VIEWS": ", ".join(data["DOWNSTREAM_VIEWS"]),
+            "DOWNSTREAM_ODS_TABLES_LIST": ", ".join(data["DOWNSTREAM_ODS_TABLES_LIST"]),
+            "DOWNSTREAM_CURATED_TABLES_LIST": ", ".join(data["DOWNSTREAM_CURATED_TABLES_LIST"]),
+            "DOWNSTREAM_OTHER_TABLES_LIST": ", ".join(data["DOWNSTREAM_OTHER_TABLES_LIST"])
+        })
+
+# Create pandas DataFrame and show as table
+df_lineage = pd.DataFrame(records)
+print(df_lineage.to_string(index=False))
