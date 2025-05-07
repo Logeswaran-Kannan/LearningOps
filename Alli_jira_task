@@ -54,7 +54,8 @@ for index, row in scoped_df.iterrows():
             "table": table_fqn,
             "script_sql": "ERROR extracting SQL",
             "error": str(ve),
-            "status": "Failed"
+            "status": "Failed",
+            "script_vs_table": "Error"
         })
         continue
 
@@ -62,11 +63,14 @@ for index, row in scoped_df.iterrows():
     try:
         table_count = spark.sql(f"SELECT COUNT(*) FROM {table_fqn}").collect()[0][0]
         view_count = spark.sql(f"SELECT COUNT(*) FROM {view_fqn}").collect()[0][0]
-        script_count = spark.sql(exec_sql).count()
+        script_df = spark.sql(exec_sql)
+        script_count = script_df.count()
 
         status = "Match"
         if len(set([table_count, view_count, script_count])) > 1:
             status = "Mismatch"
+
+        script_vs_table = "Match" if table_count == script_count else "Mismatch"
 
         validation_results.append({
             "view": view_fqn,
@@ -75,7 +79,8 @@ for index, row in scoped_df.iterrows():
             "view_count": view_count,
             "script_count": script_count,
             "script_sql": exec_sql,
-            "status": status
+            "status": status,
+            "script_vs_table": script_vs_table
         })
 
     except Exception as e:
@@ -84,7 +89,8 @@ for index, row in scoped_df.iterrows():
             "table": table_fqn,
             "script_sql": exec_sql,
             "error": str(e),
-            "status": "Failed"
+            "status": "Failed",
+            "script_vs_table": "Error"
         })
 
 # Convert result to DataFrame
@@ -93,9 +99,13 @@ spark_df = spark.createDataFrame(results_df)
 
 # Add color coding (note: display() in notebooks handles this visually with styling tools)
 spark_df = spark_df.withColumn("status_color", when(spark_df.status == "Match", lit("✅ Match")).otherwise(lit("❌ Mismatch/Failed")))
+spark_df = spark_df.withColumn("script_vs_table_color", when(spark_df.script_vs_table == "Match", lit("🟢 Match")).otherwise(lit("🔴 Mismatch/Error")))
 
 # Display results
-display(spark_df.select("view", "table", "table_count", "view_count", "script_count", "status", "status_color", "script_sql"))
+display(spark_df.select(
+    "view", "table", "table_count", "view_count", "script_count",
+    "status", "status_color", "script_vs_table", "script_vs_table_color", "script_sql"
+))
 
 # Optional: Save results to a managed table or CSV
 # results_df.to_csv("/dbfs/path/to/output/validation_results.csv", index=False)
