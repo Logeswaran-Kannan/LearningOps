@@ -1,111 +1,57 @@
-# Databricks notebook script for data validation between managed tables, views, and source SQL
+Subject: DDL Comparison – Oracle vs Read Replica (PostgreSQL) Validation Summary
 
-from pyspark.sql import SparkSession
-import pandas as pd
-import re
-from pyspark.sql.functions import lit, when
+Hi Team,
 
-# Initialize Spark session
-spark = SparkSession.builder.getOrCreate()
+Please find below the summary of the validation results from the DDL comparison performed between the Oracle and Read Replica (PostgreSQL) databases as part of the migration validation exercise:
 
-# Load the CSV with metadata details
-csv_path = "/dbfs/path/to/your_metadata_file.csv"  # Update this path
-metadata_df = pd.read_csv(csv_path)
+Environments Compared
 
-# Filter for scope = 'Y'
-scoped_df = metadata_df[metadata_df['Scope'] == 'Y']
+Oracle: SYS9 for Policy Center (PC) and Billing Center (BC), and UAT4 for Claim Center (CC)
 
-# Function to extract appropriate SQL based on pattern
-def extract_executable_sql(sql):
-    sql_clean = sql.replace('\n', ' ').replace('\r', ' ').strip()
-    lowered = sql_clean.lower()
+Read Replica (PostgreSQL): STD001 for PC, BC, and CC
+Both are test environments. No table exclusion parameters were applied during comparison to ensure full visibility across all available objects.
 
-    if lowered.startswith("create view"):
-        match = re.search(r'(?i)as\s+(select\s+.+)', sql_clean, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-        else:
-            raise ValueError("Could not extract SELECT statement from CREATE VIEW SQL.")
-    elif lowered.startswith("create function"):
-        match = re.search(r'(select\s+.+)', sql_clean, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-        else:
-            raise ValueError("Could not extract SELECT statement from CREATE FUNCTION SQL.")
-    elif lowered.startswith("select") or lowered.startswith("with"):
-        return sql_clean
-    else:
-        raise ValueError("SQL format not recognized. Must start with CREATE VIEW, CREATE FUNCTION, SELECT, or WITH.")
+Total Tables Identified
 
-# Results list
-validation_results = []
+Oracle: 5,625 tables
 
-# Loop through each scoped entry and perform validation
-for index, row in scoped_df.iterrows():
-    table_fqn = f"{row['table_catalog']}.{row['table_schema']}.{row['table_name']}"
-    view_fqn = f"{row['view_catalog']}.{row['view_schema']}.{row['view_name']}"
+Read Replica (RR): 6,090 tables
+The RR set includes business data tables, technical process support tables, and intermediate tables.
 
-    # Extract appropriate SQL
-    try:
-        exec_sql = extract_executable_sql(row['SQL'])
-    except ValueError as ve:
-        validation_results.append({
-            "view": view_fqn,
-            "table": table_fqn,
-            "script_sql": "ERROR extracting SQL",
-            "error": str(ve),
-            "status": "Failed",
-            "script_vs_table": "Error"
-        })
-        continue
+Out of 6,090 RR tables, 737 are new (not found in Oracle)
 
-    # Get counts from table, view, and SQL
-    try:
-        table_count = spark.sql(f"SELECT COUNT(*) FROM {table_fqn}").collect()[0][0]
-        view_count = spark.sql(f"SELECT COUNT(*) FROM {view_fqn}").collect()[0][0]
-        script_df = spark.sql(exec_sql)
-        script_count = script_df.count()
+5,353 tables have matching names between Oracle and RR
 
-        status = "Match"
-        if len(set([table_count, view_count, script_count])) > 1:
-            status = "Mismatch"
+272 tables found in Oracle are missing in RR
 
-        script_vs_table = "Match" if table_count == script_count else "Mismatch"
+Missing Tables Analysis (272 total)
 
-        validation_results.append({
-            "view": view_fqn,
-            "table": table_fqn,
-            "table_count": table_count,
-            "view_count": view_count,
-            "script_count": script_count,
-            "script_sql": exec_sql,
-            "status": status,
-            "script_vs_table": script_vs_table
-        })
+Out of the 272 missing tables, 118 have valid data in Oracle and require further investigation.
 
-    except Exception as e:
-        validation_results.append({
-            "view": view_fqn,
-            "table": table_fqn,
-            "script_sql": exec_sql,
-            "error": str(e),
-            "status": "Failed",
-            "script_vs_table": "Error"
-        })
+154 tables hold no data even in Oracle.
 
-# Convert result to DataFrame
-results_df = pd.DataFrame(validation_results)
-spark_df = spark.createDataFrame(results_df)
+For the 118 data-holding tables, we suspect some could be technical/intermediate tables used by Oracle but not required in RR. However, a clear explanation is needed, especially as there was no explicit requirement to exclude these tables.
 
-# Add color coding (note: display() in notebooks handles this visually with styling tools)
-spark_df = spark_df.withColumn("status_color", when(spark_df.status == "Match", lit("✅ Match")).otherwise(lit("❌ Mismatch/Failed")))
-spark_df = spark_df.withColumn("script_vs_table_color", when(spark_df.script_vs_table == "Match", lit("🟢 Match")).otherwise(lit("🔴 Mismatch/Error")))
+Matching Tables (5,353 total) – Column-Level Mismatches
 
-# Display results
-display(spark_df.select(
-    "view", "table", "table_count", "view_count", "script_count",
-    "status", "status_color", "script_vs_table", "script_vs_table_color", "script_sql"
-))
+949 tables have column mismatches.
 
-# Optional: Save results to a managed table or CSV
-# results_df.to_csv("/dbfs/path/to/output/validation_results.csv", index=False)
+231 columns present in Oracle are missing in RR
+
+2,216 columns are additional in RR but not present in Oracle
+This needs further investigation, especially regarding whether these changes were intentional. Currently, there is no clear requirement justification for the removal or addition of these columns within existing tables.
+
+Precision Mismatch Observation
+
+One table was found to have a precision-level mismatch. While it may not affect data integrity, it’s noted here as an observation for completeness.
+
+Analysis of the 737 New Tables in RR
+
+Out of these, 356 tables contain valid data
+
+381 tables have zero records
+These might be placeholders for future use or simply lack test data at this stage. However, as per the initial expectation, no additional tables were planned, so confirmation is needed from the RR DB side regarding their purpose.
+
+All detailed findings — including lists of missing and additional tables/columns — are available in the attached Excel sheet. Happy to walk through the results case-by-case to assist with analysis or resolution.
+
+Let me know if any further clarification is needed.
