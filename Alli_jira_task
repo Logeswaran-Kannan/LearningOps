@@ -1,57 +1,44 @@
-Subject: DDL Comparison – Oracle vs Read Replica (PostgreSQL) Validation Summary
+Subject: DDL Comparison Validation Results – Oracle vs Read Replica (PostgreSQL)
 
 Hi Team,
 
-Please find below the summary of the validation results from the DDL comparison performed between the Oracle and Read Replica (PostgreSQL) databases as part of the migration validation exercise:
+As part of the database migration validation between Oracle and the PostgreSQL Read Replica (RR), we’ve completed the DDL comparison across environments. Below is a summary of the findings, captured in 7 key points:
 
-Environments Compared
+Environments Used:
+The comparison was performed using SYS9 for PC and BC, and UAT4 for CC on the Oracle side. For the RR side, we used STD001 for PC, BC, and CC. These are all test environments. No table exclusion filters were applied to ensure a full and accurate comparison.
 
-Oracle: SYS9 for Policy Center (PC) and Billing Center (BC), and UAT4 for Claim Center (CC)
+Table Count Comparison:
 
-Read Replica (PostgreSQL): STD001 for PC, BC, and CC
-Both are test environments. No table exclusion parameters were applied during comparison to ensure full visibility across all available objects.
+Oracle: 5625 tables
 
-Total Tables Identified
+Read Replica: 6090 tables
+Out of the 6090 tables in RR, 737 are new tables not found in Oracle, while 5353 tables match by name with those in Oracle. This implies that 272 tables from Oracle are missing in the RR environment.
 
-Oracle: 5,625 tables
+Investigation of Missing Tables (272):
 
-Read Replica (RR): 6,090 tables
-The RR set includes business data tables, technical process support tables, and intermediate tables.
+118 tables (from Oracle) contain valid data and are missing in RR – these need further explanation.
 
-Out of 6,090 RR tables, 737 are new (not found in Oracle)
+154 tables have no data even on the Oracle side – may be safe to exclude.
+We suspect some missing tables may be Oracle-specific technical/intermediate tables not required in RR, but this needs confirmation since we were not provided with a list of tables to exclude.
 
-5,353 tables have matching names between Oracle and RR
+Column-Level Mismatches (in 5353 matched tables):
 
-272 tables found in Oracle are missing in RR
+949 tables have structural mismatches.
 
-Missing Tables Analysis (272 total)
+231 columns exist in Oracle but are missing in RR.
 
-Out of the 272 missing tables, 118 have valid data in Oracle and require further investigation.
+2216 columns are additional in RR but not present in Oracle.
+This discrepancy needs further investigation, especially around why existing Oracle columns were removed and new ones were added in RR without documented requirements.
 
-154 tables hold no data even in Oracle.
+Precision Mismatch:
+One table was found with a precision-level mismatch. While this doesn’t appear to affect data, we’ve noted it for visibility.
 
-For the 118 data-holding tables, we suspect some could be technical/intermediate tables used by Oracle but not required in RR. However, a clear explanation is needed, especially as there was no explicit requirement to exclude these tables.
+New Tables in RR (737):
+Of these, only 356 tables have any data. The remaining 381 tables contain zero records. These could be placeholders for future use or may lack test data at this stage. However, as there was no original requirement indicating the creation of these new tables, we would appreciate confirmation from the RR database team.
 
-Matching Tables (5,353 total) – Column-Level Mismatches
+Next Steps:
+All details regarding missing tables, additional tables, and column-level mismatches have been captured in the attached Excel file.
+We're happy to walk through the results case-by-case to clarify and resolve outstanding items. Please let us know if further information is needed.
 
-949 tables have column mismatches.
-
-231 columns present in Oracle are missing in RR
-
-2,216 columns are additional in RR but not present in Oracle
-This needs further investigation, especially regarding whether these changes were intentional. Currently, there is no clear requirement justification for the removal or addition of these columns within existing tables.
-
-Precision Mismatch Observation
-
-One table was found to have a precision-level mismatch. While it may not affect data integrity, it’s noted here as an observation for completeness.
-
-Analysis of the 737 New Tables in RR
-
-Out of these, 356 tables contain valid data
-
-381 tables have zero records
-These might be placeholders for future use or simply lack test data at this stage. However, as per the initial expectation, no additional tables were planned, so confirmation is needed from the RR DB side regarding their purpose.
-
-All detailed findings — including lists of missing and additional tables/columns — are available in the attached Excel sheet. Happy to walk through the results case-by-case to assist with analysis or resolution.
-
-Let me know if any further clarification is needed.
+Thanks & regards,
+[Your Name]
