@@ -1,18 +1,21 @@
-jdbcHostname = "your_postgres_host"
+# Test PostgreSQL connection using Spark JDBC
+jdbcHostname = "your_host"
 jdbcPort = 5432
 jdbcDatabase = "your_db_name"
+jdbcUsername = "your_user"
+jdbcPassword = "your_password"
 jdbcUrl = f"jdbc:postgresql://{jdbcHostname}:{jdbcPort}/{jdbcDatabase}"
 
 connectionProperties = {
-  "user" : "your_username",
-  "password" : "your_password",
-  "driver" : "org.postgresql.Driver"
+    "user": jdbcUsername,
+    "password": jdbcPassword,
+    "driver": "org.postgresql.Driver"
 }
 
-# Attempt to read a simple table
 try:
-    df = spark.read.jdbc(url=jdbcUrl, table="your_table_name", properties=connectionProperties)
-    df.show()
-    print("Connection successful and data read.")
+    # Replace 'your_table_name' with a real table to test
+    test_df = spark.read.jdbc(url=jdbcUrl, table="your_table_name", properties=connectionProperties)
+    test_df.show(5)
+    print("✅ PostgreSQL connection successful and data read.")
 except Exception as e:
-    print(f"Failed to read from PostgreSQL: {e}")
+    print(f"❌ Failed to connect to PostgreSQL: {e}")
