@@ -1,32 +1,41 @@
+from pyspark.sql.functions import col
 from pyspark.sql.utils import AnalysisException
 
-# Input: table name you want to check (use lowercase for case-insensitive match)
-input_table = "your_catalog.your_schema.source_table"
+# Input
+input_table = "table_xyz"  # Table to search for
+schemas_to_search = ["schema1", "schema2", "schema3"]  # List of schemas to scan
+catalog = "your_catalog"  # Set your catalog name here
 
-# Where to search (replace with your target catalog/schema)
-catalog = "your_catalog"
-schema = "your_schema"
+# Result holder
+usage_results = []
 
-# Store matched views
-matched_views = []
-
-# Get all views in the schema
-views_df = spark.sql(f"SHOW VIEWS IN {catalog}.{schema}")
-views = [row['viewName'] for row in views_df.collect() if not row['isTemporary']]
-
-# Search for input_table in view definitions
-for view in views:
+for schema in schemas_to_search:
     try:
-        ddl_df = spark.sql(f"SHOW CREATE TABLE {catalog}.{schema}.{view}")
-        ddl = ddl_df.collect()[0][0].lower()  # lowercase for case-insensitive matching
-        if input_table.lower() in ddl:
-            matched_views.append((view, "Referenced"))
-    except AnalysisException as e:
-        matched_views.append((view, f"Error: {str(e)}"))
+        # Get all tables/views in schema
+        objects = spark.sql(f"SHOW TABLES IN {catalog}.{schema}").collect()
 
-# Display result
-if matched_views:
-    result_df = spark.createDataFrame(matched_views, ["View Name", "Status"])
+        for obj in objects:
+            table_name = obj.tableName
+            full_table_name = f"{catalog}.{schema}.{table_name}"
+
+            try:
+                # Get the DDL for each table/view
+                ddl_df = spark.sql(f"SHOW CREATE TABLE {full_table_name}")
+                ddl_text = ddl_df.collect()[0][0]
+
+                # Check if input_table name appears in DDL
+                if input_table.lower() in ddl_text.lower():
+                    usage_results.append((full_table_name, "Referenced"))
+            except AnalysisException as e:
+                # Skip if the object doesn't support SHOW CREATE TABLE
+                continue
+
+    except AnalysisException as e:
+        print(f"Could not access schema {schema}: {e}")
+
+# Show results
+if usage_results:
+    result_df = spark.createDataFrame(usage_results, ["Object", "Status"])
     display(result_df)
 else:
-    print(f"No downstream views found referencing table: {input_table}")
+    print(f"No downstream usage found for table '{input_table}' in specified schemas.")
