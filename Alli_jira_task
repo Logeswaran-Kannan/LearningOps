@@ -1,1 +1,5 @@
-Thanks for sharing this. I believe this is the schema you mentioned that's accessible from the test workspace to view production data — just wanted to confirm, is this the actual production data that gets synced daily, or a separate copy of the production data?
+Thanks for sharing this. I believe this is the schema you were referring to that's accessible from the test workspace for viewing production data.
+
+Just to confirm — is this pointing to the actual production data that's synced daily, or is it a copy of the production data? Also, is there a specific Databricks URL or workspace we should use to view the production data directly?
+
+Appreciate the clarification!
