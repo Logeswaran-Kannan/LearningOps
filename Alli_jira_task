@@ -1,8 +1,18 @@
-# Replace with your actual path (can be DBFS or mounted S3 path)
-csv_path = "/dbfs/FileStore/myfolder/myfile.csv"  # Example path
+jdbcHostname = "your_postgres_host"
+jdbcPort = 5432
+jdbcDatabase = "your_db_name"
+jdbcUrl = f"jdbc:postgresql://{jdbcHostname}:{jdbcPort}/{jdbcDatabase}"
 
-# Read the CSV file into a DataFrame
-df = spark.read.option("header", True).option("inferSchema", True).csv(csv_path)
+connectionProperties = {
+  "user" : "your_username",
+  "password" : "your_password",
+  "driver" : "org.postgresql.Driver"
+}
 
-# Display the data
-display(df)
+# Attempt to read a simple table
+try:
+    df = spark.read.jdbc(url=jdbcUrl, table="your_table_name", properties=connectionProperties)
+    df.show()
+    print("Connection successful and data read.")
+except Exception as e:
+    print(f"Failed to read from PostgreSQL: {e}")
