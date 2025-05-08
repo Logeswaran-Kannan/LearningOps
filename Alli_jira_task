@@ -1,27 +1,26 @@
-Subject: PC Scope Summary and Next Steps
+from pyspark.sql.utils import AnalysisException
 
-Hi Graham,
+# List of fully qualified table names (e.g., 'catalog.schema.table')
+table_list = [
+    "your_catalog.your_schema.table1",
+    "your_catalog.your_schema.table2",
+    "your_catalog.your_schema.non_existing_table"
+]
 
-Thanks for sharing the overall scope list. For Policy Center (PC), I’ve reviewed the schemas provided and included the managed tables and their corresponding views from the relevant schemas. The tables and views from other schemas have been kept out of scope for now, but we can always bring them in later if needed.
+# Store results
+results = []
 
-For the identified PC views and managed tables, I’ve compiled a list that includes:
+# Iterate through each table
+for table_name in table_list:
+    try:
+        # Try to read the table
+        df = spark.table(table_name)
+        row_count = df.count()
+        results.append((table_name, row_count))
+    except AnalysisException:
+        # If table not found
+        results.append((table_name, "No table found"))
 
-Managed table names
-
-Corresponding views that populate them
-
-Row counts for comparison
-
-View scripts
-
-Breakdown of dependencies, including ODS, ODS_VIEW, and Silver tables used within the scripts
-
-🔜 Next Action Items:
-I’ve added a priority column to the list — could you please update it with values like 1, 2, 3 (with 1 being high priority)?
-
-A few scripts failed the count comparison between the managed table and the corresponding view. For now, I’ve adjusted the count by temporarily removing anti-joins from the scripts, but we’ll need some clarity on those joins to properly reconcile the data.
-
-From the three-way reconciliation list, I’ve cross-checked and ensured that all applicable tables are included in the current scope. There’s just one table that’s missing due to schema restrictions — let me know if we should bring that back into scope.
-
-Let me know if you need anything else or want to review this together.
-
+# Convert results to DataFrame for display
+result_df = spark.createDataFrame(results, ["Table Name", "Record Count"])
+display(result_df)
