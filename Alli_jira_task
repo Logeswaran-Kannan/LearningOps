@@ -1,3 +1,26 @@
-Thanks for your input. From what I can see, everything else for PC appears to be covered in the scope list — this seems to be the only item missing.
+Subject: PC – Managed Tables and View Mapping Scope Summary
 
-I’m currently including only the curated_edw and curated_edw_insert_view schemas in scope. Just checking — would you like me to include this one as well?
+Hi Graham,
+
+Thanks for the discussion earlier. As agreed, I’ve reviewed the list for PC and identified the managed tables and their corresponding views within the two relevant schemas. Tables and views from other schemas have been excluded for now, but we can include them later using the same approach if needed.
+
+For the identified PC-related views and managed tables, I’ve compiled the following in the attached list:
+
+Managed table names
+
+Corresponding view names that populate those tables
+
+Row counts for comparison
+
+View scripts used
+
+Relevant breakdown of ODS, ODS View, and Silver tables involved in each script
+
+Next Steps / Actions:
+I’ve added a column called "Priority" in the sheet — please review and update the priority for each item (e.g., 1 for high, 2 for medium, and so on).
+
+A few of the scripts are not matching counts between the managed tables and their views. I’ve temporarily matched them by removing the anti-joins, but we’ll need to investigate those joins further to understand the discrepancy.
+
+Based on the three-way reconciliation list shared earlier, it looks like all relevant tables have been included in the scope — except for one table that was excluded due to schema access restrictions. I’m happy to include it as well if needed.
+
+Let me know if you need any clarifications or if you'd like to walk through any specific parts.
