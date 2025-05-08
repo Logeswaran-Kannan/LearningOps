@@ -1,5 +1,1 @@
-As discussed, could you please help export the metadata details from the production Oracle environment for PC, BC, and CC into Excel? I’d like to use that for comparison against the Read Replica.
-
-Also, to verify whether certain columns actually contain data, I believe it makes the most sense to check directly in production. Is there a quick way I could get access to the production DB — either directly through Oracle or possibly via the Databricks production workspace?
-
-Appreciate your help!
+Thanks for sharing this. I believe this is the schema you mentioned that's accessible from the test workspace to view production data — just wanted to confirm, is this the actual production data that gets synced daily, or a separate copy of the production data?
