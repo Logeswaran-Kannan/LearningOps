@@ -1,26 +1,27 @@
-Subject: PC – Managed Tables and View Mapping Scope Summary
+Subject: PC Scope Summary and Next Steps
 
 Hi Graham,
 
-Thanks for the discussion earlier. As agreed, I’ve reviewed the list for PC and identified the managed tables and their corresponding views within the two relevant schemas. Tables and views from other schemas have been excluded for now, but we can include them later using the same approach if needed.
+Thanks for sharing the overall scope list. For Policy Center (PC), I’ve reviewed the schemas provided and included the managed tables and their corresponding views from the relevant schemas. The tables and views from other schemas have been kept out of scope for now, but we can always bring them in later if needed.
 
-For the identified PC-related views and managed tables, I’ve compiled the following in the attached list:
+For the identified PC views and managed tables, I’ve compiled a list that includes:
 
 Managed table names
 
-Corresponding view names that populate those tables
+Corresponding views that populate them
 
 Row counts for comparison
 
-View scripts used
+View scripts
 
-Relevant breakdown of ODS, ODS View, and Silver tables involved in each script
+Breakdown of dependencies, including ODS, ODS_VIEW, and Silver tables used within the scripts
 
-Next Steps / Actions:
-I’ve added a column called "Priority" in the sheet — please review and update the priority for each item (e.g., 1 for high, 2 for medium, and so on).
+🔜 Next Action Items:
+I’ve added a priority column to the list — could you please update it with values like 1, 2, 3 (with 1 being high priority)?
 
-A few of the scripts are not matching counts between the managed tables and their views. I’ve temporarily matched them by removing the anti-joins, but we’ll need to investigate those joins further to understand the discrepancy.
+A few scripts failed the count comparison between the managed table and the corresponding view. For now, I’ve adjusted the count by temporarily removing anti-joins from the scripts, but we’ll need some clarity on those joins to properly reconcile the data.
 
-Based on the three-way reconciliation list shared earlier, it looks like all relevant tables have been included in the scope — except for one table that was excluded due to schema access restrictions. I’m happy to include it as well if needed.
+From the three-way reconciliation list, I’ve cross-checked and ensured that all applicable tables are included in the current scope. There’s just one table that’s missing due to schema restrictions — let me know if we should bring that back into scope.
 
-Let me know if you need any clarifications or if you'd like to walk through any specific parts.
+Let me know if you need anything else or want to review this together.
+
