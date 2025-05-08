@@ -1,31 +1,8 @@
-# Input: table name to search for (can be fully qualified or partial)
-search_table = "your_schema.your_table"  # Or just "your_table"
+# Replace with your actual path (can be DBFS or mounted S3 path)
+csv_path = "/dbfs/FileStore/myfolder/myfile.csv"  # Example path
 
-catalog_name = "your_catalog"  # Replace with your catalog name
+# Read the CSV file into a DataFrame
+df = spark.read.option("header", True).option("inferSchema", True).csv(csv_path)
 
-# Get all schemas in the catalog
-schemas = [row['namespace'] for row in spark.sql(f"SHOW SCHEMAS IN {catalog_name}").collect()]
-
-# Store results
-references = []
-
-# Search through each schema
-for schema in schemas:
-    views = spark.sql(f"SHOW VIEWS IN {catalog_name}.{schema}").collect()
-    
-    for view in views:
-        view_name = view['viewName']
-        full_view_name = f"{catalog_name}.{schema}.{view_name}"
-        
-        # Get the CREATE statement for the view
-        try:
-            ddl = spark.sql(f"SHOW CREATE TABLE {full_view_name}").collect()[0][0]
-            if search_table.lower() in ddl.lower():
-                references.append((full_view_name, ddl))
-        except Exception as e:
-            # Skip views that can't be accessed
-            print(f"Skipping {full_view_name}: {str(e)}")
-
-# Display result
-result_df = spark.createDataFrame(references, ["View Name", "Script Snippet"])
-display(result_df)
+# Display the data
+display(df)
