@@ -1,1 +1,32 @@
-I had a quick chat with Amritha — looks like there’s a meeting scheduled for the test plan walkthrough tomorrow. Would you mind adding me to that invite? I think that’s a good place for me to jump in, review the plan, and then I’ll catch up with Nickie afterward.
+from pyspark.sql.utils import AnalysisException
+
+# Input: table name you want to check (use lowercase for case-insensitive match)
+input_table = "your_catalog.your_schema.source_table"
+
+# Where to search (replace with your target catalog/schema)
+catalog = "your_catalog"
+schema = "your_schema"
+
+# Store matched views
+matched_views = []
+
+# Get all views in the schema
+views_df = spark.sql(f"SHOW VIEWS IN {catalog}.{schema}")
+views = [row['viewName'] for row in views_df.collect() if not row['isTemporary']]
+
+# Search for input_table in view definitions
+for view in views:
+    try:
+        ddl_df = spark.sql(f"SHOW CREATE TABLE {catalog}.{schema}.{view}")
+        ddl = ddl_df.collect()[0][0].lower()  # lowercase for case-insensitive matching
+        if input_table.lower() in ddl:
+            matched_views.append((view, "Referenced"))
+    except AnalysisException as e:
+        matched_views.append((view, f"Error: {str(e)}"))
+
+# Display result
+if matched_views:
+    result_df = spark.createDataFrame(matched_views, ["View Name", "Status"])
+    display(result_df)
+else:
+    print(f"No downstream views found referencing table: {input_table}")
