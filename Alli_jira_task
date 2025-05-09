@@ -1,17 +1,1 @@
-Hi Paul,
-
-Thanks for the detailed analysis on the lineage mapping — really helpful. Based on my understanding, I think the following are the next steps to move things toward closure. Please feel free to correct me if I’ve interpreted anything differently:
-
-Technical Follow-ups:
-From the missing column list tied to the lineage dependencies, I believe the next step is to consolidate and finalize this list for Guidewire. Once that’s done, we can request the corresponding mapping details for those columns from the Guidewire team.
-
-In the Prod ORA vs RR comparison, I noticed two Claims tables with 2 records each that are still missing in RR. I’m not sure if they impact any downstream processes, but all other missing tables seem fine since they’re not in Prod. I’m happy to close this item once we confirm whether these two tables should be included or are okay to leave out.
-
-Regarding the legacy tactical NDM dependency, we’ll need confirmation from Brando about the ‘Paid’ column.
-
-Process-Level Suggestions:
-I think it would make sense to have us looped in as approvers for any future changes (additions/removals) to columns in finalized tables. While schema drift functionality helps, a quick lineage check should ideally be done before changes are made to the source — just to ensure we’re aware of any downstream impacts.
-
-For the columns that are consistently null or zero in Prod and not present in RR — based on the lineage analysis, I assume we can consider those as signed off and not needed in RR. Just checking — do we need to track this somewhere in Confluence for future reference, especially for test signoff purposes?
-
-Let me know your thoughts, and happy to jump on a quick call if anything needs clarification.
+Ah got it — I see it now under the Edit Defect tab, it’s showing up just above the fix versions there!
