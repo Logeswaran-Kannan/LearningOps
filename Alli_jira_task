@@ -1,21 +1,17 @@
 Hi Paul,
 
-Thanks for the detailed analysis on the lineage mapping — really helpful.
+Thanks for the detailed analysis on the lineage mapping — really helpful. Based on my understanding, I think the following are the next steps to move things toward closure. Please feel free to correct me if I’ve interpreted anything differently:
 
-Based on my understanding, I believe the following actions would help bring this to closure. Please do correct me if I’ve interpreted anything differently.
+Technical Follow-ups:
+From the missing column list tied to the lineage dependencies, I believe the next step is to consolidate and finalize this list for Guidewire. Once that’s done, we can request the corresponding mapping details for those columns from the Guidewire team.
 
-Data-Level Actions:
-From the list of missing columns and the lineage dependencies identified, it seems the next step would be to check with Guidewire. Could we consolidate and finalize this list to share with them? Once confirmed, we’d also need to identify the mapping details for those specific columns from their side.
+In the Prod ORA vs RR comparison, I noticed two Claims tables with 2 records each that are still missing in RR. I’m not sure if they impact any downstream processes, but all other missing tables seem fine since they’re not in Prod. I’m happy to close this item once we confirm whether these two tables should be included or are okay to leave out.
 
-Regarding the PROD ORA vs RR comparison, I noticed that two Claims tables (each with 2 records) are still missing in RR. I’m not sure if these have any downstream dependencies — all other missing tables are fine as they’re not present in PROD. I’m happy to close this item once we clarify whether these two tables should be included or are safe to exclude from the RR.
+Regarding the legacy tactical NDM dependency, we’ll need confirmation from Brando about the ‘Paid’ column.
 
-For the legacy tactical NDM dependency, we’ll need confirmation from Brando regarding the ‘Paid’ column.
+Process-Level Suggestions:
+I think it would make sense to have us looped in as approvers for any future changes (additions/removals) to columns in finalized tables. While schema drift functionality helps, a quick lineage check should ideally be done before changes are made to the source — just to ensure we’re aware of any downstream impacts.
 
-Process-Level Notes:
-I think it would be good to include us as approvers in the process, especially if there are any future additions or removals of columns in finalized tables. Even though schema drift handling is available, any such changes ideally should go through the right review channel to assess their downstream impact.
+For the columns that are consistently null or zero in Prod and not present in RR — based on the lineage analysis, I assume we can consider those as signed off and not needed in RR. Just checking — do we need to track this somewhere in Confluence for future reference, especially for test signoff purposes?
 
-For columns that have consistently held null or zero values in PROD — and are currently not present in the RR — I believe, based on the lineage mapping, we can treat those as approved for exclusion from RR. Just wondering if this needs to be captured somewhere in Confluence or another location for future reference, especially for traceability during testing signoff?
-
-Let me know your thoughts on the above, or if anything needs tweaking.
-
-Thanks again!
+Let me know your thoughts, and happy to jump on a quick call if anything needs clarification.
