@@ -1,1 +1,6 @@
-Thanks, this is really helpful! Yep, I can see the documents in the channel. I’ll go through them in the meantime, and we can chat more about the details next week.
+SELECT
+  'COPY public."' || table_name || 
+  '" TO ''/var/lib/postgresql/exports/public_' || table_name || '.csv'' WITH CSV HEADER;'
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_type = 'BASE TABLE';
