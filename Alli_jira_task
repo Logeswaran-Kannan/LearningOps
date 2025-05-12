@@ -1,26 +1,7 @@
-🐞 Defect 1 – MI: Read Replica – Missing Tables Compared to Oracle
-Description:
-As part of the DDL comparison performed between the Oracle and Read Replica (PostgreSQL) environments, we identified a total of 272 tables missing in the Read Replica that are present in the Oracle test environment.
+Hi team,
 
-Following a triage, it was noted that out of these 272 tables, only 2 tables exist in the Claims production environment — the remaining are not in use in production. These 2 tables may still be relevant for downstream processes and require confirmation from the respective owners. The rest can likely be de-scoped, but were captured here for completeness and tracking.
+I’ve set up a Manual Test Execution Progress Dashboard along with an Overall Defect Status Dashboard, which includes both manual and automation-related defects.
 
-🐞 Defect 2 – MI: Read Replica – Additional Tables Not Found in Oracle
-Description:
-We discovered 737 tables present in the Read Replica that do not exist in Oracle. According to the migration team, these are part of the cloud upgrade process.
+The defects are being raised under the GCU project, but the dashboard is filtered to track only our relevant tickets.
 
-Out of these, 356 tables have data, while the remaining 381 tables are empty. These may serve as future placeholders or simply lack test data at the current stage. Since these tables weren’t part of the original documented scope, we’re capturing this as a low-priority defect for visibility and traceability.
-
-🐞 Defect 3 – MI: Read Replica – Additional Columns Introduced Without Requirement
-Description:
-During validation of matching tables between Oracle and Read Replica, we identified 2216 additional columns across existing tables in the Read Replica that do not exist in the Oracle version. These were introduced as part of the cloud upgrade but were not documented or communicated in the original scope.
-
-This highlights the need for a formalized process to track and validate any column-level changes (additions or removals) during migration. This is being logged for future reference and better governance, not flagged as a blocking issue at this stage.
-
-🐞 Defect 4 – MI: Read Replica – Precision-Level Mismatch in Table
-Description:
-One table was found with a data type precision mismatch between Oracle and Read Replica. While this does not currently impact the data output or processing, it is being flagged as a low-severity defect to ensure it remains visible and doesn’t cause discrepancies in future validations or downstream use cases.
-)-----
-
-
-
-Just a quick catch-up to go over the testing activities we’ve covered so far, and to review the test plan and strategy.
+Going forward, we can use this dashboard to monitor overall progress. Feel free to take a look and let me know if you have any suggestions or if there’s anything you’d like to tweak.
