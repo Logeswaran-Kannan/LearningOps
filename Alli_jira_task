@@ -1,6 +1,11 @@
-SELECT
-  'COPY public."' || table_name || 
-  '" TO ''/var/lib/postgresql/exports/public_' || table_name || '.csv'' WITH CSV HEADER;'
-FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_type = 'BASE TABLE';
+Title:
+Missing Columns in Read Replica – Downstream Impact Identified
+
+Description:
+As part of the DDL comparison between the Oracle and Read Replica (PostgreSQL) environments for the GW Cloud migration, we identified 231 columns that exist in the Oracle version but are missing in the Read Replica.
+
+Out of these, 3 columns have been confirmed to impact downstream processes, specifically within the Silver layer, as identified by Paul. These columns are currently unaccounted for in the Read Replica, and there is no clarity on their replacement or intended handling.
+
+To proceed, we require clarification from the Guidewire source team on whether there are alternative columns that should be used in place of the missing ones, or if any mapping exists that can be applied.
+
+This issue may affect data quality or completeness in the downstream data pipeline if left unaddressed.
