@@ -19,3 +19,8 @@ This highlights the need for a formalized process to track and validate any colu
 🐞 Defect 4 – MI: Read Replica – Precision-Level Mismatch in Table
 Description:
 One table was found with a data type precision mismatch between Oracle and Read Replica. While this does not currently impact the data output or processing, it is being flagged as a low-severity defect to ensure it remains visible and doesn’t cause discrepancies in future validations or downstream use cases.
+)-----
+
+
+
+Hi Phil, just a quick update — I’m currently split 50/50 between the upgrade and Radar Live. I’ve got access to the SharePoint now and have started shaping up the test plan.
