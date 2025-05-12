@@ -1,19 +1,21 @@
-🐞 Defect 1: MI - Read Replica: Missing Tables Compared to Oracle
+🐞 Defect 1 – MI: Read Replica – Missing Tables Compared to Oracle
 Description:
-During DDL comparison between Oracle and Read Replica (PostgreSQL), 272 tables were found to be missing in the Read Replica environment, despite being present in the Oracle test environment.
-Upon further triage, it was identified that only 2 of these tables exist in the Claims production environment; the remaining tables are non-prod or unused. However, as there was no prior requirement or confirmation to exclude these tables, the absence of these two production tables requires clarification or remediation.
+As part of the DDL comparison performed between the Oracle and Read Replica (PostgreSQL) environments, we identified a total of 272 tables missing in the Read Replica that are present in the Oracle test environment.
 
-🐞 Defect 2: MI - Read Replica: Additional Tables Without Requirement
-Description:
-A total of 737 additional tables were found in the Read Replica that do not exist in the Oracle environment.
-Out of these, only 356 tables contain any data, while the remaining 381 have zero records. These appear to be part of the cloud upgrade, potentially for future use or lacking test data at this stage.
-As these new tables were not included in the original requirements, they are being tracked here as a low-priority defect for visibility.
+Following a triage, it was noted that out of these 272 tables, only 2 tables exist in the Claims production environment — the remaining are not in use in production. These 2 tables may still be relevant for downstream processes and require confirmation from the respective owners. The rest can likely be de-scoped, but were captured here for completeness and tracking.
 
-🐞 Defect 3: MI - Read Replica: Additional Columns Not in Oracle
+🐞 Defect 2 – MI: Read Replica – Additional Tables Not Found in Oracle
 Description:
-There are 2216 new columns present in the Read Replica that are not found in Oracle, all within existing tables. These columns seem to have been introduced as part of the cloud upgrade effort.
-However, since this addition wasn’t covered under the original migration requirements, a new process is recommended to govern the addition or removal of columns in source systems to ensure downstream lineage is validated before deployment.
+We discovered 737 tables present in the Read Replica that do not exist in Oracle. According to the migration team, these are part of the cloud upgrade process.
 
-🐞 Defect 4: MI - Read Replica: Data Precision Mismatch
+Out of these, 356 tables have data, while the remaining 381 tables are empty. These may serve as future placeholders or simply lack test data at the current stage. Since these tables weren’t part of the original documented scope, we’re capturing this as a low-priority defect for visibility and traceability.
+
+🐞 Defect 3 – MI: Read Replica – Additional Columns Introduced Without Requirement
 Description:
-A precision-level mismatch was identified in one table between Oracle and Read Replica. While this does not currently appear to impact data accuracy, the inconsistency is being tracked as a low-severity defect for future visibility and documentation.
+During validation of matching tables between Oracle and Read Replica, we identified 2216 additional columns across existing tables in the Read Replica that do not exist in the Oracle version. These were introduced as part of the cloud upgrade but were not documented or communicated in the original scope.
+
+This highlights the need for a formalized process to track and validate any column-level changes (additions or removals) during migration. This is being logged for future reference and better governance, not flagged as a blocking issue at this stage.
+
+🐞 Defect 4 – MI: Read Replica – Precision-Level Mismatch in Table
+Description:
+One table was found with a data type precision mismatch between Oracle and Read Replica. While this does not currently impact the data output or processing, it is being flagged as a low-severity defect to ensure it remains visible and doesn’t cause discrepancies in future validations or downstream use cases.
