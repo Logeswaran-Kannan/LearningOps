@@ -1,7 +1,9 @@
-Hi team,
+Just a quick update — last week, Phil and Hazel spoke to me about possibly stepping into the Test Lead role for the Radar Live project, in addition to my current responsibilities on the GW Upgrade project supporting Amirtha and Rahul.
 
-I’ve set up a Manual Test Execution Progress Dashboard along with an Overall Defect Status Dashboard, which includes both manual and automation-related defects.
+Their expectation is to bring in a similar test infrastructure setup to what we’ve implemented for GW Upgrade. I’ve agreed to support both projects for now, with a half-day focus on each, given the ongoing test execution on the GW side.
 
-The defects are being raised under the GCU project, but the dashboard is filtered to track only our relevant tickets.
+While there are some concerns that have been raised around Radar Live — including documentation gaps flagged by Amirtha — I feel it’s a bit early to dive too deep into those just yet. Phil and Hazel are mainly keen to ensure there’s strong test ownership on Radar Live due to its complexity.
 
-Going forward, we can use this dashboard to monitor overall progress. Feel free to take a look and let me know if you have any suggestions or if there’s anything you’d like to tweak.
+I’ve started playing the role from today and I’m comfortable managing both for the time being. Not sure if this has already been communicated through Hazel, Phil, or Amirtha — just wanted to keep you in the loop.
+
+Let me know if you’d like to chat further or if there’s anything that needs to be discussed.
