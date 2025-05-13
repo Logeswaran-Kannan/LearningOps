@@ -1,15 +1,16 @@
 DO
 $$
 DECLARE
-    r RECORD;
+    tbl RECORD;
+    row_count BIGINT;
 BEGIN
-    FOR r IN
+    FOR tbl IN
         SELECT tablename
         FROM pg_tables
-        WHERE schemaname = 'public'  -- Change schema if needed
+        WHERE schemaname = 'public'  -- change schema if needed
     LOOP
-        EXECUTE format('SELECT count(*) FROM public.%I', r.tablename) INTO r;
-        RAISE NOTICE 'Table: %, Count: %', r.tablename, r.count;
+        EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
+        RAISE NOTICE 'Table: %, Count: %', tbl.tablename, row_count;
     END LOOP;
 END;
 $$;
