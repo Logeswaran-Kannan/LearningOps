@@ -1,17 +1,7 @@
-Hi [Name],
+Some of you I already know from the GW upgrade project, and for the rest — just a quick intro: I’ll be supporting the testing team alongside Amirtha and Rahul.
 
-Just wanted to keep you in the loop — last week, Phil and Hazel reached out to discuss the possibility of me stepping into a Test Lead role for the Radar Live project, in addition to my current involvement in the GW Upgrade project supporting Amirtha and Rahul.
+I just got started today and spent some time going through the Confluence pages to get up to speed. At a high level, I’ve been looking into the existing workflow that handles data ingestion from Event Hub into the Bronze layer.
 
-There were some concerns raised regarding the testing front on Radar Live. While I believe it's still a bit early to make a full judgment, both sides have shared their perspectives. That said, the main ask is to bring in a similar test infrastructure to what we’ve implemented for GW Upgrade.
+I helped the testing team walk through how and where to check the payload, how it’s processed into Bronze, and how to verify things like onset/offset values. We also completed a test scenario to validate the Bronze layer sourced from Event Hub — I understand there are other sources involved too, like Cosmos DB and a few others.
 
-Given the current test execution underway, I’ve agreed to split my time — half-day on GW and half-day on Radar Live — and officially started supporting Radar Live from today. I’m comfortable managing both for now, especially since there’s a strong client focus and urgency to get things moving from a testing perspective.
-
-Not sure if this has already been communicated through Hazel, Phil, or Amirtha — just wanted to keep you informed. Let me know if you'd like to discuss anything further on this.
-
-Thanks!
-
-
-
-
-
-
+I’ve started reviewing the test plan as well and am looking forward to catching up with Nikee to understand the full workflow, the remaining sources, and also dive into how we’re handling service-level processing through Athen
