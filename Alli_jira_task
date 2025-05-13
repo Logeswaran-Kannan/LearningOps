@@ -3,14 +3,28 @@ $$
 DECLARE
     tbl RECORD;
     row_count BIGINT;
+    has_column BOOLEAN;
 BEGIN
     FOR tbl IN
         SELECT tablename
         FROM pg_tables
-        WHERE schemaname = 'public'  -- change schema if needed
+        WHERE schemaname = 'public'
     LOOP
-        EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
-        RAISE NOTICE 'Table: %, Count: %', tbl.tablename, row_count;
+        -- Check if 'createtime' column exists in the table
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = tbl.tablename
+              AND column_name = 'createtime'
+        ) INTO has_column;
+
+        IF has_column THEN
+            EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
+            RAISE NOTICE 'Table: %, Count (with createtime): %', tbl.tablename, row_count;
+        ELSE
+            RAISE NOTICE 'Table: % skipped - no createtime column', tbl.tablename;
+        END IF;
     END LOOP;
 END;
 $$;
