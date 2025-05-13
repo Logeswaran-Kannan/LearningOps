@@ -1,7 +1,30 @@
-Some of you I already know from the GW upgrade project, and for the rest — just a quick intro: I’ll be supporting the testing team alongside Amirtha and Rahul.
+from pyspark.sql import SparkSession
 
-I just got started today and spent some time going through the Confluence pages to get up to speed. At a high level, I’ve been looking into the existing workflow that handles data ingestion from Event Hub into the Bronze layer.
+# Start Spark session
+spark = SparkSession.builder \
+    .appName("CatalogueTableCounts") \
+    .enableHiveSupport() \
+    .getOrCreate()
 
-I helped the testing team walk through how and where to check the payload, how it’s processed into Bronze, and how to verify things like onset/offset values. We also completed a test scenario to validate the Bronze layer sourced from Event Hub — I understand there are other sources involved too, like Cosmos DB and a few others.
+# Function to list databases, tables, and row counts
+def get_table_counts():
+    results = []
+    databases = [db.name for db in spark.catalog.listDatabases()]
 
-I’ve started reviewing the test plan as well and am looking forward to catching up with Nikee to understand the full workflow, the remaining sources, and also dive into how we’re handling service-level processing through Athen
+    for db in databases:
+        tables = spark.catalog.listTables(db)
+        for table in tables:
+            table_name = table.name
+            full_table_name = f"{db}.{table_name}"
+            try:
+                count = spark.table(full_table_name).count()
+                results.append((db, table_name, count))
+            except Exception as e:
+                results.append((db, table_name, f"Error: {str(e)}"))
+
+    return results
+
+# Run the function and show results
+table_counts = get_table_counts()
+for db, table, count in table_counts:
+    print(f"Database: {db}, Table: {table}, Row Count: {count}")
