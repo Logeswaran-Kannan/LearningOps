@@ -1,26 +1,31 @@
-# Set your catalog and database
+from pyspark.sql import SparkSession
+
+# Initialize Spark session (if not already running)
+spark = SparkSession.builder.getOrCreate()
+
+# Replace these with your actual catalog and database names
 catalog_name = "your_catalog"
 database_name = "your_database"
 
-# Set the current catalog and database
+# Switch to the desired catalog and database
 spark.sql(f"USE CATALOG {catalog_name}")
 spark.sql(f"USE {database_name}")
 
-# Get all tables in the database
-tables_df = spark.sql("SHOW TABLES")
+# Get list of all tables in the specified catalog and database
+tables_df = spark.sql("SHOW TABLES").select("tableName")
 
-# Get table names and their row counts
-results = []
+# Prepare results list
+table_counts = []
+
+# Loop through tables and get their row counts
 for row in tables_df.collect():
-    table_name = row.tableName
-    full_table_name = f"{catalog_name}.{database_name}.{table_name}"
-    count = spark.table(full_table_name).count()
-    results.append((full_table_name, count))
+    table_name = row["tableName"]
+    try:
+        count = spark.table(table_name).count()
+        table_counts.append((table_name, count))
+    except Exception as e:
+        table_counts.append((table_name, f"Error: {str(e)}"))
 
-# Convert to a DataFrame for better display
-from pyspark.sql import SparkSession
-spark = SparkSession.builder.getOrCreate()
-result_df = spark.createDataFrame(results, ["Table Name", "Row Count"])
-
-# Display the result
+# Display the result as a DataFrame
+result_df = spark.createDataFrame(table_counts, ["table_name", "row_count"])
 result_df.show(truncate=False)
