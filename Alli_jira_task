@@ -10,7 +10,7 @@ BEGIN
         FROM pg_tables
         WHERE schemaname = 'public'
     LOOP
-        -- Check if 'createtime' column exists in the table
+        -- Check if 'createtime' column exists
         SELECT EXISTS (
             SELECT 1
             FROM information_schema.columns
@@ -19,12 +19,12 @@ BEGIN
               AND column_name = 'createtime'
         ) INTO has_column;
 
-        IF has_column THEN
-            EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
-            RAISE NOTICE 'Table: %, Count (with createtime): %', tbl.tablename, row_count;
-        ELSE
-            RAISE NOTICE 'Table: % skipped - no createtime column', tbl.tablename;
-        END IF;
+        -- Get table row count
+        EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
+
+        -- Log both count and column check
+        RAISE NOTICE 'Table: %, Row Count: %, Has createtime: %',
+            tbl.tablename, row_count, has_column;
     END LOOP;
 END;
 $$;
