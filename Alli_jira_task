@@ -1,48 +1,56 @@
-WITH source_data AS (
-  SELECT 
-    CAST(Payload AS STRING) AS Payload_str
-  FROM mqs.dlt_quote_request
-  WHERE Payload IS NOT NULL
-),
+from pyspark.sql.functions import col, explode, from_json
+from pyspark.sql.types import *
 
-parsed AS (
-  SELECT 
-    from_json(Payload_str, '
-    STRUCT<
-      coreRisk: ARRAY<STRUCT<
-        drivers: ARRAY<STRUCT<
-          incidents: STRUCT<
-            claims: ARRAY<STRUCT<
-              claim_ClaimType: STRING,
-              claim_Date: STRING,
-              claim_DriverAtFaultInd: STRING,
-              claim_NcdLostInd: STRING,
-              claim_Prn: INT
-            >>
-          >
-        >>
-      >>
-    >') AS parsed_json
-  FROM source_data
-),
+# Define the schema for the nested JSON structure
+schema = StructType([
+    StructField("coreRisk", ArrayType(
+        StructType([
+            StructField("drivers", ArrayType(
+                StructType([
+                    StructField("driver_Prn", StringType()),
+                    StructField("incidents", StructType([
+                        StructField("claims", ArrayType(
+                            StructType([
+                                StructField("claim_ClaimType", StringType()),
+                                StructField("claim_Date", StringType()),
+                                StructField("claim_DriverAtFaultInd", StringType()),
+                                StructField("claim_NcdLostInd", StringType()),
+                                StructField("claim_Prn", IntegerType())
+                            ])
+                        ))
+                    ]))
+                ])
+            ))
+        ])
+    ))
+])
 
-core_risk_exploded AS (
-  SELECT explode(parsed_json.coreRisk) AS core_risk FROM parsed
-),
+# Read the table
+df = spark.table("mqs.dlt_quote_request")
 
-drivers_exploded AS (
-  SELECT explode(core_risk.drivers) AS driver FROM core_risk_exploded
-),
+# Ensure Payload is cast to string before parsing
+df = df.withColumn("Payload_str", col("Payload").cast("string"))
 
-claims_exploded AS (
-  SELECT explode(driver.incidents.claims) AS claim FROM drivers_exploded
+# Parse JSON column
+parsed_df = df.withColumn("parsed", from_json(col("Payload_str"), schema))
+
+# Explode coreRisk -> drivers -> claims
+core_risk_df = parsed_df.select(explode("parsed.coreRisk").alias("coreRisk"))
+drivers_df = core_risk_df.select(explode("coreRisk.drivers").alias("driver"))
+claims_df = drivers_df.select(
+    col("driver.driver_Prn"),
+    explode("driver.incidents.claims").alias("claim")
 )
 
--- Final selection of required fields
-SELECT
-  claim.claim_ClaimType,
-  claim.claim_Date,
-  claim.claim_DriverAtFaultInd,
-  claim.claim_NcdLostInd,
-  claim.claim_Prn
-FROM claims_exploded;
+# Select required fields
+final_df = claims_df.select(
+    col("driver_Prn"),
+    col("claim.claim_ClaimType").alias("claim_ClaimType"),
+    col("claim.claim_Date").alias("claim_Date"),
+    col("claim.claim_DriverAtFaultInd").alias("claim_DriverAtFaultInd"),
+    col("claim.claim_NcdLostInd").alias("claim_NcdLostInd"),
+    col("claim.claim_Prn").cast("string").alias("claim_Prn")
+)
+
+# Show the result
+final_df.show(truncate=False)
