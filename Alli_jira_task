@@ -1,41 +1,31 @@
-DO
-$$
+SET SERVEROUTPUT ON;
+
 DECLARE
-    table_list TEXT[] := ARRAY[
-        'table1',
-        'table2',
-        'table3'  -- Add your actual table names here
-    ];
-    tbl_name TEXT;
-    row_count BIGINT;
-    loaded_tables INT := 0;
-    not_loaded_tables INT := 0;
-    table_exists BOOLEAN;
+    TYPE table_list_t IS TABLE OF VARCHAR2(100);
+    table_names table_list_t := table_list_t('TABLE1', 'TABLE2', 'TABLE3'); -- Replace with your tables
+    v_sql   VARCHAR2(1000);
+    v_count NUMBER;
+    loaded_count     NUMBER := 0;
+    not_loaded_count NUMBER := 0;
 BEGIN
-    FOREACH tbl_name IN ARRAY table_list
-    LOOP
-        -- Check if table exists in the public schema
-        SELECT EXISTS (
-            SELECT 1 FROM pg_tables 
-            WHERE schemaname = 'public' AND tablename = tbl_name
-        ) INTO table_exists;
+    FOR i IN 1 .. table_names.COUNT LOOP
+        BEGIN
+            v_sql := 'SELECT COUNT(*) FROM ' || table_names(i);
+            EXECUTE IMMEDIATE v_sql INTO v_count;
 
-        IF table_exists THEN
-            EXECUTE format('SELECT count(*) FROM public.%I', tbl_name) INTO row_count;
-
-            IF row_count > 0 THEN
-                loaded_tables := loaded_tables + 1;
-                RAISE NOTICE 'Table: %, Count: %, Status: LOADED', tbl_name, row_count;
+            IF v_count > 0 THEN
+                loaded_count := loaded_count + 1;
+                DBMS_OUTPUT.PUT_LINE('Table: ' || table_names(i) || ', Count: ' || v_count || ', Status: LOADED');
             ELSE
-                not_loaded_tables := not_loaded_tables + 1;
-                RAISE NOTICE 'Table: %, Count: %, Status: NOT LOADED', tbl_name, row_count;
+                not_loaded_count := not_loaded_count + 1;
+                DBMS_OUTPUT.PUT_LINE('Table: ' || table_names(i) || ', Count: ' || v_count || ', Status: NOT LOADED');
             END IF;
-        ELSE
-            RAISE NOTICE 'Table: % not found in schema public', tbl_name;
-        END IF;
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Table: ' || table_names(i) || ' - Error: ' || SQLERRM);
+        END;
     END LOOP;
 
-    -- Summary
-    RAISE NOTICE 'Summary -> Loaded tables: %, Not loaded tables: %', loaded_tables, not_loaded_tables;
+    DBMS_OUTPUT.PUT_LINE('Summary -> Loaded: ' || loaded_count || ', Not Loaded: ' || not_loaded_count);
 END;
-$$;
+/
