@@ -1,35 +1,53 @@
-from pyspark.sql.functions import col, explode, from_json, schema_of_json
-from pyspark.sql import SparkSession
+-- Step 1: Define schema for the expected JSON structure
+-- (You can adjust field types if needed)
 
-# Start Spark session
-spark = SparkSession.builder.getOrCreate()
+WITH source_data AS (
+  SELECT 
+    CAST(Payload AS STRING) AS Payload_str
+  FROM mqs.dlt_quote_request
+  WHERE Payload IS NOT NULL
+),
 
-# Read the table
-df = spark.table("mqs.dlt_quote_request")
+-- Step 2: Parse the JSON using a defined schema
+parsed AS (
+  SELECT 
+    from_json(Payload_str, '
+    STRUCT<
+      coreRisk: STRUCT<
+        drivers: ARRAY<STRUCT<
+          incidents: STRUCT<
+            claims: ARRAY<STRUCT<
+              claim_PRN: STRING,
+              claim_ClaimType: STRING,
+              claim_Date: STRING,
+              claim_DriverAtFaultInd: STRING,
+              claim_NcdLostInd: STRING
+            >>
+          >
+        >>
+      >
+    >') AS parsed_json
+  FROM source_data
+),
 
-# Convert Payload to string (safe for from_json)
-df = df.withColumn("Payload_str", col("Payload").cast("string"))
+-- Step 3: Flatten the nested structure
+exploded AS (
+  SELECT 
+    EXPLODE(parsed_json.coreRisk.drivers) AS driver
+  FROM parsed
+),
 
-# Sample a record to infer schema
-sample_json = df.select("Payload_str").filter("Payload_str IS NOT NULL").limit(1).collect()[0][0]
-json_schema = schema_of_json(sample_json)
-
-# Parse the JSON string into structured data
-parsed_df = df.withColumn("parsed", from_json(col("Payload_str"), json_schema))
-
-# Explode drivers → incidents → claims
-exploded_df = parsed_df \
-    .withColumn("driver", explode("parsed.coreRisk.drivers")) \
-    .withColumn("claim", explode("driver.incidents.claims"))
-
-# Extract the fields
-result_df = exploded_df.select(
-    col("claim.claim_PRN").alias("claim_PRN"),
-    col("claim.claim_ClaimType").alias("claim_ClaimType"),
-    col("claim.claim_Date").alias("claim_Date"),
-    col("claim.claim_DriverAtFaultInd").alias("claim_DriverAtFaultInd"),
-    col("claim.claim_NcdLostInd").alias("claim_NcdLostInd")
+claims AS (
+  SELECT 
+    EXPLODE(driver.incidents.claims) AS claim
+  FROM exploded
 )
 
-# Display the result
-result_df.show(truncate=False)
+-- Step 4: Select the required fields
+SELECT
+  claim.claim_PRN,
+  claim.claim_ClaimType,
+  claim.claim_Date,
+  claim.claim_DriverAtFaultInd,
+  claim.claim_NcdLostInd
+FROM claims;
