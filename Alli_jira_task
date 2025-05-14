@@ -2,10 +2,10 @@ DO
 $$
 DECLARE
     tbl RECORD;
-    filtered_count BIGINT;
-    has_column BOOLEAN;
-    start_time TIMESTAMP := '2025-05-12 00:00:01+00';
-    end_time   TIMESTAMP := '2025-05-13 00:00:01+00';
+    row_count BIGINT;
+    has_updatetime BOOLEAN;
+    start_ts TIMESTAMP := '2025-05-12 00:00:01';
+    end_ts TIMESTAMP := '2025-05-13 00:00:01';
 BEGIN
     FOR tbl IN
         SELECT tablename
@@ -19,19 +19,18 @@ BEGIN
             WHERE table_schema = 'public'
               AND table_name = tbl.tablename
               AND column_name = 'updatetime'
-        ) INTO has_column;
+        ) INTO has_updatetime;
 
-        IF has_column THEN
-            -- Count rows within the specified time range
+        -- Count based on condition
+        IF has_updatetime THEN
             EXECUTE format(
-                'SELECT count(*) FROM public.%I WHERE updatetime BETWEEN TIMESTAMP %L AND TIMESTAMP %L',
-                tbl.tablename, start_time, end_time
-            ) INTO filtered_count;
-
-            RAISE NOTICE 'Table: %, Rows between % and %: %',
-                tbl.tablename, start_time, end_time, filtered_count;
+                'SELECT count(*) FROM public.%I WHERE updatetime >= %L AND updatetime < %L',
+                tbl.tablename, start_ts, end_ts
+            ) INTO row_count;
+            RAISE NOTICE 'Table: %, Filtered Count (updatetime exists): %', tbl.tablename, row_count;
         ELSE
-            RAISE NOTICE 'Table: % skipped - no updatetime column', tbl.tablename;
+            EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
+            RAISE NOTICE 'Table: %, Full Count (no updatetime): %', tbl.tablename, row_count;
         END IF;
     END LOOP;
 END;
