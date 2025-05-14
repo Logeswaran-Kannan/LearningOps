@@ -1,7 +1,9 @@
 from pyspark.sql.functions import col, explode, from_json
 from pyspark.sql.types import *
 
-# Define the schema for the nested JSON structure
+# ----------------------------
+# Step 1: Define schema for source Payload JSON
+# ----------------------------
 schema = StructType([
     StructField("coreRisk", ArrayType(
         StructType([
@@ -25,16 +27,13 @@ schema = StructType([
     ))
 ])
 
-# Read the table
-df = spark.table("mqs.dlt_quote_request")
+# ----------------------------
+# Step 2: Extract source data
+# ----------------------------
+source_df = spark.table("mqs.dlt_quote_request")
+source_df = source_df.withColumn("Payload_str", col("Payload").cast("string"))
+parsed_df = source_df.withColumn("parsed", from_json(col("Payload_str"), schema))
 
-# Ensure Payload is cast to string before parsing
-df = df.withColumn("Payload_str", col("Payload").cast("string"))
-
-# Parse JSON column
-parsed_df = df.withColumn("parsed", from_json(col("Payload_str"), schema))
-
-# Explode coreRisk -> drivers -> claims
 core_risk_df = parsed_df.select(explode("parsed.coreRisk").alias("coreRisk"))
 drivers_df = core_risk_df.select(explode("coreRisk.drivers").alias("driver"))
 claims_df = drivers_df.select(
@@ -42,8 +41,7 @@ claims_df = drivers_df.select(
     explode("driver.incidents.claims").alias("claim")
 )
 
-# Select required fields
-final_df = claims_df.select(
+source_final = claims_df.select(
     col("driver_Prn"),
     col("claim.claim_ClaimType").alias("claim_ClaimType"),
     col("claim.claim_Date").alias("claim_Date"),
@@ -52,5 +50,34 @@ final_df = claims_df.select(
     col("claim.claim_Prn").cast("string").alias("claim_Prn")
 )
 
-# Show the result
-final_df.show(truncate=False)
+# ----------------------------
+# Step 3: Load target data and exclude audit columns
+# ----------------------------
+exclude_cols = ["QUOTE_KEY", "MULTI_ACTIVE_SQNC", "LOAD_DT", "DWN_ANCHOR_DT", "REC_SRCE"]
+target_df = spark.table("claim_mtr_atna")
+target_final = target_df.drop(*exclude_cols)
+
+# ----------------------------
+# Step 4: Align columns for comparison (lowercase & ordered)
+# ----------------------------
+source_final = source_final.select(sorted(source_final.columns))
+target_final = target_final.select(sorted(target_final.columns))
+
+# ----------------------------
+# Step 5: Compare source vs target
+# ----------------------------
+source_count = source_final.count()
+target_count = target_final.count()
+
+source_minus_target = source_final.subtract(target_final)
+target_minus_source = target_final.subtract(source_final)
+
+# Show counts and differences
+print("🔢 Source count:", source_count)
+print("📦 Target count:", target_count)
+
+print("\n✅ Records in source but not in target:")
+source_minus_target.show(truncate=False)
+
+print("\n⚠️ Records in target but not in source:")
+target_minus_source.show(truncate=False)
