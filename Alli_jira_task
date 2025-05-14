@@ -1,31 +1,8 @@
-SET SERVEROUTPUT ON;
-
-DECLARE
-    TYPE table_list_t IS TABLE OF VARCHAR2(100);
-    table_names table_list_t := table_list_t('TABLE1', 'TABLE2', 'TABLE3'); -- Replace with your tables
-    v_sql   VARCHAR2(1000);
-    v_count NUMBER;
-    loaded_count     NUMBER := 0;
-    not_loaded_count NUMBER := 0;
-BEGIN
-    FOR i IN 1 .. table_names.COUNT LOOP
-        BEGIN
-            v_sql := 'SELECT COUNT(*) FROM ' || table_names(i);
-            EXECUTE IMMEDIATE v_sql INTO v_count;
-
-            IF v_count > 0 THEN
-                loaded_count := loaded_count + 1;
-                DBMS_OUTPUT.PUT_LINE('Table: ' || table_names(i) || ', Count: ' || v_count || ', Status: LOADED');
-            ELSE
-                not_loaded_count := not_loaded_count + 1;
-                DBMS_OUTPUT.PUT_LINE('Table: ' || table_names(i) || ', Count: ' || v_count || ', Status: NOT LOADED');
-            END IF;
-        EXCEPTION
-            WHEN OTHERS THEN
-                DBMS_OUTPUT.PUT_LINE('Table: ' || table_names(i) || ' - Error: ' || SQLERRM);
-        END;
-    END LOOP;
-
-    DBMS_OUTPUT.PUT_LINE('Summary -> Loaded: ' || loaded_count || ', Not Loaded: ' || not_loaded_count);
-END;
-/
+SELECT 
+    'SELECT ''' || table_name || ''' AS table_name, COUNT(*) AS row_count, ' ||
+    'CASE WHEN COUNT(*) > 0 THEN ''LOADED'' ELSE ''NOT LOADED'' END AS status ' ||
+    'FROM ' || table_name || 
+    ' UNION ALL'
+AS generated_sql
+FROM user_tables
+WHERE table_name IN ('TABLE1', 'TABLE2', 'TABLE3');  -- Add your table names here
