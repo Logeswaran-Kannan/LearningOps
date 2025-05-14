@@ -1,83 +1,62 @@
-from pyspark.sql.functions import col, explode, from_json
-from pyspark.sql.types import *
+DO
+$$
+DECLARE
+    tbl RECORD;
+    row_count BIGINT;
+    has_updatetime BOOLEAN;
+    start_ts TIMESTAMP := '2025-05-12 00:00:01';
+    end_ts TIMESTAMP := '2025-05-13 00:00:01';
+    export_query TEXT;
+    output_path TEXT := '/your/export/path/'; -- Change this to your target path
+    input_tables TEXT[] := ARRAY['table1', 'table2', 'table3']; -- Replace with your table names
+BEGIN
+    FOR tbl IN
+        SELECT unnest(input_tables) AS tablename
+    LOOP
+        -- Check if 'updatetime' column exists
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = tbl.tablename
+              AND column_name = 'updatetime'
+        ) INTO has_updatetime;
 
-# ----------------------------
-# Step 1: Define schema for source Payload JSON
-# ----------------------------
-schema = StructType([
-    StructField("coreRisk", ArrayType(
-        StructType([
-            StructField("drivers", ArrayType(
-                StructType([
-                    StructField("driver_Prn", StringType()),
-                    StructField("incidents", StructType([
-                        StructField("claims", ArrayType(
-                            StructType([
-                                StructField("claim_ClaimType", StringType()),
-                                StructField("claim_Date", StringType()),
-                                StructField("claim_DriverAtFaultInd", StringType()),
-                                StructField("claim_NcdLostInd", StringType()),
-                                StructField("claim_Prn", IntegerType())
-                            ])
-                        ))
-                    ]))
-                ])
-            ))
-        ])
-    ))
-])
+        -- Update 'updatetime' as 'createtime' if applicable
+        IF has_updatetime THEN
+            EXECUTE format(
+                'UPDATE public.%I SET updatetime = createtime WHERE updatetime IS DISTINCT FROM createtime',
+                tbl.tablename
+            );
+        END IF;
 
-# ----------------------------
-# Step 2: Extract source data
-# ----------------------------
-source_df = spark.table("mqs.dlt_quote_request")
-source_df = source_df.withColumn("Payload_str", col("Payload").cast("string"))
-parsed_df = source_df.withColumn("parsed", from_json(col("Payload_str"), schema))
+        -- Determine row count
+        IF has_updatetime THEN
+            EXECUTE format(
+                'SELECT count(*) FROM public.%I WHERE updatetime >= %L AND updatetime < %L',
+                tbl.tablename, start_ts, end_ts
+            ) INTO row_count;
+        ELSE
+            EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
+        END IF;
 
-core_risk_df = parsed_df.select(explode("parsed.coreRisk").alias("coreRisk"))
-drivers_df = core_risk_df.select(explode("coreRisk.drivers").alias("driver"))
-claims_df = drivers_df.select(
-    col("driver.driver_Prn"),
-    explode("driver.incidents.claims").alias("claim")
-)
+        -- Construct export query
+        IF row_count <= 5000 THEN
+            export_query := format(
+                'COPY (SELECT * FROM public.%I) TO %L WITH CSV HEADER',
+                tbl.tablename, output_path || tbl.tablename || '.csv'
+            );
+        ELSE
+            export_query := format(
+                'COPY (SELECT * FROM public.%I WHERE updatetime >= %L AND updatetime < %L) TO %L WITH CSV HEADER',
+                tbl.tablename, start_ts, end_ts, output_path || tbl.tablename || '.csv'
+            );
+        END IF;
 
-source_final = claims_df.select(
-    col("driver_Prn"),
-    col("claim.claim_ClaimType").alias("claim_ClaimType"),
-    col("claim.claim_Date").alias("claim_Date"),
-    col("claim.claim_DriverAtFaultInd").alias("claim_DriverAtFaultInd"),
-    col("claim.claim_NcdLostInd").alias("claim_NcdLostInd"),
-    col("claim.claim_Prn").cast("string").alias("claim_Prn")
-)
+        -- Execute export
+        EXECUTE export_query;
 
-# ----------------------------
-# Step 3: Load target data and exclude audit columns
-# ----------------------------
-exclude_cols = ["QUOTE_KEY", "MULTI_ACTIVE_SQNC", "LOAD_DT", "DWN_ANCHOR_DT", "REC_SRCE"]
-target_df = spark.table("claim_mtr_atna")
-target_final = target_df.drop(*exclude_cols)
-
-# ----------------------------
-# Step 4: Align columns for comparison (lowercase & ordered)
-# ----------------------------
-source_final = source_final.select(sorted(source_final.columns))
-target_final = target_final.select(sorted(target_final.columns))
-
-# ----------------------------
-# Step 5: Compare source vs target
-# ----------------------------
-source_count = source_final.count()
-target_count = target_final.count()
-
-source_minus_target = source_final.subtract(target_final)
-target_minus_source = target_final.subtract(source_final)
-
-# Show counts and differences
-print("🔢 Source count:", source_count)
-print("📦 Target count:", target_count)
-
-print("\n✅ Records in source but not in target:")
-source_minus_target.show(truncate=False)
-
-print("\n⚠️ Records in target but not in source:")
-target_minus_source.show(truncate=False)
+        RAISE NOTICE 'Exported table % with % rows', tbl.tablename, row_count;
+    END LOOP;
+END;
+$$;
