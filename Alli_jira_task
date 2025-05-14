@@ -2,29 +2,37 @@ DO
 $$
 DECLARE
     tbl RECORD;
-    row_count BIGINT;
+    filtered_count BIGINT;
     has_column BOOLEAN;
+    start_time TIMESTAMP := '2025-05-12 00:00:01+00';
+    end_time   TIMESTAMP := '2025-05-13 00:00:01+00';
 BEGIN
     FOR tbl IN
         SELECT tablename
         FROM pg_tables
         WHERE schemaname = 'public'
     LOOP
-        -- Check if 'createtime' column exists
+        -- Check if 'updatetime' column exists
         SELECT EXISTS (
             SELECT 1
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name = tbl.tablename
-              AND column_name = 'createtime'
+              AND column_name = 'updatetime'
         ) INTO has_column;
 
-        -- Get table row count
-        EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
+        IF has_column THEN
+            -- Count rows within the specified time range
+            EXECUTE format(
+                'SELECT count(*) FROM public.%I WHERE updatetime BETWEEN TIMESTAMP %L AND TIMESTAMP %L',
+                tbl.tablename, start_time, end_time
+            ) INTO filtered_count;
 
-        -- Log both count and column check
-        RAISE NOTICE 'Table: %, Row Count: %, Has createtime: %',
-            tbl.tablename, row_count, has_column;
+            RAISE NOTICE 'Table: %, Rows between % and %: %',
+                tbl.tablename, start_time, end_time, filtered_count;
+        ELSE
+            RAISE NOTICE 'Table: % skipped - no updatetime column', tbl.tablename;
+        END IF;
     END LOOP;
 END;
 $$;
