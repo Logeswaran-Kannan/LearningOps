@@ -8,50 +8,47 @@ DECLARE
     end_ts TIMESTAMP := '2025-05-13 00:00:01';
     export_path TEXT := '/desired/export/path/'; -- CHANGE THIS TO YOUR PATH
     sql TEXT;
+    input_tables TEXT[] := ARRAY['table1', 'table2']; -- ADD YOUR TABLE NAMES HERE
 BEGIN
-    FOR tbl IN
-        SELECT tablename
-        FROM pg_tables
-        WHERE schemaname = 'public'
-    LOOP
+    FOREACH tbl IN ARRAY input_tables LOOP
         -- Check if 'createtime' column exists
         SELECT EXISTS (
             SELECT 1
             FROM information_schema.columns
             WHERE table_schema = 'public'
-              AND table_name = tbl.tablename
+              AND table_name = tbl
               AND column_name = 'createtime'
         ) INTO has_createtime;
 
         IF has_createtime THEN
             EXECUTE format(
                 'SELECT count(*) FROM public.%I WHERE createtime >= %L AND createtime < %L',
-                tbl.tablename, start_ts, end_ts
+                tbl, start_ts, end_ts
             ) INTO row_count;
-            RAISE NOTICE 'Table: %, Filtered Count (createtime exists): %', tbl.tablename, row_count;
+            RAISE NOTICE 'Table: %, Filtered Count (createtime exists): %', tbl, row_count;
 
             IF row_count > 5000 THEN
                 sql := format(
                     'COPY (SELECT * FROM public.%I WHERE createtime >= %L AND createtime < %L)
                      TO %L WITH CSV HEADER',
-                    tbl.tablename, start_ts, end_ts,
-                    export_path || tbl.tablename || '_filtered.csv'
+                    tbl, start_ts, end_ts,
+                    export_path || tbl || '_filtered.csv'
                 );
             ELSE
                 sql := format(
                     'COPY public.%I TO %L WITH CSV HEADER',
-                    tbl.tablename,
-                    export_path || tbl.tablename || '_full.csv'
+                    tbl,
+                    export_path || tbl || '_full.csv'
                 );
             END IF;
         ELSE
-            EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
-            RAISE NOTICE 'Table: %, Full Count (no createtime): %', tbl.tablename, row_count;
+            EXECUTE format('SELECT count(*) FROM public.%I', tbl) INTO row_count;
+            RAISE NOTICE 'Table: %, Full Count (no createtime): %', tbl, row_count;
 
             sql := format(
                 'COPY public.%I TO %L WITH CSV HEADER',
-                tbl.tablename,
-                export_path || tbl.tablename || '_full.csv'
+                tbl,
+                export_path || tbl || '_full.csv'
             );
         END IF;
 
