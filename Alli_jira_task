@@ -1,8 +1,32 @@
-SELECT 
-    'SELECT ''' || table_name || ''' AS table_name, COUNT(*) AS row_count, ' ||
-    'CASE WHEN COUNT(*) > 0 THEN ''LOADED'' ELSE ''NOT LOADED'' END AS status ' ||
-    'FROM ' || table_name || 
-    ' UNION ALL'
-AS generated_sql
-FROM user_tables
-WHERE table_name IN ('TABLE1', 'TABLE2', 'TABLE3');  -- Add your table names here
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Hello from PL/SQL!');
+END;
+
+
+
+
+DECLARE
+    TYPE t_table_list IS TABLE OF VARCHAR2(100);
+    table_list t_table_list := t_table_list('TABLE1', 'TABLE2', 'TABLE3');
+    row_count NUMBER;
+    loaded_tables NUMBER := 0;
+    not_loaded_tables NUMBER := 0;
+BEGIN
+    FOR i IN 1 .. table_list.COUNT LOOP
+        BEGIN
+            EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM ' || table_list(i) INTO row_count;
+            IF row_count > 0 THEN
+                loaded_tables := loaded_tables + 1;
+                DBMS_OUTPUT.PUT_LINE('Table: ' || table_list(i) || ' | Count: ' || row_count || ' | Status: LOADED');
+            ELSE
+                not_loaded_tables := not_loaded_tables + 1;
+                DBMS_OUTPUT.PUT_LINE('Table: ' || table_list(i) || ' | Count: ' || row_count || ' | Status: NOT LOADED');
+            END IF;
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Error accessing table: ' || table_list(i) || ' - ' || SQLERRM);
+        END;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('Summary -> Loaded: ' || loaded_tables || ', Not Loaded: ' || not_loaded_tables);
+END;
