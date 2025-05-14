@@ -7,19 +7,22 @@ spark = SparkSession.builder.getOrCreate()
 # Read the table
 df = spark.table("mqs.dlt_quote_request")
 
-# Infer schema from a sample JSON to help parse
-sample_json = df.select("Payload").filter("Payload IS NOT NULL").limit(1).collect()[0][0]
+# Convert Payload to string (safe for from_json)
+df = df.withColumn("Payload_str", col("Payload").cast("string"))
+
+# Sample a record to infer schema
+sample_json = df.select("Payload_str").filter("Payload_str IS NOT NULL").limit(1).collect()[0][0]
 json_schema = schema_of_json(sample_json)
 
-# Parse the JSON string into a structured column
-parsed_df = df.withColumn("parsed", from_json(col("Payload"), json_schema))
+# Parse the JSON string into structured data
+parsed_df = df.withColumn("parsed", from_json(col("Payload_str"), json_schema))
 
-# Navigate nested structure: coreRisk -> drivers[] -> incidents -> claims[]
+# Explode drivers → incidents → claims
 exploded_df = parsed_df \
     .withColumn("driver", explode("parsed.coreRisk.drivers")) \
     .withColumn("claim", explode("driver.incidents.claims"))
 
-# Extract the required fields if present
+# Extract the fields
 result_df = exploded_df.select(
     col("claim.claim_PRN").alias("claim_PRN"),
     col("claim.claim_ClaimType").alias("claim_ClaimType"),
@@ -28,5 +31,5 @@ result_df = exploded_df.select(
     col("claim.claim_NcdLostInd").alias("claim_NcdLostInd")
 )
 
-# Show or export results
+# Display the result
 result_df.show(truncate=False)
