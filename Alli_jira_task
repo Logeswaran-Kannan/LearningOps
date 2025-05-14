@@ -1,49 +1,41 @@
 DO
 $$
 DECLARE
-    tbl RECORD;
+    table_list TEXT[] := ARRAY[
+        'table1',
+        'table2',
+        'table3'  -- Add your actual table names here
+    ];
+    tbl_name TEXT;
     row_count BIGINT;
-    has_updatetime BOOLEAN;
-    start_ts TIMESTAMP := '2025-05-12 00:00:01';
-    end_ts TIMESTAMP := '2025-05-13 00:00:01';
     loaded_tables INT := 0;
     not_loaded_tables INT := 0;
+    table_exists BOOLEAN;
 BEGIN
-    FOR tbl IN
-        SELECT tablename
-        FROM pg_tables
-        WHERE schemaname = 'public'
+    FOREACH tbl_name IN ARRAY table_list
     LOOP
-        -- Check if 'updatetime' column exists
+        -- Check if table exists in the public schema
         SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = tbl.tablename
-              AND column_name = 'updatetime'
-        ) INTO has_updatetime;
+            SELECT 1 FROM pg_tables 
+            WHERE schemaname = 'public' AND tablename = tbl_name
+        ) INTO table_exists;
 
-        -- Perform count based on presence of updatetime
-        IF has_updatetime THEN
-            EXECUTE format(
-                'SELECT count(*) FROM public.%I WHERE updatetime >= %L AND updatetime < %L',
-                tbl.tablename, start_ts, end_ts
-            ) INTO row_count;
-        ELSE
-            EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
-        END IF;
+        IF table_exists THEN
+            EXECUTE format('SELECT count(*) FROM public.%I', tbl_name) INTO row_count;
 
-        -- Track loaded / not loaded
-        IF row_count > 0 THEN
-            loaded_tables := loaded_tables + 1;
-            RAISE NOTICE 'Table: %, Count: %, Status: LOADED', tbl.tablename, row_count;
+            IF row_count > 0 THEN
+                loaded_tables := loaded_tables + 1;
+                RAISE NOTICE 'Table: %, Count: %, Status: LOADED', tbl_name, row_count;
+            ELSE
+                not_loaded_tables := not_loaded_tables + 1;
+                RAISE NOTICE 'Table: %, Count: %, Status: NOT LOADED', tbl_name, row_count;
+            END IF;
         ELSE
-            not_loaded_tables := not_loaded_tables + 1;
-            RAISE NOTICE 'Table: %, Count: %, Status: NOT LOADED', tbl.tablename, row_count;
+            RAISE NOTICE 'Table: % not found in schema public', tbl_name;
         END IF;
     END LOOP;
 
-    -- Final summary
+    -- Summary
     RAISE NOTICE 'Summary -> Loaded tables: %, Not loaded tables: %', loaded_tables, not_loaded_tables;
 END;
 $$;
