@@ -6,6 +6,8 @@ DECLARE
     has_updatetime BOOLEAN;
     start_ts TIMESTAMP := '2025-05-12 00:00:01';
     end_ts TIMESTAMP := '2025-05-13 00:00:01';
+    loaded_tables INT := 0;
+    not_loaded_tables INT := 0;
 BEGIN
     FOR tbl IN
         SELECT tablename
@@ -21,17 +23,27 @@ BEGIN
               AND column_name = 'updatetime'
         ) INTO has_updatetime;
 
-        -- Count based on condition
+        -- Perform count based on presence of updatetime
         IF has_updatetime THEN
             EXECUTE format(
                 'SELECT count(*) FROM public.%I WHERE updatetime >= %L AND updatetime < %L',
                 tbl.tablename, start_ts, end_ts
             ) INTO row_count;
-            RAISE NOTICE 'Table: %, Filtered Count (updatetime exists): %', tbl.tablename, row_count;
         ELSE
             EXECUTE format('SELECT count(*) FROM public.%I', tbl.tablename) INTO row_count;
-            RAISE NOTICE 'Table: %, Full Count (no updatetime): %', tbl.tablename, row_count;
+        END IF;
+
+        -- Track loaded / not loaded
+        IF row_count > 0 THEN
+            loaded_tables := loaded_tables + 1;
+            RAISE NOTICE 'Table: %, Count: %, Status: LOADED', tbl.tablename, row_count;
+        ELSE
+            not_loaded_tables := not_loaded_tables + 1;
+            RAISE NOTICE 'Table: %, Count: %, Status: NOT LOADED', tbl.tablename, row_count;
         END IF;
     END LOOP;
+
+    -- Final summary
+    RAISE NOTICE 'Summary -> Loaded tables: %, Not loaded tables: %', loaded_tables, not_loaded_tables;
 END;
 $$;
