@@ -1,6 +1,7 @@
 DO
 $$
 DECLARE
+    i INT;
     tbl_name TEXT;
     row_count BIGINT;
     has_createtime BOOLEAN;
@@ -10,7 +11,9 @@ DECLARE
     sql TEXT;
     input_tables TEXT[] := ARRAY['table1', 'table2']; -- ADD YOUR TABLE NAMES HERE
 BEGIN
-    FOREACH tbl_name IN ARRAY input_tables LOOP
+    FOR i IN 1 .. array_length(input_tables, 1) LOOP
+        tbl_name := input_tables[i];
+
         -- Check if 'createtime' column exists
         SELECT EXISTS (
             SELECT 1
