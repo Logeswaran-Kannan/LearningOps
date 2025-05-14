@@ -24,10 +24,11 @@ BEGIN
         ) INTO has_createtime;
 
         IF has_createtime THEN
-            EXECUTE format(
+            sql := format(
                 'SELECT count(*) FROM public.%I WHERE createtime >= %L AND createtime < %L',
                 tbl_name, start_ts, end_ts
-            ) INTO row_count;
+            );
+            EXECUTE sql INTO row_count;
             RAISE NOTICE 'Table: %, Filtered Count (createtime exists): %', tbl_name, row_count;
 
             IF row_count > 5000 THEN
@@ -45,7 +46,8 @@ BEGIN
                 );
             END IF;
         ELSE
-            EXECUTE format('SELECT count(*) FROM public.%I', tbl_name) INTO row_count;
+            sql := format('SELECT count(*) FROM public.%I', tbl_name);
+            EXECUTE sql INTO row_count;
             RAISE NOTICE 'Table: %, Full Count (no createtime): %', tbl_name, row_count;
 
             sql := format(
