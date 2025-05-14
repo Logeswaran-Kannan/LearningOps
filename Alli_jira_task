@@ -1,6 +1,3 @@
--- Step 1: Define schema for the expected JSON structure
--- (You can adjust field types if needed)
-
 WITH source_data AS (
   SELECT 
     CAST(Payload AS STRING) AS Payload_str
@@ -8,46 +5,44 @@ WITH source_data AS (
   WHERE Payload IS NOT NULL
 ),
 
--- Step 2: Parse the JSON using a defined schema
 parsed AS (
   SELECT 
     from_json(Payload_str, '
     STRUCT<
-      coreRisk: STRUCT<
+      coreRisk: ARRAY<STRUCT<
         drivers: ARRAY<STRUCT<
           incidents: STRUCT<
             claims: ARRAY<STRUCT<
-              claim_PRN: STRING,
               claim_ClaimType: STRING,
               claim_Date: STRING,
               claim_DriverAtFaultInd: STRING,
-              claim_NcdLostInd: STRING
+              claim_NcdLostInd: STRING,
+              claim_Prn: INT
             >>
           >
         >>
-      >
+      >>
     >') AS parsed_json
   FROM source_data
 ),
 
--- Step 3: Flatten the nested structure
-exploded AS (
-  SELECT 
-    EXPLODE(parsed_json.coreRisk.drivers) AS driver
-  FROM parsed
+core_risk_exploded AS (
+  SELECT explode(parsed_json.coreRisk) AS core_risk FROM parsed
 ),
 
-claims AS (
-  SELECT 
-    EXPLODE(driver.incidents.claims) AS claim
-  FROM exploded
+drivers_exploded AS (
+  SELECT explode(core_risk.drivers) AS driver FROM core_risk_exploded
+),
+
+claims_exploded AS (
+  SELECT explode(driver.incidents.claims) AS claim FROM drivers_exploded
 )
 
--- Step 4: Select the required fields
+-- Final selection of required fields
 SELECT
-  claim.claim_PRN,
   claim.claim_ClaimType,
   claim.claim_Date,
   claim.claim_DriverAtFaultInd,
-  claim.claim_NcdLostInd
-FROM claims;
+  claim.claim_NcdLostInd,
+  claim.claim_Prn
+FROM claims_exploded;
