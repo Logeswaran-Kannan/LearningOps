@@ -7,8 +7,9 @@ DECLARE
     has_createtime BOOLEAN;
     start_ts TIMESTAMP := '2025-05-12 00:00:01';
     end_ts TIMESTAMP := '2025-05-13 00:00:01';
-    export_path TEXT := '/desired/export/path/'; -- CHANGE THIS TO YOUR PATH
+    export_path TEXT := 'C:/Users/adm.logeswaran.kanna/Desktop/Export/PC/'; -- CHANGE THIS TO YOUR PATH
     sql TEXT;
+    copy_cmd TEXT;
     input_tables TEXT[] := ARRAY['table1', 'table2']; -- ADD YOUR TABLE NAMES HERE
 BEGIN
     FOR i IN 1 .. array_length(input_tables, 1) LOOP
@@ -32,17 +33,16 @@ BEGIN
             RAISE NOTICE 'Table: %, Filtered Count (createtime exists): %', tbl_name, row_count;
 
             IF row_count > 5000 THEN
-                sql := format(
-                    'COPY (SELECT * FROM public.%I WHERE createtime >= %L AND createtime < %L)
-                     TO %L WITH CSV HEADER',
+                copy_cmd := format(
+                    '\copy (SELECT * FROM public.%I WHERE createtime >= ''%s'' AND createtime < ''%s'') TO ''%s%s_filtered.csv'' WITH CSV HEADER',
                     tbl_name, start_ts, end_ts,
-                    export_path || tbl_name || '_filtered.csv'
+                    export_path, tbl_name
                 );
             ELSE
-                sql := format(
-                    'COPY public.%I TO %L WITH CSV HEADER',
+                copy_cmd := format(
+                    '\copy public.%I TO ''%s%s_full.csv'' WITH CSV HEADER',
                     tbl_name,
-                    export_path || tbl_name || '_full.csv'
+                    export_path, tbl_name
                 );
             END IF;
         ELSE
@@ -50,15 +50,15 @@ BEGIN
             EXECUTE sql INTO row_count;
             RAISE NOTICE 'Table: %, Full Count (no createtime): %', tbl_name, row_count;
 
-            sql := format(
-                'COPY public.%I TO %L WITH CSV HEADER',
+            copy_cmd := format(
+                '\copy public.%I TO ''%s%s_full.csv'' WITH CSV HEADER',
                 tbl_name,
-                export_path || tbl_name || '_full.csv'
+                export_path, tbl_name
             );
         END IF;
 
-        -- Execute the COPY command
-        EXECUTE sql;
+        -- Instead of executing, show the COPY command for manual execution
+        RAISE NOTICE 'COPY command: %', copy_cmd;
     END LOOP;
 END;
 $$;
