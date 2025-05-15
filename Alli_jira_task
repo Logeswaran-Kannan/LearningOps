@@ -1,6 +1,3 @@
-📅 Subject: Daily Defect Triage Meeting
-🕒 Duration: 30 minutes (adjust as needed)
-📍 Location: Teams / Zoom
+I’m part of the Radar Live data testing team — I’m currently looking into the Vehicle Type data from Cosmos DB and was hoping to get some info on the configuration and connectivity side so I can help shape the test plan.
 
-📝 Agenda:
-The purpose of this daily triage is to review newly raised defects, validate and assign severity/priority, and ensure clear ownership for resolution. We will walk through all open and critical issues, provide updates, and confirm timelines for fixes. Any blockers or environment-related concerns impacting resolution will also be discussed to keep test execution on track.
+Do you have a bit of time today to give us a quick walkthrough at a high level? Mainly looking to understand the test setup, schema, how it flows through Databricks, and the source DB details. Let me know what works!
