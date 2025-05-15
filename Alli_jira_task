@@ -66,13 +66,20 @@ for table in table_names:
         if target_count > 5000:
             target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
         target_filtered_count = target_df.count()
+
+        common_columns = list(source_columns & target_columns)
+        source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}"
+        target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}"
     except:
         target_df = None
         target_columns = set()
         target_count = 0
         target_filtered_count = 0
+        common_columns = list(source_columns)
+        source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}"
+        target_sql = ""
 
-    if source_count == target_count and target_df is not None:
+    if target_df is not None:
         missing_in_source = list(target_columns - source_columns)
         missing_in_target = list(source_columns - target_columns)
         common_columns = list(source_columns & target_columns)
@@ -88,18 +95,12 @@ for table in table_names:
                 mismatches_target.append(col_name)
 
         duplicate_count = target_df.count() - target_df.dropDuplicates().count()
-
-        # SQL query strings
-        source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}"
-        target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}"
     else:
         missing_in_source = []
         missing_in_target = []
         mismatches = []
         mismatches_target = []
         duplicate_count = 0
-        source_sql = ""
-        target_sql = ""
 
     results.append({
         "input_table": table,
