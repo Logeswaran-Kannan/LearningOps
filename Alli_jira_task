@@ -1,63 +1,55 @@
 from pyspark.sql import SparkSession
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("DDLComparison").getOrCreate()
+spark = SparkSession.builder.appName("DDL Comparison").getOrCreate()
 
-# Define input parameters
+# Input: list of table names to compare
+table_list = ["p_policy", "b_billing", "c_claim"]
+
+# Source and target catalog/database setup
 source_catalog = "core_tst_sys9"
-source_db = "rr_source"
+source_database = "rr_source"
 target_catalog = "core_tst_sys9"
-target_db = "ods"
-input_tables = ["ptable1", "btable2", "ctable3"]
+target_database = "ods"
 
-# Function to resolve target table names based on prefix
-def resolve_target_table_name(table_name):
-    prefix = table_name[0].lower()
-    if prefix == 'p':
-        return f"policycentre_{table_name}"
-    elif prefix == 'b':
-        return f"billingcentre_{table_name}"
-    elif prefix == 'c':
-        return f"claimcentre_{table_name}"
-    return table_name
+# Prefix mapping for target tables
+prefix_map = {
+    'p': 'policycentre_',
+    'b': 'billingcentre_',
+    'c': 'claimcentre_'
+}
 
-# Function to fetch table schema
-def get_table_columns(catalog, db, table):
+def get_columns(catalog, database, table):
     try:
-        df = spark.table(f"{catalog}.{db}.{table}")
+        df = spark.table(f"{catalog}.{database}.{table}")
         return set(df.columns)
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"Error accessing {catalog}.{database}.{table}: {e}")
+        return set()
 
-# Store results
-results = []
+# Comparison process
+for table in table_list:
+    table_prefix = table[0]
+    table_name = table
 
-for table in input_tables:
-    source_columns = get_table_columns(source_catalog, source_db, table)
-    target_table = resolve_target_table_name(table)
-    target_columns = get_table_columns(target_catalog, target_db, target_table)
+    # Source table name remains the same
+    source_table = table_name
 
-    table_status = "Present" if source_columns and target_columns else "Missing"
-    columns_status = []
+    # Modify target table name based on prefix
+    if table_prefix in prefix_map:
+        target_table = prefix_map[table_prefix] + table_name
+    else:
+        target_table = table_name
 
-    if source_columns and target_columns:
-        for col in source_columns:
-            if col in target_columns:
-                columns_status.append((col, "Present"))
-            else:
-                columns_status.append((col, "Missing"))
+    # Get column sets
+    source_columns = get_columns(source_catalog, source_database, source_table)
+    target_columns = get_columns(target_catalog, target_database, target_table)
 
-    results.append({
-        "Table": table,
-        "Target Table": target_table,
-        "Table Status": table_status,
-        "Columns": columns_status
-    })
+    # Find differences
+    missing_in_target = source_columns - target_columns
+    missing_in_source = target_columns - source_columns
 
-# Display results
-for result in results:
-    print(f"Table: {result['Table']} => Target Table: {result['Target Table']}")
-    print(f"  Table Status: {result['Table Status']}")
-    for col, status in result['Columns']:
-        print(f"    Column: {col} - {status}")
-    print("\n")
+    # Output results
+    print(f"\nTable Comparison: {table_name}")
+    print(f"Missing in target ({target_table}): {missing_in_target}")
+    print(f"Missing in source ({source_table}): {missing_in_source}")
