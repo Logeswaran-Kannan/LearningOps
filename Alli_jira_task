@@ -1,37 +1,99 @@
-Hey team, here's my quick update for today:
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, lower
 
-As part of this week's planning activity, we've finalized the technical test scenarios for the bronze layer. These scenarios cover everything from functional data validation to orchestration and fail-safe mechanisms — so we're confident it's a comprehensive set.
+# Initialize Spark session
+spark = SparkSession.builder.appName("BooleanColumnConversionAndComparison").getOrCreate()
 
-Based on the mapping document we have so far for the quote request message, we've identified:
+# Define catalogues and databases
+source_catalog = "core_tst_sys9"
+source_db = "rr_source"
+target_catalog = "core_tst_std001"
+target_db = "ods"
 
-21 bronze tables
+# List of input table names
+input_table_names = ["ptable1", "btable2", "ctable3"]  # Update with actual input table names
 
-8 silver tables
+# Function to convert boolean-like columns
+def convert_boolean_columns(df):
+    for column in df.columns:
+        unique_vals = df.select(column).distinct().rdd.flatMap(lambda x: x).collect()
+        if set(unique_vals).issubset({"t", "f"}):
+            df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
+    return df
 
-4 gold layer tables
+# Output results
+output = []
 
-For the other message types — precom request/response, stop quote, cache request/response — we’re still waiting for the finalized list of tables.
+for table in input_table_names:
+    source_table = f"{source_catalog}.{source_db}.{table}"
 
-In terms of progress:
+    if table.startswith("p"):
+        target_table = f"{target_catalog}.{target_db}.policycenter_{table}"
+    elif table.startswith("b"):
+        target_table = f"{target_catalog}.{target_db}.billingcenter_{table}"
+    elif table.startswith("c"):
+        target_table = f"{target_catalog}.{target_db}.claimcenter_{table}"
+    else:
+        target_table = f"{target_catalog}.{target_db}.{table}"
 
-We've completed test scripting for one bronze table so far.
+    try:
+        source_df = spark.table(source_table)
+        source_exists = True
+    except:
+        source_exists = False
 
-Planning to have a demo and test scenario walkthrough with the dev team early next week.
+    try:
+        target_df = spark.table(target_table)
+        target_exists = True
+    except:
+        target_exists = False
 
-On the business test data side, we've started drafting scenarios covering the basics — New Business (NB), NB Quote, Prequote, Requote, Stop Quote, MTA Quote, and Renewal Quote.
+    result = {
+        "input_table": table,
+        "source_table": source_table if source_exists else "missing",
+        "target_table": target_table if target_exists else "missing",
+        "source_count": None,
+        "target_count": None,
+        "missing_columns_in_source": [],
+        "missing_columns_in_target": [],
+        "mismatch_columns_src_vs_tgt": [],
+        "mismatch_columns_tgt_vs_src": [],
+        "duplicates_in_target": 0
+    }
 
-We do need some additional info from the Athena side. I’ll sync up with Asuthosh to get more clarity on that.
+    if source_exists and target_exists:
+        source_df = convert_boolean_columns(source_df)
+        target_df = convert_boolean_columns(target_df)
+        target_df = target_df.drop("azure_load_date")
 
-Also, had a detailed conversation with Robert about vehicle info in Cosmos DB — we’ve kicked off test scripting today to validate file vs DB comparison. We’ll do a system test scenario walkthrough with Robert mid-next week to get his inputs.
+        source_df = source_df.select([col(c).alias(c.lower()) for c in source_df.columns])
+        target_df = target_df.select([col(c).alias(c.lower()) for c in target_df.columns])
 
-Finally, what we’re looking to finalize:
+        result["source_count"] = source_df.count()
+        result["target_count"] = target_df.count()
 
-Day 1 table list for estimating test timelines
+        if result["source_count"] == result["target_count"]:
+            source_cols = set(source_df.columns)
+            target_cols = set(target_df.columns)
 
-Test environment readiness (especially for streaming and Cosmos DB sources)
+            result["missing_columns_in_source"] = list(target_cols - source_cols)
+            result["missing_columns_in_target"] = list(source_cols - target_cols)
 
-Scope of testing for the presentation layer
+            common_cols = list(source_cols & target_cols)
 
-And the volume of test data we’re planning to load.
+            for col_name in common_cols:
+                mismatches_src = source_df.select(col_name).subtract(target_df.select(col_name)).count()
+                mismatches_tgt = target_df.select(col_name).subtract(source_df.select(col_name)).count()
+                if mismatches_src > 0:
+                    result["mismatch_columns_src_vs_tgt"].append(col_name)
+                if mismatches_tgt > 0:
+                    result["mismatch_columns_tgt_vs_src"].append(col_name)
 
-That’s it from me — happy to dive deeper on any of these if needed.
+            duplicate_count = target_df.groupBy(common_cols).count().filter(col("count") > 1).count()
+            result["duplicates_in_target"] = duplicate_count
+
+    output.append(result)
+
+# Convert output to DataFrame and create a temporary view
+output_df = spark.createDataFrame(output)
+output_df.createOrReplaceTempView("comparison_summary")
