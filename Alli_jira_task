@@ -1,5 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lower
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
 
 # Initialize Spark session
 spark = SparkSession.builder.appName("BooleanColumnConversion").getOrCreate()
@@ -108,6 +109,33 @@ for table in table_names:
         "duplicate_check_in_target": duplicate_count
     })
 
-# Convert result to a Spark DataFrame for inspection
-result_df = spark.createDataFrame(results)
+# Define schema for result rows
+schema = StructType([
+    StructField("input_table", StringType(), True),
+    StructField("source_table", StringType(), True),
+    StructField("target_table", StringType(), True),
+    StructField("source_count", IntegerType(), True),
+    StructField("target_count", IntegerType(), True),
+    StructField("missing_in_source", ArrayType(StringType()), True),
+    StructField("missing_in_target", ArrayType(StringType()), True),
+    StructField("mismatches", ArrayType(StringType()), True),
+    StructField("mismatches_target", ArrayType(StringType()), True),
+    StructField("duplicate_check_in_target", IntegerType(), True)
+])
+
+# Convert to DataFrame using defined schema
+result_rdd = spark.sparkContext.parallelize([(
+    r["input_table"],
+    r["source_table"],
+    r["target_table"],
+    r["source_count"],
+    r["target_count"],
+    r["missing_in_source"],
+    r["missing_in_target"],
+    r["mismatches"],
+    r["mismatches_target"],
+    r["duplicate_check_in_target"]
+) for r in results])
+
+result_df = spark.createDataFrame(result_rdd, schema)
 result_df.show(truncate=False)
