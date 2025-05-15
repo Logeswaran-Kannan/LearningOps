@@ -38,11 +38,16 @@ def to_lowercase_columns(df):
 # Loop through each table and prepare them for comparison
 for table in table_names:
     source_table = f"{source_catalog}.{source_db}.{table}"
-    source_df = spark.table(source_table)
-    source_df = convert_boolean_columns(source_df)
-    source_df = to_lowercase_columns(source_df)
-    source_columns = set(source_df.columns)
-    source_count = source_df.count()
+    try:
+        source_df = spark.table(source_table)
+        source_df = convert_boolean_columns(source_df)
+        source_df = to_lowercase_columns(source_df)
+        source_columns = set(source_df.columns)
+        source_count = source_df.count()
+    except:
+        source_df = None
+        source_columns = set()
+        source_count = 0
 
     # Determine target table name based on prefix
     prefix = table[0].lower()
@@ -66,23 +71,19 @@ for table in table_names:
         if target_count > 5000:
             target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
         target_filtered_count = target_df.count()
-
-        common_columns = list(source_columns & target_columns)
-        source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}"
-        target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}"
     except:
         target_df = None
         target_columns = set()
         target_count = 0
         target_filtered_count = 0
-        common_columns = list(source_columns)
-        source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}"
-        target_sql = ""
 
-    if target_df is not None:
+    common_columns = list(source_columns & target_columns)
+    source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}" if source_columns else ""
+    target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}" if target_columns else ""
+
+    if source_df is not None and target_df is not None:
         missing_in_source = list(target_columns - source_columns)
         missing_in_target = list(source_columns - target_columns)
-        common_columns = list(source_columns & target_columns)
         mismatches = []
         mismatches_target = []
 
