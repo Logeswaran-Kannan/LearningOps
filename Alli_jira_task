@@ -1,55 +1,37 @@
-from pyspark.sql import SparkSession
+Hey team, here's my quick update for today:
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("DDL Comparison").getOrCreate()
+As part of this week's planning activity, we've finalized the technical test scenarios for the bronze layer. These scenarios cover everything from functional data validation to orchestration and fail-safe mechanisms — so we're confident it's a comprehensive set.
 
-# Input: list of table names to compare
-table_list = ["p_policy", "b_billing", "c_claim"]
+Based on the mapping document we have so far for the quote request message, we've identified:
 
-# Source and target catalog/database setup
-source_catalog = "core_tst_sys9"
-source_database = "rr_source"
-target_catalog = "core_tst_sys9"
-target_database = "ods"
+21 bronze tables
 
-# Prefix mapping for target tables
-prefix_map = {
-    'p': 'policycentre_',
-    'b': 'billingcentre_',
-    'c': 'claimcentre_'
-}
+8 silver tables
 
-def get_columns(catalog, database, table):
-    try:
-        df = spark.table(f"{catalog}.{database}.{table}")
-        return set(col.lower() for col in df.columns)
-    except Exception as e:
-        print(f"Error accessing {catalog}.{database}.{table}: {e}")
-        return set()
+4 gold layer tables
 
-# Comparison process
-for table in table_list:
-    table_prefix = table[0].lower()
-    table_name = table.lower()
+For the other message types — precom request/response, stop quote, cache request/response — we’re still waiting for the finalized list of tables.
 
-    # Source table name remains the same
-    source_table = table_name
+In terms of progress:
 
-    # Modify target table name based on prefix
-    if table_prefix in prefix_map:
-        target_table = prefix_map[table_prefix] + table_name
-    else:
-        target_table = table_name
+We've completed test scripting for one bronze table so far.
 
-    # Get column sets
-    source_columns = get_columns(source_catalog, source_database, source_table)
-    target_columns = get_columns(target_catalog, target_database, target_table)
+Planning to have a demo and test scenario walkthrough with the dev team early next week.
 
-    # Find differences
-    missing_in_target = source_columns - target_columns
-    missing_in_source = target_columns - source_columns
+On the business test data side, we've started drafting scenarios covering the basics — New Business (NB), NB Quote, Prequote, Requote, Stop Quote, MTA Quote, and Renewal Quote.
 
-    # Output results
-    print(f"\nTable Comparison: {table_name}")
-    print(f"Missing in target ({target_table}): {missing_in_target}")
-    print(f"Missing in source ({source_table}): {missing_in_source}")
+We do need some additional info from the Athena side. I’ll sync up with Asuthosh to get more clarity on that.
+
+Also, had a detailed conversation with Robert about vehicle info in Cosmos DB — we’ve kicked off test scripting today to validate file vs DB comparison. We’ll do a system test scenario walkthrough with Robert mid-next week to get his inputs.
+
+Finally, what we’re looking to finalize:
+
+Day 1 table list for estimating test timelines
+
+Test environment readiness (especially for streaming and Cosmos DB sources)
+
+Scope of testing for the presentation layer
+
+And the volume of test data we’re planning to load.
+
+That’s it from me — happy to dive deeper on any of these if needed.
