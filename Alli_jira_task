@@ -1,1 +1,63 @@
-are you planning to send the invite, or would you like us to send it over?
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("DDLComparison").getOrCreate()
+
+# Input configurations
+source_catalog = "core_tst_sys9"
+source_db = "rr_source"
+target_catalog = "core_tst_sys9"
+target_db = "ods"
+input_tables = ["table1", "table2", "table3"]  # Replace with actual table list
+
+# Function to get table schema
+
+def get_table_schema(catalog, db, table):
+    try:
+        df = spark.table(f"{catalog}.{db}.{table}")
+        return set((field.name, field.dataType.simpleString()) for field in df.schema.fields)
+    except Exception as e:
+        return None
+
+# Prepare results list
+results = []
+
+for table in input_tables:
+    source_schema = get_table_schema(source_catalog, source_db, table)
+    target_schema = get_table_schema(target_catalog, target_db, table)
+
+    table_status = "Present" if source_schema and target_schema else "Missing in Source or Target"
+    column_comparisons = []
+
+    if source_schema and target_schema:
+        source_columns = {col[0] for col in source_schema}
+        target_columns = {col[0] for col in target_schema}
+
+        all_columns = source_columns.union(target_columns)
+        for column in all_columns:
+            status = "Present" if column in source_columns and column in target_columns else ("Missing in Source" if column not in source_columns else "Missing in Target")
+            column_comparisons.append((column, status))
+
+    results.append({
+        "table": table,
+        "table_status": table_status,
+        "columns": column_comparisons
+    })
+
+# Convert results to DataFrame for visualization
+flat_results = []
+for result in results:
+    table = result["table"]
+    table_status = result["table_status"]
+    if result["columns"]:
+        for col, status in result["columns"]:
+            flat_results.append((table, table_status, col, status))
+    else:
+        flat_results.append((table, table_status, None, None))
+
+results_df = spark.createDataFrame(flat_results, ["Table", "Table Status", "Column", "Column Status"])
+
+# Show or write the results
+display(results_df)
+# results_df.write.format("csv").save("/path/to/save/ddl_comparison_result.csv")
