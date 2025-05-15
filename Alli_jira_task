@@ -1,3 +1,29 @@
-=IF(B2>5000, 
-"\COPY (SELECT * FROM " & A1 & " WHERE createtime BETWEEN '2025-05-12' AND '2025-05-13') TO '/tmp/" & A1 & "_filtered.csv' WITH (FORMAT CSV, HEADER);",
-"\COPY (SELECT * FROM " & A1 & ") TO '/tmp/" & A1 & "_full.csv' WITH (FORMAT CSV, HEADER);")
+import os
+from pyspark.sql import SparkSession
+
+# Folder path in DBFS or mounted storage
+folder_path = "dbfs:/mnt/your-folder-path/"  # Replace with your actual path
+
+# Catalog and database
+catalog_name = "core_tst_sys9"
+database_name = "rr_source"
+
+# Set the current catalog and database
+spark.sql(f"USE CATALOG {catalog_name}")
+spark.sql(f"USE {database_name}")
+
+# List all CSV files in the folder
+files = dbutils.fs.ls(folder_path)
+
+for file in files:
+    if file.name.endswith(".csv"):
+        table_name = file.name.replace(".csv", "").lower()
+        file_path = file.path
+        
+        # Read CSV
+        df = spark.read.option("header", True).option("inferSchema", True).csv(file_path)
+        
+        # Create table (overwrite if exists)
+        df.write.mode("overwrite").saveAsTable(f"{catalog_name}.{database_name}.{table_name}")
+        
+        print(f"Table created: {catalog_name}.{database_name}.{table_name}")
