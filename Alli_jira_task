@@ -22,15 +22,15 @@ prefix_map = {
 def get_columns(catalog, database, table):
     try:
         df = spark.table(f"{catalog}.{database}.{table}")
-        return set(df.columns)
+        return set(col.lower() for col in df.columns)
     except Exception as e:
         print(f"Error accessing {catalog}.{database}.{table}: {e}")
         return set()
 
 # Comparison process
 for table in table_list:
-    table_prefix = table[0]
-    table_name = table
+    table_prefix = table[0].lower()
+    table_name = table.lower()
 
     # Source table name remains the same
     source_table = table_name
