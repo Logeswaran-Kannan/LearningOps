@@ -1,5 +1,4 @@
 import os
-from pyspark.sql import SparkSession
 
 # Folder path in DBFS or mounted storage
 folder_path = "dbfs:/mnt/your-folder-path/"  # Replace with your actual path
@@ -8,22 +7,46 @@ folder_path = "dbfs:/mnt/your-folder-path/"  # Replace with your actual path
 catalog_name = "core_tst_sys9"
 database_name = "rr_source"
 
-# Set the current catalog and database
+# Set the catalog and database context
 spark.sql(f"USE CATALOG {catalog_name}")
 spark.sql(f"USE {database_name}")
 
-# List all CSV files in the folder
+# List all CSV files
 files = dbutils.fs.ls(folder_path)
 
+# Summary counters
+total_files = 0
+tables_created = 0
+tables_failed = []
+
+# Process each CSV file
 for file in files:
     if file.name.endswith(".csv"):
+        total_files += 1
         table_name = file.name.replace(".csv", "").lower()
         file_path = file.path
         
-        # Read CSV
-        df = spark.read.option("header", True).option("inferSchema", True).csv(file_path)
-        
-        # Create table (overwrite if exists)
-        df.write.mode("overwrite").saveAsTable(f"{catalog_name}.{database_name}.{table_name}")
-        
-        print(f"Table created: {catalog_name}.{database_name}.{table_name}")
+        try:
+            # Read the CSV file
+            df = spark.read.option("header", True).option("inferSchema", True).csv(file_path)
+
+            # Create table
+            df.write.mode("overwrite").saveAsTable(f"{catalog_name}.{database_name}.{table_name}")
+            
+            print(f"✅ Table created: {catalog_name}.{database_name}.{table_name}")
+            tables_created += 1
+
+        except Exception as e:
+            print(f"❌ Failed to create table for file: {file.name}, Error: {str(e)}")
+            tables_failed.append(file.name)
+
+# Display Summary
+print("\n--- Summary Report ---")
+print(f"Total CSV files processed: {total_files}")
+print(f"Tables created successfully: {tables_created}")
+print(f"Failed table creations: {len(tables_failed)}")
+
+if tables_failed:
+    print("Files with errors:")
+    for f in tables_failed:
+        print(f" - {f}")
