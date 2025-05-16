@@ -64,4 +64,39 @@ Finalize the list of Day 1 tables and dependencies for scope clarity and timelin
 
 Thanks everyone for the collaboration so far – great momentum and communication across dev, data, and QA teams. Looking forward to next week’s reviews and scenario walk-throughs.
 
-Let me know if you need a version formatted for email or Confluence.
+-------
+
+
+Here’s a quick summary of the testing activities and progress from our team this week:
+
+🔧 Test Strategy & Planning
+
+The high-level Test Strategy document is in progress and being shaped using the available details from the confirmed baseline version of the MQS message.
+
+Our Test Plan document was reviewed this week. Amirtha is incorporating updates aligned with Day 1 scope using input gathered across the team.
+
+🧪 Test Scripting & Validation
+
+Using sample messages from the Mule team (Quote Request and PRECOM Request), we’ve built initial test scripts to validate data from incoming messages through to the Silverish layer.
+
+The testing scope for both Bronze and Silverish layers has been finalized. We're currently working with Mike to clarify Silver and Gold scope, especially around table changes and any new tables being introduced.
+
+🔄 Technical Test Scenarios
+
+Following a productive discussion with Nate on environment config and orchestration, we’ve finalized the technical test scenarios. These are currently under internal review and will be shared soon with the wider group to align on the ingestion and Silverish validation logic.
+
+For Vehicle feed validation against Cosmos DB, the ingestion scenario has also been finalized and will be reviewed with the team early next week.
+
+📊 Test Data & Flow Understanding
+
+We're in the process of scheduling time with Asuthosh (Mule team) to better understand the end-to-end message flow and implications for test data creation.
+
+📁 Test Artifacts Delivered This Week
+
+✅ Technical ingestion validation scenarios (for both streaming and file-based sources) are completed and currently under peer review.
+
+✅ Initial smoke run of test scripts has been done for one sample message type.
+
+✅ Vehicle feed test scripts for file-based validation are also completed.
+
+
