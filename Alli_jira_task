@@ -19,3 +19,49 @@ Test artifacts delivered this week:
 ✅ Sample test script for one message – smoke test successfully run.
 
 ✅ File-based validation scripts for vehicle feed – completed.
+
+
+---------
+
+
+Hi all,
+
+Here’s a quick recap of our testing progress this week – a solid team effort across the board.
+
+📄 Test Strategy & Planning
+The High-Level Test Strategy document is around 60% complete. We're targeting to freeze it by mid-next week and will walk through it with the team for review shortly after.
+
+The Test Plan has gone through an initial review, and Amirtha is refining it in line with the Day 1 scope, based on input gathered from the team.
+
+🧬 Test Scope & Scenario Coverage
+Using sample messages provided by the MuleSoft team (e.g., Quote Request and PRECOM Request), we've developed test scripts to validate incoming messages against the Silver-ish layer.
+
+Scope for Bronze and Silver-ish layers is now locked in.
+
+We're collaborating with Mike to better understand changes to existing Silver/Gold tables and define the scope for those layers.
+
+⚙️ Technical Validation & Environments
+We had a detailed discussion with Nate on the current test environment setup and orchestration process.
+
+Based on that, the Technical Test Scenario for ingestion and Silver-ish layer validation is finalized and currently under review. We’ll share it with the wider team soon for alignment and agreement.
+
+🚗 Vehicle Feed Testing
+For the vehicle feed ingestion validation (file vs Cosmos DB), the test scenario has been finalized. We’ll also review this with the team next week to ensure everyone’s aligned.
+
+🧪 Test Artifacts & Execution
+Test artifacts produced this week:
+
+Technical ingestion validation scenarios for both streaming and file-based sources – currently in peer review.
+
+Sample test script for Quote Request message has undergone a smoke run, with initial validation successful.
+
+Vehicle feed test script for file-based validation is now complete.
+
+🔍 Next Steps
+Plan to set up a working session with Asuthosh (MuleSoft team) to get a better grasp of end-to-end data flow and fill gaps for test data planning.
+
+Finalize the list of Day 1 tables and dependencies for scope clarity and timeline estimation.
+
+Thanks everyone for the collaboration so far – great momentum and communication across dev, data, and QA teams. Looking forward to next week’s reviews and scenario walk-throughs.
+
+Let me know if you need a version formatted for email or Confluence.
