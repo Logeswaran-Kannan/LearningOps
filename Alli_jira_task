@@ -35,6 +35,12 @@ def to_lowercase_columns(df):
         df = df.withColumnRenamed(col_name, col_name.lower())
     return df
 
+# Function to align schema and cast all columns to string for safe comparison
+def cast_columns_to_string(df, columns):
+    for col_name in columns:
+        df = df.withColumn(col_name, col(col_name).cast("string"))
+    return df.select([col(c) for c in columns])
+
 # Loop through each table and prepare them for comparison
 for table in table_names:
     source_table = f"{source_catalog}.{source_db}.{table}"
@@ -81,21 +87,25 @@ for table in table_names:
     source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}" if source_columns else ""
     target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}" if target_columns else ""
 
-    if source_df is not None and target_df is not None:
+    if source_df is not None and target_df is not None and common_columns:
         missing_in_source = list(target_columns - source_columns)
         missing_in_target = list(source_columns - target_columns)
         mismatches = []
         mismatches_target = []
 
+        # Cast and align schemas for comparison
+        source_comp_df = cast_columns_to_string(source_df, common_columns)
+        target_comp_df = cast_columns_to_string(target_df, common_columns)
+
         for col_name in common_columns:
-            source_vals = source_df.select(col_name).distinct()
-            target_vals = target_df.select(col_name).distinct()
+            source_vals = source_comp_df.select(col_name).distinct()
+            target_vals = target_comp_df.select(col_name).distinct()
             if source_vals.subtract(target_vals).count() > 0:
                 mismatches.append(col_name)
             if target_vals.subtract(source_vals).count() > 0:
                 mismatches_target.append(col_name)
 
-        duplicate_count = target_df.count() - target_df.dropDuplicates().count()
+        duplicate_count = target_comp_df.count() - target_comp_df.dropDuplicates().count()
     else:
         missing_in_source = []
         missing_in_target = []
