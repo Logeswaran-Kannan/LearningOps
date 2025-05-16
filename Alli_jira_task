@@ -103,8 +103,8 @@ def validate_table(table):
         }
 
     common_columns = list(source_columns & target_columns)
-    source_sql = f"SELECT {', '.join(source_comp_df.columns)} FROM {source_table}" if source_columns else ""
-    target_sql = f"SELECT {', '.join(target_comp_df.columns)} FROM {target_table}" if target_columns else ""
+    source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}" if source_columns else ""
+    target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}" if target_columns else ""
 
     missing_in_source = list(target_columns - source_columns)
     missing_in_target = list(source_columns - target_columns)
