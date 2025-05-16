@@ -1,9 +1,11 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lower
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+from pyspark.sql.utils import AnalysisException
+from concurrent.futures import ThreadPoolExecutor
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("BooleanColumnConversion").getOrCreate()
+spark = SparkSession.builder.appName("AutomatedValidation").getOrCreate()
 
 # Catalog and database details
 source_catalog = "core_tst_sys9"
@@ -11,29 +13,24 @@ source_db = "rr_source"
 target_catalog = "core_tst_std001"
 target_db = "ods"
 
-# Table names to process
-table_names = ["ptable1", "btable2", "ctable3"]  # Add your table names here
+# Table names to process (expandable)
+table_names = ["ptable1", "btable2", "ctable3"]  # Replace with a larger list or automated fetch
 
 # Date range for filtering
 filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
 
-# Output result list
-results = []
-
 # Function to convert boolean-like columns
 def convert_boolean_columns(df):
     for column in df.columns:
-        unique_vals = df.select(column).distinct().rdd.flatMap(lambda x: x).collect()
+        unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
         if set(unique_vals).issubset({"t", "f"}):
             df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
     return df
 
 # Function to convert column names to lowercase
 def to_lowercase_columns(df):
-    for col_name in df.columns:
-        df = df.withColumnRenamed(col_name, col_name.lower())
-    return df
+    return df.select([col(c).alias(c.lower()) for c in df.columns])
 
 # Function to align schema and cast all columns to string for safe comparison
 def cast_columns_to_string(df, columns):
@@ -41,21 +38,33 @@ def cast_columns_to_string(df, columns):
         df = df.withColumn(col_name, col(col_name).cast("string"))
     return df.select([col(c) for c in columns])
 
-# Loop through each table and prepare them for comparison
-for table in table_names:
-    source_table = f"{source_catalog}.{source_db}.{table}"
+# Validation logic for a single table
+def validate_table(table):
     try:
+        source_table = f"{source_catalog}.{source_db}.{table}"
         source_df = spark.table(source_table)
         source_df = convert_boolean_columns(source_df)
         source_df = to_lowercase_columns(source_df)
         source_columns = set(source_df.columns)
         source_count = source_df.count()
-    except:
-        source_df = None
-        source_columns = set()
-        source_count = 0
+    except Exception:
+        return {
+            "input_table": table,
+            "source_table": "missing",
+            "target_table": "missing",
+            "source_count": 0,
+            "target_count": 0,
+            "target_filtered_count": 0,
+            "missing_in_source": [],
+            "missing_in_target": [],
+            "mismatches": [],
+            "mismatches_target": [],
+            "duplicate_check_in_target": 0,
+            "source_sql": "",
+            "target_sql": ""
+        }
 
-    # Determine target table name based on prefix
+    # Target table name logic
     prefix = table[0].lower()
     if prefix == 'p':
         target_table_name = f"policycenter_{table}"
@@ -64,7 +73,7 @@ for table in table_names:
     elif prefix == 'c':
         target_table_name = f"claimcenter_{table}"
     else:
-        target_table_name = table  # Default fallback
+        target_table_name = table
 
     try:
         target_table = f"{target_catalog}.{target_db}.{target_table_name}"
@@ -73,50 +82,50 @@ for table in table_names:
         target_df = to_lowercase_columns(target_df)
         target_columns = set(target_df.columns)
         target_count = target_df.count()
-
         if target_count > 5000:
             target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
         target_filtered_count = target_df.count()
-    except:
-        target_df = None
-        target_columns = set()
-        target_count = 0
-        target_filtered_count = 0
+    except Exception:
+        return {
+            "input_table": table,
+            "source_table": source_table,
+            "target_table": "missing",
+            "source_count": source_count,
+            "target_count": 0,
+            "target_filtered_count": 0,
+            "missing_in_source": [],
+            "missing_in_target": [],
+            "mismatches": [],
+            "mismatches_target": [],
+            "duplicate_check_in_target": 0,
+            "source_sql": f"SELECT * FROM {source_table}",
+            "target_sql": ""
+        }
 
     common_columns = list(source_columns & target_columns)
     source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}" if source_columns else ""
     target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}" if target_columns else ""
 
-    if source_df is not None and target_df is not None and common_columns:
-        missing_in_source = list(target_columns - source_columns)
-        missing_in_target = list(source_columns - target_columns)
-        mismatches = []
-        mismatches_target = []
+    missing_in_source = list(target_columns - source_columns)
+    missing_in_target = list(source_columns - target_columns)
+    mismatches = []
+    mismatches_target = []
 
-        # Cast and align schemas for comparison
-        source_comp_df = cast_columns_to_string(source_df, common_columns)
-        target_comp_df = cast_columns_to_string(target_df, common_columns)
+    source_comp_df = cast_columns_to_string(source_df, common_columns)
+    target_comp_df = cast_columns_to_string(target_df, common_columns)
 
-        for col_name in common_columns:
-            source_vals = source_comp_df.select(col_name).distinct()
-            target_vals = target_comp_df.select(col_name).distinct()
-            if source_vals.subtract(target_vals).count() > 0:
-                mismatches.append(col_name)
-            if target_vals.subtract(source_vals).count() > 0:
-                mismatches_target.append(col_name)
+    for col_name in common_columns:
+        if source_comp_df.select(col_name).subtract(target_comp_df.select(col_name)).take(1):
+            mismatches.append(col_name)
+        if target_comp_df.select(col_name).subtract(source_comp_df.select(col_name)).take(1):
+            mismatches_target.append(col_name)
 
-        duplicate_count = target_comp_df.count() - target_comp_df.dropDuplicates().count()
-    else:
-        missing_in_source = []
-        missing_in_target = []
-        mismatches = []
-        mismatches_target = []
-        duplicate_count = 0
+    duplicate_count = target_comp_df.count() - target_comp_df.dropDuplicates().count()
 
-    results.append({
+    return {
         "input_table": table,
-        "source_table": source_table if source_df else "missing",
-        "target_table": target_table if target_df else "missing",
+        "source_table": source_table,
+        "target_table": target_table,
         "source_count": source_count,
         "target_count": target_count,
         "target_filtered_count": target_filtered_count,
@@ -127,7 +136,11 @@ for table in table_names:
         "duplicate_check_in_target": duplicate_count,
         "source_sql": source_sql,
         "target_sql": target_sql
-    })
+    }
+
+# Run validation in parallel
+with ThreadPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(validate_table, table_names))
 
 # Define schema for result rows
 schema = StructType([
@@ -164,4 +177,5 @@ result_rdd = spark.sparkContext.parallelize([(
 ) for r in results])
 
 result_df = spark.createDataFrame(result_rdd, schema)
+result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
 result_df.show(truncate=False)
