@@ -4,61 +4,57 @@ import time
 
 # --- CONFIG ---
 workspace_url = "https://<your-instance>.databricks.com"
-access_token = "<your_personal_access_token>"
+access_token = "<your_token_here>"
 headers = {
-    "Authorization": f"Bearer {access_token}"
+    "Authorization": f"Bearer {access_token}",
+    "Content-Type": "application/json"
 }
 
-# --- INPUT: table.column list (fully qualified) ---
+# --- INPUT FORMAT: ["catalog.schema.table.column"] ---
 input_list = [
-    "main_catalog.sales.orders.order_id",
-    "main_catalog.finance.payments.payment_date",
+    "lineage_data.lineagedemo.dinner.dessert",
+    "catalog.schema.table.column",  # Add more...
 ]
 
 def parse_entry(entry):
     parts = entry.split('.')
     if len(parts) != 4:
-        raise ValueError(f"Invalid format: {entry} (should be catalog.schema.table.column)")
-    return parts[0], parts[1], parts[2], parts[3]
+        raise ValueError(f"Invalid format: {entry}")
+    return parts[0] + "." + parts[1] + "." + parts[2], parts[3]
 
-def get_column_lineage(catalog, schema, table, column):
-    dataset_full_name = f"{catalog}.{schema}.{table}"
-    lineage_url = f"{workspace_url}/api/2.1/unity-catalog/lineage"
-
-    params = {
-        "dataset_name": dataset_full_name,
-        "include_column_lineage": "true",
-        "direction": "downstream",
-        "depth": "3"
+def get_column_lineage(table_name, column_name):
+    url = f"{workspace_url}/api/2.0/lineage-tracking/column-lineage"
+    payload = {
+        "table_name": table_name,
+        "column_name": column_name
     }
 
-    response = requests.get(lineage_url, headers=headers, params=params)
+    response = requests.post(url, headers=headers, json=payload)
+
     if response.status_code != 200:
-        print(f"❌ Failed for {dataset_full_name}.{column}: {response.text}")
         return [], response.text
 
     data = response.json()
-    downstream_refs = []
+    downstream = []
 
-    for edge in data.get("column_lineage", []):
-        if edge.get("source_column") == f"{dataset_full_name}.{column}":
-            downstream_refs.append(edge.get("target_column"))
+    for ref in data.get("downstream_columns", []):
+        downstream.append(ref.get("column_name", "UNKNOWN"))
 
-    return downstream_refs, None
+    return downstream, None
 
 # --- MAIN LOOP ---
 results = []
 
 for entry in input_list:
     try:
-        catalog, schema, table, column = parse_entry(entry)
-        refs, error = get_column_lineage(catalog, schema, table, column)
+        table, column = parse_entry(entry)
+        refs, error = get_column_lineage(table, column)
         results.append({
             "input": entry,
             "referenced_in": refs,
             "error": error or ""
         })
-        time.sleep(1)  # respect API rate limits
+        time.sleep(0.5)
     except Exception as e:
         results.append({
             "input": entry,
@@ -68,5 +64,5 @@ for entry in input_list:
 
 # --- EXPORT ---
 df = pd.DataFrame(results)
-df.to_csv("column_lineage_output.csv", index=False)
-print("✅ Done. Output saved to column_lineage_output.csv")
+df.to_csv("column_lineage_results.csv", index=False)
+print("✅ Lineage check complete. Results saved to column_lineage_results.csv")
