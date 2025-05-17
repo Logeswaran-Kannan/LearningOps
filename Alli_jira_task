@@ -1,102 +1,80 @@
-Just sharing a quick weekly wrap-up on where we’re at with testing – and big shoutout to the whole team for the solid progress this week!
+import requests
+import pandas as pd
+import time
 
-We’ve got about 60% of the High-Level Test Strategy doc done so far. The plan is to lock that down by mid next week and go through it together for feedback and alignment.
+# ---- CONFIGURATION ----
+workspace_url = "https://<your-instance>.databricks.com"
+access_token = "<your_personal_access_token>"
 
-The Test Plan doc has already been reviewed and is being updated by Amirtha to reflect the confirmed Day 1 scope, based on inputs gathered across the team.
+headers = {
+    "Authorization": f"Bearer {access_token}"
+}
 
-On the test scripting side, using the sample messages shared by Mule for both quote request and PRECOM request, we’ve built scripts to validate incoming messages against the silver-ish layer. The scope for Bronze and Silver-ish layers is now frozen, and we’re working closely with Mike to finalize the scope for Silver and Gold layers, including any new or changed tables.
+# ---- INPUT: list of 'catalog.schema.table.column' or 'schema.table.column' ----
+input_list = [
+    "main_catalog.sales.orders.order_id",
+    "main_catalog.finance.payments.payment_date",
+    # add more...
+]
 
-Had a good catch-up with Nate to walk through the current test environment setup and the orchestration process. Based on that, the technical test scenarios for ingestion and silver-ish validation are now finalized and currently going through review. Once that’s done, we’ll share it with everyone to get agreement and buy-in.
+# ---- PARSE FUNCTION ----
+def parse_entry(entry):
+    parts = entry.split('.')
+    if len(parts) == 4:
+        catalog, schema, table, column = parts
+    elif len(parts) == 3:
+        catalog = "main_catalog"  # fallback default
+        schema, table, column = parts
+    else:
+        raise ValueError(f"Invalid format: {entry}")
+    return catalog, schema, table, column
 
-For the vehicle feed validation (file vs Cosmos DB), the test scenario is also finalized, and we’ll be reviewing that with the team next week as well.
+# ---- GET LINEAGE FUNCTION ----
+def get_column_lineage(catalog, schema, table, column):
+    dataset_name = f"{catalog}.{schema}.{table}"
+    lineage_url = f"{workspace_url}/api/2.0/unity-catalog/lineage-tracking/lineage"
 
-To get better clarity on test data and data flow understanding, we’re planning to set up time with Asuthosh from the Mule team—should help us fill in any blanks.
+    params = {
+        "dataset_name": dataset_name,
+        "include_column_lineage": "true",
+        "direction": "downstream",
+        "depth": "3"
+    }
 
-Test artifacts delivered this week:
+    response = requests.get(lineage_url, headers=headers, params=params)
+    if response.status_code != 200:
+        print(f"Failed for {dataset_name}.{column}: {response.text}")
+        return []
 
-✅ Technical ingestion validation scenarios (for both streaming and file-based sources) – now under peer review.
+    data = response.json()
+    downstream_refs = []
 
-✅ Sample test script for one message – smoke test successfully run.
+    for edge in data.get("column_lineage", []):
+        if edge.get("source_column") == f"{dataset_name}.{column}":
+            downstream_refs.append(edge.get("target_column"))
 
-✅ File-based validation scripts for vehicle feed – completed.
+    return downstream_refs
 
+# ---- MAIN PROCESSING ----
+results = []
 
----------
+for entry in input_list:
+    try:
+        catalog, schema, table, column = parse_entry(entry)
+        downstream = get_column_lineage(catalog, schema, table, column)
+        results.append({
+            "input": entry,
+            "referenced_in": downstream
+        })
+        time.sleep(1)
+    except Exception as e:
+        results.append({
+            "input": entry,
+            "referenced_in": [],
+            "error": str(e)
+        })
 
-
-Hi all,
-
-Here’s a quick recap of our testing progress this week – a solid team effort across the board.
-
-📄 Test Strategy & Planning
-The High-Level Test Strategy document is around 60% complete. We're targeting to freeze it by mid-next week and will walk through it with the team for review shortly after.
-
-The Test Plan has gone through an initial review, and Amirtha is refining it in line with the Day 1 scope, based on input gathered from the team.
-
-🧬 Test Scope & Scenario Coverage
-Using sample messages provided by the MuleSoft team (e.g., Quote Request and PRECOM Request), we've developed test scripts to validate incoming messages against the Silver-ish layer.
-
-Scope for Bronze and Silver-ish layers is now locked in.
-
-We're collaborating with Mike to better understand changes to existing Silver/Gold tables and define the scope for those layers.
-
-⚙️ Technical Validation & Environments
-We had a detailed discussion with Nate on the current test environment setup and orchestration process.
-
-Based on that, the Technical Test Scenario for ingestion and Silver-ish layer validation is finalized and currently under review. We’ll share it with the wider team soon for alignment and agreement.
-
-🚗 Vehicle Feed Testing
-For the vehicle feed ingestion validation (file vs Cosmos DB), the test scenario has been finalized. We’ll also review this with the team next week to ensure everyone’s aligned.
-
-🧪 Test Artifacts & Execution
-Test artifacts produced this week:
-
-Technical ingestion validation scenarios for both streaming and file-based sources – currently in peer review.
-
-Sample test script for Quote Request message has undergone a smoke run, with initial validation successful.
-
-Vehicle feed test script for file-based validation is now complete.
-
-🔍 Next Steps
-Plan to set up a working session with Asuthosh (MuleSoft team) to get a better grasp of end-to-end data flow and fill gaps for test data planning.
-
-Finalize the list of Day 1 tables and dependencies for scope clarity and timeline estimation.
-
-Thanks everyone for the collaboration so far – great momentum and communication across dev, data, and QA teams. Looking forward to next week’s reviews and scenario walk-throughs.
-
--------
-
-
-Here’s a quick summary of the testing activities and progress from our team this week:
-
-🔧 Test Strategy & Planning
-
-The high-level Test Strategy document is in progress and being shaped using the available details from the confirmed baseline version of the MQS message.
-
-Our Test Plan document was reviewed this week. Amirtha is incorporating updates aligned with Day 1 scope using input gathered across the team.
-
-🧪 Test Scripting & Validation
-
-Using sample messages from the Mule team (Quote Request and PRECOM Request), we’ve built initial test scripts to validate data from incoming messages through to the Silverish layer.
-
-The testing scope for both Bronze and Silverish layers has been finalized. We're currently working with Mike to clarify Silver and Gold scope, especially around table changes and any new tables being introduced.
-
-🔄 Technical Test Scenarios
-
-Following a productive discussion with Nate on environment config and orchestration, we’ve finalized the technical test scenarios. These are currently under internal review and will be shared soon with the wider group to align on the ingestion and Silverish validation logic.
-
-For Vehicle feed validation against Cosmos DB, the ingestion scenario has also been finalized and will be reviewed with the team early next week.
-
-📊 Test Data & Flow Understanding
-
-We're in the process of scheduling time with Asuthosh (Mule team) to better understand the end-to-end message flow and implications for test data creation.
-
-📁 Test Artifacts Delivered This Week
-
-✅ Technical ingestion validation scenarios (for both streaming and file-based sources) are completed and currently under peer review.
-
-✅ Initial smoke run of test scripts has been done for one sample message type.
-
-✅ Vehicle feed test scripts for file-based validation are also completed.
-
-
+# ---- OUTPUT TO CSV ----
+df = pd.DataFrame(results)
+df.to_csv("column_lineage_results.csv", index=False)
+print("✅ Lineage check completed. See 'column_lineage_results.csv'")
