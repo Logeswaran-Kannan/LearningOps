@@ -1,6 +1,5 @@
 import requests
 import pandas as pd
-import time
 
 # --- Configuration ---
 token = "<your_personal_access_token>"
@@ -12,68 +11,22 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# --- Input List: Each item is "catalog.schema.table.column"
-input_list = [
-    "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy.productcode",
-    "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy.policy_number",
-    # Add more columns here
-]
+# --- Inputs ---
+params = {
+    "table_name": "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy",
+    "column_name": "productcode",  # You can loop over multiple columns if needed
+    "include_entity_lineage": True
+}
 
-# --- Helper Function to Split Table and Column ---
-def parse_entry(entry):
-    parts = entry.strip().split(".")
-    if len(parts) != 4:
-        raise ValueError(f"Invalid format: {entry}")
-    table_name = ".".join(parts[:3])
-    column_name = parts[3]
-    return table_name, column_name
+# --- Send Request ---
+response = requests.get(url, headers=headers, params=params)
 
-# --- Main Loop ---
-results = []
-
-for entry in input_list:
-    try:
-        table_name, column_name = parse_entry(entry)
-        params = {
-            "table_name": table_name,
-            "column_name": column_name,
-            "include_entity_lineage": True
-        }
-
-        response = requests.get(url, headers=headers, params=params)
-
-        if response.status_code == 200:
-            downstream = response.json().get("downstream_columns", [])
-            if downstream:
-                for ref in downstream:
-                    results.append({
-                        "table": table_name,
-                        "column": column_name,
-                        "referenced_in": ref.get("column_name", "UNKNOWN")
-                    })
-            else:
-                results.append({
-                    "table": table_name,
-                    "column": column_name,
-                    "referenced_in": "No downstream references"
-                })
-        else:
-            results.append({
-                "table": table_name,
-                "column": column_name,
-                "referenced_in": f"ERROR: {response.status_code} {response.text}"
-            })
-
-        time.sleep(0.5)  # To avoid hitting rate limits
-
-    except Exception as e:
-        results.append({
-            "table": "UNKNOWN",
-            "column": entry,
-            "referenced_in": f"Exception: {str(e)}"
-        })
-
-# --- Save to CSV ---
-df = pd.DataFrame(results)
-df.to_csv("column_lineage_results.csv", index=False)
-print("✅ Lineage results saved to column_lineage_results.csv")
+# --- Handle Response ---
+if response.status_code == 200:
+    data = response.json()
+    downstream = data.get("downstream_columns", [])
+    df = pd.json_normalize(downstream)
+    print("✅ Downstream lineage retrieved.")
+    display(df)
+else:
+    print(f"❌ API Error {response.status_code}: {response.text}")
