@@ -2,24 +2,24 @@ import requests
 import pandas as pd
 import time
 
-# --- CONFIG ---
-workspace_url = "https://<your-instance>.databricks.com"
-access_token = "<your_token_here>"
+# --- CONFIGURATION ---
+workspace_url = "https://<your-databricks-instance>.databricks.com"
+access_token = "<your_personal_access_token>"
 headers = {
     "Authorization": f"Bearer {access_token}",
     "Content-Type": "application/json"
 }
 
-# --- INPUT FORMAT: ["catalog.schema.table.column"] ---
+# --- INPUT: list of 'catalog.schema.table.column' entries ---
 input_list = [
     "lineage_data.lineagedemo.dinner.dessert",
-    "catalog.schema.table.column",  # Add more...
+    # Add more entries as needed
 ]
 
 def parse_entry(entry):
     parts = entry.split('.')
     if len(parts) != 4:
-        raise ValueError(f"Invalid format: {entry}")
+        raise ValueError(f"Invalid format: {entry}. Expected format: catalog.schema.table.column")
     return parts[0] + "." + parts[1] + "." + parts[2], parts[3]
 
 def get_column_lineage(table_name, column_name):
@@ -42,7 +42,7 @@ def get_column_lineage(table_name, column_name):
 
     return downstream, None
 
-# --- MAIN LOOP ---
+# --- MAIN PROCESSING ---
 results = []
 
 for entry in input_list:
@@ -54,7 +54,7 @@ for entry in input_list:
             "referenced_in": refs,
             "error": error or ""
         })
-        time.sleep(0.5)
+        time.sleep(0.5)  # To respect API rate limits
     except Exception as e:
         results.append({
             "input": entry,
@@ -62,7 +62,7 @@ for entry in input_list:
             "error": str(e)
         })
 
-# --- EXPORT ---
+# --- OUTPUT TO CSV ---
 df = pd.DataFrame(results)
 df.to_csv("column_lineage_results.csv", index=False)
-print("✅ Lineage check complete. Results saved to column_lineage_results.csv")
+print("✅ Lineage check complete. Results saved to 'column_lineage_results.csv'")
