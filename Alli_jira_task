@@ -9,46 +9,59 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Parameters Setup
-params = {
-    "table_name": "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy",
-    "column_name": "productcode",
-    "include_entity_lineage": True
-}
+# List of columns to check
+columns_to_check = ["productcode", "hash_diff"]
 
-# Request Execution
-response = requests.get(url, headers=headers, params=params)
+all_lineage = []
 
-# Response Handling
-if response.status_code == 200:
-    data = response.json()
+for column in columns_to_check:
+    print(f"\nProcessing lineage for column: {column}\n")
 
-    # Flatten the JSON if needed
-    upstream = pd.json_normalize(data.get('upstream_cols', []))
-    downstream = pd.json_normalize(data.get('downstream_cols', []))
+    # Parameters Setup
+    params = {
+        "table_name": "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy",
+        "column_name": column,
+        "include_entity_lineage": True
+    }
 
-    # Add direction and default linkage details
-    upstream["direction"] = "upstream"
-    downstream["direction"] = "downstream"
+    # Request Execution
+    response = requests.get(url, headers=headers, params=params)
 
-    # Function to determine linkage type and comment
-    def determine_linkage(row):
-        if 'vw_policycenter_std001_current_pc_policy' in row.get('table_name', ''):
-            return pd.Series(["direct", "Direct relation to the source table"])
-        elif 'vw_' in row.get('table_name', ''):
-            return pd.Series(["indirect", "Derived from a view possibly indirectly linked"])
-        else:
-            return pd.Series(["unknown", "Linkage unknown"])
+    # Response Handling
+    if response.status_code == 200:
+        data = response.json()
 
-    upstream[["linkage_type", "comment"]] = upstream.apply(determine_linkage, axis=1)
-    downstream[["linkage_type", "comment"]] = downstream.apply(determine_linkage, axis=1)
+        # Flatten the JSON if needed
+        upstream = pd.json_normalize(data.get('upstream_cols', []))
+        downstream = pd.json_normalize(data.get('downstream_cols', []))
 
-    # Merge all into a single DataFrame with labels
-    lineage_df = pd.concat([upstream, downstream], ignore_index=True)
+        # Add direction and column being processed
+        upstream["direction"] = "upstream"
+        downstream["direction"] = "downstream"
+        upstream["source_column"] = column
+        downstream["source_column"] = column
 
-    print("\nLineage Details:\n")
-    display(lineage_df)
+        # Function to determine linkage type and comment
+        def determine_linkage(row):
+            col_name = row.get("name", "").lower()
+            if col_name == column.lower():
+                return pd.Series(["direct", f"Column '{column}' is directly used in this table/view"])
+            else:
+                return pd.Series(["indirect", f"Column is derived using '{column}' or other input columns"])
 
-else:
-    print(f"Request failed with status code {response.status_code}")
-    print(response.text)
+        # Apply linkage logic
+        upstream[["linkage_type", "comment"]] = upstream.apply(determine_linkage, axis=1)
+        downstream[["linkage_type", "comment"]] = downstream.apply(determine_linkage, axis=1)
+
+        # Merge and collect
+        lineage_df = pd.concat([upstream, downstream], ignore_index=True)
+        all_lineage.append(lineage_df)
+    else:
+        print(f"Request failed for column {column} with status code {response.status_code}")
+        print(response.text)
+
+# Combine all collected lineage info
+if all_lineage:
+    final_df = pd.concat(all_lineage, ignore_index=True)
+    print("\nFinal Lineage Details (with linkage type and comments):\n")
+    display(final_df)
