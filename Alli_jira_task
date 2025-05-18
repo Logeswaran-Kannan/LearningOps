@@ -1,81 +1,44 @@
 import requests
 import pandas as pd
-import time
 
-# --- Configuration ---
-token = "<your_personal_access_token>"
-workspace_url = "https://adb-67779643136828772.12.azuredatabricks.net"
-url = f"{workspace_url}/api/2.0/lineage-tracking/column-lineage"
-
+# Token and URL Setup
+token = "test"
+url = "https://adb-67779643136828772.12.azuredatabricks.net/api/2.0/lineage-tracking/column-lineage"
 headers = {
     "Authorization": f"Bearer {token}",
     "Content-Type": "application/json"
 }
 
-# --- Input List: Each item is "catalog.schema.table.column"
-input_list = [
-    "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy.productcode",
-    "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy.policy_number",
-    # Add more entries here
-]
+# Parameters Setup
+params = {
+    "table_name": "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy",
+    "column_name": "productcode",
+    "include_entity_lineage": True
+}
 
-# --- Helper Function to Parse Entries ---
-def parse_table_column(entry):
-    parts = entry.strip().split(".")
-    if len(parts) < 4:
-        raise ValueError(f"Invalid format: '{entry}'. Expected format: catalog.schema.table.column")
-    table_name = ".".join(parts[:3])
-    column_name = parts[3]
-    return table_name, column_name
+# Request Execution
+response = requests.get(url, headers=headers, params=params)
 
-# --- Collect Results ---
-results = []
+# Response Handling
+if response.status_code == 200:
+    data = response.json()
 
-for entry in input_list:
-    try:
-        print("Processing:", entry)
-        table_name, column_name = parse_table_column(entry)
-        params = {
-            "table_name": table_name,
-            "column_name": column_name,
-            "include_entity_lineage": True
-        }
+    # Flatten the JSON if needed
+    upstream = pd.json_normalize(data.get('upstream_cols', []))
+    downstream = pd.json_normalize(data.get('downstream_cols', []))
 
-        response = requests.get(url, headers=headers, params=params)
+    print("\nUpstream Columns:\n")
+    display(upstream)
 
-        if response.status_code == 200:
-            data = response.json()
-            downstream = data.get("downstream_columns", [])
-            if downstream:
-                for ref in downstream:
-                    results.append({
-                        "table": table_name,
-                        "column": column_name,
-                        "referenced_in": ref.get("column_name", "UNKNOWN")
-                    })
-            else:
-                results.append({
-                    "table": table_name,
-                    "column": column_name,
-                    "referenced_in": "No downstream references"
-                })
-        else:
-            results.append({
-                "table": table_name,
-                "column": column_name,
-                "referenced_in": f"ERROR: {response.status_code} {response.text}"
-            })
+    print("\nDownstream Columns:\n")
+    display(downstream)
 
-        time.sleep(0.5)  # Avoid rate limits
+    # Optionally merge all into a single DataFrame with labels
+    upstream["direction"] = "upstream"
+    downstream["direction"] = "downstream"
+    lineage_df = pd.concat([upstream, downstream], ignore_index=True)
+    display(lineage_df)
 
-    except Exception as e:
-        results.append({
-            "table": "UNKNOWN",
-            "column": entry,
-            "referenced_in": f"Exception: {str(e)}"
-        })
-
-# --- Output Results ---
-df = pd.DataFrame(results)
-df.to_csv("column_lineage_results.csv", index=False)
-print("\u2705 Lineage results saved to column_lineage_results.csv")
+else:
+    print(f"Request failed with status code {response.status_code}")
+    print(response.text)
