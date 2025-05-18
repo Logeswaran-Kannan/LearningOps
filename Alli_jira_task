@@ -9,51 +9,46 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Load input parameters from CSV
-input_csv = "lineage_input.csv"  # Update this with your actual CSV file path
-df_input = pd.read_csv(input_csv)
+# Parameters Setup
+params = {
+    "table_name": "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy",
+    "column_name": "productcode",
+    "include_entity_lineage": True
+}
 
-# Loop through each row in the CSV
-for index, row in df_input.iterrows():
-    catalog = row['catalog_name']
-    database = row['schema_name']
-    table = row['table_name']
-    column = row['column_name']
+# Request Execution
+response = requests.get(url, headers=headers, params=params)
 
-    # Combine full table name
-    full_table_name = f"{catalog}.{database}.{table}"
+# Response Handling
+if response.status_code == 200:
+    data = response.json()
 
-    # Parameters Setup
-    params = {
-        "table_name": full_table_name,
-        "column_name": column,
-        "include_entity_lineage": True
-    }
+    # Flatten the JSON if needed
+    upstream = pd.json_normalize(data.get('upstream_cols', []))
+    downstream = pd.json_normalize(data.get('downstream_cols', []))
 
-    # Request Execution
-    response = requests.get(url, headers=headers, params=params)
+    # Add direction and default linkage details
+    upstream["direction"] = "upstream"
+    downstream["direction"] = "downstream"
 
-    # Response Handling
-    print(f"\nProcessing: {full_table_name}, Column: {column}")
-    if response.status_code == 200:
-        data = response.json()
+    # Function to determine linkage type and comment
+    def determine_linkage(row):
+        if 'vw_policycenter_std001_current_pc_policy' in row.get('table_name', ''):
+            return pd.Series(["direct", "Direct relation to the source table"])
+        elif 'vw_' in row.get('table_name', ''):
+            return pd.Series(["indirect", "Derived from a view possibly indirectly linked"])
+        else:
+            return pd.Series(["unknown", "Linkage unknown"])
 
-        # Flatten the JSON if needed
-        upstream = pd.json_normalize(data.get('upstream_cols', []))
-        downstream = pd.json_normalize(data.get('downstream_cols', []))
+    upstream[["linkage_type", "comment"]] = upstream.apply(determine_linkage, axis=1)
+    downstream[["linkage_type", "comment"]] = downstream.apply(determine_linkage, axis=1)
 
-        print("\nUpstream Columns:\n")
-        display(upstream)
+    # Merge all into a single DataFrame with labels
+    lineage_df = pd.concat([upstream, downstream], ignore_index=True)
 
-        print("\nDownstream Columns:\n")
-        display(downstream)
+    print("\nLineage Details:\n")
+    display(lineage_df)
 
-        # Optionally merge all into a single DataFrame with labels
-        upstream["direction"] = "upstream"
-        downstream["direction"] = "downstream"
-        lineage_df = pd.concat([upstream, downstream], ignore_index=True)
-        display(lineage_df)
-
-    else:
-        print(f"Request failed with status code {response.status_code}")
-        print(response.text)
+else:
+    print(f"Request failed with status code {response.status_code}")
+    print(response.text)
