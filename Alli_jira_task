@@ -1,68 +1,33 @@
 import requests
-import pandas as pd
-import time
+import json
 
-# --- CONFIGURATION ---
+# --- Configuration ---
 workspace_url = "https://<your-databricks-instance>.databricks.com"
 access_token = "<your_personal_access_token>"
+
 headers = {
     "Authorization": f"Bearer {access_token}",
     "Content-Type": "application/json"
 }
 
-# --- INPUT: list of 'catalog.schema.table.column' entries ---
-input_list = [
-    "lineage_data.lineagedemo.dinner.dessert",
-    # Add more entries as needed
-]
+# --- Input ---
+table_name = "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy"
+column_name = "policy_number"  # Replace with actual column
 
-def parse_entry(entry):
-    parts = entry.split('.')
-    if len(parts) != 4:
-        raise ValueError(f"Invalid format: {entry}. Expected format: catalog.schema.table.column")
-    return parts[0] + "." + parts[1] + "." + parts[2], parts[3]
+url = f"{workspace_url}/api/2.0/lineage-tracking/column-lineage"
+payload = {
+    "table_name": table_name,
+    "column_name": column_name
+}
 
-def get_column_lineage(table_name, column_name):
-    url = f"{workspace_url}/api/2.0/lineage-tracking/column-lineage"
-    payload = {
-        "table_name": table_name,
-        "column_name": column_name
-    }
+# --- Send Request ---
+response = requests.post(url, headers=headers, json=payload)
 
-    response = requests.post(url, headers=headers, json=payload)
-
-    if response.status_code != 200:
-        return [], response.text
-
+# --- Handle Response ---
+if response.status_code == 200:
     data = response.json()
-    downstream = []
-
-    for ref in data.get("downstream_columns", []):
-        downstream.append(ref.get("column_name", "UNKNOWN"))
-
-    return downstream, None
-
-# --- MAIN PROCESSING ---
-results = []
-
-for entry in input_list:
-    try:
-        table, column = parse_entry(entry)
-        refs, error = get_column_lineage(table, column)
-        results.append({
-            "input": entry,
-            "referenced_in": refs,
-            "error": error or ""
-        })
-        time.sleep(0.5)  # To respect API rate limits
-    except Exception as e:
-        results.append({
-            "input": entry,
-            "referenced_in": [],
-            "error": str(e)
-        })
-
-# --- OUTPUT TO CSV ---
-df = pd.DataFrame(results)
-df.to_csv("column_lineage_results.csv", index=False)
-print("✅ Lineage check complete. Results saved to 'column_lineage_results.csv'")
+    print(f"✅ Downstream references for {column_name}:")
+    for col in data.get("downstream_columns", []):
+        print(f"- {col['column_name']}")
+else:
+    print(f"❌ API error {response.status_code}: {response.text}")
