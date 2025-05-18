@@ -1,5 +1,6 @@
 import requests
 import pandas as pd
+import sqlalchemy
 
 # Token and URL Setup
 token = "test"
@@ -9,36 +10,47 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Parameters Setup
-params = {
-    "table_name": "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy",
-    "column_name": "productcode",
-    "include_entity_lineage": True
-}
+# Set up a connection to the information schema (adjust the connection string as needed)
+engine = sqlalchemy.create_engine('databricks+connector://<username>:<password>@<hostname>/<catalog>/<schema>')
 
-# Request Execution
-response = requests.get(url, headers=headers, params=params)
+# Query the information schema to get tables and columns
+query = """
+SELECT table_name, column_name 
+FROM information_schema.columns 
+WHERE table_schema = 'ods_views'
+"""
+table_info = pd.read_sql(query, engine)
 
-# Response Handling
-if response.status_code == 200:
-    data = response.json()
+# Iterate through each table and column
+all_lineage_data = []
 
-    # Flatten the JSON if needed
-    upstream = pd.json_normalize(data.get('upstream_cols', []))
-    downstream = pd.json_normalize(data.get('downstream_cols', []))
+for _, row in table_info.iterrows():
+    params = {
+        "table_name": f"core_tst_std001.ods_views.{row['table_name']}",
+        "column_name": row['column_name'],
+        "include_entity_lineage": True
+    }
 
-    print("\nUpstream Columns:\n")
-    display(upstream)
+    response = requests.get(url, headers=headers, params=params)
 
-    print("\nDownstream Columns:\n")
-    display(downstream)
+    if response.status_code == 200:
+        data = response.json()
+        upstream = pd.json_normalize(data.get('upstream_cols', []))
+        downstream = pd.json_normalize(data.get('downstream_cols', []))
 
-    # Optionally merge all into a single DataFrame with labels
-    upstream["direction"] = "upstream"
-    downstream["direction"] = "downstream"
-    lineage_df = pd.concat([upstream, downstream], ignore_index=True)
-    display(lineage_df)
+        upstream["direction"] = "upstream"
+        downstream["direction"] = "downstream"
+        lineage_df = pd.concat([upstream, downstream], ignore_index=True)
+        lineage_df["source_table"] = row['table_name']
+        lineage_df["source_column"] = row['column_name']
 
+        all_lineage_data.append(lineage_df)
+    else:
+        print(f"Failed for {row['table_name']}.{row['column_name']}: {response.status_code}")
+
+# Combine all collected lineage data
+if all_lineage_data:
+    final_df = pd.concat(all_lineage_data, ignore_index=True)
+    display(final_df)
 else:
-    print(f"Request failed with status code {response.status_code}")
-    print(response.text)
+    print("No lineage data collected.")
