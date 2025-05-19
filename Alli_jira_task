@@ -40,6 +40,8 @@ def cast_columns_to_string(df, columns):
 
 # Validation logic for a single table
 def validate_table(table):
+    post_dedup_count = 0
+    comment = ""
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
         source_df = spark.table(source_table)
@@ -49,6 +51,20 @@ def validate_table(table):
         source_count = source_df.count()
     except Exception:
         post_dedup_count = target_comp_df.count()
+    comment_parts = []
+    if source_count != post_dedup_count:
+        comment_parts.append("count mismatch")
+    if missing_in_source:
+        comment_parts.append("missing columns in source")
+    if missing_in_target:
+        comment_parts.append("missing columns in target")
+    if mismatches or mismatches_target:
+        comment_parts.append("data mismatch")
+    if duplicate_count > 0:
+        comment_parts.append("duplicates in target")
+    comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
+
+    post_dedup_count = target_comp_df.count()
     comment_parts = []
     if source_count != post_dedup_count:
         comment_parts.append("count mismatch")
@@ -190,8 +206,7 @@ with ThreadPoolExecutor(max_workers=4) as executor:
 
 # Define schema for result rows
 schema = StructType([
-    StructField("post_dedup_count", IntegerType(), True),
-    StructField("comment", StringType(), True),
+    
     StructField("input_table", StringType(), True),
     StructField("source_table", StringType(), True),
     StructField("target_table", StringType(), True),
@@ -211,8 +226,7 @@ schema = StructType([
 
 # Convert to DataFrame using defined schema
 result_rdd = spark.sparkContext.parallelize([(
-    r["post_dedup_count"],
-    r["comment"],
+    
     r["input_table"],
     r["source_table"],
     r["target_table"],
@@ -226,6 +240,8 @@ result_rdd = spark.sparkContext.parallelize([(
     r["duplicate_check_in_target"],
     r["source_sql"],
     r["target_sql"],
+    r["post_dedup_count"],
+    r["comment"],
     r["post_dedup_count"],
     r["comment"]
 ) for r in results])
