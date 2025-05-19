@@ -1,1 +1,1 @@
-Thanks Simon and Paul — that really helps clarify things. Good to know the columns will be retained in production via schema drift, and agreed it makes sense to keep them in the cloud tables and ODS views for consistency, even if they’re null. Appreciate the quick responses!
+Thanks Paul and Simon — that clarifies it well. Good to know the columns will still be included in production via schema drift, and that the expectation is to retain them even if they're null. I’ll make sure we factor this in for the test setup as well. Appreciate the clarification!
