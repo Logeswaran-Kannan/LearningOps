@@ -43,16 +43,19 @@ for _, row in df_inputs.iterrows():
 
         # Add direction and column being processed
         for df, direction in [(upstream, "upstream"), (downstream, "downstream")]:
-            df["direction"] = direction
-            df["source_column"] = column
-            df["source_schema"] = source_schema
-            df["source_table"] = source_table
+            if not df.empty:
+                df["direction"] = direction
+                df["source_column"] = column
+                df["source_schema"] = source_schema
+                df["source_table"] = source_table
 
-            # Function to determine linkage type and comment
-            linkage_types = df["name"].apply(lambda x: "direct" if str(x).lower() == column.lower() else "indirect")
-            comments = df["name"].apply(lambda x: f"Column '{column}' is directly used in this table/view" if str(x).lower() == column.lower() else f"Column is derived using '{column}' or other input columns")
-            df["linkage_type"] = linkage_types
-            df["comment"] = comments
+                # Confirm 'name' column exists
+                if "name" in df.columns:
+                    df["linkage_type"] = df["name"].apply(lambda x: "direct" if str(x).lower() == column.lower() else "indirect")
+                    df["comment"] = df["name"].apply(lambda x: f"Column '{column}' is directly used in this table/view" if str(x).lower() == column.lower() else f"Column is derived using '{column}' or other input columns")
+                else:
+                    df["linkage_type"] = "unknown"
+                    df["comment"] = "'name' column missing in response"
 
         # Merge and collect
         lineage_df = pd.concat([upstream, downstream], ignore_index=True)
@@ -62,10 +65,10 @@ for _, row in df_inputs.iterrows():
         combined = pd.concat([upstream, downstream], ignore_index=True)
         upstream_count = upstream.shape[0]
         downstream_count = downstream.shape[0]
-        distinct_col_count = combined['name'].nunique()
+        distinct_col_count = combined['name'].nunique() if 'name' in combined.columns else 0
         distinct_tbl_count = combined['table_name'].nunique() if 'table_name' in combined.columns else 0
-        direct_count = combined[combined['linkage_type'] == 'direct'].shape[0]
-        indirect_count = combined[combined['linkage_type'] == 'indirect'].shape[0]
+        direct_count = combined[combined['linkage_type'] == 'direct'].shape[0] if 'linkage_type' in combined.columns else 0
+        indirect_count = combined[combined['linkage_type'] == 'indirect'].shape[0] if 'linkage_type' in combined.columns else 0
 
         summary_stats.append({
             "source_schema": source_schema,
