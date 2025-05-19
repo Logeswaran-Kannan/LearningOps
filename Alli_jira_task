@@ -13,6 +13,7 @@ headers = {
 columns_to_check = ["productcode", "hash_diff"]
 
 all_lineage = []
+summary_stats = []
 
 for column in columns_to_check:
     print(f"\nProcessing lineage for column: {column}\n")
@@ -56,6 +57,21 @@ for column in columns_to_check:
         # Merge and collect
         lineage_df = pd.concat([upstream, downstream], ignore_index=True)
         all_lineage.append(lineage_df)
+
+        # Summary statistics for upstream only
+        distinct_col_count = upstream['name'].nunique()
+        distinct_tbl_count = upstream['table_name'].nunique()
+        direct_count = upstream[upstream['linkage_type'] == 'direct'].shape[0]
+        indirect_count = upstream[upstream['linkage_type'] == 'indirect'].shape[0]
+
+        summary_stats.append({
+            "source_column": column,
+            "upstream_distinct_column_count": distinct_col_count,
+            "upstream_distinct_table_count": distinct_tbl_count,
+            "direct_linkage_count": direct_count,
+            "indirect_linkage_count": indirect_count
+        })
+
     else:
         print(f"Request failed for column {column} with status code {response.status_code}")
         print(response.text)
@@ -65,3 +81,8 @@ if all_lineage:
     final_df = pd.concat(all_lineage, ignore_index=True)
     print("\nFinal Lineage Details (with linkage type and comments):\n")
     display(final_df)
+
+    # Display summary statistics
+    summary_df = pd.DataFrame(summary_stats)
+    print("\nSummary Statistics per Column:\n")
+    display(summary_df)
