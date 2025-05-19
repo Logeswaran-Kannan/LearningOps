@@ -1,5 +1,1 @@
-Thanks, Simon and Paul. I understand the column was always NULL on-prem, but since it’s referenced downstream, I think we should either retain it in the structure with NULLs in the ods_views or make sure all dependencies are cleaned up.
-
-Just trying to confirm from a production deployment perspective — this column should still be present in the ods_views DDL, right? Otherwise, if any downstream scripts (views, notebooks, dashboards, etc.) reference it, wouldn’t that lead to runtime errors?
-
-Asking because I noticed the column isn’t there in the ods_views in the test environment.
+Thanks Simon and Paul — that really helps clarify things. Good to know the columns will be retained in production via schema drift, and agreed it makes sense to keep them in the cloud tables and ODS views for consistency, even if they’re null. Appreciate the quick responses!
