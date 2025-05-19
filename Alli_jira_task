@@ -30,6 +30,11 @@ def cast_columns_to_string(df, columns):
         df = df.withColumn(col_name, col(col_name).cast("string"))
     return df.select([col(c) for c in columns])
 
+def normalize_dataframe(df, columns):
+    for col_name in columns:
+        df = df.withColumn(col_name, when(col(col_name).isNull(), "").otherwise(col(col_name)))
+    return df.select(columns).dropDuplicates().orderBy(columns)
+
 def validate_table(table):
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
@@ -118,8 +123,8 @@ def validate_table(table):
     missing_in_source = list(target_columns - source_columns)
     missing_in_target = list(source_columns - target_columns)
 
-    target_comp_df = cast_columns_to_string(target_df.dropDuplicates() if not has_createtime and not has_updatetime else target_df, common_columns)
-    source_comp_df = cast_columns_to_string(source_df, common_columns)
+    source_comp_df = normalize_dataframe(cast_columns_to_string(source_df, common_columns), common_columns)
+    target_comp_df = normalize_dataframe(cast_columns_to_string(target_df, common_columns), common_columns)
 
     mismatches = [col_name for col_name in common_columns if source_comp_df.select(col_name).subtract(target_comp_df.select(col_name)).take(1)]
     mismatches_target = [col_name for col_name in common_columns if target_comp_df.select(col_name).subtract(source_comp_df.select(col_name)).take(1)]
