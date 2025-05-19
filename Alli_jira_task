@@ -47,6 +47,17 @@ def validate_table(table):
     mismatches = []
     mismatches_target = []
     duplicate_count = 0
+    source_count = 0
+    target_count = 0
+    target_filtered_count = 0
+    target_table = ""
+    post_dedup_count = 0
+    comment = ""
+    missing_in_source = []
+    missing_in_target = []
+    mismatches = []
+    mismatches_target = []
+    duplicate_count = 0
 
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
@@ -56,7 +67,9 @@ def validate_table(table):
         source_columns = set(source_df.columns)
         source_count = source_df.count()
     except Exception:
-        post_dedup_count = target_comp_df.count()
+        " | ".join(comment_parts) if comment_parts else "All checks passed"
+
+    post_dedup_count = target_comp_df.count()
     comment_parts = []
     if source_count != post_dedup_count:
         comment_parts.append("count mismatch")
@@ -70,7 +83,7 @@ def validate_table(table):
         comment_parts.append("duplicates in target")
     comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-    post_dedup_count = target_comp_df.count()
+    post_dedup_count = target_comp_df.count() if 'target_comp_df' in locals() else 0
     comment_parts = []
     if source_count != post_dedup_count:
         comment_parts.append("count mismatch")
@@ -246,8 +259,7 @@ result_rdd = spark.sparkContext.parallelize([(
     r["duplicate_check_in_target"],
     r["source_sql"],
     r["target_sql"],
-    r["post_dedup_count"],
-    r["comment"],
+    
     r["post_dedup_count"],
     r["comment"]
 ) for r in results])
