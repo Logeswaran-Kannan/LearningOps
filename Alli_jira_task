@@ -134,8 +134,12 @@ def validate_table(table):
     mismatches = []
     mismatches_target = []
 
+    # Adjust target comparison DataFrame if both createtime and updatetime are missing
+    if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
+        target_comp_df = cast_columns_to_string(target_df.dropDuplicates(), common_columns)
+    else:
+        target_comp_df = cast_columns_to_string(target_df, common_columns)
     source_comp_df = cast_columns_to_string(source_df, common_columns)
-    target_comp_df = cast_columns_to_string(target_df, common_columns)
 
     for col_name in common_columns:
         if source_comp_df.select(col_name).subtract(target_comp_df.select(col_name)).take(1):
@@ -143,7 +147,10 @@ def validate_table(table):
         if target_comp_df.select(col_name).subtract(source_comp_df.select(col_name)).take(1):
             mismatches_target.append(col_name)
 
-    duplicate_count = target_comp_df.count() - target_comp_df.dropDuplicates().count()
+    if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
+        duplicate_count = 0  # Do not count duplicates when deduplication is applied
+    else:
+        duplicate_count = target_comp_df.count() - target_comp_df.dropDuplicates().count()
 
     return {
         "input_table": table,
