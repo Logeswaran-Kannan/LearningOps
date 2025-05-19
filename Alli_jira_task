@@ -17,6 +17,10 @@ filter_end = '2025-05-13T00:00:01.0025+00:00'
 
 def convert_boolean_columns(df):
     for column in df.columns:
+        # Skip columns already numeric
+        dt = dict(df.dtypes)[column]
+        if dt not in ["string", "varchar"]:
+            continue
         unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
         if set(unique_vals).issubset({"t", "f"}):
             df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
