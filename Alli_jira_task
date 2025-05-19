@@ -131,8 +131,9 @@ def validate_table(table):
     try:
         target_table = f"{target_catalog}.{target_db}.{target_table_name}"
         target_df = spark.table(target_table).drop("azure_load_date")
+        if 'target_df' in locals():
         target_df = convert_boolean_columns(target_df)
-        target_df = to_lowercase_columns(target_df)
+                target_df = to_lowercase_columns(target_df)
 
         # Remove azure_load_date if present
         if "azure_load_date" in target_df.columns:
@@ -146,8 +147,8 @@ def validate_table(table):
         if not (has_createtime or has_updatetime):
             target_count = target_df.distinct().count()
         else:
-            target_count = target_df.count()
-        target_columns = set(target_df.columns)
+                    target_count = target_df.count()
+                target_columns = set(target_df.columns)
         
         target_columns = set(target_df.columns)
         if 'createtime' in target_columns and target_df.count() > 5000:
