@@ -42,26 +42,17 @@ for _, row in df_inputs.iterrows():
         downstream = pd.json_normalize(data.get('downstream_cols', []))
 
         # Add direction and column being processed
-        upstream["direction"] = "upstream"
-        downstream["direction"] = "downstream"
-        upstream["source_column"] = column
-        downstream["source_column"] = column
-        upstream["source_schema"] = source_schema
-        upstream["source_table"] = source_table
-        downstream["source_schema"] = source_schema
-        downstream["source_table"] = source_table
+        for df, direction in [(upstream, "upstream"), (downstream, "downstream")]:
+            df["direction"] = direction
+            df["source_column"] = column
+            df["source_schema"] = source_schema
+            df["source_table"] = source_table
 
-        # Function to determine linkage type and comment
-        def determine_linkage(row):
-            col_name = row.get("name", "").lower()
-            if col_name == column.lower():
-                return pd.Series(["direct", f"Column '{column}' is directly used in this table/view"])
-            else:
-                return pd.Series(["indirect", f"Column is derived using '{column}' or other input columns"])
-
-        # Apply linkage logic
-        upstream[["linkage_type", "comment"]] = upstream.apply(determine_linkage, axis=1)
-        downstream[["linkage_type", "comment"]] = downstream.apply(determine_linkage, axis=1)
+            # Function to determine linkage type and comment
+            linkage_types = df["name"].apply(lambda x: "direct" if str(x).lower() == column.lower() else "indirect")
+            comments = df["name"].apply(lambda x: f"Column '{column}' is directly used in this table/view" if str(x).lower() == column.lower() else f"Column is derived using '{column}' or other input columns")
+            df["linkage_type"] = linkage_types
+            df["comment"] = comments
 
         # Merge and collect
         lineage_df = pd.concat([upstream, downstream], ignore_index=True)
@@ -72,7 +63,7 @@ for _, row in df_inputs.iterrows():
         upstream_count = upstream.shape[0]
         downstream_count = downstream.shape[0]
         distinct_col_count = combined['name'].nunique()
-        distinct_tbl_count = combined['table_name'].nunique()
+        distinct_tbl_count = combined['table_name'].nunique() if 'table_name' in combined.columns else 0
         direct_count = combined[combined['linkage_type'] == 'direct'].shape[0]
         indirect_count = combined[combined['linkage_type'] == 'indirect'].shape[0]
 
