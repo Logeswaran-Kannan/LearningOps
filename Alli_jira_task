@@ -36,8 +36,10 @@ def cast_columns_to_string(df, columns):
 
 def normalize_dataframe(df, columns):
     from pyspark.sql.functions import when, col
+    dtypes = dict(df.dtypes)
     for col_name in columns:
-        df = df.withColumn(col_name, when(col(col_name).isNull(), "").otherwise(col(col_name)))
+        if dtypes[col_name] in ["string", "varchar"]:
+            df = df.withColumn(col_name, when(col(col_name).isNull(), "").otherwise(col(col_name)))
     return df.select(columns).dropDuplicates().orderBy(columns)
 
 def validate_table(table):
