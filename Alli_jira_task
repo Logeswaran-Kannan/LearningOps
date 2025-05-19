@@ -58,16 +58,17 @@ for column in columns_to_check:
         lineage_df = pd.concat([upstream, downstream], ignore_index=True)
         all_lineage.append(lineage_df)
 
-        # Summary statistics for upstream only
-        distinct_col_count = upstream['name'].nunique()
-        distinct_tbl_count = upstream['table_name'].nunique()
-        direct_count = upstream[upstream['linkage_type'] == 'direct'].shape[0]
-        indirect_count = upstream[upstream['linkage_type'] == 'indirect'].shape[0]
+        # Summary statistics including downstream
+        combined = pd.concat([upstream, downstream], ignore_index=True)
+        distinct_col_count = combined['name'].nunique()
+        distinct_tbl_count = combined['table_name'].nunique()
+        direct_count = combined[combined['linkage_type'] == 'direct'].shape[0]
+        indirect_count = combined[combined['linkage_type'] == 'indirect'].shape[0]
 
         summary_stats.append({
             "source_column": column,
-            "upstream_distinct_column_count": distinct_col_count,
-            "upstream_distinct_table_count": distinct_tbl_count,
+            "total_distinct_column_count": distinct_col_count,
+            "total_distinct_table_count": distinct_tbl_count,
             "direct_linkage_count": direct_count,
             "indirect_linkage_count": indirect_count
         })
