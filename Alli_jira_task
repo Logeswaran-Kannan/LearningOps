@@ -42,6 +42,12 @@ def cast_columns_to_string(df, columns):
 def validate_table(table):
     post_dedup_count = 0
     comment = ""
+    missing_in_source = []
+    missing_in_target = []
+    mismatches = []
+    mismatches_target = []
+    duplicate_count = 0
+
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
         source_df = spark.table(source_table)
