@@ -40,6 +40,8 @@ def cast_columns_to_string(df, columns):
 
 # Validation logic for a single table
 def validate_table(table):
+    source_sql = ""
+    target_sql = ""
     post_dedup_count = 0
     comment = ""
     missing_in_source = []
@@ -67,51 +69,26 @@ def validate_table(table):
         source_columns = set(source_df.columns)
         source_count = source_df.count()
     except Exception:
-        " | ".join(comment_parts) if comment_parts else "All checks passed"
+        comment = "source or target load failure"
+        return {
+            "input_table": table,
+            "source_table": source_table if 'source_table' in locals() else "missing",
+            "target_table": target_table if 'target_table' in locals() else "missing",
+            "source_count": source_count,
+            "target_count": 0,
+            "target_filtered_count": 0,
+            "missing_in_source": [],
+            "missing_in_target": [],
+            "mismatches": [],
+            "mismatches_target": [],
+            "duplicate_check_in_target": 0,
+            "source_sql": source_sql,
+            "target_sql": target_sql,
+            "post_dedup_count": 0,
+            "comment": comment
+        }
 
-    # compute post_dedup_count safely
-    post_dedup_count = target_comp_df.count() if 'target_comp_df' in locals() else 0
-    comment_parts = []
-    if source_count != post_dedup_count:
-        comment_parts.append("count mismatch")
-    if missing_in_source:
-        comment_parts.append("missing columns in source")
-    if missing_in_target:
-        comment_parts.append("missing columns in target")
-    if mismatches or mismatches_target:
-        comment_parts.append("data mismatch")
-    if duplicate_count > 0:
-        comment_parts.append("duplicates in target")
-    comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-
-    post_dedup_count = target_comp_df.count() if 'target_comp_df' in locals() else 0
-    comment_parts = []
-    if source_count != post_dedup_count:
-        comment_parts.append("count mismatch")
-    if missing_in_source:
-        comment_parts.append("missing columns in source")
-    if missing_in_target:
-        comment_parts.append("missing columns in target")
-    if mismatches or mismatches_target:
-        comment_parts.append("data mismatch")
-    if duplicate_count > 0:
-        comment_parts.append("duplicates in target")
-    comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-
-    comment_parts = []
-    if source_count != post_dedup_count:
-        comment_parts.append("count mismatch")
-    if missing_in_source:
-        comment_parts.append("missing columns in source")
-    if missing_in_target:
-        comment_parts.append("missing columns in target")
-    if mismatches or mismatches_target:
-        comment_parts.append("data mismatch")
-    if duplicate_count > 0:
-        comment_parts.append("duplicates in target")
-    comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-
-    return {
+        # fallback return block removed below
         "input_table": table,
         "source_table": source_table,
         "target_table": target_table,
