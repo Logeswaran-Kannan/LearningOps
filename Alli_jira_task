@@ -1,5 +1,6 @@
 import requests
 import pandas as pd
+from pyspark.sql import SparkSession
 
 # Token and URL Setup
 token = "test"
@@ -8,6 +9,9 @@ headers = {
     "Authorization": f"Bearer {token}",
     "Content-Type": "application/json"
 }
+
+# Start Spark session for table/column validation
+spark = SparkSession.builder.getOrCreate()
 
 # Load input data from CSV in DBFS
 input_csv_path = "/dbfs/FileStore/lineage_input.csv"  # Adjust the path as needed
@@ -24,8 +28,9 @@ for _, row in df_inputs.iterrows():
     print(f"\nProcessing lineage for: {source_schema}.{source_table}.{column}\n")
 
     # Parameters Setup
+    table_full_name = f"core_tst_std001.{source_schema}.{source_table}"
     params = {
-        "table_name": f"core_tst_std001.{source_schema}.{source_table}",
+        "table_name": table_full_name,
         "column_name": column,
         "include_entity_lineage": True
     }
@@ -33,7 +38,6 @@ for _, row in df_inputs.iterrows():
     # Request Execution
     response = requests.get(url, headers=headers, params=params)
 
-    # Response Handling
     if response.status_code == 200:
         data = response.json()
 
@@ -79,9 +83,36 @@ for _, row in df_inputs.iterrows():
             "total_distinct_column_count": distinct_col_count,
             "total_distinct_table_count": distinct_tbl_count,
             "direct_linkage_count": direct_count,
-            "indirect_linkage_count": indirect_count
+            "indirect_linkage_count": indirect_count,
+            "comment": ""
         })
 
+    elif response.status_code == 403 and "PERMISSION_DENIED" in response.text:
+        try:
+            table_exists = spark._jsparkSession.catalog().tableExists(f"core_tst_std001.{source_schema}.{source_table}")
+            if table_exists:
+                df = spark.table(f"core_tst_std001.{source_schema}.{source_table}")
+                if column not in df.columns:
+                    comment = "Column missing"
+                else:
+                    comment = "Permission denied for lineage API, but table and column exist"
+            else:
+                comment = "Table missing"
+        except Exception as e:
+            comment = f"Error checking table/column: {str(e)}"
+
+        summary_stats.append({
+            "source_schema": source_schema,
+            "source_table": source_table,
+            "source_column": column,
+            "upstream_count": 0,
+            "downstream_count": 0,
+            "total_distinct_column_count": 0,
+            "total_distinct_table_count": 0,
+            "direct_linkage_count": 0,
+            "indirect_linkage_count": 0,
+            "comment": comment
+        })
     else:
         print(f"Request failed for column {column} with status code {response.status_code}")
         print(response.text)
@@ -92,7 +123,7 @@ if all_lineage:
     print("\nFinal Lineage Details (with linkage type and comments):\n")
     display(final_df)
 
-    # Display summary statistics
-    summary_df = pd.DataFrame(summary_stats)
-    print("\nSummary Statistics per Column:\n")
-    display(summary_df)
+# Display summary statistics
+summary_df = pd.DataFrame(summary_stats)
+print("\nSummary Statistics per Column:\n")
+display(summary_df)
