@@ -1,3 +1,5 @@
-As we discussed in the defect triage, these columns are part of the downstream lineage — they’re present in Oracle but missing in the Read Replica. In addition to the 3 columns we already flagged as impacting downstream, we’ve now identified 8 more through Unity Catalog lineage, so that brings the total to 11 columns.
+Thanks, Simon and Paul. I understand the column was always NULL on-prem, but since it’s referenced downstream, I think we should either retain it in the structure with NULLs in the ods_views or make sure all dependencies are cleaned up.
 
-That said, Unity Catalog has some limitations — it doesn’t tell us if these columns are used specifically in filter conditions. So, I’m planning to work on a solution to parse each notebook and check if any of the missing columns are being used in filters within the scripts. Will keep you posted on that.
+Just trying to confirm from a production deployment perspective — this column should still be present in the ods_views DDL, right? Otherwise, if any downstream scripts (views, notebooks, dashboards, etc.) reference it, wouldn’t that lead to runtime errors?
+
+Asking because I noticed the column isn’t there in the ods_views in the test environment.
