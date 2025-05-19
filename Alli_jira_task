@@ -12,6 +12,9 @@ headers = {
 # List of columns to check
 columns_to_check = ["productcode", "hash_diff"]
 
+source_schema = "ods_views"
+source_table = "vw_policycenter_std001_current_pc_policy"
+
 all_lineage = []
 summary_stats = []
 
@@ -20,7 +23,7 @@ for column in columns_to_check:
 
     # Parameters Setup
     params = {
-        "table_name": "core_tst_std001.ods_views.vw_policycenter_std001_current_pc_policy",
+        "table_name": f"core_tst_std001.{source_schema}.{source_table}",
         "column_name": column,
         "include_entity_lineage": True
     }
@@ -41,6 +44,10 @@ for column in columns_to_check:
         downstream["direction"] = "downstream"
         upstream["source_column"] = column
         downstream["source_column"] = column
+        upstream["source_schema"] = source_schema
+        upstream["source_table"] = source_table
+        downstream["source_schema"] = source_schema
+        downstream["source_table"] = source_table
 
         # Function to determine linkage type and comment
         def determine_linkage(row):
@@ -60,13 +67,19 @@ for column in columns_to_check:
 
         # Summary statistics including downstream
         combined = pd.concat([upstream, downstream], ignore_index=True)
+        upstream_count = upstream.shape[0]
+        downstream_count = downstream.shape[0]
         distinct_col_count = combined['name'].nunique()
         distinct_tbl_count = combined['table_name'].nunique()
         direct_count = combined[combined['linkage_type'] == 'direct'].shape[0]
         indirect_count = combined[combined['linkage_type'] == 'indirect'].shape[0]
 
         summary_stats.append({
+            "source_schema": source_schema,
+            "source_table": source_table,
             "source_column": column,
+            "upstream_count": upstream_count,
+            "downstream_count": downstream_count,
             "total_distinct_column_count": distinct_col_count,
             "total_distinct_table_count": distinct_tbl_count,
             "direct_linkage_count": direct_count,
