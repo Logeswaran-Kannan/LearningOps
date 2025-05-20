@@ -111,7 +111,8 @@ def validate_table(table):
 
         if not (has_createtime or has_updatetime):
             target_df = target_df.dropDuplicates()
-            target_count = target_df.count()
+            actual_target_df = target_df.drop("azure_load_date") if "azure_load_date" in target_df.columns else target_df
+            target_count = actual_target_df.count()
             target_filtered_count = target_count
         else:
             target_count = target_df.count()
@@ -166,7 +167,8 @@ def validate_table(table):
         mismatches_target = common_columns
 
     post_dedup_count = target_comp_df.count()
-    duplicate_count = max(0, target_count - post_dedup_count)
+    dedup_cols = [c for c in actual_target_df.columns if c != "azure_load_date"]
+    duplicate_count = actual_target_df.count() - actual_target_df.dropDuplicates(dedup_cols).count()
 
     comment_parts = []
     if source_count != post_dedup_count:
