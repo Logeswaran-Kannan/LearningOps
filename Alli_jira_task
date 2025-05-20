@@ -71,7 +71,7 @@ def validate_table(table):
     except Exception:
         has_createtime = False
         casted_comparison_sql = ""
-            boolean_f_t_only_in_source = source_boolean_f_t_only_cols
+        boolean_f_t_only_in_source = []
 
     return {
             "source_only_count": 0,
