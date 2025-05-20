@@ -136,6 +136,8 @@ def validate_table(table):
         converted_boolean_columns = []
         source_boolean_f_t_only_cols = []
         return {
+        "converted_boolean_columns": converted_boolean_columns,
+        "boolean_f_t_only_in_source": source_boolean_f_t_only_cols,
         "source_only_count": 0,
         "target_only_count": 0,
         "input_table": table,
