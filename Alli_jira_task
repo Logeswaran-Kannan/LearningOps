@@ -69,7 +69,21 @@ def validate_table(table):
     except Exception:
         has_createtime = False
         casted_comparison_sql = ""
-        return {
+            # Collect boolean-only columns used
+    boolean_column_list = boolean_like_cols
+
+    # Sample mismatched record (if any)
+    sample_source_minus_target = ""
+    sample_target_minus_source = ""
+    try:
+        if source_only:
+            sample_source_minus_target = source_comp_df.subtract(target_comp_df).limit(1).toPandas().to_csv(sep="|", index=False).strip()
+        if target_only:
+            sample_target_minus_source = target_comp_df.subtract(source_comp_df).limit(1).toPandas().to_csv(sep="|", index=False).strip()
+    except:
+        pass
+
+    return {
             "source_only_count": 0,
             "target_only_count": 0,
             "input_table": table,
@@ -284,6 +298,9 @@ schema = StructType([
     StructField("target_sql", StringType(), True),
     StructField("post_dedup_count", IntegerType(), True),
     StructField("comment", StringType(), True),
+    StructField("boolean_column_list", ArrayType(StringType()), True),
+    StructField("sample_source_minus_target", StringType(), True),
+    StructField("sample_target_minus_source", StringType(), True),
     StructField("casted_comparison_sql", StringType(), True)
 ])
 
@@ -293,7 +310,7 @@ result_rdd = spark.sparkContext.parallelize([(
     r["source_count"], r["target_count"], r["target_filtered_count"],
     r["missing_in_source"], r["missing_in_target"], r["mismatches"],
     r["mismatches_target"], r["duplicate_check_in_target"],
-    r["source_sql"], r["target_sql"], r["post_dedup_count"], r["comment"], r["casted_comparison_sql"]
+    r["source_sql"], r["target_sql"], r["post_dedup_count"], r["comment"], r["casted_comparison_sql"], r["boolean_column_list"], r["sample_source_minus_target"], r["sample_target_minus_source"]
 ) for r in results])
 
 result_df = spark.createDataFrame(result_rdd, schema)
