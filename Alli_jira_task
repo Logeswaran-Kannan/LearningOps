@@ -226,10 +226,6 @@ def validate_table(table):
                 source_boolean_only_cols.append(col_name)
         except:
             continue
-            if set(map(str.lower, map(str, vals))).issubset({"t", "f", "true", "false"}):
-                boolean_like_cols.append(col_name)
-        except:
-            continue
 
     # Prepare CAST with transformation
     cast_exprs = []
