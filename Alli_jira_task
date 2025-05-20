@@ -91,6 +91,8 @@ def validate_table(table):
             "duplicate_check_in_target": 0,
             "source_sql": "",
             "target_sql": "",
+        "converted_boolean_columns": converted_boolean_columns,
+        "boolean_f_t_only_in_source": source_boolean_f_t_only_cols,
             "post_dedup_count": 0,
             "comment": "source table load failure",
             "casted_comparison_sql": casted_comparison_sql
@@ -130,6 +132,9 @@ def validate_table(table):
                 target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
             target_filtered_count = target_df.count()
     except Exception:
+        casted_comparison_sql = ""
+        converted_boolean_columns = []
+        source_boolean_f_t_only_cols = []
         return {
         "source_only_count": 0,
         "target_only_count": 0,
@@ -147,7 +152,8 @@ def validate_table(table):
             "source_sql": f"SELECT * FROM {source_table}",
             "target_sql": "",
             "post_dedup_count": 0,
-            "comment": "target table load failure"
+            "comment": "target table load failure",
+        "casted_comparison_sql": casted_comparison_sql
         }
 
     common_columns = list(source_columns & target_columns)
