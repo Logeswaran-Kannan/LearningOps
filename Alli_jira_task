@@ -67,15 +67,9 @@ def validate_table(table):
         source_columns = set(source_df.columns)
         source_count = source_df.count()
     except Exception:
-            casted_comparison_sql = f"SELECT {', '.join([f'CAST({c} AS STRING)' for c in common_columns])} FROM {source_table}" if common_columns else ""
-    if has_createtime and source_count > 5000:
-        casted_comparison_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    casted_comparison_sql += " ||||| "
-    casted_comparison_sql += f"SELECT {', '.join([f'CAST({c} AS STRING)' for c in common_columns])} FROM {target_table}"
-    if has_createtime and target_count > 5000:
-        casted_comparison_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-
-    return {
+        has_createtime = False
+        casted_comparison_sql = ""
+        return {
         "input_table": table,
             "source_table": "missing",
             "target_table": "missing",
