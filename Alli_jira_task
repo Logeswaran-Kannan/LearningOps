@@ -22,11 +22,13 @@ filter_end = '2025-05-13T00:00:01.0025+00:00'
 
 # Function to convert boolean-like columns
 def convert_boolean_columns(df):
+    converted_columns = []
     for column in df.columns:
         unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
         if set(unique_vals).issubset({"t", "f"}):
             df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
-    return df
+            converted_columns.append(column)
+    return df, converted_columns
 
 # Function to convert column names to lowercase
 def to_lowercase_columns(df):
@@ -62,7 +64,7 @@ def validate_table(table):
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
         source_df = spark.table(source_table)
-        source_df = convert_boolean_columns(source_df)
+        source_df, converted_boolean_columns = convert_boolean_columns(source_df)
         source_df = to_lowercase_columns(source_df)
         source_columns = set(source_df.columns)
         source_count = source_df.count()
@@ -93,6 +95,7 @@ def validate_table(table):
         }
         casted_comparison_sql = ""
         return {
+        "converted_boolean_columns": converted_boolean_columns,
         "input_table": table,
             "source_table": "missing",
             "target_table": "missing",
@@ -265,6 +268,7 @@ with ThreadPoolExecutor(max_workers=4) as executor:
     results = list(executor.map(validate_table, table_names))
 
 schema = StructType([
+    StructField("converted_boolean_columns", ArrayType(StringType()), True),
     StructField("boolean_f_t_only_in_source", ArrayType(StringType()), True),
     StructField("source_only_count", IntegerType(), True),
     StructField("target_only_count", IntegerType(), True),
@@ -287,6 +291,7 @@ schema = StructType([
 ])
 
 result_rdd = spark.sparkContext.parallelize([(
+    r["converted_boolean_columns"],
     r["source_only_count"], r["target_only_count"],
         r["input_table"], r["source_table"], r["target_table"],
     r["source_count"], r["target_count"], r["target_filtered_count"],
