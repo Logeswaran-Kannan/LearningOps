@@ -189,6 +189,18 @@ def validate_table(table):
     source_only_count = source_only
     target_only_count = target_only
 
+    # Create casted comparison SQL
+    cast_exprs = [f"CAST({c} AS STRING) AS {c}" for c in common_columns]
+    casted_source_sql = f"SELECT {', '.join(cast_exprs)} FROM {source_table}"
+    casted_target_sql = f"SELECT {', '.join(cast_exprs)} FROM {target_table}"
+    if has_createtime and source_count > 5000:
+        casted_source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
+    if has_createtime and target_count > 5000:
+        casted_target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
+    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql
+    source_only_count = source_only
+    target_only_count = target_only
+
     return {
         "input_table": table,
         "source_table": source_table,
@@ -206,7 +218,8 @@ def validate_table(table):
         "post_dedup_count": post_dedup_count,
         "source_only_count": source_only_count,
         "target_only_count": target_only_count,
-        "comment": comment
+        "comment": comment,
+        "casted_comparison_sql": casted_comparison_sql
     }
 
 # Run validation in parallel
