@@ -117,11 +117,11 @@ def validate_table(table):
 
     prefix = table[0].lower()
     if prefix == 'p':
-        target_table_name = f"policycenter_{table}"
+        target_table_name = f"policycenter_std001_{table}"
     elif prefix == 'b':
-        target_table_name = f"billingcenter_{table}"
+        target_table_name = f"billingcenter_std001_{table}"
     elif prefix == 'c':
-        target_table_name = f"claimcenter_{table}"
+        target_table_name = f"claimcenter_std001_{table}"
     else:
         target_table_name = table
 
@@ -240,7 +240,7 @@ def validate_table(table):
         casted_source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
     if has_createtime and target_count > 5000:
         casted_target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql" ||||| " + casted_target_sql
+    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql
     source_only_count = source_only
     target_only_count = target_only
 
