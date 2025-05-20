@@ -39,12 +39,21 @@ def validate_table(table):
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
         source_df = spark.table(source_table)
-        source_df = convert_boolean_columns(source_df)
         source_df = to_lowercase_columns(source_df)
         source_columns = set(source_df.columns)
         source_count = source_df.count()
+
+        boolean_column_list = []
+        for c in source_df.columns:
+            try:
+                vals = source_df.select(c).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
+                lower_vals = set([str(v).lower() for v in vals])
+                if lower_vals.issubset({"t", "f", "true", "false"}):
+                    boolean_column_list.append(c)
+            except:
+                continue
     except Exception:
-        return {"input_table": table, "source_table": "missing", "target_table": "missing", "comment": "source table load failure"}
+        return {"input_table": table, "source_table": "missing", "target_table": "missing", "comment": "source table load failure", "boolean_column_list": [], "sample_source_minus_target": "", "sample_target_minus_source": ""}
 
     prefix = table[0].lower()
     if prefix == 'p':
@@ -59,7 +68,6 @@ def validate_table(table):
     try:
         target_table = f"{target_catalog}.{target_db}.{target_table_name}"
         target_df = spark.table(target_table)
-        target_df = convert_boolean_columns(target_df)
         target_df = to_lowercase_columns(target_df)
         if "azure_load_date" in target_df.columns:
             target_df = target_df.drop("azure_load_date")
@@ -71,7 +79,7 @@ def validate_table(table):
             target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
         target_filtered_count = target_df.count()
     except Exception:
-        return {"input_table": table, "source_table": source_table, "target_table": "missing", "comment": "target table load failure"}
+        return {"input_table": table, "source_table": source_table, "target_table": "missing", "comment": "target table load failure", "boolean_column_list": boolean_column_list, "sample_source_minus_target": "", "sample_target_minus_source": ""}
 
     common_columns = list(source_columns & target_columns)
     source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
@@ -87,6 +95,7 @@ def validate_table(table):
 
     sample_source_minus_target = ""
     sample_target_minus_source = ""
+
     try:
         if source_only > 0:
             sample_source_minus_target = source_only_df.limit(1).toPandas().to_csv(sep="|", index=False).strip()
@@ -106,15 +115,6 @@ def validate_table(table):
     if missing_in_target:
         comment_parts.append("missing in target")
 
-    boolean_columns = []
-    for c in common_columns:
-        try:
-            vals = source_df.select(c).union(target_df.select(c)).distinct().limit(100).rdd.flatMap(lambda x: x).map(lambda x: str(x).lower()).collect()
-            if set(vals).issubset({"t", "f", "true", "false"}):
-                boolean_columns.append(c)
-        except:
-            continue
-
     return {
         "input_table": table,
         "source_table": source_table,
@@ -124,7 +124,7 @@ def validate_table(table):
         "missing_in_source": missing_in_source,
         "missing_in_target": missing_in_target,
         "comment": " | ".join(comment_parts) if comment_parts else "All checks passed",
-        "boolean_column_list": boolean_columns,
+        "boolean_column_list": boolean_column_list,
         "sample_source_minus_target": sample_source_minus_target,
         "sample_target_minus_source": sample_target_minus_source
     }
