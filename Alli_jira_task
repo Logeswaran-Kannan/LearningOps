@@ -70,6 +70,9 @@ def validate_table(table):
         source_count = source_df.count()
     except Exception:
         has_createtime = False
+        casted_comparison_sql = ""
+        converted_boolean_columns = []
+        source_boolean_f_t_only_cols = []
         return {
             "source_only_count": 0,
             "target_only_count": 0,
@@ -88,7 +91,9 @@ def validate_table(table):
             "target_sql": "",
             "post_dedup_count": 0,
             "comment": "source and target table load failure",
-            "casted_comparison_sql": casted_comparison_sql
+            "casted_comparison_sql": casted_comparison_sql,
+        "converted_boolean_columns": converted_boolean_columns,
+        "boolean_f_t_only_in_source": source_boolean_f_t_only_cols
         }
         casted_comparison_sql = ""
         return {
