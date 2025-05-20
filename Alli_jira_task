@@ -81,29 +81,19 @@ def validate_table(table):
 
     source_only_df = source_comp_df.subtract(target_comp_df)
     target_only_df = target_comp_df.subtract(source_comp_df)
+
     source_only = source_only_df.count()
     target_only = target_only_df.count()
 
     sample_source_minus_target = ""
     sample_target_minus_source = ""
     try:
-        if source_only:
+        if source_only > 0:
             sample_source_minus_target = source_only_df.limit(1).toPandas().to_csv(sep="|", index=False).strip()
-        if target_only:
+        if target_only > 0:
             sample_target_minus_source = target_only_df.limit(1).toPandas().to_csv(sep="|", index=False).strip()
     except:
         pass
-
-    boolean_columns = []
-    for col_name in common_columns:
-        try:
-            source_vals = source_df.select(col_name).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
-            target_vals = target_df.select(col_name).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
-            combined_vals = set(map(str.lower, map(str, source_vals + target_vals)))
-            if combined_vals.issubset({"t", "f", "true", "false"}):
-                boolean_columns.append(col_name)
-        except:
-            continue
 
     missing_in_source = list(target_columns - source_columns)
     missing_in_target = list(source_columns - target_columns)
@@ -116,6 +106,15 @@ def validate_table(table):
     if missing_in_target:
         comment_parts.append("missing in target")
 
+    boolean_columns = []
+    for c in common_columns:
+        try:
+            vals = source_df.select(c).union(target_df.select(c)).distinct().limit(100).rdd.flatMap(lambda x: x).map(lambda x: str(x).lower()).collect()
+            if set(vals).issubset({"t", "f", "true", "false"}):
+                boolean_columns.append(c)
+        except:
+            continue
+
     return {
         "input_table": table,
         "source_table": source_table,
@@ -125,7 +124,7 @@ def validate_table(table):
         "missing_in_source": missing_in_source,
         "missing_in_target": missing_in_target,
         "comment": " | ".join(comment_parts) if comment_parts else "All checks passed",
-        "boolean_columns": boolean_columns,
+        "boolean_column_list": boolean_columns,
         "sample_source_minus_target": sample_source_minus_target,
         "sample_target_minus_source": sample_target_minus_source
     }
@@ -142,7 +141,7 @@ schema = StructType([
     StructField("missing_in_source", ArrayType(StringType()), True),
     StructField("missing_in_target", ArrayType(StringType()), True),
     StructField("comment", StringType(), True),
-    StructField("boolean_columns", ArrayType(StringType()), True),
+    StructField("boolean_column_list", ArrayType(StringType()), True),
     StructField("sample_source_minus_target", StringType(), True),
     StructField("sample_target_minus_source", StringType(), True)
 ])
@@ -151,7 +150,7 @@ result_rdd = spark.sparkContext.parallelize([
     (r.get("input_table"), r.get("source_table"), r.get("target_table"),
      r.get("source_only_count", 0), r.get("target_only_count", 0),
      r.get("missing_in_source", []), r.get("missing_in_target", []), r.get("comment"),
-     r.get("boolean_columns", []), r.get("sample_source_minus_target", ""), r.get("sample_target_minus_source", ""))
+     r.get("boolean_column_list", []), r.get("sample_source_minus_target", ""), r.get("sample_target_minus_source", ""))
     for r in results
 ])
 
