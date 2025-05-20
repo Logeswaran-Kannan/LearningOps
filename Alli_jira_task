@@ -74,6 +74,8 @@ def validate_table(table):
         converted_boolean_columns = []
         source_boolean_f_t_only_cols = []
         return {
+            "converted_boolean_columns": converted_boolean_columns,
+            "boolean_f_t_only_in_source": source_boolean_f_t_only_cols,
             "source_only_count": 0,
             "target_only_count": 0,
             "input_table": table,
@@ -90,29 +92,8 @@ def validate_table(table):
             "source_sql": "",
             "target_sql": "",
             "post_dedup_count": 0,
-            "comment": "source and target table load failure",
-            "casted_comparison_sql": casted_comparison_sql,
-        "converted_boolean_columns": converted_boolean_columns,
-        "boolean_f_t_only_in_source": source_boolean_f_t_only_cols
-        }
-        casted_comparison_sql = ""
-        return {
-        "converted_boolean_columns": converted_boolean_columns,
-        "input_table": table,
-            "source_table": "missing",
-            "target_table": "missing",
-            "source_count": 0,
-            "target_count": 0,
-            "target_filtered_count": 0,
-            "missing_in_source": [],
-            "missing_in_target": [],
-            "mismatches": [],
-            "mismatches_target": [],
-            "duplicate_check_in_target": 0,
-            "source_sql": "",
-            "target_sql": "",
-            "post_dedup_count": 0,
-            "comment": "source table load failure"
+            "comment": "source table load failure",
+            "casted_comparison_sql": casted_comparison_sql
         }
 
     prefix = table[0].lower()
