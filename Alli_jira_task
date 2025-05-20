@@ -70,12 +70,7 @@ def validate_table(table):
         source_count = source_df.count()
     except Exception:
         has_createtime = False
-        casted_comparison_sql = ""
-        boolean_f_t_only_in_source = []
-        converted_boolean_columns = []
-        boolean_f_t_only_in_source = []
-
-    return {
+        return {
             "source_only_count": 0,
             "target_only_count": 0,
             "input_table": table,
