@@ -221,7 +221,8 @@ schema = StructType([
 ])
 
 result_rdd = spark.sparkContext.parallelize([(
-    r["input_table"], r["source_table"], r["target_table"],
+    r["source_only_count"], r["target_only_count"],
+        r["input_table"], r["source_table"], r["target_table"],
     r["source_count"], r["target_count"], r["target_filtered_count"],
     r["missing_in_source"], r["missing_in_target"], r["mismatches"],
     r["mismatches_target"], r["duplicate_check_in_target"],
