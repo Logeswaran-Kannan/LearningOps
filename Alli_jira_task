@@ -69,8 +69,7 @@ def validate_table(table):
     except Exception:
         has_createtime = False
         casted_comparison_sql = ""
-            boolean_column_list = boolean_like_cols
-    boolean_f_t_only_in_source = source_boolean_only_cols
+            boolean_f_t_only_in_source = source_boolean_f_t_only_cols
 
     return {
             "source_only_count": 0,
@@ -212,18 +211,13 @@ def validate_table(table):
     source_only_count = source_only
     target_only_count = target_only
 
-    # Identify boolean-like columns from both source and target (f/t or true/false)
-    boolean_like_cols = []
-    source_boolean_only_cols = []
+    # Identify boolean-only columns in source
+    source_boolean_f_t_only_cols = []
     for col_name in common_columns:
         try:
             source_vals = source_df.select(col_name).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
-            target_vals = target_df.select(col_name).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
-            combined_vals = set(map(str.lower, map(str, source_vals + target_vals)))
-            if combined_vals.issubset({"t", "f", "true", "false"}):
-                boolean_like_cols.append(col_name)
             if set(map(str.lower, map(str, source_vals))).issubset({"t", "f"}):
-                source_boolean_only_cols.append(col_name)
+                source_boolean_f_t_only_cols.append(col_name)
         except:
             continue
 
@@ -241,7 +235,7 @@ def validate_table(table):
         casted_source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
     if has_createtime and target_count > 5000:
         casted_target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql
+    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql" ||||| " + casted_target_sql
     source_only_count = source_only
     target_only_count = target_only
 
@@ -271,6 +265,7 @@ with ThreadPoolExecutor(max_workers=4) as executor:
     results = list(executor.map(validate_table, table_names))
 
 schema = StructType([
+    StructField("boolean_f_t_only_in_source", ArrayType(StringType()), True),
     StructField("source_only_count", IntegerType(), True),
     StructField("target_only_count", IntegerType(), True),
     StructField("input_table", StringType(), True),
@@ -288,9 +283,7 @@ schema = StructType([
     StructField("target_sql", StringType(), True),
     StructField("post_dedup_count", IntegerType(), True),
     StructField("comment", StringType(), True),
-    StructField("casted_comparison_sql", StringType(), True),
-    StructField("boolean_column_list", ArrayType(StringType()), True),
-    StructField("boolean_f_t_only_in_source", ArrayType(StringType()), True)
+    StructField("casted_comparison_sql", StringType(), True)
 ])
 
 result_rdd = spark.sparkContext.parallelize([(
@@ -299,7 +292,7 @@ result_rdd = spark.sparkContext.parallelize([(
     r["source_count"], r["target_count"], r["target_filtered_count"],
     r["missing_in_source"], r["missing_in_target"], r["mismatches"],
     r["mismatches_target"], r["duplicate_check_in_target"],
-    r["source_sql"], r["target_sql"], r["post_dedup_count"], r["comment"], r["casted_comparison_sql"], r["boolean_column_list"], r["boolean_f_t_only_in_source"]
+    r["source_sql"], r["target_sql"], r["post_dedup_count"], r["comment"], r["casted_comparison_sql"], r["boolean_f_t_only_in_source"]
 ) for r in results])
 
 result_df = spark.createDataFrame(result_rdd, schema)
