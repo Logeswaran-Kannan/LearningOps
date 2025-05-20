@@ -115,7 +115,8 @@ def validate_table(table):
             target_count = actual_target_df.count()
             target_filtered_count = target_count
         else:
-            target_count = target_df.count()
+            actual_target_df = target_df  # Ensure it's initialized
+            target_count = actual_target_df.count()
             if has_createtime and target_count > 5000:
                 target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
             target_filtered_count = target_df.count()
