@@ -1,15 +1,160 @@
-Based on the triage discussion, these tables were classified as ones that don't have audit columns on the source side to help identify latest records. Ideally, ingestion should handle de-duplication in ODS, but even production currently has duplicates due to this limitation. We’re rechecking all affected tables to confirm it's a genuine source limitation, and once validated, we'll close this as not related to the migration activity.
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, lower
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+from concurrent.futures import ThreadPoolExecutor
 
-As per Paul’s explanation, this defect will be tracked as low severity and revisited during post-deployment monitoring. No Guidewire dependencies for now. Phil will check if there’s any downstream dependency on the data_hub side. In test, schema drift isn’t triggering as expected, but for production, the expectation is that schema drift will handle it. This will go under risk acceptance for test sign-off.
+spark = SparkSession.builder.appName("AutomatedValidation").getOrCreate()
 
-This one was identified as a data sync mismatch between the testing framework’s read and compare logic. Based on Paul’s input, Mani will revalidate this.
+source_catalog = "core_tst_sys9"
+source_db = "rr_source"
+target_catalog = "core_tst_std001"
+target_db = "ods"
 
-Next steps on the ODS ingestion fix will be discussed in the upcoming defect triage.
+table_names = ["ptable1", "btable2", "ctable3"]
 
-With Paul's clarification, those two tables will be removed from the automation testing scope. However, we’ll confirm any downstream impact related to cctl_master in today's triage before closing it.
+filter_start = '2025-05-12T00:00:01.0025+00:00'
+filter_end = '2025-05-13T00:00:01.0025+00:00'
 
-Assigning Mani to remove the impacted columns from the automation validation scope.
+def convert_boolean_columns(df):
+    for column in df.columns:
+        unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
+        if set(unique_vals).issubset({"t", "f"}):
+            df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
+    return df
 
-Also assigning Mani to exclude the related tables from automation validation.
+def to_lowercase_columns(df):
+    return df.select([col(c).alias(c.lower()) for c in df.columns])
 
-Thanks Paul for the clarification — this one’s good to close. ✅
+def cast_columns_to_common_type(source_df, target_df, columns):
+    for col_name in columns:
+        source_type = dict(source_df.dtypes).get(col_name)
+        target_type = dict(target_df.dtypes).get(col_name)
+        common_type = target_type if source_type != target_type else source_type
+        if common_type:
+            source_df = source_df.withColumn(col_name, col(col_name).cast(common_type))
+            target_df = target_df.withColumn(col_name, col(col_name).cast(common_type))
+    return source_df.select(columns), target_df.select(columns)
+
+def validate_table(table):
+    try:
+        source_table = f"{source_catalog}.{source_db}.{table}"
+        source_df = spark.table(source_table)
+        source_df = convert_boolean_columns(source_df)
+        source_df = to_lowercase_columns(source_df)
+        source_columns = set(source_df.columns)
+        source_count = source_df.count()
+    except Exception:
+        return {"input_table": table, "source_table": "missing", "target_table": "missing", "comment": "source table load failure"}
+
+    prefix = table[0].lower()
+    if prefix == 'p':
+        target_table_name = f"policycenter_{table}"
+    elif prefix == 'b':
+        target_table_name = f"billingcenter_{table}"
+    elif prefix == 'c':
+        target_table_name = f"claimcenter_{table}"
+    else:
+        target_table_name = table
+
+    try:
+        target_table = f"{target_catalog}.{target_db}.{target_table_name}"
+        target_df = spark.table(target_table)
+        target_df = convert_boolean_columns(target_df)
+        target_df = to_lowercase_columns(target_df)
+        if "azure_load_date" in target_df.columns:
+            target_df = target_df.drop("azure_load_date")
+
+        target_columns = set(target_df.columns)
+        has_createtime = "createtime" in target_columns
+
+        if has_createtime:
+            target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
+        target_filtered_count = target_df.count()
+    except Exception:
+        return {"input_table": table, "source_table": source_table, "target_table": "missing", "comment": "target table load failure"}
+
+    common_columns = list(source_columns & target_columns)
+    source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
+
+    source_comp_df = source_aligned.dropDuplicates()
+    target_comp_df = target_aligned.dropDuplicates()
+
+    source_only_df = source_comp_df.subtract(target_comp_df)
+    target_only_df = target_comp_df.subtract(source_comp_df)
+    source_only = source_only_df.count()
+    target_only = target_only_df.count()
+
+    sample_source_minus_target = ""
+    sample_target_minus_source = ""
+    try:
+        if source_only:
+            sample_source_minus_target = source_only_df.limit(1).toPandas().to_csv(sep="|", index=False).strip()
+        if target_only:
+            sample_target_minus_source = target_only_df.limit(1).toPandas().to_csv(sep="|", index=False).strip()
+    except:
+        pass
+
+    boolean_columns = []
+    for col_name in common_columns:
+        try:
+            source_vals = source_df.select(col_name).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
+            target_vals = target_df.select(col_name).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
+            combined_vals = set(map(str.lower, map(str, source_vals + target_vals)))
+            if combined_vals.issubset({"t", "f", "true", "false"}):
+                boolean_columns.append(col_name)
+        except:
+            continue
+
+    missing_in_source = list(target_columns - source_columns)
+    missing_in_target = list(source_columns - target_columns)
+
+    comment_parts = []
+    if source_only or target_only:
+        comment_parts.append("data mismatch")
+    if missing_in_source:
+        comment_parts.append("missing in source")
+    if missing_in_target:
+        comment_parts.append("missing in target")
+
+    return {
+        "input_table": table,
+        "source_table": source_table,
+        "target_table": target_table,
+        "source_only_count": source_only,
+        "target_only_count": target_only,
+        "missing_in_source": missing_in_source,
+        "missing_in_target": missing_in_target,
+        "comment": " | ".join(comment_parts) if comment_parts else "All checks passed",
+        "boolean_columns": boolean_columns,
+        "sample_source_minus_target": sample_source_minus_target,
+        "sample_target_minus_source": sample_target_minus_source
+    }
+
+with ThreadPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(validate_table, table_names))
+
+schema = StructType([
+    StructField("input_table", StringType(), True),
+    StructField("source_table", StringType(), True),
+    StructField("target_table", StringType(), True),
+    StructField("source_only_count", IntegerType(), True),
+    StructField("target_only_count", IntegerType(), True),
+    StructField("missing_in_source", ArrayType(StringType()), True),
+    StructField("missing_in_target", ArrayType(StringType()), True),
+    StructField("comment", StringType(), True),
+    StructField("boolean_columns", ArrayType(StringType()), True),
+    StructField("sample_source_minus_target", StringType(), True),
+    StructField("sample_target_minus_source", StringType(), True)
+])
+
+result_rdd = spark.sparkContext.parallelize([
+    (r.get("input_table"), r.get("source_table"), r.get("target_table"),
+     r.get("source_only_count", 0), r.get("target_only_count", 0),
+     r.get("missing_in_source", []), r.get("missing_in_target", []), r.get("comment"),
+     r.get("boolean_columns", []), r.get("sample_source_minus_target", ""), r.get("sample_target_minus_source", ""))
+    for r in results
+])
+
+result_df = spark.createDataFrame(result_rdd, schema)
+result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
+result_df.show(truncate=False)
