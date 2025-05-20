@@ -226,7 +226,7 @@ result_rdd = spark.sparkContext.parallelize([(
     r["source_count"], r["target_count"], r["target_filtered_count"],
     r["missing_in_source"], r["missing_in_target"], r["mismatches"],
     r["mismatches_target"], r["duplicate_check_in_target"],
-    r["source_sql"], r["target_sql"], r["source_only_count"], r["target_only_count"], r["post_dedup_count"], r["comment"]
+    r["source_sql"], r["target_sql"], r["post_dedup_count"], r["comment"]
 ) for r in results])
 
 result_df = spark.createDataFrame(result_rdd, schema)
