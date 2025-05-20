@@ -209,15 +209,31 @@ def validate_table(table):
     source_only_count = source_only
     target_only_count = target_only
 
-    # Create casted comparison SQL
-    cast_exprs = [f"CAST({c} AS STRING) AS {c}" for c in common_columns]
+    # Identify boolean-like columns from both source and target (f/t or true/false)
+    boolean_like_cols = []
+    for col_name in common_columns:
+        try:
+            vals = source_df.select(col_name).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
+            if set(map(str.lower, map(str, vals))).issubset({"t", "f", "true", "false"}):
+                boolean_like_cols.append(col_name)
+        except:
+            continue
+
+    # Prepare CAST with transformation
+    cast_exprs = []
+    for c in common_columns:
+        if c in boolean_like_cols:
+            cast_exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'true' THEN '1' WHEN 'f' THEN '0' WHEN 'false' THEN '0' ELSE {c} END AS STRING) AS {c}")
+        else:
+            cast_exprs.append(f"CAST({c} AS STRING) AS {c}")
+
     casted_source_sql = f"SELECT {', '.join(cast_exprs)} FROM {source_table}"
     casted_target_sql = f"SELECT {', '.join(cast_exprs)} FROM {target_table}"
     if has_createtime and source_count > 5000:
         casted_source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
     if has_createtime and target_count > 5000:
         casted_target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql
+    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql" ||||| " + casted_target_sql
     source_only_count = source_only
     target_only_count = target_only
 
