@@ -70,6 +70,27 @@ def validate_table(table):
         has_createtime = False
         casted_comparison_sql = ""
         return {
+            "source_only_count": 0,
+            "target_only_count": 0,
+            "input_table": table,
+            "source_table": "missing",
+            "target_table": "missing",
+            "source_count": 0,
+            "target_count": 0,
+            "target_filtered_count": 0,
+            "missing_in_source": [],
+            "missing_in_target": [],
+            "mismatches": [],
+            "mismatches_target": [],
+            "duplicate_check_in_target": 0,
+            "source_sql": "",
+            "target_sql": "",
+            "post_dedup_count": 0,
+            "comment": "source and target table load failure",
+            "casted_comparison_sql": casted_comparison_sql
+        }
+        casted_comparison_sql = ""
+        return {
         "input_table": table,
             "source_table": "missing",
             "target_table": "missing",
@@ -122,9 +143,11 @@ def validate_table(table):
             target_filtered_count = target_df.count()
     except Exception:
         return {
-            "input_table": table,
-            "source_table": source_table,
-            "target_table": "missing",
+        "source_only_count": 0,
+        "target_only_count": 0,
+        "input_table": table,
+        "source_table": source_table,
+        "target_table": "missing",
             "source_count": source_count,
             "target_count": 0,
             "target_filtered_count": 0,
