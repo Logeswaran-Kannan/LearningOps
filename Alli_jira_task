@@ -13,14 +13,15 @@ source_db = "rr_source"
 target_catalog = "core_tst_std001"
 target_db = "ods"
 
-# Table names to process (expandable)
-table_names = ["ptable1", "btable2", "ctable3"]  # Replace with a larger list or automated fetch
+# Table names to process
+table_names = ["ptable1", "btable2", "ctable3"]
 
 # Date range for filtering
 filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
 
-# Function to convert boolean-like columns
+# Functions
+
 def convert_boolean_columns(df):
     for column in df.columns:
         unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
@@ -28,18 +29,16 @@ def convert_boolean_columns(df):
             df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
     return df
 
-# Function to convert column names to lowercase
 def to_lowercase_columns(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
 
-# Function to align schema and cast all columns to string for safe comparison
 def cast_columns_to_string(df, columns):
     for col_name in columns:
         df = df.withColumn(col_name, col(col_name).cast("string"))
     return df.select([col(c) for c in columns])
 
-# Validation logic for a single table
 def validate_table(table):
+    # Initialize
     source_sql = ""
     target_sql = ""
     post_dedup_count = 0
@@ -53,13 +52,6 @@ def validate_table(table):
     target_count = 0
     target_filtered_count = 0
     target_table = ""
-    post_dedup_count = 0
-    comment = ""
-    missing_in_source = []
-    missing_in_target = []
-    mismatches = []
-    mismatches_target = []
-    duplicate_count = 0
 
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
@@ -69,39 +61,11 @@ def validate_table(table):
         source_columns = set(source_df.columns)
         source_count = source_df.count()
     except Exception:
-        comment = "source or target load failure"
-        # Final deduplicated target count for reporting
-    post_dedup_count = target_comp_df.count() if 'target_comp_df' in locals() else 0
-
-    # Accurate duplicate count only when not deduping for comparison
-    if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
-        duplicate_count = target_df.count() - post_dedup_count
-    else:
-        duplicate_count = target_comp_df.count() - target_comp_df.dropDuplicates().count()
-
-    # Comment logic
-    comment_parts = []
-    if source_count != post_dedup_count:
-        comment_parts.append("count mismatch")
-    if missing_in_source:
-        comment_parts.append("missing columns in source")
-    if missing_in_target:
-        comment_parts.append("missing columns in target")
-    if mismatches or mismatches_target:
-        comment_parts.append("data mismatch")
-    if duplicate_count > 0:
-        comment_parts.append("duplicates in target")
-    comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-
-    # SQL reconstruction from actual comparison DataFrames
-    source_sql = f"SELECT {', '.join(source_comp_df.columns)} FROM {source_table}"
-    target_sql = f"SELECT {', '.join(target_comp_df.columns)} FROM {target_table}"
-
-    return {
-        "input_table": table,
-        "source_table": source_table if 'source_table' in locals() else "missing",
-            "target_table": target_table if 'target_table' in locals() else "missing",
-            "source_count": source_count,
+        return {
+            "input_table": table,
+            "source_table": "missing",
+            "target_table": "missing",
+            "source_count": 0,
             "target_count": 0,
             "target_filtered_count": 0,
             "missing_in_source": [],
@@ -109,15 +73,13 @@ def validate_table(table):
             "mismatches": [],
             "mismatches_target": [],
             "duplicate_check_in_target": 0,
-            "source_sql": source_sql,
-            "target_sql": target_sql,
+            "source_sql": "",
+            "target_sql": "",
             "post_dedup_count": 0,
-            "comment": comment
+            "comment": "source table load failure"
         }
 
-        
-
-    # Target table name logic
+    # Determine target
     prefix = table[0].lower()
     if prefix == 'p':
         target_table_name = f"policycenter_{table}"
@@ -130,43 +92,31 @@ def validate_table(table):
 
     try:
         target_table = f"{target_catalog}.{target_db}.{target_table_name}"
-        target_df = spark.table(target_table).drop("azure_load_date")
-        if 'target_df' in locals():
+        target_df = spark.table(target_table)
         target_df = convert_boolean_columns(target_df)
-                target_df = to_lowercase_columns(target_df)
+        target_df = to_lowercase_columns(target_df)
 
-        # Remove azure_load_date if present
         if "azure_load_date" in target_df.columns:
             target_df = target_df.drop("azure_load_date")
 
-        # Determine filtering logic based on available columns
-        has_createtime = "createtime" in target_df.columns
-        has_updatetime = "updatetime" in target_df.columns
-
-        # Count records based on distinct row values if no filtering possible
-        if not (has_createtime or has_updatetime):
-            target_count = target_df.distinct().count()
-        else:
-                    target_count = target_df.count()
-                target_columns = set(target_df.columns)
-        
         target_columns = set(target_df.columns)
-        if 'createtime' in target_columns and target_df.count() > 5000:
-            target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
-            target_filtered_count = target_df.count()
-        elif 'updatetime' in target_columns and target_df.count() > 5000:
-            target_filtered_count = target_df.count()
+        has_createtime = "createtime" in target_columns
+        has_updatetime = "updatetime" in target_columns
+
+        if not (has_createtime or has_updatetime):
+            target_df = target_df.dropDuplicates()
+            target_count = target_df.count()
+            target_filtered_count = target_count
         else:
-            target_filtered_count = target_df.dropDuplicates().count()
-        target_count = target_df.count()
-        if target_count > 5000 and "createtime" in target_df.columns:
-            target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
-        target_filtered_count = target_df.count()
+            target_count = target_df.count()
+            if has_createtime and target_count > 5000:
+                target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
+            target_filtered_count = target_df.count()
     except Exception:
         return {
-        "input_table": table,
-        "source_table": source_table,
-        "target_table": "missing",
+            "input_table": table,
+            "source_table": source_table,
+            "target_table": "missing",
             "source_count": source_count,
             "target_count": 0,
             "target_filtered_count": 0,
@@ -177,50 +127,47 @@ def validate_table(table):
             "duplicate_check_in_target": 0,
             "source_sql": f"SELECT * FROM {source_table}",
             "target_sql": "",
-        "post_dedup_count": 0,
-        "comment": "target table load failure"
-    }
+            "post_dedup_count": 0,
+            "comment": "target table load failure"
+        }
 
+    # Column alignment and comparison
     common_columns = list(source_columns & target_columns)
-    source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}" if source_columns else ""
-    target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}" if target_columns else ""
-
     missing_in_source = list(target_columns - source_columns)
     missing_in_target = list(source_columns - target_columns)
-    mismatches = []
-    mismatches_target = []
 
-    # Adjust target comparison DataFrame if both createtime and updatetime are missing
-    if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
-        target_comp_df = cast_columns_to_string(target_df.dropDuplicates(), common_columns)
-    else:
-        target_comp_df = cast_columns_to_string(target_df, common_columns)
-    source_comp_df = cast_columns_to_string(source_df, common_columns)
-
-    # Full-row comparison logic
     source_comp_df = cast_columns_to_string(source_df.select(common_columns), common_columns)
     target_comp_df = cast_columns_to_string(target_df.select(common_columns), common_columns)
 
-    # Deduplicate both if no timestamps
     if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
         source_comp_df = source_comp_df.dropDuplicates()
         target_comp_df = target_comp_df.dropDuplicates()
 
-    # Compare full rows
     source_only = source_comp_df.subtract(target_comp_df).limit(1).count()
     target_only = target_comp_df.subtract(source_comp_df).limit(1).count()
 
     if source_only > 0 or target_only > 0:
         mismatches = common_columns
         mismatches_target = common_columns
-    else:
-        mismatches = []
-        mismatches_target = [].append(col_name)
 
-    if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
-        duplicate_count = 0  # Do not count duplicates when deduplication is applied
-    else:
-        duplicate_count = target_comp_df.count() - target_comp_df.dropDuplicates().count()
+    post_dedup_count = target_comp_df.count()
+    duplicate_count = max(0, target_count - post_dedup_count)
+
+    source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}"
+    target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}"
+
+    comment_parts = []
+    if source_count != post_dedup_count:
+        comment_parts.append("count mismatch")
+    if missing_in_source:
+        comment_parts.append("missing columns in source")
+    if missing_in_target:
+        comment_parts.append("missing columns in target")
+    if mismatches:
+        comment_parts.append("data mismatch")
+    if duplicate_count > 0:
+        comment_parts.append("duplicates in target")
+    comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
     return {
         "input_table": table,
@@ -236,7 +183,7 @@ def validate_table(table):
         "duplicate_check_in_target": duplicate_count,
         "source_sql": source_sql,
         "target_sql": target_sql,
-        "post_dedup_count": 0,
+        "post_dedup_count": post_dedup_count,
         "comment": comment
     }
 
@@ -246,7 +193,6 @@ with ThreadPoolExecutor(max_workers=4) as executor:
 
 # Define schema for result rows
 schema = StructType([
-    
     StructField("input_table", StringType(), True),
     StructField("source_table", StringType(), True),
     StructField("target_table", StringType(), True),
@@ -266,23 +212,11 @@ schema = StructType([
 
 # Convert to DataFrame using defined schema
 result_rdd = spark.sparkContext.parallelize([(
-    
-    r["input_table"],
-    r["source_table"],
-    r["target_table"],
-    r["source_count"],
-    r["target_count"],
-    r["target_filtered_count"],
-    r["missing_in_source"],
-    r["missing_in_target"],
-    r["mismatches"],
-    r["mismatches_target"],
-    r["duplicate_check_in_target"],
-    r["source_sql"],
-    r["target_sql"],
-    
-    r["post_dedup_count"],
-    r["comment"]
+    r["input_table"], r["source_table"], r["target_table"],
+    r["source_count"], r["target_count"], r["target_filtered_count"],
+    r["missing_in_source"], r["missing_in_target"], r["mismatches"],
+    r["mismatches_target"], r["duplicate_check_in_target"],
+    r["source_sql"], r["target_sql"], r["post_dedup_count"], r["comment"]
 ) for r in results])
 
 result_df = spark.createDataFrame(result_rdd, schema)
