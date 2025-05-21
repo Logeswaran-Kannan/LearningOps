@@ -1,3 +1,16 @@
-Yeah, I’ll go ahead and raise this as a defect. I’ll also check in with the application team to take a closer look at it. Thanks, Paul.
+Data Format Mismatch – Amount Fields Showing as 0E-18 in Read Replica Instead of 0.0 from Oracle
 
-I believe you’ll be resuming the load for CC now — in the meantime, I’ll review PC and BC. I’ll also do a quick check on the RR side for the tables we’re not loading, just to make sure there aren’t any similar discrepancies.
+📝 Defect Summary:
+During post-migration validation between the Oracle source and the Read Replica (PostgreSQL) target, a data format discrepancy was identified in several amount-related columns within the ODS tables.
+
+In the Oracle source, these fields hold values like 0.0 (standard decimal notation). However, in the Read Replica (PostgreSQL), the same fields are represented as 0E-18, which is an exponential notation for zero.
+
+While mathematically equivalent, this representation may lead to:
+
+Unexpected behavior in downstream reporting or calculations
+
+Formatting issues in data exports or UI displays
+
+False mismatches during automated data comparison or regression scripts
+
+This defect needs investigation to determine if the conversion is happening during ingestion or due to underlying datatype differences (e.g., NUMBER in Oracle vs. NUMERIC/DECIMAL in PostgreSQL). The impact and resolution path (e.g., formatting during ingestion or in downstream logic) should be evaluated.
