@@ -1,0 +1,51 @@
+Scenario Category,Test Scenario ID,Test Scenario Name,Scenario Description,Steps to Perform,Expected Result,Pre-requisite,Access Required
+EventHub to Bronze Layer Validation,EH-BR-01,Message Receipt Validation,Ensure all incoming messages from EventHub are received and logged in the Bronze layer.,"1. Send test messages to EventHub.
+2. Trigger ingestion pipeline.
+3. Query Bronze table for expected messages.",All messages are captured in the Bronze layer with no loss.,Working EventHub publisher and pipeline.,"Read access to EventHub, Bronze layer."
+EventHub to Bronze Layer Validation,EH-BR-02,Schema Conformance Check,"Validate message schema (fields, types) matches expected schema in the Bronze table.","1. Define expected schema.
+2. Compare with actual ingested records in Bronze.",Schemas and data types match exactly.,Schema contract documentation.,Read access to Bronze schema/data.
+EventHub to Bronze Layer Validation,EH-BR-03,Timestamp Capture,"Verify ingestion timestamp is accurately captured (e.g., _ingest_time).","1. Send messages with known timestamps.
+2. Check _ingest_time in Bronze layer.",_ingest_time exists and falls within expected window.,Bronze table schema must include _ingest_time.,Read access to Bronze table.
+EventHub to Bronze Layer Validation,EH-BR-04,Null/Corrupted Message Handling,Check that malformed or null messages are either handled or quarantined.,"1. Send intentionally corrupted/null messages.
+2. Validate error handling or quarantine mechanism.",Invalid messages are quarantined or excluded from main Bronze ingestion.,Corrupt message generator/test harness.,Access to Bronze and error logs.
+EventHub to Bronze Layer Validation,EH-BR-05,Duplication Handling,Validate deduplication logic (if any) at the Bronze level for repeated EventHub messages.,"1. Send duplicate EventHub messages.
+2. Check for unique storage in Bronze.",Duplicates are avoided or properly marked if allowed.,Deduplication logic must be implemented.,Read access to Bronze.
+EventHub to Bronze Layer Validation,EH-BR-06,Field Completeness Check,"Ensure all required fields (e.g., id, event_time) are present in Bronze.","1. Inspect Bronze records.
+2. Check presence of mandatory fields.",No required field is null or missing.,Field mapping specs required.,Read access to Bronze.
+EventHub to Bronze Layer Validation,EH-BR-07,EventHub Offset Continuity,Validate that EventHub offsets are processed in sequence and none are skipped.,"1. Monitor offset logs before and after run.
+2. Verify continuity.","All offsets are processed in order, with no skips.",Offset tracking and logging in place.,Access to EventHub metrics/logs.
+Bronze to Silver Layer Transformation Validation,BR-SL-01,1:1 Record Mapping,"Ensure each Bronze record maps to exactly one Silver record (no loss, no duplicates).",1. Compare record counts between Bronze and Silver tables for same time window.,Record counts match exactly; no duplicates in Silver.,Bronze and Silver layers must have a common identifier.,Read access to both Bronze and Silver.
+Bronze to Silver Layer Transformation Validation,BR-SL-02,Data Transformation Accuracy,"Validate correctness of transformations (e.g., parsing, enrichment, filtering).","1. Define transformation rules.
+2. Compare source fields and target fields with applied logic.",Fields transformed accurately as defined.,Transformation logic available.,Access to transformation notebooks and data.
+Bronze to Silver Layer Transformation Validation,BR-SL-03,Field Mapping Validation,Check all required fields in Silver layer are correctly derived from Bronze.,"1. Trace lineage from Bronze fields to Silver outputs.
+2. Compare for correctness.",All required Silver fields correctly populated from Bronze.,Data dictionary or mapping specification.,Read access to metadata and data.
+Bronze to Silver Layer Transformation Validation,BR-SL-04,Type Casting Consistency,"Confirm data types are correctly cast (e.g., string to timestamp).","1. Inspect type transformations during ETL.
+2. Check for runtime errors or mismatches.",All type conversions succeed and conform to schema.,ETL scripts or DLT config must define expected types.,Access to pipeline logic.
+Bronze to Silver Layer Transformation Validation,BR-SL-05,Business Rule Enforcement,"Validate any business rules applied in Silver layer (e.g., filtering out test events).","1. Inject events violating rules.
+2. Validate exclusion or tagging in Silver.",Only valid events are present in Silver layer.,Defined business rules available.,Read access to rules and Silver data.
+Bronze to Silver Layer Transformation Validation,BR-SL-06,Invalid Record Filtering,"Ensure invalid records are handled properly (e.g., excluded, logged).","1. Insert invalid data formats or nulls in Bronze.
+2. Confirm filtered or logged.",Invalid records are absent or clearly tagged in Silver.,Validation logic in Silver ETL must exist.,Read access to Silver and error logs.
+Bronze to Silver Layer Transformation Validation,BR-SL-07,Audit Trail Check,"Confirm lineage from EventHub → Bronze → Silver is traceable (e.g., using event_id or uuid).","1. Pick random IDs.
+2. Trace them from source to Silver layer.",Each record has consistent traceable ID through pipeline.,Unique ID should be preserved across stages.,"Access to EventHub, Bronze, Silver."
+Bronze to Silver Layer Transformation Validation,BR-SL-08,Incremental Load Handling,Validate only new data is processed during incremental pipeline runs.,"1. Trigger two pipeline runs with minor new data.
+2. Confirm only new data appears in Silver.",Silver table reflects only new additions.,Incremental logic (watermarks/checkpoints) required.,Access to pipeline run logs.
+End-to-End Integrity & Performance Tests,E2E-01,End-to-End Count Match,Validate that count of records from EventHub = Bronze = Silver (within processing window).,"1. Capture message counts from source.
+2. Compare counts at each layer post-ingestion.",All layers show same (or explainable) count.,Window alignment across systems.,"Access to EventHub, Bronze, Silver."
+End-to-End Integrity & Performance Tests,E2E-02,Latency Measurement,Measure time taken from EventHub arrival to Silver layer availability.,"1. Add timestamps in messages.
+2. Compare with arrival in Silver.",Latency stays within SLA thresholds.,Timestamps should be system-generated and consistent.,Access to logs or _ingest_time fields.
+End-to-End Integrity & Performance Tests,E2E-03,Reprocessing Idempotency,Ensure reprocessing the same data doesn’t create duplicates in Silver layer.,"1. Trigger re-ingestion of same payloads.
+2. Check Silver for duplication.",Reprocessing does not result in duplicate records.,Idempotency enforcement logic needed.,Access to raw input and Silver data.
+End-to-End Integrity & Performance Tests,E2E-04,Error Logging & Alerting,Confirm errors during transformation are logged and alerts triggered if needed.,"1. Cause data/type violations.
+2. Validate logs and alert dashboard.",All errors are captured and properly alerted.,Alerting mechanism setup needed.,"Access to alerting tools, logs."
+End-to-End Integrity & Performance Tests,E2E-05,Backfill Handling,Validate that historical/backfill data is correctly processed and aligned with current data.,"1. Inject older records.
+2. Validate correct Silver layer placement with timestamps.",Historical data processed and correctly placed in Silver.,Backfill feature support required.,"Write to Bronze, read from Silver."
+EventHub to Bronze Layer Validation,EH-BR-08,Message Type Coverage,"Ensure all MQS message types (e.g., Quote Request, Precomp Response, Rating Request, etc.) are received and ingested into Bronze layer.","1. Trigger each MQS message type from source system.
+2. Confirm presence and count in Bronze tables post ingestion.",Each message type is present in Bronze with correct structure.,MQS should be configured to emit all message types.,Access to EventHub and Bronze layer tables.
+EventHub to Bronze Layer Validation,EH-BR-09,Compressed Payload Handling,"Validate that messages with embedded compressed XML or nested JSON (e.g., Quote Request) are correctly ingested and unpacked if needed.","1. Send sample messages with compressed payload.
+2. In Bronze layer, validate raw storage and optional parsing logic.",Bronze layer stores raw compressed message and allows transformation pipeline to read it.,Samples of compressed messages must be available.,Read access to raw message payloads in Bronze.
+Bronze to Silver Layer Transformation Validation,BR-SL-09,Feature Extraction for Rating,Validate extraction of Radar Feature Set from Precomp Response and proper loading in Silver layer (Vehicle Data Sensor).,"1. Send Precomp Response with Radar Feature Set.
+2. Verify mapping and correct output in Silver layer.",Silver Vehicle Data Sensor table contains parsed and mapped feature set values.,Feature set structure known and parsing logic implemented.,Read access to Bronze Precomp Response and Silver Feature tables.
+Bronze to Silver Layer Transformation Validation,BR-SL-10,ML Score Validation,Ensure ML Scores from Rating Request are captured and carried forward to Silver layer for analytics.,"1. Inject Rating Request with ML Score data.
+2. Validate presence and accuracy in downstream Silver table.",ML Score data is retained accurately from Bronze to Silver.,ML Score format and schema must be defined.,Read access to Bronze/ Silver Rating tables.
+End-to-End Integrity & Performance Tests,E2E-06,Schema Drift Handling,"Ensure pipeline can detect and log schema changes (e.g., in Precomp or CacheID Response).","1. Send schema-variant version of Precomp message.
+2. Check transformation for error logging or schema drift alerts.",Schema drift is logged or handled gracefully without pipeline failure.,Pipeline should include schema drift detection logic.,Access to transformation logs and schema registry.
