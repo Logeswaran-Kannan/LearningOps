@@ -1,187 +1,134 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+from pyspark.sql.functions import col, lower, when
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("AutomatedValidation").getOrCreate()
+spark = SparkSession.builder.appName("SchemaValidation").getOrCreate()
 
-# Catalog and database details
-source_catalog = "core_tst_sys9"
-source_db = "rr_source"
-target_catalog = "core_tst_std001"
-target_db = "ods"
-
-# Table names to process
+# Configuration
 table_names = ["ptable1", "btable2", "ctable3"]
+source_db = "core_tst_sys9.rr_source"
+target_db = "core_tst_std001.ods"
+date_filter_start = "2025-05-12T00:00:01.0025+00:00"
+date_filter_end = "2025-05-13T00:00:01.0025+00:00"
 
-# Date filter
-filter_start = '2025-05-12T00:00:01.0025+00:00'
-filter_end = '2025-05-13T00:00:01.0025+00:00'
-
-def convert_boolean_columns(df):
-    converted_cols = []
-    for column in df.columns:
-        unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
-        string_vals = set(map(lambda x: str(x).lower() if x is not None else "null", unique_vals))
-        if string_vals.issubset({"t", "f", "null"}):
-            df = df.withColumn(column, when(col(column).isNull(), 0)
-                                       .when(col(column) == "t", 1)
-                                       .when(col(column) == "f", 0)
-                                       .otherwise(0))
-            converted_cols.append(column)
-    return df, converted_cols
+# Prefix logic
+def get_target_table_name(table):
+    if table.startswith("p"):
+        return f"policycenter_std001_{table}"
+    elif table.startswith("b"):
+        return f"billingcenter_std001_{table}"
+    elif table.startswith("c"):
+        return f"claimcenter_std001_{table}"
+    return table
 
 def to_lowercase_columns(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
 
+def convert_boolean_columns(df):
+    converted = []
+    for c in df.columns:
+        distinct_vals = [r[c] for r in df.select(c).distinct().collect() if r[c] is not None]
+        if set(map(str.lower, map(str, distinct_vals))) <= {'t', 'f'}:
+            df = df.withColumn(c, when(lower(col(c)) == 't', 1).otherwise(0))
+            converted.append(c)
+    return df, converted
+
+def normalize_target_decimal_to_double(df):
+    decimal_columns = [f.name for f in df.schema.fields if f.dataType.simpleString().startswith("decimal")]
+    for c in decimal_columns:
+        df = df.withColumn(c, col(c).cast("double"))
+    return df, decimal_columns
+
 def cast_columns_to_common_type(source_df, target_df, columns):
-    for col_name in columns:
-        source_type = dict(source_df.dtypes).get(col_name)
-        target_type = dict(target_df.dtypes).get(col_name)
-        common_type = target_type if source_type != target_type else source_type
-        if common_type:
-            source_df = source_df.withColumn(col_name, col(col_name).cast(common_type))
-            target_df = target_df.withColumn(col_name, col(col_name).cast(common_type))
-    return source_df.select(columns), target_df.select(columns)
+    for c in columns:
+        src_type = source_df.schema[c].dataType
+        tgt_type = target_df.schema[c].dataType
+        common_type = str(tgt_type) if str(src_type) != str(tgt_type) else str(src_type)
+        source_df = source_df.withColumn(c, col(c).cast(common_type))
+        target_df = target_df.withColumn(c, col(c).cast(common_type))
+    return source_df, target_df
 
-def normalize_target_decimal_to_double(target_df):
-    for column, dtype in target_df.dtypes:
-        if dtype.startswith("decimal"):
-            target_df = target_df.withColumn(column, col(column).cast("double"))
-    return target_df
+def compare_dataframes(src, tgt, columns):
+    src_only = src.select(columns).subtract(tgt.select(columns))
+    tgt_only = tgt.select(columns).subtract(src.select(columns))
+    mismatches = {}
+    for c in columns:
+        diff = src.select(c).subtract(tgt.select(c))
+        if diff.count() > 0:
+            mismatches[c] = "source to target mismatch"
+        diff = tgt.select(c).subtract(src.select(c))
+        if diff.count() > 0:
+            mismatches[c] = mismatches.get(c, "") + ", target to source mismatch"
+    return src_only.count(), tgt_only.count(), mismatches
 
-def get_mismatched_columns(df1, df2, columns):
-    mismatched = []
-    for col_name in columns:
-        diff_count = df1.select(col_name).subtract(df2.select(col_name)).count()
-        reverse_diff_count = df2.select(col_name).subtract(df1.select(col_name)).count()
-        if diff_count > 0 or reverse_diff_count > 0:
-            mismatched.append(col_name)
-    return mismatched
-
-def generate_casted_comparison_sql(common_columns, source_table, target_table, converted_boolean_columns, decimal_columns, has_createtime, source_count, target_count):
-    cast_exprs_source = []
-    cast_exprs_target = []
-    for c in common_columns:
-        if c in converted_boolean_columns:
-            expr = f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}"
+def generate_casted_comparison_sql(table, columns, boolean_columns, decimal_columns):
+    def cast_expr(c):
+        if c in boolean_columns:
+            return f"CASE WHEN LOWER({c}) = 't' THEN 1 ELSE 0 END AS {c}"
         elif c in decimal_columns:
-            expr = f"CAST({c} AS DOUBLE) AS {c}"
+            return f"CAST({c} AS DOUBLE) AS {c}"
         else:
-            expr = f"CAST({c} AS STRING) AS {c}"
-        cast_exprs_source.append(expr)
-        cast_exprs_target.append(expr)
+            return f"CAST({c} AS STRING) AS {c}"
 
-    casted_source_sql = f"SELECT {', '.join(cast_exprs_source)} FROM {source_table}"
-    casted_target_sql = f"SELECT {', '.join(cast_exprs_target)} FROM {target_table}"
-    if has_createtime and source_count > 5000:
-        casted_source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    if has_createtime and target_count > 5000:
-        casted_target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    return casted_source_sql + " ||||| " + casted_target_sql
-
+    casted = [cast_expr(c) for c in columns]
+    source_sql = f"SELECT {', '.join(casted)} FROM {source_db}.{table}"
+    target_sql = f"SELECT {', '.join(casted)} FROM {target_db}.{get_target_table_name(table)}"
+    return source_sql + " ||||| " + target_sql
 
 def validate_table(table):
-    source_table = f"{source_catalog}.{source_db}.{table}"
-    target_table_name = f"policycenter_std001_{table}" if table.startswith("p") else \
-                        f"billingcenter_std001_{table}" if table.startswith("b") else \
-                        f"claimcenter_std001_{table}" if table.startswith("c") else table
-    target_table = f"{target_catalog}.{target_db}.{target_table_name}"
-
+    result = {"table": table, "comment": ""}
     try:
-        source_df = spark.table(source_table)
-        source_df, converted_boolean_columns = convert_boolean_columns(source_df)
-        source_df = to_lowercase_columns(source_df)
-        source_columns = set(source_df.columns)
-        source_count = source_df.count()
+        src_df = spark.table(f"{source_db}.{table}")
+        tgt_table = get_target_table_name(table)
+        tgt_df = spark.table(f"{target_db}.{tgt_table}")
 
-        target_df = spark.table(target_table)
-        target_df, _ = convert_boolean_columns(target_df)
-        target_df = to_lowercase_columns(target_df)
-        target_df = normalize_target_decimal_to_double(target_df)
+        src_df = to_lowercase_columns(src_df)
+        tgt_df = to_lowercase_columns(tgt_df)
 
-        target_columns = set(target_df.columns)
-        has_createtime = "createtime" in target_columns
-        has_updatetime = "updatetime" in target_columns
+        src_df, boolean_columns = convert_boolean_columns(src_df)
+        tgt_df, _ = convert_boolean_columns(tgt_df)
 
-        actual_target_df = target_df
-        target_count = actual_target_df.count()
-        if has_createtime and target_count > 5000:
-            target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
-        target_filtered_count = target_df.count()
+        tgt_df, decimal_columns = normalize_target_decimal_to_double(tgt_df)
 
-        common_columns = list(source_columns & target_columns)
-        decimal_columns = list([col_name for col_name, dtype in target_df.dtypes if dtype.startswith("decimal")])
+        common_cols = list(set(src_df.columns).intersection(set(tgt_df.columns)))
+        missing_src = list(set(tgt_df.columns) - set(src_df.columns))
+        missing_tgt = list(set(src_df.columns) - set(tgt_df.columns))
 
-        source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
-        if not (has_createtime or has_updatetime):
-            source_comp_df = source_aligned.dropDuplicates()
-            target_comp_df = target_aligned.dropDuplicates()
+        src_df, tgt_df = cast_columns_to_common_type(src_df, tgt_df, common_cols)
+
+        if 'createtime' in tgt_df.columns and tgt_df.count() > 5000:
+            tgt_df = tgt_df.filter((col('createtime') >= date_filter_start) & (col('createtime') <= date_filter_end))
+            if 'createtime' in src_df.columns:
+                src_df = src_df.filter((col('createtime') >= date_filter_start) & (col('createtime') <= date_filter_end))
         else:
-            source_comp_df = source_aligned
-            target_comp_df = target_aligned
+            src_df = src_df.dropDuplicates([c for c in src_df.columns if c != 'azure_load_date'])
+            tgt_df = tgt_df.dropDuplicates([c for c in tgt_df.columns if c != 'azure_load_date'])
 
-        source_only, target_only, mismatches, mismatches_target = compare_dataframes(
-            source_comp_df, target_comp_df, common_columns
-        )
+        src_only_count, tgt_only_count, mismatches = compare_dataframes(src_df, tgt_df, common_cols)
 
-        casted_comparison_sql = generate_casted_comparison_sql(
-            common_columns, source_table, target_table,
-            converted_boolean_columns, decimal_columns,
-            has_createtime, source_count, target_count
-        )
-
-        return {
-            "converted_boolean_columns": converted_boolean_columns,
-            "boolean_f_t_only_in_source": [],
-            "source_only_count": source_only,
-            "target_only_count": target_only,
-            "input_table": table,
-            "source_table": source_table,
-            "target_table": target_table,
-            "source_count": source_count,
-            "target_count": target_count,
-            "target_filtered_count": target_filtered_count,
-            "missing_in_source": list(target_columns - source_columns),
-            "missing_in_target": list(source_columns - target_columns),
-            "mismatches": mismatches,
-            "mismatches_target": mismatches_target,
-            "duplicate_check_in_target": actual_target_df.count() - actual_target_df.dropDuplicates([c for c in actual_target_df.columns if c != "azure_load_date"]).count(),
-            "source_sql": f"SELECT {', '.join(common_columns)} FROM {source_table}",
-            "target_sql": f"SELECT {', '.join(common_columns)} FROM {target_table}",
-            "post_dedup_count": target_comp_df.count(),
-            "comment": "All checks passed" if not mismatches else "Data mismatch",
-            "casted_comparison_sql": casted_comparison_sql
-        }
-
+        result.update({
+            "converted_boolean_columns": boolean_columns,
+            "decimal_columns": decimal_columns,
+            "source_only_count": src_only_count,
+            "target_only_count": tgt_only_count,
+            "missing_in_source": missing_src,
+            "missing_in_target": missing_tgt,
+            "mismatches": list(mismatches.keys()),
+            "casted_comparison_sql": generate_casted_comparison_sql(table, common_cols, boolean_columns, decimal_columns)
+        })
     except Exception as e:
-        return {
-            "converted_boolean_columns": [],
-            "boolean_f_t_only_in_source": [],
-            "source_only_count": 0,
-            "target_only_count": 0,
-            "input_table": table,
-            "source_table": source_table,
+        result.update({
+            "source_table": "missing",
             "target_table": "missing",
-            "source_count": 0,
-            "target_count": 0,
-            "target_filtered_count": 0,
-            "missing_in_source": [],
-            "missing_in_target": [],
-            "mismatches": [],
-            "mismatches_target": [],
-            "duplicate_check_in_target": 0,
-            "source_sql": "",
-            "target_sql": "",
-            "post_dedup_count": 0,
-            "comment": str(e),
-            "casted_comparison_sql": ""
-        }
+            "comment": str(e)
+        })
+    return result
 
-def compare_dataframes(source_comp_df, target_comp_df, common_columns):
-    source_only = source_comp_df.subtract(target_comp_df).count()
-    target_only = target_comp_df.subtract(source_comp_df).count()
-    mismatches = get_mismatched_columns(source_comp_df, target_comp_df, common_columns)
-    mismatches_target = get_mismatched_columns(target_comp_df, source_comp_df, common_columns)
-    return source_only, target_only, mismatches, mismatches_target
+# Run validations in parallel
+with ThreadPoolExecutor() as executor:
+    results = list(executor.map(validate_table, table_names))
+
+# Output as Spark DataFrame
+results_df = spark.createDataFrame(results)
+results_df.write.mode("overwrite").saveAsTable("core_tst_std001.validation_results")
