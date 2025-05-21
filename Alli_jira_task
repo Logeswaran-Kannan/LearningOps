@@ -61,17 +61,20 @@ def get_mismatched_columns(df1, df2, columns):
     return mismatched
 
 def generate_casted_comparison_sql(common_columns, source_table, target_table, converted_boolean_columns, decimal_columns, has_createtime, source_count, target_count):
-    cast_exprs = []
+    cast_exprs_source = []
+    cast_exprs_target = []
     for c in common_columns:
         if c in converted_boolean_columns:
-            cast_exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}")
+            expr = f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}"
         elif c in decimal_columns:
-            cast_exprs.append(f"CAST(CAST({c} AS DOUBLE) AS STRING) AS {c}")
+            expr = f"CAST(CAST({c} AS DOUBLE) AS STRING) AS {c}"
         else:
-            cast_exprs.append(f"CAST({c} AS STRING) AS {c}")
+            expr = f"CAST({c} AS STRING) AS {c}"
+        cast_exprs_source.append(expr)
+        cast_exprs_target.append(expr)
 
-    casted_source_sql = f"SELECT {', '.join(cast_exprs)} FROM {source_table}"
-    casted_target_sql = f"SELECT {', '.join(cast_exprs)} FROM {target_table}"
+    casted_source_sql = f"SELECT {', '.join(cast_exprs_source)} FROM {source_table}"
+    casted_target_sql = f"SELECT {', '.join(cast_exprs_target)} FROM {target_table}"
     if has_createtime and source_count > 5000:
         casted_source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
     if has_createtime and target_count > 5000:
