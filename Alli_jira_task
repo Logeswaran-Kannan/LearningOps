@@ -1,29 +1,3 @@
-DO $$
-DECLARE
-    r RECORD;
-    min_val DATE;
-    max_val DATE;
-    lower_bound DATE := CURRENT_DATE - INTERVAL '10 years';
-    upper_bound DATE := CURRENT_DATE + INTERVAL '10 years';
-    sql TEXT;
-BEGIN
-    FOR r IN
-        SELECT table_schema, table_name, column_name, data_type
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND data_type IN ('date', 'timestamp without time zone', 'timestamp with time zone')
-    LOOP
-        -- Dynamic SQL to get min and max
-        sql := FORMAT(
-            'SELECT MIN(%I), MAX(%I) FROM %I.%I',
-            r.column_name, r.column_name, r.table_schema, r.table_name
-        );
+Yeah, I’ll go ahead and raise this as a defect. I’ll also check in with the application team to take a closer look at it. Thanks, Paul.
 
-        EXECUTE sql INTO min_val, max_val;
-
-        IF min_val IS NOT NULL AND (min_val < lower_bound OR max_val > upper_bound) THEN
-            RAISE NOTICE 'Table: %.%, Column: %, Min: %, Max: %',
-                r.table_schema, r.table_name, r.column_name, min_val, max_val;
-        END IF;
-    END LOOP;
-END $$;
+I believe you’ll be resuming the load for CC now — in the meantime, I’ll review PC and BC. I’ll also do a quick check on the RR side for the tables we’re not loading, just to make sure there aren’t any similar discrepancies.
