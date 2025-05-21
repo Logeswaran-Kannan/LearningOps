@@ -1,38 +1,29 @@
 DO $$
 DECLARE
-    tbl RECORD;
-    col RECORD;
-    query TEXT;
-    invalid_count INT;
-    lower_bound DATE := current_date - INTERVAL '7 years';
-    upper_bound DATE := current_date + INTERVAL '5 years';
+    r RECORD;
+    min_val DATE;
+    max_val DATE;
+    lower_bound DATE := CURRENT_DATE - INTERVAL '10 years';
+    upper_bound DATE := CURRENT_DATE + INTERVAL '10 years';
+    sql TEXT;
 BEGIN
-    FOR tbl IN
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    FOR r IN
+        SELECT table_schema, table_name, column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND data_type IN ('date', 'timestamp without time zone', 'timestamp with time zone')
     LOOP
-        FOR col IN
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = tbl.table_name
-              AND data_type IN ('date', 'timestamp without time zone', 'timestamp with time zone')
-        LOOP
-            query := format(
-                'SELECT COUNT(*) FROM public.%I WHERE %I IS NOT NULL AND (%I < %L OR %I > %L)',
-                tbl.table_name,
-                col.column_name,
-                col.column_name, lower_bound,
-                col.column_name, upper_bound
-            );
+        -- Dynamic SQL to get min and max
+        sql := FORMAT(
+            'SELECT MIN(%I), MAX(%I) FROM %I.%I',
+            r.column_name, r.column_name, r.table_schema, r.table_name
+        );
 
-            EXECUTE query INTO invalid_count;
+        EXECUTE sql INTO min_val, max_val;
 
-            IF invalid_count > 0 THEN
-                RAISE NOTICE 'Table: %, Column: %, Invalid Rows: %',
-                    tbl.table_name, col.column_name, invalid_count;
-            END IF;
-        END LOOP;
+        IF min_val IS NOT NULL AND (min_val < lower_bound OR max_val > upper_bound) THEN
+            RAISE NOTICE 'Table: %.%, Column: %, Min: %, Max: %',
+                r.table_schema, r.table_name, r.column_name, min_val, max_val;
+        END IF;
     END LOOP;
 END $$;
