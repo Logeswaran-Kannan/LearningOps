@@ -1,25 +1,32 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, lower
+from pyspark.sql.functions import col, when
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
 from concurrent.futures import ThreadPoolExecutor
 
+# Initialize Spark session
 spark = SparkSession.builder.appName("AutomatedValidation").getOrCreate()
 
+# Catalog and database details
 source_catalog = "core_tst_sys9"
 source_db = "rr_source"
 target_catalog = "core_tst_std001"
 target_db = "ods"
+
+# Table names to process
 table_names = ["ptable1", "btable2", "ctable3"]
 
+# Date filter
 filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
 
 def convert_boolean_columns(df):
+    converted_cols = []
     for column in df.columns:
         unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
         if set(unique_vals).issubset({"t", "f"}):
             df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
-    return df
+            converted_cols.append(column)
+    return df, converted_cols
 
 def to_lowercase_columns(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
@@ -35,74 +42,142 @@ def cast_columns_to_common_type(source_df, target_df, columns):
     return source_df.select(columns), target_df.select(columns)
 
 def validate_table(table):
+    source_sql = ""
+    target_sql = ""
+    post_dedup_count = 0
+    casted_comparison_sql = ""
+    comment = ""
+    missing_in_source = []
+    missing_in_target = []
+    mismatches = []
+    mismatches_target = []
+    duplicate_count = 0
+    source_count = 0
+    target_count = 0
+    target_filtered_count = 0
+    converted_boolean_columns = []
+    boolean_f_t_only_in_source = []
+
     try:
         source_table = f"{source_catalog}.{source_db}.{table}"
         source_df = spark.table(source_table)
-        source_df = convert_boolean_columns(source_df)
+        source_df, converted_boolean_columns = convert_boolean_columns(source_df)
         source_df = to_lowercase_columns(source_df)
         source_columns = set(source_df.columns)
         source_count = source_df.count()
+
+        for column in source_df.columns:
+            unique_vals = source_df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
+            if set(map(str.lower, map(str, unique_vals))) == {"t", "f"}:
+                boolean_f_t_only_in_source.append(column)
+
     except Exception:
-        return {"input_table": table, "source_table": "missing", "target_table": "missing", "source_count": 0,
-                "target_count": 0, "target_filtered_count": 0, "missing_in_source": [], "missing_in_target": [],
-                "mismatches": [], "mismatches_target": [], "duplicate_check_in_target": 0, "source_sql": "",
-                "target_sql": "", "post_dedup_count": 0, "comment": "source and target table load failure",
-                "casted_comparison_sql": ""}
+        return {
+            "converted_boolean_columns": [],
+            "boolean_f_t_only_in_source": [],
+            "source_only_count": 0,
+            "target_only_count": 0,
+            "input_table": table,
+            "source_table": "missing",
+            "target_table": "missing",
+            "source_count": 0,
+            "target_count": 0,
+            "target_filtered_count": 0,
+            "missing_in_source": [],
+            "missing_in_target": [],
+            "mismatches": [],
+            "mismatches_target": [],
+            "duplicate_check_in_target": 0,
+            "source_sql": "",
+            "target_sql": "",
+            "post_dedup_count": 0,
+            "comment": "source and target table load failure",
+            "casted_comparison_sql": ""
+        }
 
     prefix = table[0].lower()
     if prefix == 'p':
-        target_table_name = f"policycenter_{table}"
+        target_table_name = f"policycenter_std001_{table}"
     elif prefix == 'b':
-        target_table_name = f"billingcenter_{table}"
+        target_table_name = f"billingcenter_std001_{table}"
     elif prefix == 'c':
-        target_table_name = f"claimcenter_{table}"
+        target_table_name = f"claimcenter_std001_{table}"
     else:
         target_table_name = table
 
     try:
         target_table = f"{target_catalog}.{target_db}.{target_table_name}"
         target_df = spark.table(target_table)
-        target_df = convert_boolean_columns(target_df)
+        target_df, _ = convert_boolean_columns(target_df)
         target_df = to_lowercase_columns(target_df)
         if "azure_load_date" in target_df.columns:
             target_df = target_df.drop("azure_load_date")
+
         target_columns = set(target_df.columns)
         has_createtime = "createtime" in target_columns
         has_updatetime = "updatetime" in target_columns
-        if not (has_createtime or has_updatetime):
-            target_df = target_df.dropDuplicates()
+
         actual_target_df = target_df
         target_count = actual_target_df.count()
         if has_createtime and target_count > 5000:
             target_df = target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
         target_filtered_count = target_df.count()
+
     except Exception:
-        return {"input_table": table, "source_table": source_table, "target_table": "missing", "source_count": source_count,
-                "target_count": 0, "target_filtered_count": 0, "missing_in_source": [], "missing_in_target": [],
-                "mismatches": [], "mismatches_target": [], "duplicate_check_in_target": 0, "source_sql": f"SELECT * FROM {source_table}",
-                "target_sql": "", "post_dedup_count": 0, "comment": "target table load failure",
-                "casted_comparison_sql": ""}
+        return {
+            "converted_boolean_columns": converted_boolean_columns,
+            "boolean_f_t_only_in_source": boolean_f_t_only_in_source,
+            "source_only_count": 0,
+            "target_only_count": 0,
+            "input_table": table,
+            "source_table": source_table,
+            "target_table": "missing",
+            "source_count": source_count,
+            "target_count": 0,
+            "target_filtered_count": 0,
+            "missing_in_source": [],
+            "missing_in_target": [],
+            "mismatches": [],
+            "mismatches_target": [],
+            "duplicate_check_in_target": 0,
+            "source_sql": f"SELECT * FROM {source_table}",
+            "target_sql": "",
+            "post_dedup_count": 0,
+            "comment": "target table load failure",
+            "casted_comparison_sql": ""
+        }
 
     common_columns = list(source_columns & target_columns)
     source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}"
     if has_createtime and source_count > 5000:
         source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}"
     if has_createtime and target_count > 5000:
-        target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
+        target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table} WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
+    else:
+        target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}"
 
     missing_in_source = list(target_columns - source_columns)
     missing_in_target = list(source_columns - target_columns)
 
     source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
-    source_comp_df = source_aligned.dropDuplicates() if not ("createtime" in target_df.columns or "updatetime" in target_df.columns) else source_aligned
-    target_comp_df = target_aligned.dropDuplicates() if not ("createtime" in target_df.columns or "updatetime" in target_df.columns) else target_aligned
+
+    if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
+        source_comp_df = source_aligned.dropDuplicates()
+        target_comp_df = target_aligned.dropDuplicates()
+    else:
+        source_comp_df = source_aligned
+        target_comp_df = target_aligned
 
     source_only = source_comp_df.subtract(target_comp_df).limit(1).count()
     target_only = target_comp_df.subtract(source_comp_df).limit(1).count()
 
+    if source_only > 0 or target_only > 0:
+        mismatches = common_columns
+        mismatches_target = common_columns
+
     post_dedup_count = target_comp_df.count()
-    duplicate_count = actual_target_df.count() - actual_target_df.dropDuplicates().count()
+    dedup_cols = [c for c in actual_target_df.columns if c != "azure_load_date"]
+    duplicate_count = actual_target_df.count() - actual_target_df.dropDuplicates(dedup_cols).count()
 
     comment_parts = []
     if source_count != post_dedup_count:
@@ -111,35 +186,58 @@ def validate_table(table):
         comment_parts.append("missing columns in source")
     if missing_in_target:
         comment_parts.append("missing columns in target")
-    if source_only or target_only:
+    if mismatches:
         comment_parts.append("data mismatch")
     if duplicate_count > 0:
         comment_parts.append("duplicates in target")
     comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-    cast_exprs = [f"CAST({c} AS STRING) AS {c}" for c in common_columns]
+    cast_exprs = []
+    for c in common_columns:
+        if c in converted_boolean_columns:
+            cast_exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}")
+        else:
+            cast_exprs.append(f"CAST({c} AS STRING) AS {c}")
+
     casted_source_sql = f"SELECT {', '.join(cast_exprs)} FROM {source_table}"
     casted_target_sql = f"SELECT {', '.join(cast_exprs)} FROM {target_table}"
     if has_createtime and source_count > 5000:
         casted_source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
     if has_createtime and target_count > 5000:
         casted_target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
+    casted_comparison_sql = casted_source_sql + " ||||| " + casted_target_sql
 
     return {
-        "input_table": table, "source_table": source_table, "target_table": target_table,
-        "source_count": source_count, "target_count": target_count, "target_filtered_count": target_filtered_count,
-        "missing_in_source": missing_in_source, "missing_in_target": missing_in_target,
-        "mismatches": common_columns if source_only or target_only else [],
-        "mismatches_target": common_columns if source_only or target_only else [],
-        "duplicate_check_in_target": duplicate_count, "source_sql": source_sql, "target_sql": target_sql,
-        "post_dedup_count": post_dedup_count, "source_only_count": source_only, "target_only_count": target_only,
-        "comment": comment, "casted_comparison_sql": casted_source_sql + " ||||| " + casted_target_sql
+        "converted_boolean_columns": converted_boolean_columns,
+        "boolean_f_t_only_in_source": boolean_f_t_only_in_source,
+        "source_only_count": source_only,
+        "target_only_count": target_only,
+        "input_table": table,
+        "source_table": source_table,
+        "target_table": target_table,
+        "source_count": source_count,
+        "target_count": target_count,
+        "target_filtered_count": target_filtered_count,
+        "missing_in_source": missing_in_source,
+        "missing_in_target": missing_in_target,
+        "mismatches": mismatches,
+        "mismatches_target": mismatches_target,
+        "duplicate_check_in_target": duplicate_count,
+        "source_sql": source_sql,
+        "target_sql": target_sql,
+        "post_dedup_count": post_dedup_count,
+        "comment": comment,
+        "casted_comparison_sql": casted_comparison_sql
     }
 
+# Run validation in parallel
 with ThreadPoolExecutor(max_workers=4) as executor:
     results = list(executor.map(validate_table, table_names))
 
+# Schema definition
 schema = StructType([
+    StructField("converted_boolean_columns", ArrayType(StringType()), True),
+    StructField("boolean_f_t_only_in_source", ArrayType(StringType()), True),
     StructField("source_only_count", IntegerType(), True),
     StructField("target_only_count", IntegerType(), True),
     StructField("input_table", StringType(), True),
@@ -161,11 +259,15 @@ schema = StructType([
 ])
 
 result_rdd = spark.sparkContext.parallelize([(
-    r["source_only_count"], r["target_only_count"], r["input_table"], r["source_table"], r["target_table"],
+    r["converted_boolean_columns"],
+    r["boolean_f_t_only_in_source"],
+    r["source_only_count"], r["target_only_count"],
+    r["input_table"], r["source_table"], r["target_table"],
     r["source_count"], r["target_count"], r["target_filtered_count"],
     r["missing_in_source"], r["missing_in_target"], r["mismatches"],
     r["mismatches_target"], r["duplicate_check_in_target"],
-    r["source_sql"], r["target_sql"], r["post_dedup_count"], r["comment"], r["casted_comparison_sql"]
+    r["source_sql"], r["target_sql"], r["post_dedup_count"],
+    r["comment"], r["casted_comparison_sql"]
 ) for r in results])
 
 result_df = spark.createDataFrame(result_rdd, schema)
