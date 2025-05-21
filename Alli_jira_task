@@ -1,35 +1,22 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
-from concurrent.futures import ThreadPoolExecutor
+Invalid Date Format in accidenttime Column – Value 0002-01-01 BC Causing Workflow Failure in MI Claim Flow
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("AutomatedValidation").getOrCreate()
+📝 Defect Summary:
+As part of the data quality validation on the Read Replica (PostgreSQL) environment post-migration from Oracle, an issue was identified in the ccx_coa_cnf_message_ext table. The accidenttime column contains invalid or unexpected historical date values, such as 0002-01-01 BC.
 
-# Catalog and database details
-source_catalog = "core_tst_sys9"
-source_db = "rr_source"
-target_catalog = "core_tst_std001"
-target_db = "ods"
+This format is not compatible with downstream processing workflows, and as a result, has been observed to cause failures in the BICOE – MI layer, particularly in the Claim flow ingestion.
 
-# Table names to process
-table_names = ["ptable1", "btable2", "ctable3"]
+Key points:
 
-# Date filter
-filter_start = '2025-05-12T00:00:01.0025+00:00'
-filter_end = '2025-05-13T00:00:01.0025+00:00'
+The source (Oracle) did not contain such values, indicating either a transformation issue or a data inconsistency introduced during migration.
 
-def convert_boolean_columns(df):
-    converted_cols = []
-    for column in df.columns:
-        unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
-        string_vals = set(map(lambda x: str(x).lower() if x is not None else "null", unique_vals))
-        if string_vals.issubset({"t", "f", "null"}):
-            df = df.withColumn(column, when(col(column).isNull(), 0)
-                                       .when(col(column) == "t", 1)
-                                       .when(col(column) == "f", 0)
-                                       .otherwise(0))
-            converted_cols.append(column)
-    return df, converted_cols
+The invalid date format breaks standard datetime parsers and violates expected input for downstream jobs.
 
-# Other functions and logic remain unchanged...
+This is a critical data quality issue with direct impact on automated claim processing workflows.
+
+Immediate investigation is required to:
+
+Confirm the origin of these values (source vs. transformation).
+
+Apply remediation, either by filtering, null handling, or defaulting during ingestion.
+
+Prevent recurrence in future loads.
