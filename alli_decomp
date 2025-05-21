@@ -1,0 +1,162 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, lit, lower, countDistinct, expr
+from concurrent.futures import ThreadPoolExecutor
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+
+spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
+
+source_catalog = "core_tst_sys9"
+source_db = "rr_source"
+target_catalog = "core_tst_std001"
+target_db = "ods"
+table_names = ["cc_master", "btable2", "ctable3"]
+filter_start = '2025-05-12T00:00:01.0025+00:00'
+filter_end = '2025-05-13T00:00:01.0025+00:00'
+
+results = []
+
+def normalize_column_names(df):
+    return df.select([col(c).alias(c.lower()) for c in df.columns])
+
+def generate_target_table_name(table):
+    if table.startswith("p"):
+        return f"policycenter_std001_{table}"
+    elif table.startswith("b"):
+        return f"billingcenter_std001_{table}"
+    elif table.startswith("c"):
+        return f"claimcenter_std001_{table}"
+    return table
+
+def is_boolean_column(df, col_name):
+    try:
+        values = [r[0] for r in df.select(col_name).distinct().collect()]
+        return set(values).issubset({"f", "t", None})
+    except:
+        return False
+
+def boolean_transform(df):
+    bool_cols = []
+    for c in df.columns:
+        if is_boolean_column(df, c):
+            df = df.withColumn(c, when(col(c) == "t", 1).otherwise(0))
+            bool_cols.append(c)
+    return df, bool_cols
+
+def cast_decimal_to_double(df):
+    decimal_cols = [f.name for f in df.schema.fields if f.dataType.simpleString().startswith("decimal")]
+    for c in decimal_cols:
+        df = df.withColumn(c, col(c).cast("double"))
+    return df, decimal_cols
+
+def remove_column(df, colname):
+    if colname in df.columns:
+        return df.drop(colname)
+    return df
+
+def compare_table(table):
+    source_table = f"{source_catalog}.{source_db}.{table}"
+    target_table = generate_target_table_name(table)
+    target_table_full = f"{target_catalog}.{target_db}.{target_table}"
+
+    try:
+        try:
+            source_df = spark.read.table(source_table)
+        except:
+            return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, "source table missing", "")
+
+        try:
+            target_df = spark.read.table(target_table_full)
+        except:
+            return (table, source_table, target_table_full, source_df.count(), 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, "target table missing", "")
+
+        source_df = normalize_column_names(source_df)
+        target_df = normalize_column_names(target_df)
+        source_df, bool_cols = boolean_transform(source_df)
+        target_df = remove_column(target_df, "azure_load_date")
+        target_df, decimal_cols = cast_decimal_to_double(target_df)
+
+        creation_time_present = "creationtime" in target_df.columns
+        update_time_present = "updatetime" in target_df.columns
+
+        full_target_count = target_df.count()
+
+        if not (creation_time_present and update_time_present):
+            dedup_target_df = target_df.dropDuplicates()
+        else:
+            dedup_target_df = target_df
+
+        post_dedup_count = dedup_target_df.count()
+
+        apply_filter = full_target_count > 3000 and creation_time_present
+
+        if apply_filter:
+            filtered_source_df = source_df.filter((col("creationtime") >= filter_start) & (col("creationtime") <= filter_end))
+            filtered_target_df = dedup_target_df.filter((col("creationtime") >= filter_start) & (col("creationtime") <= filter_end))
+        else:
+            filtered_source_df = source_df
+            filtered_target_df = dedup_target_df
+
+        targetfiltercount = filtered_target_df.count()
+        source_count = filtered_source_df.count()
+
+        common_cols = list(set(filtered_source_df.columns) & set(filtered_target_df.columns))
+        source_only = filtered_source_df.select(common_cols).exceptAll(filtered_target_df.select(common_cols)).count()
+        target_only = filtered_target_df.select(common_cols).exceptAll(filtered_source_df.select(common_cols)).count()
+
+        missing_in_source = list(set(filtered_target_df.columns) - set(filtered_source_df.columns))
+        missing_in_target = list(set(filtered_source_df.columns) - set(filtered_target_df.columns))
+
+        duplicate_count = full_target_count - post_dedup_count
+        mismatches = source_only + target_only > 0
+
+        comment_parts = []
+        if source_count != post_dedup_count:
+            comment_parts.append("count mismatch")
+        if missing_in_source:
+            comment_parts.append("missing columns in source")
+        if missing_in_target:
+            comment_parts.append("missing columns in target")
+        if mismatches:
+            comment_parts.append("data mismatch")
+        if duplicate_count > 0:
+            comment_parts.append("duplicates in target")
+
+        comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
+
+        casted_sql = f"SELECT {', '.join(common_cols)} FROM {source_table} WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'" if apply_filter else f"SELECT {', '.join(common_cols)} FROM {source_table}"
+
+        return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
+                post_dedup_count, duplicate_count, bool_cols, decimal_cols,
+                source_only, target_only, missing_in_source, missing_in_target,
+                source_only, target_only, comment, casted_sql)
+
+    except Exception as e:
+        return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
+
+with ThreadPoolExecutor() as executor:
+    result_futures = executor.map(compare_table, table_names)
+    results = list(result_futures)
+
+schema = StructType([
+    StructField("tablename", StringType(), True),
+    StructField("source_table", StringType(), True),
+    StructField("target_table", StringType(), True),
+    StructField("source_count", IntegerType(), True),
+    StructField("targetfullcount", IntegerType(), True),
+    StructField("targetfiltercount", IntegerType(), True),
+    StructField("targetcountpostdedup", IntegerType(), True),
+    StructField("duplicate_check_in_target", IntegerType(), True),
+    StructField("converted_boolean_columns", ArrayType(StringType()), True),
+    StructField("decimal_columns", ArrayType(StringType()), True),
+    StructField("source_only_count", IntegerType(), True),
+    StructField("target_only_count", IntegerType(), True),
+    StructField("missing_in_source", ArrayType(StringType()), True),
+    StructField("missing_in_target", ArrayType(StringType()), True),
+    StructField("data_mismatches_source_to_target", IntegerType(), True),
+    StructField("data_mismatches_target_to_source", IntegerType(), True),
+    StructField("comment", StringType(), True),
+    StructField("casted_comparison_sql", StringType(), True)
+])
+
+final_df = spark.createDataFrame(results, schema=schema)
+final_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
