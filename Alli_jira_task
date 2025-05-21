@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lower
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType, DecimalType
 from pyspark.sql.utils import AnalysisException
 from concurrent.futures import ThreadPoolExecutor
 
@@ -24,23 +24,31 @@ filter_end = '2025-05-13T00:00:01.0025+00:00'
 def convert_boolean_columns(df):
     for column in df.columns:
         unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
-        if set(unique_vals).issubset({"t", "f"}):
-            df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
+        if set(unique_vals).issubset({"t", "f", None}):
+            df = df.withColumn(column, when(lower(col(column)) == "t", 1).otherwise(0))
     return df
+
+# Function to identify decimal columns
+def get_decimal_columns(df):
+    return [field.name for field in df.schema.fields if isinstance(field.dataType, DecimalType)]
 
 # Function to convert column names to lowercase
 def to_lowercase_columns(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
 
 # Function to align schema and cast columns to a common type
+# Prefers source type
 def cast_columns_to_common_type(source_df, target_df, columns):
     for col_name in columns:
         source_type = dict(source_df.dtypes).get(col_name)
         target_type = dict(target_df.dtypes).get(col_name)
-        common_type = target_type if source_type != target_type else source_type
-        if common_type:
-            source_df = source_df.withColumn(col_name, col(col_name).cast(common_type))
-            target_df = target_df.withColumn(col_name, col(col_name).cast(common_type))
+        if source_type != target_type:
+            if "decimal" in source_type.lower() or "decimal" in target_type.lower():
+                source_df = source_df.withColumn(col_name, col(col_name).cast("double"))
+                target_df = target_df.withColumn(col_name, col(col_name).cast("double"))
+            elif source_type == "string" or target_type == "string":
+                source_df = source_df.withColumn(col_name, col(col_name).cast("string"))
+                target_df = target_df.withColumn(col_name, col(col_name).cast("string"))
     return source_df.select(columns), target_df.select(columns)
 
 # Validation logic for a single table
@@ -68,7 +76,7 @@ def validate_table(table):
         source_count = source_df.count()
     except Exception:
         return {
-        "input_table": table,
+            "input_table": table,
             "source_table": "missing",
             "target_table": "missing",
             "source_count": 0,
@@ -87,11 +95,11 @@ def validate_table(table):
 
     prefix = table[0].lower()
     if prefix == 'p':
-        target_table_name = f"policycenter_{table}"
+        target_table_name = f"policycenter_std001_{table}"
     elif prefix == 'b':
-        target_table_name = f"billingcenter_{table}"
+        target_table_name = f"billingcenter_std001_{table}"
     elif prefix == 'c':
-        target_table_name = f"claimcenter_{table}"
+        target_table_name = f"claimcenter_std001_{table}"
     else:
         target_table_name = table
 
@@ -136,18 +144,29 @@ def validate_table(table):
         }
 
     common_columns = list(source_columns & target_columns)
-    source_sql = f"SELECT {', '.join(common_columns)} FROM {source_table}" if common_columns else ""
-    if has_createtime and source_count > 5000:
+    source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
+
+    # Build SQL
+    sql_projection = []
+    for col_name in common_columns:
+        source_type = dict(source_df.dtypes).get(col_name)
+        if source_type == "boolean":
+            sql_projection.append(f"CASE WHEN LOWER({col_name}) = 't' THEN 1 ELSE 0 END AS {col_name}")
+        elif "decimal" in source_type.lower():
+            sql_projection.append(f"CAST({col_name} AS DOUBLE) AS {col_name}")
+        else:
+            sql_projection.append(f"CAST({col_name} AS STRING) AS {col_name}")
+
+    source_sql = f"SELECT {', '.join(sql_projection)} FROM {source_table}"
+    target_sql = f"SELECT {', '.join(sql_projection)} FROM {target_table}"
+
+    if "createtime" in source_df.columns and source_count > 5000:
         source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    if has_createtime and target_count > 5000:
-        target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table} WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    else:
-        target_sql = f"SELECT {', '.join(common_columns)} FROM {target_table}"
+    if "createtime" in target_df.columns and target_count > 5000:
+        target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
 
     missing_in_source = list(target_columns - source_columns)
     missing_in_target = list(source_columns - target_columns)
-
-    source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
 
     if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
         source_comp_df = source_aligned.dropDuplicates()
