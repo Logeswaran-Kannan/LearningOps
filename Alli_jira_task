@@ -1,5 +1,8 @@
-source_only = source_comp_df.subtract(target_comp_df).count()
-target_only = target_comp_df.subtract(source_comp_df).count()
-
-mismatches = get_mismatched_columns(source_comp_df, target_comp_df, common_columns)
-mismatches_target = get_mismatched_columns(target_comp_df, source_comp_df, common_columns)
+    cast_exprs = []
+    for c in common_columns:
+        if c in converted_boolean_columns:
+            cast_exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}")
+        elif c in decimal_columns:
+            cast_exprs.append(f"CAST(CAST({c} AS DOUBLE) AS STRING) AS {c}")
+        else:
+            cast_exprs.append(f"CAST({c} AS STRING) AS {c}")
