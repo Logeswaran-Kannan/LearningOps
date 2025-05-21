@@ -25,31 +25,43 @@ def convert_boolean_columns(df):
     for column in df.columns:
         unique_vals = df.select(column).distinct().limit(100).rdd.flatMap(lambda x: x).collect()
         if set(unique_vals).issubset({"t", "f", None}):
-            df = df.withColumn(column, when(lower(col(column)) == "t", 1).otherwise(0))
+            df = df.withColumn(column, when(col(column) == "t", 1).otherwise(0))
     return df
-
-# Function to identify decimal columns
-def get_decimal_columns(df):
-    return [field.name for field in df.schema.fields if isinstance(field.dataType, DecimalType)]
 
 # Function to convert column names to lowercase
 def to_lowercase_columns(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
 
+# Function to identify decimal columns in a DataFrame
+def get_decimal_columns(df):
+    return [field.name for field in df.schema.fields if isinstance(field.dataType, DecimalType)]
+
 # Function to align schema and cast columns to a common type
-# Prefers source type
 def cast_columns_to_common_type(source_df, target_df, columns):
     for col_name in columns:
         source_type = dict(source_df.dtypes).get(col_name)
         target_type = dict(target_df.dtypes).get(col_name)
-        if source_type != target_type:
-            if "decimal" in source_type.lower() or "decimal" in target_type.lower():
-                source_df = source_df.withColumn(col_name, col(col_name).cast("double"))
-                target_df = target_df.withColumn(col_name, col(col_name).cast("double"))
-            elif source_type == "string" or target_type == "string":
-                source_df = source_df.withColumn(col_name, col(col_name).cast("string"))
-                target_df = target_df.withColumn(col_name, col(col_name).cast("string"))
+        common_type = source_type if source_type != target_type else source_type
+        if common_type:
+            source_df = source_df.withColumn(col_name, col(col_name).cast(common_type))
+            target_df = target_df.withColumn(col_name, col(col_name).cast(common_type))
     return source_df.select(columns), target_df.select(columns)
+
+# Build SQL query with schema alignment
+def build_aligned_sql(table, columns, source_types, target_types, filter_clause, source=True):
+    table_qualifier = f"{source_catalog}.{source_db}.{table}" if source else table
+    projections = []
+    for col_name in columns:
+        dtype = source_types[col_name] if source else target_types[col_name]
+        if dtype == 'boolean':
+            cast_expr = f"CAST(CASE WHEN {col_name} = 't' THEN 1 ELSE 0 END AS INT)"
+        elif dtype.startswith('decimal') and not source:
+            cast_expr = f"CAST({col_name} AS DOUBLE)"
+        else:
+            cast_expr = f"CAST({col_name} AS STRING)"
+        projections.append(f"{cast_expr} AS {col_name}")
+    select_clause = f"SELECT {', '.join(projections)} FROM {table_qualifier}"
+    return f"{select_clause} {filter_clause}" if filter_clause else select_clause
 
 # Validation logic for a single table
 def validate_table(table):
@@ -73,6 +85,7 @@ def validate_table(table):
         source_df = convert_boolean_columns(source_df)
         source_df = to_lowercase_columns(source_df)
         source_columns = set(source_df.columns)
+        source_dtypes = dict(source_df.dtypes)
         source_count = source_df.count()
     except Exception:
         return {
@@ -112,6 +125,7 @@ def validate_table(table):
             target_df = target_df.drop("azure_load_date")
 
         target_columns = set(target_df.columns)
+        target_dtypes = dict(target_df.dtypes)
         has_createtime = "createtime" in target_columns
         has_updatetime = "updatetime" in target_columns
 
@@ -144,29 +158,14 @@ def validate_table(table):
         }
 
     common_columns = list(source_columns & target_columns)
-    source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
-
-    # Build SQL
-    sql_projection = []
-    for col_name in common_columns:
-        source_type = dict(source_df.dtypes).get(col_name)
-        if source_type == "boolean":
-            sql_projection.append(f"CASE WHEN LOWER({col_name}) = 't' THEN 1 ELSE 0 END AS {col_name}")
-        elif "decimal" in source_type.lower():
-            sql_projection.append(f"CAST({col_name} AS DOUBLE) AS {col_name}")
-        else:
-            sql_projection.append(f"CAST({col_name} AS STRING) AS {col_name}")
-
-    source_sql = f"SELECT {', '.join(sql_projection)} FROM {source_table}"
-    target_sql = f"SELECT {', '.join(sql_projection)} FROM {target_table}"
-
-    if "createtime" in source_df.columns and source_count > 5000:
-        source_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
-    if "createtime" in target_df.columns and target_count > 5000:
-        target_sql += f" WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'"
+    filter_clause = f"WHERE createtime >= '{filter_start}' AND createtime <= '{filter_end}'" if "createtime" in common_columns else ""
+    source_sql = build_aligned_sql(table, common_columns, source_dtypes, target_dtypes, filter_clause, source=True)
+    target_sql = build_aligned_sql(target_table_name, common_columns, source_dtypes, target_dtypes, filter_clause, source=False)
 
     missing_in_source = list(target_columns - source_columns)
     missing_in_target = list(source_columns - target_columns)
+
+    source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
 
     if not ("createtime" in target_df.columns or "updatetime" in target_df.columns):
         source_comp_df = source_aligned.dropDuplicates()
@@ -197,8 +196,6 @@ def validate_table(table):
     if duplicate_count > 0:
         comment_parts.append("duplicates in target")
     comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-    source_only_count = source_only
-    target_only_count = target_only
 
     return {
         "input_table": table,
@@ -215,8 +212,8 @@ def validate_table(table):
         "source_sql": source_sql,
         "target_sql": target_sql,
         "post_dedup_count": post_dedup_count,
-        "source_only_count": source_only_count,
-        "target_only_count": target_only_count,
+        "source_only_count": source_only,
+        "target_only_count": target_only,
         "comment": comment
     }
 
