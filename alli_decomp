@@ -53,6 +53,16 @@ def remove_column(df, colname):
         return df.drop(colname)
     return df
 
+def align_column_types(df1, df2, cols):
+    for c in cols:
+        dtype1 = df1.schema[c].dataType
+        dtype2 = df2.schema[c].dataType
+        if dtype1 != dtype2:
+            common_type = "string" if "string" in [dtype1.simpleString(), dtype2.simpleString()] else "double"
+            df1 = df1.withColumn(c, col(c).cast(common_type))
+            df2 = df2.withColumn(c, col(c).cast(common_type))
+    return df1, df2
+
 def compare_table(table):
     source_table = f"{source_catalog}.{source_db}.{table}"
     target_table = generate_target_table_name(table)
@@ -100,6 +110,8 @@ def compare_table(table):
         source_count = filtered_source_df.count()
 
         common_cols = list(set(filtered_source_df.columns) & set(filtered_target_df.columns))
+        filtered_source_df, filtered_target_df = align_column_types(filtered_source_df, filtered_target_df, common_cols)
+
         source_only = filtered_source_df.select(common_cols).exceptAll(filtered_target_df.select(common_cols)).count()
         target_only = filtered_target_df.select(common_cols).exceptAll(filtered_source_df.select(common_cols)).count()
 
