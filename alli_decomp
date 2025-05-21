@@ -63,6 +63,17 @@ def align_column_types(df1, df2, cols):
             df2 = df2.withColumn(c, col(c).cast(common_type))
     return df1, df2
 
+def build_sql_exprs(columns, bool_cols, decimal_cols, source=True):
+    exprs = []
+    for c in columns:
+        if source and c in bool_cols:
+            exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}")
+        elif not source and c in decimal_cols:
+            exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
+        else:
+            exprs.append(f"CAST({c} AS STRING) AS {c}")
+    return exprs
+
 def compare_table(table):
     source_table = f"{source_catalog}.{source_db}.{table}"
     target_table = generate_target_table_name(table)
@@ -135,7 +146,16 @@ def compare_table(table):
 
         comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-        casted_sql = f"SELECT {', '.join(common_cols)} FROM {source_table} WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'" if apply_filter else f"SELECT {', '.join(common_cols)} FROM {source_table}"
+        source_exprs = build_sql_exprs(common_cols, bool_cols, decimal_cols, source=True)
+        target_exprs = build_sql_exprs(common_cols, bool_cols, decimal_cols, source=False)
+
+        source_sql = f"SELECT {', '.join(source_exprs)} FROM {source_table}"
+        target_sql = f"SELECT {', '.join(target_exprs)} FROM {target_table_full}"
+        if apply_filter:
+            source_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
+            target_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
+
+        casted_sql = f"SOURCE_SQL:\n{source_sql}\nTARGET_SQL:\n{target_sql}"
 
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
                 post_dedup_count, duplicate_count, bool_cols, decimal_cols,
