@@ -67,7 +67,7 @@ def generate_casted_comparison_sql(common_columns, source_table, target_table, c
         if c in converted_boolean_columns:
             expr = f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}"
         elif c in decimal_columns:
-            expr = f"CAST(CAST({c} AS DOUBLE) AS STRING) AS {c}"
+            expr = f"CAST({c} AS DOUBLE) AS {c}"
         else:
             expr = f"CAST({c} AS STRING) AS {c}"
         cast_exprs_source.append(expr)
@@ -112,7 +112,7 @@ def validate_table(table):
         target_filtered_count = target_df.count()
 
         common_columns = list(source_columns & target_columns)
-        decimal_columns = [col_name for col_name, dtype in target_df.dtypes if dtype.startswith("decimal")]
+        decimal_columns = list([col_name for col_name, dtype in target_df.dtypes if dtype.startswith("decimal")])
 
         source_aligned, target_aligned = cast_columns_to_common_type(source_df, target_df, common_columns)
         if not (has_createtime or has_updatetime):
