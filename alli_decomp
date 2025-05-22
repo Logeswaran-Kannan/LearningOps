@@ -47,8 +47,10 @@ def identify_boolean_pattern(df, col_name):
 def correct_boolean_cast(df, column, pattern):
     if pattern == "tf":
         return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
-    elif pattern in ["t_null", "f_null"]:
-        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).when(col(column).isNull(), lit(0)).cast("int"))
+    elif pattern == "t_null":
+        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).otherwise(None).cast("int"))
+    elif pattern == "f_null":
+        return df.withColumn(column, when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
     elif pattern in ["t", "f"]:
         return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
     elif pattern == "null_only":
