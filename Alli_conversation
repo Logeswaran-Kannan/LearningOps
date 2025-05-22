@@ -1,1 +1,20 @@
-Yeah, based on this morning’s stand-up, Suraj is already following up with Nick’s team to get the latest updates on that. He can share more details on where things stand.
+# Set the catalog and schema
+catalog = "core_tst_sys9"
+schema = "rr_source"
+
+# Switch to the target catalog and schema
+spark.sql(f"USE CATALOG {catalog}")
+spark.sql(f"USE {schema}")
+
+# Fetch all table names from the schema
+tables = spark.catalog.listTables(schema)
+
+# Loop and drop tables starting with 'c'
+for table in tables:
+    if table.name.startswith("c") and table.tableType == "MANAGED":
+        full_table_name = f"{catalog}.{schema}.{table.name}"
+        try:
+            spark.sql(f"DROP TABLE IF EXISTS {full_table_name}")
+            print(f"Dropped table: {full_table_name}")
+        except Exception as e:
+            print(f"Failed to drop table {full_table_name}: {str(e)}")
