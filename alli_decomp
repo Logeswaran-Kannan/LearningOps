@@ -145,7 +145,17 @@ def compare_table(table):
 
         comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-        casted_sql = "source and target sql not included in this snippet"
+        source_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, bool_patterns, source=True)
+        target_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, bool_patterns, source=False)
+        source_sql = f"SELECT {', '.join(source_exprs)} FROM {source_table}"
+        target_sql = f"SELECT {', '.join(target_exprs)} FROM {target_table_full}"
+        if full_target_count > 3000 and creation_time_present:
+            source_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
+            target_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
+        casted_sql = f"SOURCE_SQL:
+{source_sql}
+TARGET_SQL:
+{target_sql}"
 
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount, post_dedup_count, duplicate_count, bool_cols, decimal_cols, source_only, target_only, missing_in_source, missing_in_target, source_only, target_only, comment, casted_sql)
 
