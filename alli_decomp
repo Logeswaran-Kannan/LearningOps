@@ -119,10 +119,13 @@ def compare_table(table):
 
         for c in casted_common_cols:
             if c in bool_cols:
-                if is_nullable_boolean_column(source_df, c):
-                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)).cast("int"))
-                else:
-                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None).cast("int"))
+                filtered_source_df = filtered_source_df.withColumn(
+                    c,
+                    when(lower(col(c)) == "t", lit(1))
+                    .when(lower(col(c)) == "f", lit(0))
+                    .otherwise(lit(0))
+                    .cast("int")
+                )
             else:
                 filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
 
