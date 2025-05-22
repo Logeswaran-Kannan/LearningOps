@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, lit, lower, countDistinct, expr
+from pyspark.sql.functions import col, when, lit, lower
 from concurrent.futures import ThreadPoolExecutor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
 
@@ -101,13 +101,8 @@ def compare_table(table):
 
         full_target_count = target_df.count()
 
-        if not (creation_time_present and update_time_present):
-            dedup_target_df = target_df.dropDuplicates()
-        else:
-            dedup_target_df = target_df
-
+        dedup_target_df = target_df.dropDuplicates() if not (creation_time_present and update_time_present) else target_df
         post_dedup_count = dedup_target_df.count()
-
         apply_filter = full_target_count > 3000 and creation_time_present
 
         if apply_filter:
@@ -121,14 +116,25 @@ def compare_table(table):
         source_count = filtered_source_df.count()
 
         common_cols = list(set(filtered_source_df.columns) & set(filtered_target_df.columns))
-        filtered_source_df, filtered_target_df = align_column_types(filtered_source_df, filtered_target_df, common_cols)
+        casted_common_cols = [c for c in common_cols if c in filtered_source_df.columns and c in filtered_target_df.columns]
 
-        source_only = filtered_source_df.select(common_cols).exceptAll(filtered_target_df.select(common_cols)).count()
-        target_only = filtered_target_df.select(common_cols).exceptAll(filtered_source_df.select(common_cols)).count()
+        for c in casted_common_cols:
+            if c in bool_cols:
+                filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)).cast("int"))
+            else:
+                filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
+
+        for c in casted_common_cols:
+            if c in decimal_cols:
+                filtered_target_df = filtered_target_df.withColumn(c, col(c).cast("double"))
+            else:
+                filtered_target_df = filtered_target_df.withColumn(c, col(c).cast("string"))
+
+        source_only = filtered_source_df.select(casted_common_cols).exceptAll(filtered_target_df.select(casted_common_cols)).count()
+        target_only = filtered_target_df.select(casted_common_cols).exceptAll(filtered_source_df.select(casted_common_cols)).count()
 
         missing_in_source = list(set(filtered_target_df.columns) - set(filtered_source_df.columns))
         missing_in_target = list(set(filtered_source_df.columns) - set(filtered_target_df.columns))
-
         duplicate_count = full_target_count - post_dedup_count
         mismatches = source_only + target_only > 0
 
@@ -146,15 +152,13 @@ def compare_table(table):
 
         comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-        source_exprs = build_sql_exprs(common_cols, bool_cols, decimal_cols, source=True)
-        target_exprs = build_sql_exprs(common_cols, bool_cols, decimal_cols, source=False)
-
+        source_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, source=True)
+        target_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, source=False)
         source_sql = f"SELECT {', '.join(source_exprs)} FROM {source_table}"
         target_sql = f"SELECT {', '.join(target_exprs)} FROM {target_table_full}"
         if apply_filter:
             source_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
             target_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
-
         casted_sql = f"SOURCE_SQL:\n{source_sql}\nTARGET_SQL:\n{target_sql}"
 
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
