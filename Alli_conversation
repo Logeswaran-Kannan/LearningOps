@@ -105,6 +105,10 @@ def compare_table(table):
 
         source_df = normalize_column_names(source_df)
         # Replace problematic characters like � with hyphen in all string columns
+        from pyspark.sql.functions import regexp_replace
+        for c in source_df.columns:
+            if source_df.schema[c].dataType.simpleString() == "string":
+                source_df = source_df.withColumn(c, regexp_replace(col(c), "�", "-"))
         for c in source_df.columns:
             if source_df.schema[c].dataType.simpleString() == "string":
                 source_df = source_df.withColumn(c, when(col(c).contains("�"), col(c).replace("�", "-")).otherwise(col(c)))
