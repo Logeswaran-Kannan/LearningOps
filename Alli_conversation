@@ -104,6 +104,10 @@ def compare_table(table):
         target_df = spark.read.table(target_table_full)
 
         source_df = normalize_column_names(source_df)
+        # Replace problematic characters like � with hyphen in all string columns
+        for c in source_df.columns:
+            if source_df.schema[c].dataType.simpleString() == "string":
+                source_df = source_df.withColumn(c, when(col(c).contains("�"), col(c).replace("�", "-")).otherwise(col(c)))
         target_df = normalize_column_names(target_df)
         source_df, bool_cols, bool_patterns = boolean_transform_patterned(source_df)
         target_df = remove_column(target_df, "azure_load_date")
