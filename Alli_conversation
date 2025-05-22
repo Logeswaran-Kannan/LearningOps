@@ -84,11 +84,8 @@ def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True
     for c in columns:
         if source and c in bool_cols:
             pattern = bool_patterns.get(c)
-            exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN 1 WHEN 'f' THEN 0 ELSE NULL END AS STRING) AS {c}")
-            elif pattern == "t_null":
-                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' ELSE NULL END AS STRING) AS {c}")
-            elif pattern == "f_null":
-                exprs.append(f"CAST(CASE LOWER({c}) WHEN 'f' THEN '0' ELSE NULL END AS STRING) AS {c}")
+            if pattern in ["tf", "t_null", "f_null", "t", "f"]:
+                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN 1 WHEN 'f' THEN 0 ELSE NULL END AS STRING) AS {c}")
             else:
                 exprs.append(f"CAST({c} AS STRING) AS {c}")
         elif not source and c in decimal_cols:
