@@ -27,30 +27,36 @@ def generate_target_table_name(table):
         return f"claimcenter_std001_{table}"
     return table
 
-def is_boolean_column(df, col_name):
-    try:
-        values = [r[0] for r in df.select(col_name).distinct().collect()]
-        return set(values).issubset({"f", "t", None})
-    except:
-        return False
+def identify_boolean_pattern(df, col_name):
+    values = set([r[0] for r in df.select(col_name).distinct().collect()])
+    if values.issubset({"t", "f", None}):
+        if "t" in values and "f" in values:
+            return "tf"
+        elif "t" in values and None in values:
+            return "t_null"
+        elif "f" in values and None in values:
+            return "f_null"
+        elif "t" in values:
+            return "t"
+        elif "f" in values:
+            return "f"
+        elif None in values:
+            return "null_only"
+    return None
 
-def is_nullable_boolean_column(df, col_name):
-    try:
-        values = set([r[0] for r in df.select(col_name).distinct().collect()])
-        return values.issubset({"f", "t", None}) and ("t" in values and None in values or "f" in values and None in values)
-    except:
-        return False
-
-def boolean_transform_nullable(df):
+def boolean_transform_patterned(df):
     bool_cols = []
+    patterns = {}
     for c in df.columns:
-        if is_nullable_boolean_column(df, c):
-            df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)))
+        pattern = identify_boolean_pattern(df, c)
+        if pattern:
             bool_cols.append(c)
-        elif is_boolean_column(df, c):
-            df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None))
-            bool_cols.append(c)
-    return df, bool_cols
+            patterns[c] = pattern
+            if pattern in ["tf", "t_null", "f_null"]:
+                df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)))
+            else:
+                df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None))
+    return df, bool_cols, patterns
 
 def cast_decimal_to_double(df):
     decimal_cols = [f.name for f in df.schema.fields if f.dataType.simpleString().startswith("decimal")]
@@ -63,11 +69,14 @@ def remove_column(df, colname):
         return df.drop(colname)
     return df
 
-def build_sql_exprs(columns, bool_cols, decimal_cols, source=True):
+def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True):
     exprs = []
     for c in columns:
         if source and c in bool_cols:
-            exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE {c} END AS STRING) AS {c}")
+            if bool_patterns.get(c) in ["tf", "t_null", "f_null"]:
+                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' ELSE '0' END AS STRING) AS {c}")
+            else:
+                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE NULL END AS STRING) AS {c}")
         elif not source and c in decimal_cols:
             exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
         else:
@@ -80,31 +89,22 @@ def compare_table(table):
     target_table_full = f"{target_catalog}.{target_db}.{target_table}"
 
     try:
-        try:
-            source_df = spark.read.table(source_table)
-        except:
-            return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, "source table missing", "")
-
-        try:
-            target_df = spark.read.table(target_table_full)
-        except:
-            return (table, source_table, target_table_full, source_df.count(), 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, "target table missing", "")
+        source_df = spark.read.table(source_table)
+        target_df = spark.read.table(target_table_full)
 
         source_df = normalize_column_names(source_df)
         target_df = normalize_column_names(target_df)
-        source_df, bool_cols = boolean_transform_nullable(source_df)
+        source_df, bool_cols, bool_patterns = boolean_transform_patterned(source_df)
         target_df = remove_column(target_df, "azure_load_date")
         target_df, decimal_cols = cast_decimal_to_double(target_df)
 
         creation_time_present = "creationtime" in target_df.columns
         update_time_present = "updatetime" in target_df.columns
-
         full_target_count = target_df.count()
         dedup_target_df = target_df.dropDuplicates() if not (creation_time_present and update_time_present) else target_df
         post_dedup_count = dedup_target_df.count()
-        apply_filter = full_target_count > 3000 and creation_time_present
 
-        if apply_filter:
+        if full_target_count > 3000 and creation_time_present:
             filtered_source_df = source_df.filter((col("creationtime") >= filter_start) & (col("creationtime") <= filter_end))
             filtered_target_df = dedup_target_df.filter((col("creationtime") >= filter_start) & (col("creationtime") <= filter_end))
         else:
@@ -113,19 +113,16 @@ def compare_table(table):
 
         targetfiltercount = filtered_target_df.count()
         source_count = filtered_source_df.count()
-
         common_cols = list(set(filtered_source_df.columns) & set(filtered_target_df.columns))
         casted_common_cols = [c for c in common_cols if c in filtered_source_df.columns and c in filtered_target_df.columns]
 
         for c in casted_common_cols:
             if c in bool_cols:
-                filtered_source_df = filtered_source_df.withColumn(
-                    c,
-                    when(lower(col(c)) == "t", lit(1))
-                    .when(lower(col(c)) == "f", lit(0))
-                    .otherwise(lit(0))
-                    .cast("int")
-                )
+                pattern = bool_patterns.get(c, "")
+                if pattern in ["tf", "t_null", "f_null"]:
+                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)).cast("int"))
+                else:
+                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None).cast("int"))
             else:
                 filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
 
@@ -141,7 +138,6 @@ def compare_table(table):
         missing_in_source = list(set(filtered_target_df.columns) - set(filtered_source_df.columns))
         missing_in_target = list(set(filtered_source_df.columns) - set(filtered_target_df.columns))
         duplicate_count = full_target_count - post_dedup_count
-        mismatches = source_only + target_only > 0
 
         comment_parts = []
         if source_count != post_dedup_count:
@@ -150,26 +146,23 @@ def compare_table(table):
             comment_parts.append("missing columns in source")
         if missing_in_target:
             comment_parts.append("missing columns in target")
-        if mismatches:
+        if source_only + target_only > 0:
             comment_parts.append("data mismatch")
         if duplicate_count > 0:
             comment_parts.append("duplicates in target")
 
         comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-        source_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, source=True)
-        target_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, source=False)
+        source_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, bool_patterns, source=True)
+        target_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, bool_patterns, source=False)
         source_sql = f"SELECT {', '.join(source_exprs)} FROM {source_table}"
         target_sql = f"SELECT {', '.join(target_exprs)} FROM {target_table_full}"
-        if apply_filter:
+        if full_target_count > 3000 and creation_time_present:
             source_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
             target_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
         casted_sql = f"SOURCE_SQL:\n{source_sql}\nTARGET_SQL:\n{target_sql}"
 
-        return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
-                post_dedup_count, duplicate_count, bool_cols, decimal_cols,
-                source_only, target_only, missing_in_source, missing_in_target,
-                source_only, target_only, comment, casted_sql)
+        return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount, post_dedup_count, duplicate_count, bool_cols, decimal_cols, source_only, target_only, missing_in_source, missing_in_target, source_only, target_only, comment, casted_sql)
 
     except Exception as e:
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
