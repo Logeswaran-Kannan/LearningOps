@@ -9,7 +9,7 @@ source_catalog = "core_tst_sys9"
 source_db = "rr_source"
 target_catalog = "core_tst_std001"
 target_db = "ods"
-table_names = ["cc_master", "btable2", "ctable3"]
+table_names = ["cc_matter", "btable2", "ctable3"]
 filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
 
@@ -34,11 +34,21 @@ def is_boolean_column(df, col_name):
     except:
         return False
 
-def boolean_transform(df):
+def is_nullable_boolean_column(df, col_name):
+    try:
+        values = set([r[0] for r in df.select(col_name).distinct().collect()])
+        return values.issubset({"f", "t", None}) and ("t" in values and None in values or "f" in values and None in values)
+    except:
+        return False
+
+def boolean_transform_nullable(df):
     bool_cols = []
     for c in df.columns:
-        if is_boolean_column(df, c):
-            df = df.withColumn(c, when(col(c) == "t", 1).otherwise(0))
+        if is_nullable_boolean_column(df, c):
+            df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)))
+            bool_cols.append(c)
+        elif is_boolean_column(df, c):
+            df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None))
             bool_cols.append(c)
     return df, bool_cols
 
@@ -52,16 +62,6 @@ def remove_column(df, colname):
     if colname in df.columns:
         return df.drop(colname)
     return df
-
-def align_column_types(df1, df2, cols):
-    for c in cols:
-        dtype1 = df1.schema[c].dataType
-        dtype2 = df2.schema[c].dataType
-        if dtype1 != dtype2:
-            common_type = "string" if "string" in [dtype1.simpleString(), dtype2.simpleString()] else "double"
-            df1 = df1.withColumn(c, col(c).cast(common_type))
-            df2 = df2.withColumn(c, col(c).cast(common_type))
-    return df1, df2
 
 def build_sql_exprs(columns, bool_cols, decimal_cols, source=True):
     exprs = []
@@ -92,7 +92,7 @@ def compare_table(table):
 
         source_df = normalize_column_names(source_df)
         target_df = normalize_column_names(target_df)
-        source_df, bool_cols = boolean_transform(source_df)
+        source_df, bool_cols = boolean_transform_nullable(source_df)
         target_df = remove_column(target_df, "azure_load_date")
         target_df, decimal_cols = cast_decimal_to_double(target_df)
 
@@ -100,7 +100,6 @@ def compare_table(table):
         update_time_present = "updatetime" in target_df.columns
 
         full_target_count = target_df.count()
-
         dedup_target_df = target_df.dropDuplicates() if not (creation_time_present and update_time_present) else target_df
         post_dedup_count = dedup_target_df.count()
         apply_filter = full_target_count > 3000 and creation_time_present
@@ -120,7 +119,10 @@ def compare_table(table):
 
         for c in casted_common_cols:
             if c in bool_cols:
-                filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)).cast("int"))
+                if is_nullable_boolean_column(source_df, c):
+                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)).cast("int"))
+                else:
+                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None).cast("int"))
             else:
                 filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
 
