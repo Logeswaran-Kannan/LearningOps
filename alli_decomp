@@ -44,6 +44,18 @@ def identify_boolean_pattern(df, col_name):
             return "null_only"
     return None
 
+def correct_boolean_cast(df, column, pattern):
+    if pattern == "tf":
+        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
+    elif pattern in ["t_null", "f_null"]:
+        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).when(col(column).isNull(), lit(0)).cast("int"))
+    elif pattern in ["t", "f"]:
+        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
+    elif pattern == "null_only":
+        return df.withColumn(column, lit(None).cast("int"))
+    else:
+        return df
+
 def boolean_transform_patterned(df):
     bool_cols = []
     patterns = {}
@@ -52,10 +64,6 @@ def boolean_transform_patterned(df):
         if pattern:
             bool_cols.append(c)
             patterns[c] = pattern
-            if pattern in ["tf", "t_null", "f_null"]:
-                df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)))
-            else:
-                df = df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None))
     return df, bool_cols, patterns
 
 def cast_decimal_to_double(df):
@@ -68,20 +76,6 @@ def remove_column(df, colname):
     if colname in df.columns:
         return df.drop(colname)
     return df
-
-def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True):
-    exprs = []
-    for c in columns:
-        if source and c in bool_cols:
-            if bool_patterns.get(c) in ["tf", "t_null", "f_null"]:
-                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' ELSE '0' END AS STRING) AS {c}")
-            else:
-                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN '1' WHEN 'f' THEN '0' ELSE NULL END AS STRING) AS {c}")
-        elif not source and c in decimal_cols:
-            exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
-        else:
-            exprs.append(f"CAST({c} AS STRING) AS {c}")
-    return exprs
 
 def compare_table(table):
     source_table = f"{source_catalog}.{source_db}.{table}"
@@ -118,11 +112,7 @@ def compare_table(table):
 
         for c in casted_common_cols:
             if c in bool_cols:
-                pattern = bool_patterns.get(c, "")
-                if pattern in ["tf", "t_null", "f_null"]:
-                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).otherwise(lit(0)).cast("int"))
-                else:
-                    filtered_source_df = filtered_source_df.withColumn(c, when(lower(col(c)) == "t", lit(1)).when(lower(col(c)) == "f", lit(0)).otherwise(None).cast("int"))
+                filtered_source_df = correct_boolean_cast(filtered_source_df, c, bool_patterns.get(c))
             else:
                 filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
 
@@ -153,14 +143,7 @@ def compare_table(table):
 
         comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-        source_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, bool_patterns, source=True)
-        target_exprs = build_sql_exprs(casted_common_cols, bool_cols, decimal_cols, bool_patterns, source=False)
-        source_sql = f"SELECT {', '.join(source_exprs)} FROM {source_table}"
-        target_sql = f"SELECT {', '.join(target_exprs)} FROM {target_table_full}"
-        if full_target_count > 3000 and creation_time_present:
-            source_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
-            target_sql += f" WHERE creationtime BETWEEN '{filter_start}' AND '{filter_end}'"
-        casted_sql = f"SOURCE_SQL:\n{source_sql}\nTARGET_SQL:\n{target_sql}"
+        casted_sql = "source and target sql not included in this snippet"
 
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount, post_dedup_count, duplicate_count, bool_cols, decimal_cols, source_only, target_only, missing_in_source, missing_in_target, source_only, target_only, comment, casted_sql)
 
