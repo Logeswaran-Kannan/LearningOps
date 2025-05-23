@@ -1,21 +1,21 @@
-| Activity                                    | Start Date   | End Date     | Duration | Description                                                    |
-| ------------------------------------------- | ------------ | ------------ | -------- | -------------------------------------------------------------- |
-| Define test strategy and scope              | May 26, 2025 | Jun 6, 2025  | 2 weeks  | Define overall QA approach, tools, scope, entry/exit criteria. |
-| Prepare test plan and schedule              | Jun 9, 2025  | Jun 13, 2025 | 1 week   | Detail resources, timelines, roles, environments.              |
-| Requirements review and traceability matrix | Jun 16, 2025 | Jun 27, 2025 | 2 weeks  | Validate features, create RTM, align with dev.                 |
-| Design and review test cases                | Jun 30, 2025 | Jul 18, 2025 | 3 weeks  | Write test cases for unit, integration, system levels.         |
-| Set up test environments                    | Jul 21, 2025 | Aug 1, 2025  | 2 weeks  | Dev/stage environments, stubs, automation hooks.               |
-| Test data design and preparation            | Aug 4, 2025  | Aug 15, 2025 | 2 weeks  | Cover all scenarios: normal, edge, negative.                   |
-| Finalize test deliverables & sign-off       | Aug 18, 2025 | Aug 29, 2025 | 2 weeks  | Entry/exit criteria, test summary, approvals.                  |
+| Activity                                  | Resource(s)    | Start Date | End Date | Notes                                      |
+| ----------------------------------------- | -------------- | ---------- | -------- | ------------------------------------------ |
+| Define test strategy and scope            | Alice, Ben     | May 26     | Jun 6    | —                                          |
+| Prepare test plan and schedule            | Ben            | Jun 2      | Jun 13   | Overlaps final week of strategy definition |
+| Requirements review & traceability matrix | Alice, Charlie | Jun 9      | Jun 20   | In parallel with planning finalization     |
+| Design & review test cases                | All            | Jun 16     | Jul 11   | Parallel to environment setup start        |
+| Set up test environments                  | Charlie        | Jun 30     | Jul 11   | Runs with test case design                 |
+| Test data design & preparation            | Alice, Charlie | Jul 14     | Jul 25   | After env setup                            |
+| Finalize deliverables & sign-off          | All            | Aug 5      | Aug 29   | Parallel with last bits of data prep       |
 
 
-| Activity                                   | Start Date | End Date | Description                                                 |
-| ------------------------------------------ | ---------- | -------- | ----------------------------------------------------------- |
-| Unit Testing (automated/manual)            | Sep 1      | Sep 12   | MQS Bronze/Silver/Gold, DVLA, LRT Service.                  |
-| Integration Testing                        | Sep 9      | Sep 20   | Ensure modules (Data Products, MQS pipeline) work together. |
-| System Testing                             | Sep 16     | Sep 27   | End-to-end business workflows.                              |
-| Regression Testing                         | Sep 23     | Oct 4    | Ensure new changes don’t break existing features.           |
-| Performance & Load Testing                 | Sep 30     | Oct 11   | Simulate traffic to ensure stability and responsiveness.    |
-| UAT Support & Feedback Iterations          | Oct 7      | Oct 25   | Work with users for validation, apply feedback.             |
-| Final Regression and Release Sign-off      | Oct 28     | Nov 8    | Freeze scope, test final build.                             |
-| Release Preparation and Deployment Support | Nov 11     | Nov 15   | Documentation, validation, and production readiness.        |
+| Activity                            | Resource(s)    | Start Date | End Date | Notes                       |
+| ----------------------------------- | -------------- | ---------- | -------- | --------------------------- |
+| Unit Testing (automated/manual)     | Alice, Ben     | Sep 1      | Sep 12   | —                           |
+| Integration Testing                 | Ben, Charlie   | Sep 9      | Sep 20   | Starts while Unit Test ends |
+| System Testing                      | Alice, Charlie | Sep 16     | Sep 30   | Overlaps with Integration   |
+| Regression Testing                  | All            | Sep 30     | Oct 11   | Continues after system test |
+| Performance & Load Testing          | Charlie        | Sep 30     | Oct 11   | In parallel with regression |
+| UAT Support & Feedback Iterations   | Alice, Ben     | Oct 7      | Oct 25   | —                           |
+| Final Regression & Release Sign-off | All            | Oct 28     | Nov 8    | —                           |
+| Release Prep & Deployment Support   | Charlie        | Nov 11     | Nov 15   | —                           |
