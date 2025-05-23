@@ -1,13 +1,35 @@
-\COPY (
-    SELECT 
-        '=' || '"' || phone_number || '"' AS phone_number,
-        -- Add other columns as needed, or just use *
-        *
-    FROM public.your_table_name
-    WHERE updatetime BETWEEN '2025-05-19 00:00:01.253' AND '2025-05-20 00:00:01.253'
-) TO '/your/local/path/output.txt'
-WITH DELIMITER E'\t' NULL '' CSV HEADER ENCODING 'UTF8';
+from pyspark.sql import SparkSession
+import os
 
+# Initialize Spark session
+spark = SparkSession.builder.appName("ImportTXTtoCatalogTables").getOrCreate()
 
+# Path in DBFS (without /dbfs/ prefix when using Spark APIs)
+txt_path = "dbfs:/path/to/files/"
+catalog = "core_tst_sys9"
+database = "rr_source"
 
-Could you please provide your approval if it hasn’t already been done? I’m not sure if this is a monthly process, but I seem to be getting this renewal email every month. Just want to make sure it’s sorted before I lose access. Thanks!
+# Set the current catalog and database
+spark.sql(f"USE CATALOG {catalog}")
+spark.sql(f"USE DATABASE {database}")
+
+# List all .txt files in the directory
+import os
+files = [f for f in os.listdir("/dbfs/path/to/files/") if f.endswith(".txt")]
+
+for file_name in files:
+    file_path = f"{txt_path}{file_name}"
+    table_name = os.path.splitext(file_name)[0].lower()
+
+    # Read the TXT file as DataFrame
+    df = spark.read.option("header", "true") \
+                   .option("delimiter", "\t") \
+                   .option("inferSchema", "true") \
+                   .csv(file_path)
+
+    # Write to catalog table, overwrite if exists
+    df.write.mode("overwrite") \
+          .option("overwriteSchema", "true") \
+          .saveAsTable(f"{catalog}.{database}.{table_name}")
+
+    print(f"Table {catalog}.{database}.{table_name} created from {file_name}")
