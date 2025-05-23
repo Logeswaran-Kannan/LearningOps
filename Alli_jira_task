@@ -1,35 +1,21 @@
-from pyspark.sql import SparkSession
-import os
+| Activity                                    | Start Date   | End Date     | Duration | Description                                                    |
+| ------------------------------------------- | ------------ | ------------ | -------- | -------------------------------------------------------------- |
+| Define test strategy and scope              | May 26, 2025 | Jun 6, 2025  | 2 weeks  | Define overall QA approach, tools, scope, entry/exit criteria. |
+| Prepare test plan and schedule              | Jun 9, 2025  | Jun 13, 2025 | 1 week   | Detail resources, timelines, roles, environments.              |
+| Requirements review and traceability matrix | Jun 16, 2025 | Jun 27, 2025 | 2 weeks  | Validate features, create RTM, align with dev.                 |
+| Design and review test cases                | Jun 30, 2025 | Jul 18, 2025 | 3 weeks  | Write test cases for unit, integration, system levels.         |
+| Set up test environments                    | Jul 21, 2025 | Aug 1, 2025  | 2 weeks  | Dev/stage environments, stubs, automation hooks.               |
+| Test data design and preparation            | Aug 4, 2025  | Aug 15, 2025 | 2 weeks  | Cover all scenarios: normal, edge, negative.                   |
+| Finalize test deliverables & sign-off       | Aug 18, 2025 | Aug 29, 2025 | 2 weeks  | Entry/exit criteria, test summary, approvals.                  |
 
-# Initialize Spark session
-spark = SparkSession.builder.appName("ImportTXTtoCatalogTables").getOrCreate()
 
-# Path in DBFS (without /dbfs/ prefix when using Spark APIs)
-txt_path = "dbfs:/path/to/files/"
-catalog = "core_tst_sys9"
-database = "rr_source"
-
-# Set the current catalog and database
-spark.sql(f"USE CATALOG {catalog}")
-spark.sql(f"USE DATABASE {database}")
-
-# List all .txt files in the directory
-import os
-files = [f for f in os.listdir("/dbfs/path/to/files/") if f.endswith(".txt")]
-
-for file_name in files:
-    file_path = f"{txt_path}{file_name}"
-    table_name = os.path.splitext(file_name)[0].lower()
-
-    # Read the TXT file as DataFrame
-    df = spark.read.option("header", "true") \
-                   .option("delimiter", "\t") \
-                   .option("inferSchema", "true") \
-                   .csv(file_path)
-
-    # Write to catalog table, overwrite if exists
-    df.write.mode("overwrite") \
-          .option("overwriteSchema", "true") \
-          .saveAsTable(f"{catalog}.{database}.{table_name}")
-
-    print(f"Table {catalog}.{database}.{table_name} created from {file_name}")
+| Activity                                   | Start Date | End Date | Description                                                 |
+| ------------------------------------------ | ---------- | -------- | ----------------------------------------------------------- |
+| Unit Testing (automated/manual)            | Sep 1      | Sep 12   | MQS Bronze/Silver/Gold, DVLA, LRT Service.                  |
+| Integration Testing                        | Sep 9      | Sep 20   | Ensure modules (Data Products, MQS pipeline) work together. |
+| System Testing                             | Sep 16     | Sep 27   | End-to-end business workflows.                              |
+| Regression Testing                         | Sep 23     | Oct 4    | Ensure new changes don’t break existing features.           |
+| Performance & Load Testing                 | Sep 30     | Oct 11   | Simulate traffic to ensure stability and responsiveness.    |
+| UAT Support & Feedback Iterations          | Oct 7      | Oct 25   | Work with users for validation, apply feedback.             |
+| Final Regression and Release Sign-off      | Oct 28     | Nov 8    | Freeze scope, test final build.                             |
+| Release Preparation and Deployment Support | Nov 11     | Nov 15   | Documentation, validation, and production readiness.        |
