@@ -1,10 +1,13 @@
-COPY (
-    SELECT *
+\COPY (
+    SELECT 
+        '=' || '"' || phone_number || '"' AS phone_number,
+        -- Add other columns as needed, or just use *
+        *
     FROM public.your_table_name
     WHERE updatetime BETWEEN '2025-05-19 00:00:01.253' AND '2025-05-20 00:00:01.253'
-) TO '/path/to/your_file.csv'
-WITH (
-    FORMAT CSV,
-    HEADER TRUE,
-    ENCODING 'UTF8'
-);
+) TO '/your/local/path/output.txt'
+WITH DELIMITER E'\t' NULL '' CSV HEADER ENCODING 'UTF8';
+
+
+
+Could you please provide your approval if it hasn’t already been done? I’m not sure if this is a monthly process, but I seem to be getting this renewal email every month. Just want to make sure it’s sorted before I lose access. Thanks!
