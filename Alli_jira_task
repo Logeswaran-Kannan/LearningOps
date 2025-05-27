@@ -1,94 +1,89 @@
-🔍 Test Scenario ID: EH-BR-02 – Schema Conformance Check
+🔍 Test Scenario ID: EH-BR-03 – Timestamp Capture
 🔹 Purpose
-To ensure that every message landed in the Bronze layer strictly matches the expected JSON schema structure as defined in the MQS message contract (RAML/interface spec) and entity mapping documents. This validation guarantees structural data integrity and prevents downstream transformation or query failures.
+This scenario verifies that ingestion-related timestamps (such as eventhub_enqueued_time, load_dt, _ingest_time, etc.) are accurately captured and persisted in the Bronze Layer for every message. Accurate timestamping is essential for data traceability, time-window partitioning, latency tracking, and replay handling.
 
 🔹 Scope and Components Involved
-Source Schema Reference: MQS Interface Documents, RAML Specs, and Mapping Sheets (e.g., for Quote Request, PreComp Response, Rating Request)
+Source of Truth:
 
-Source Systems: Athena → MQS → EventHub
+Azure Event Hub enqueuedTimeUtc (system metadata)
 
-Landing Layer: Bronze tables (ODS Raw Layer in DLT)
+Technical Ingestion Mapping Documentation (defines timestamp fields)
 
-The messages include:
+Databricks DLT logic for ingestion and metadata capture
 
-Embedded JSON with nested or semi-structured fields
+Ingestion Pipeline:
 
-Key payload elements like: quote_id, event_type, cache_id, product_id, timestamp, and nested objects such as core_risk, raw_enrichments, etc.
+EventHub → DLT Parse Stage → Bronze Table
+
+System-generated metadata fields should be injected at the ingestion point and stored persistently in Bronze
 
 🔹 Validation Objectives
-Each JSON message must adhere to the expected structure as documented.
+Confirm that eventhub_enqueued_time (from Azure Event Hub) is captured and mapped to load_dt or equivalent column in Bronze.
 
-All required fields must be present and correctly typed.
+Verify _ingest_time (system ingestion timestamp by DLT) is generated and available.
 
-Nested fields must conform to data model rules (e.g., core_risk.driver.age should be integer).
+Validate logical consistency between all timestamps:
 
-No unexpected fields or schema drift should break the ingestion pipeline.
+eventhub_enqueued_time ≤ _ingest_time ≤ bronze_written_time (if available)
 
-Any discrepancies should be logged and flagged (either quarantined or rejected).
+Ensure timezones (UTC/local) are handled uniformly.
 
 🧪 Testing Approach
-✅ Against Reference Mapping Document
-Compare Bronze schema with the Mapping Document provided by Mike and MQS Interface Table (from your screenshot).
+✅ Cross-verify with Technical Ingestion Documentation
+As seen in the DLT ingestion architecture diagram, the documentation states:
 
-Use each MQS message type (e.g., MQS Quote Request, PreComp Request/Response, Rating Request) and:
+“Ehub Enqueued Timestamp will be the value for Load_DT”
 
-Cross-validate fields and types against Bronze Delta Table definition.
+“Ehub Enqueued Date will be the value for Anchor Date”
 
-Confirm complex/nested JSON flattening or preservation as per expectation.
+This implies a direct mapping must exist from EventHub’s enqueuedTimeUtc system property to a Bronze layer field.
 
-Example elements to validate (schema sample – Quote Request):
+Ensure these fields are populated consistently in every record.
 
-quote_id: string (required)
-
-event_type: string (required, e.g., "RatingRequest")
-
-core_risk: object (required)
-
-raw_enrichments: object (optional/required as per use case)
-
-_ingest_time, message_id: metadata fields from ingestion
+Review DLT expectations or transformations where this timestamp is injected.
 
 📋 Validation Methods
-Use automated data profiling (e.g., DLT expectations or schema enforcement rules).
+Compare the raw message metadata from Event Hub (via diagnostics/logs) to the timestamp values stored in the Bronze table.
 
-Validate nullability, data types, structure depth, array handling.
+Use test data with known delays or variations to confirm timestamp capture fidelity.
 
-Set up alerts/logs for:
-
-Missing mandatory fields
-
-Type mismatches (e.g., string instead of int)
-
-Unexpected schema fields (indicative of schema drift)
+Monitor ingestion logs or failures to identify if timestamp capture is missed or inconsistent.
 
 ✅ Success Criteria
-All records conform to the expected schema version.
+Every record in Bronze contains a valid:
 
-No schema-related ingestion failures (e.g., due to Spark schema inference mismatch).
+eventhub_enqueued_time or mapped load_dt
 
-Error messages from validation failures are logged and quarantined properly.
+_ingest_time (if system field)
 
-Transformation layer (Silver) is not impacted by unexpected structure variations.
+The timestamps reflect correct order of ingestion and no fields are null or defaulted.
+
+Values follow expected formatting (ISO8601, UTC) and no timezone drift is observed.
 
 🧾 Exclusions
-Type casting validation (string-to-timestamp etc.) is part of BR-SL-04.
+Latency measurement end-to-end is validated in E2E-02 – Latency Measurement.
 
-Backward compatibility with schema changes is tested under SCHEMA-01.
+Time-window aggregation or SLA alerts (like delay detection) are covered under OBS-03 – Time Window Lag Analysis.
 
 🗂 Mapped Data Quality Requirements
 DQ Ref	Description
-RL DQ01 – Accuracy	Ensures the payload accurately represents expected entities/fields.
-RL DQ05 – Validity	Applies validation rules and standards for acceptable formats/types.
-RL DQ03 – Completeness	Mandatory fields are checked as part of the schema conformance.
+RL DQ04 – Timeliness	Ensures timestamps reflect real-time data arrival and readiness.
+RL DQ09 – Traceability	Timestamp is essential metadata for tracing ingestion lifecycle.
+RL DQ01 – Accuracy	Accurate timestamping reflects the true event sequence.
 
 🔐 Pre-requisites & Access Required
 Access to:
 
-The latest data mapping document and RAML contracts.
+Azure Event Hub diagnostic logs (for enqueuedTimeUtc)
 
-Bronze Layer Table Definitions (Delta schemas).
+Bronze table schema and DLT pipeline definitions
 
-Databricks or DLT logs for schema mismatch errors.
+Ingestion mapping specification and timestamp derivation logic
 
-Test Message Samples: Available in interface doc (Sample MQS Quote Request JSON.json, PreComp_Response_Sample.json, etc.)
+Field References:
 
+eventhub_enqueued_time → load_dt
+
+_ingest_time → auto-generated by DLT
+
+anchor_date → for deduping and historical tagging
