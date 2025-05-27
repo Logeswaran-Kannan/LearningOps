@@ -1,21 +1,25 @@
-| Activity                                  | Resource(s)    | Start Date | End Date | Notes                                      |
-| ----------------------------------------- | -------------- | ---------- | -------- | ------------------------------------------ |
-| Define test strategy and scope            | Alice, Ben     | May 26     | Jun 6    | —                                          |
-| Prepare test plan and schedule            | Ben            | Jun 2      | Jun 13   | Overlaps final week of strategy definition |
-| Requirements review & traceability matrix | Alice, Charlie | Jun 9      | Jun 20   | In parallel with planning finalization     |
-| Design & review test cases                | All            | Jun 16     | Jul 11   | Parallel to environment setup start        |
-| Set up test environments                  | Charlie        | Jun 30     | Jul 11   | Runs with test case design                 |
-| Test data design & preparation            | Alice, Charlie | Jul 14     | Jul 25   | After env setup                            |
-| Finalize deliverables & sign-off          | All            | Aug 5      | Aug 29   | Parallel with last bits of data prep       |
+Data Quality Standard Discussion and SIT Standards Collaboration"
 
+JIRA Task Name:
+Define and Align Data Quality Standards with SIT Coverage
 
-| Activity                            | Resource(s)    | Start Date | End Date | Notes                       |
-| ----------------------------------- | -------------- | ---------- | -------- | --------------------------- |
-| Unit Testing (automated/manual)     | Alice, Ben     | Sep 1      | Sep 12   | —                           |
-| Integration Testing                 | Ben, Charlie   | Sep 9      | Sep 20   | Starts while Unit Test ends |
-| System Testing                      | Alice, Charlie | Sep 16     | Sep 30   | Overlaps with Integration   |
-| Regression Testing                  | All            | Sep 30     | Oct 11   | Continues after system test |
-| Performance & Load Testing          | Charlie        | Sep 30     | Oct 11   | In parallel with regression |
-| UAT Support & Feedback Iterations   | Alice, Ben     | Oct 7      | Oct 25   | —                           |
-| Final Regression & Release Sign-off | All            | Oct 28     | Nov 8    | —                           |
-| Release Prep & Deployment Support   | Charlie        | Nov 11     | Nov 15   | —                           |
+Sub-Tasks & Details
+Sub-Task	How to Achieve	Description	Definition of Done
+1. Schedule Joint DQ & SIT Workshop	Identify key stakeholders from the Data Governance, QA, and SIT teams. Schedule and facilitate a session.	A collaborative workshop where DQ standards and SIT validation objectives are aligned.	Workshop held with minutes of meeting (MoM) shared and approved by all parties.
+2. Document Data Quality Dimensions	Define core DQ metrics (e.g., completeness, accuracy, timeliness, uniqueness, validity).	Establish what constitutes quality for data at various pipeline stages (Bronze, Silver, Gold).	DQ metric definitions documented and agreed upon.
+3. Map SIT Test Cases to DQ Metrics	Review SIT test scope and overlay relevant DQ rules where testable (e.g., null checks, threshold breaches).	Demonstrates how SIT testing supports or complements DQ controls.	Mapping document created showing SIT support for DQ rules.
+4. Identify Gaps and Propose Enhancements	Highlight areas not covered by SIT (e.g., referential integrity, metadata consistency).	Recommend new test cases or controls to bridge coverage gaps.	Gap list documented and actions assigned.
+5. Define Common Reporting & Escalation Process	Align on how DQ breaches and SIT failures are reported, tracked, and escalated.	Standard escalation and reporting workflow covering both aspects.	Reporting template finalized and shared.
+6. Review and Sign-Off	Present compiled standards, coverage mapping, and process changes to leadership.	Final agreement and approval to proceed with implementation.	Document approved by Data Governance and QA leadership.
+
+📌 Overall Description:
+This task aims to ensure that data quality standards and SIT (System Integration Testing) standards are not handled in silos. It facilitates a structured collaboration to enhance quality coverage, reduce duplication, and ensure data quality checks are embedded into QA automation where feasible.
+
+✅ Definition of Done (Main Task):
+DQ metrics and SIT coverage mapped and documented
+
+Gaps identified and action plan agreed
+
+Escalation/reporting framework aligned
+
+Final sign-off from QA and DQ stakeholders
