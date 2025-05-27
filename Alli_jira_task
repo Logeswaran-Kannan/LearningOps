@@ -1,111 +1,91 @@
-🔍 Test Scenario ID: EH-BR-05 – Duplication Handling
+🔍 Test Scenario ID: EH-BR-06 – Field Completeness Check
 🔹 Purpose
-This scenario verifies that the ingestion pipeline properly identifies and handles duplicate messages received from EventHub to prevent redundant or repeated records in the Bronze Layer. The objective is to ensure either deduplication, quarantine, or logging of duplicates based on defined uniqueness logic, while maintaining the integrity of downstream processing.
+This scenario ensures that all mandatory fields defined in the MQS message contract and mapping document are present and non-null in each record ingested into the Bronze layer. The focus is to validate that critical business fields are not missing or empty, and to ensure consistent data structure for downstream processing.
 
 🔹 Scope and Components Involved
-Potential Duplication Points:
+Required Fields (from mapping document):
 
-Source system retries (e.g., Athena or MQS re-sending same message)
+quote_id, event_type, cache_id, event_timestamp, product_id, source_system, etc.
 
-MuleSoft re-delivery logic
+Message Types Affected:
 
-EventHub message replay due to offset reset or checkpoint rollback
+QuoteRequest, RatingRequest, PreCompRequest/Response
 
 Pipeline Layers:
 
-Azure Event Hub
+EventHub → DLT (Landed/Parse Logic) → Bronze Table
 
-DLT streaming pipeline (checkpoint and offset logic)
+Reference Sources:
 
-Bronze Landed Table
+Field Mapping Document (provided by Mike)
 
-Duplication Criteria (defined in ingestion spec or entity mapping):
-
-Repeated message_id or quote_id
-
-Identical payload hash across multiple records
-
-Same event_type and timestamp combination (depending on message type)
+RAML/Interface Contracts (for MQS message schema)
 
 🔹 Validation Objectives
-Ensure that duplicate messages do not create redundant rows in the Bronze table.
+Confirm that all non-nullable business fields are present in each record.
 
-Confirm that duplicates are either:
+Identify and flag records with:
 
-Dropped silently (if idempotency logic is enforced),
+Missing keys (e.g., quote_id is absent)
 
-Logged/quarantined for traceability, or
+Null values in critical fields (e.g., cache_id is null)
 
-Marked with a duplicate indicator (e.g., is_duplicate = true)
+Empty strings or placeholder values (e.g., "N/A", "unknown")
 
-Verify correct checkpoint management to avoid offset reprocessing in case of pipeline failures.
+Detect upstream failures or schema mismatches that result in partial payloads.
 
 🧪 Testing Approach
-✅ Against Ingestion Behavior & DLT Checkpoint Logic
-Inject a test message with a known quote_id or message_id multiple times into EventHub:
+✅ Against Mapping Sheet + Bronze Schema
+Cross-reference the field list from the mapping document against the actual structure and data within Bronze.
 
-Within seconds (simulated retry)
+Create test messages:
 
-After a checkpoint reset
+Missing one or more critical fields
 
-Monitor how the DLT job processes the reappeared record.
+With fields set to null or empty string
 
-Check for:
+Validate how these messages are ingested:
 
-Record count difference in Bronze
+Are they allowed through?
 
-Fields like uuid, eventhub_offset, _ingest_time for new insertions
+Are they logged, quarantined, or marked invalid?
 
-Any deduplication logic applied at Bronze level (e.g., Spark dropDuplicates, hash filters)
+Profile Bronze layer records for null counts and anomalies across key columns.
 
 📋 Validation Methods
-Send N identical messages from Mule to EventHub.
+Use automated data quality rules in DLT (e.g., expect(field IS NOT NULL)).
 
-Confirm whether:
+Run data profiling tools or queries (e.g., null % by field, frequency analysis).
 
-Only 1 record appears in the Bronze table.
-
-Additional records are flagged or captured in a duplicate log table.
-
-Inspect _ingest_time, eventhub_offset, or any hash key to detect redundancy.
+Review data lineage logs to confirm if incomplete records have identifiable patterns (e.g., by source or message type).
 
 ✅ Success Criteria
-No duplicate records exist in Bronze for the same logical message.
+100% of records in Bronze have values populated in all mandatory fields.
 
-Records with matching payloads are:
+No records exist where critical fields are missing, null, or defaulted (unless explicitly allowed).
 
-Filtered out at Bronze ingestion time, OR
+Pipeline logs detail any field-level errors and do not silently ingest incomplete records.
 
-Clearly marked/logged with duplication info
-
-Pipeline maintains stability and does not reprocess offsets during restart or retries.
-
-No impact to downstream Silver or Gold pipelines due to redundant Bronze records.
+Optional fields behave according to business rules (nullable, optional, defaulted).
 
 🧾 Exclusions
-Deduplication during downstream transformation (Silver Layer) is separately covered under BR-SL-01 and BR-SL-05.
+Field-level type validation is handled under EH-BR-02 – Schema Conformance.
 
-Offset continuity and recovery validation is handled in EH-BR-07.
+Business rule-based field logic (e.g., “valid timestamp range”) is handled in BR-SL-05 or BIZ rules.
 
 🗂 Mapped Data Quality Requirements
 DQ Ref	Description
-RL DQ06 – Uniqueness	Ensures duplicate records are identified and managed.
-RL DQ09 – Traceability	If duplicates are retained or logged, message lineage must remain clear.
-RL DQ03 – Completeness	Reprocessing must not result in partial data due to duplicate discards.
+RL DQ03 – Completeness	Ensures all required fields are populated.
+RL DQ05 – Validity	Fields meet expected structure and basic content rules.
+RL DQ01 – Accuracy	Completeness enables trust in record quality across all layers.
 
 🔐 Pre-requisites & Access Required
 Access to:
 
-EventHub (to send known test messages repeatedly)
+Field mapping specification and interface documentation
 
-Bronze table (to inspect message presence, ingest metadata, and UUID fields)
+Bronze table schema and DLT job configuration
 
-Quarantine/duplicate log table (if applicable)
+Sample MQS messages with complete and incomplete field sets
 
-DLT notebook or streaming pipeline logic (to confirm deduplication logic)
-
-Understand how DLT handles:
-
-Checkpoint tracking (.checkpointLocation)
-
-Streaming deduplication (e.g., via Spark dropDuplicates or UUID hash)
+Error log/quarantine zone (if incomplete records are redirected)
