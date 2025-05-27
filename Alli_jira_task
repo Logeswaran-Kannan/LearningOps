@@ -1,18 +1,27 @@
-Hey everyone,
+Test Scenario: EH-BR-01 – Message Receipt Validation
 
-Just to get us all on the same page — for validating the Silver and outbound transmit files through the automation framework, we were initially looking at using STD001. But for consistency in the three-way reconciliation and downstream layer validation, Paul, I believe you were suggesting that core_tst might be the better schema to work with — just want to confirm that’s still the recommendation?
+This test ensures that every message sent from Azure EventHub is successfully captured and stored in the Bronze layer of the data platform. It's about confirming that the ingestion pipeline does not drop or miss any events during processing.
 
-From a testing perspective — Graham — the aim for both manual and automated validation is to ensure that the cloud version of the data doesn’t introduce any issues in the Silver or downstream layers, whether it’s in terms of data mismatches or count differences. So ideally, the same test data from STD001 should be flowing through into Silver and then downstream, right?
+🔍 Description (Simplified):
+Whenever an event is published to EventHub, it should show up in the Bronze Delta table.
 
-To achieve that, Paul — is the plan to create the cloud version of the tables inside core_tst, and then repoint the Silver schema logic to read from those? Just want to make sure I’ve understood this correctly.
+This test validates that there’s a 1:1 match between sent and received messages.
 
-As an example:
-If we take the veh_coverage_premium_trans table — in the ODS view, I see two versions — one coming from the legacy sys9, and another based on the cloud data in STD001.
-So the question is:
+It helps catch issues like message loss, connectivity failure, or ingestion logic errors.
 
-Are we loading data into the same Silver table and switching the source between legacy (sys9) and cloud (STD001) during testing?
-Or
+✅ Key Integrity Checks:
+Record count comparison between EventHub and Bronze.
 
-Will there be two separate versions of the Silver table — one pointing to the legacy data and the other to the cloud version — to compare side-by-side?
+Presence of expected message IDs in the Bronze layer.
 
-Would be great to align on the approach so we can plan the automation accordingly.
+Timestamps showing timely ingestion.
+
+🧪 Example:
+If 1,000 messages are sent to EventHub during a test window, we should find 1,000 matching records in the Bronze table (within the same timeframe), including metadata like message ID, ingestion time, and payload.
+
+🎯 Expected Result:
+All messages sent via EventHub are received in the Bronze layer with no loss or duplication.
+
+📌 Requirement Mapped:
+RL DQ01 – Accuracy
+(Ensures data received is exactly what was sent, no more, no less.)
