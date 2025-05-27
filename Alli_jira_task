@@ -3,14 +3,16 @@ Data Quality Standard Discussion and SIT Standards Collaboration"
 JIRA Task Name:
 Define and Align Data Quality Standards with SIT Coverage
 
-Sub-Tasks & Details
-Sub-Task	How to Achieve	Description	Definition of Done
-1. Schedule Joint DQ & SIT Workshop	Identify key stakeholders from the Data Governance, QA, and SIT teams. Schedule and facilitate a session.	A collaborative workshop where DQ standards and SIT validation objectives are aligned.	Workshop held with minutes of meeting (MoM) shared and approved by all parties.
-2. Document Data Quality Dimensions	Define core DQ metrics (e.g., completeness, accuracy, timeliness, uniqueness, validity).	Establish what constitutes quality for data at various pipeline stages (Bronze, Silver, Gold).	DQ metric definitions documented and agreed upon.
-3. Map SIT Test Cases to DQ Metrics	Review SIT test scope and overlay relevant DQ rules where testable (e.g., null checks, threshold breaches).	Demonstrates how SIT testing supports or complements DQ controls.	Mapping document created showing SIT support for DQ rules.
-4. Identify Gaps and Propose Enhancements	Highlight areas not covered by SIT (e.g., referential integrity, metadata consistency).	Recommend new test cases or controls to bridge coverage gaps.	Gap list documented and actions assigned.
-5. Define Common Reporting & Escalation Process	Align on how DQ breaches and SIT failures are reported, tracked, and escalated.	Standard escalation and reporting workflow covering both aspects.	Reporting template finalized and shared.
-6. Review and Sign-Off	Present compiled standards, coverage mapping, and process changes to leadership.	Final agreement and approval to proceed with implementation.	Document approved by Data Governance and QA leadership.
+| Sub-Task                                            | How to Achieve                                                                                              | Description                                                                                    | Definition of Done                                                              |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **1. Schedule Joint DQ & SIT Workshop**             | Identify key stakeholders from the Data Governance, QA, and SIT teams. Schedule and facilitate a session.   | A collaborative workshop where DQ standards and SIT validation objectives are aligned.         | Workshop held with minutes of meeting (MoM) shared and approved by all parties. |
+| **2. Document Data Quality Dimensions**             | Define core DQ metrics (e.g., completeness, accuracy, timeliness, uniqueness, validity).                    | Establish what constitutes quality for data at various pipeline stages (Bronze, Silver, Gold). | DQ metric definitions documented and agreed upon.                               |
+| **3. Map SIT Test Cases to DQ Metrics**             | Review SIT test scope and overlay relevant DQ rules where testable (e.g., null checks, threshold breaches). | Demonstrates how SIT testing supports or complements DQ controls.                              | Mapping document created showing SIT support for DQ rules.                      |
+| **4. Identify Gaps and Propose Enhancements**       | Highlight areas not covered by SIT (e.g., referential integrity, metadata consistency).                     | Recommend new test cases or controls to bridge coverage gaps.                                  | Gap list documented and actions assigned.                                       |
+| **5. Define Common Reporting & Escalation Process** | Align on how DQ breaches and SIT failures are reported, tracked, and escalated.                             | Standard escalation and reporting workflow covering both aspects.                              | Reporting template finalized and shared.                                        |
+| **6. Review and Sign-Off**                          | Present compiled standards, coverage mapping, and process changes to leadership.                            | Final agreement and approval to proceed with implementation.                                   | Document approved by Data Governance and QA leadership.                         |
+
+
 
 📌 Overall Description:
 This task aims to ensure that data quality standards and SIT (System Integration Testing) standards are not handled in silos. It facilitates a structured collaboration to enhance quality coverage, reduce duplication, and ensure data quality checks are embedded into QA automation where feasible.
