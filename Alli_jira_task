@@ -25,3 +25,32 @@ All messages sent via EventHub are received in the Bronze layer with no loss or 
 📌 Requirement Mapped:
 RL DQ01 – Accuracy
 (Ensures data received is exactly what was sent, no more, no less.)
+
+---------------------------------------
+
+🧩 Verification Criteria
+Match Count: Count of records in Bronze = number of test messages sent.
+
+Match IDs: All test_ids from your payload exist in the Bronze table.
+
+Ingestion Timestamp: _ingest_time or ingestion metadata exists and is current.
+
+📋 Outcome
+PASS: All test messages are present in Bronze with correct data.
+
+FAIL: Missing messages, partial ingestion, or incorrect data fields.
+
+🔐 Tools & Access Needed
+Access to EventHub (send permissions)
+
+Access to query Bronze Delta Table
+
+Monitoring/logs access for ingestion job
+
+📌 Requirement Mapping
+RL DQ01 – Accuracy
+
+RL DQ03 – Completeness
+
+RL DQ09 – Traceability (if message_id is tracked)
+
