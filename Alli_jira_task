@@ -1,91 +1,116 @@
-🔍 Test Scenario ID: EH-BR-06 – Field Completeness Check
+🔍 Test Scenario ID: EH-BR-07 – EventHub Offset Continuity
 🔹 Purpose
-This scenario ensures that all mandatory fields defined in the MQS message contract and mapping document are present and non-null in each record ingested into the Bronze layer. The focus is to validate that critical business fields are not missing or empty, and to ensure consistent data structure for downstream processing.
+This test scenario verifies that all messages published to Azure EventHub are read in correct sequence without gaps or duplications, and that offsets are processed in order by the DLT ingestion pipeline. This ensures full ingestion coverage, protects against data loss, and maintains message integrity through recovery and restarts.
 
 🔹 Scope and Components Involved
-Required Fields (from mapping document):
+Primary Focus:
 
-quote_id, event_type, cache_id, event_timestamp, product_id, source_system, etc.
+Continuity of EventHub partition offsets
 
-Message Types Affected:
+Alignment with DLT checkpointing and job restart logic
 
-QuoteRequest, RatingRequest, PreCompRequest/Response
+Relevant Components:
 
-Pipeline Layers:
+Azure EventHub (offsets, partitions)
 
-EventHub → DLT (Landed/Parse Logic) → Bronze Table
+Databricks Structured Streaming via DLT
 
-Reference Sources:
+Bronze table ingestion flow
 
-Field Mapping Document (provided by Mike)
+Key Metadata Fields:
 
-RAML/Interface Contracts (for MQS message schema)
+eventhub_offset
+
+eventhub_partition_id
+
+_ingest_time
+
+Supporting Artifacts:
+
+EventHub monitoring in Azure Portal
+
+DLT checkpoint storage in /mnt/.../.checkpoints/...
 
 🔹 Validation Objectives
-Confirm that all non-nullable business fields are present in each record.
+Validate that no offsets are skipped during continuous streaming ingestion.
 
-Identify and flag records with:
+Confirm that checkpointing works correctly on failure and restart (no message reprocessing or data loss).
 
-Missing keys (e.g., quote_id is absent)
+Ensure monotonic offset progression within each EventHub partition.
 
-Null values in critical fields (e.g., cache_id is null)
+Detect potential issues with:
 
-Empty strings or placeholder values (e.g., "N/A", "unknown")
+Out-of-sequence message reads
 
-Detect upstream failures or schema mismatches that result in partial payloads.
+Stale checkpoint application
+
+Faulty retries or duplicate insertions
 
 🧪 Testing Approach
-✅ Against Mapping Sheet + Bronze Schema
-Cross-reference the field list from the mapping document against the actual structure and data within Bronze.
+✅ Streaming Offset and Checkpoint Behavior
+Run a controlled stream ingestion job and simulate the following conditions:
 
-Create test messages:
+Regular ingestion without failure
 
-Missing one or more critical fields
+Simulated job failure + restart
 
-With fields set to null or empty string
+EventHub partition-based replay
 
-Validate how these messages are ingested:
+Track the continuity of:
 
-Are they allowed through?
+eventhub_offset within a partition
 
-Are they logged, quarantined, or marked invalid?
+Number of records vs. expected message count
 
-Profile Bronze layer records for null counts and anomalies across key columns.
+Cross-reference DLT job logs and checkpoint folders to validate recovery behavior.
 
 📋 Validation Methods
-Use automated data quality rules in DLT (e.g., expect(field IS NOT NULL)).
+Query Bronze records by eventhub_partition_id ordered by eventhub_offset and ensure sequential continuity.
 
-Run data profiling tools or queries (e.g., null % by field, frequency analysis).
+Check for offset gaps or overlaps:
 
-Review data lineage logs to confirm if incomplete records have identifiable patterns (e.g., by source or message type).
+Gaps → message loss
+
+Overlaps → possible duplicate ingestion
+
+Review DLT checkpoint metadata after each run and after job restart.
+
+Use EventHub diagnostics or Azure Metrics to correlate producer → consumer offset progression.
 
 ✅ Success Criteria
-100% of records in Bronze have values populated in all mandatory fields.
+All offsets from EventHub are processed exactly once and in sequential order.
 
-No records exist where critical fields are missing, null, or defaulted (unless explicitly allowed).
+No messages are missed, duplicated, or delayed due to offset issues.
 
-Pipeline logs detail any field-level errors and do not silently ingest incomplete records.
+In case of pipeline failure or restart:
 
-Optional fields behave according to business rules (nullable, optional, defaulted).
+Processing resumes from last confirmed checkpoint
+
+Duplicate records are not inserted
+
+Ingestion flow maintains consistency across partitions.
 
 🧾 Exclusions
-Field-level type validation is handled under EH-BR-02 – Schema Conformance.
+Deduplication of reprocessed messages is validated in EH-BR-05.
 
-Business rule-based field logic (e.g., “valid timestamp range”) is handled in BR-SL-05 or BIZ rules.
+End-to-end record count matching is handled under E2E-01.
+
+Latency impact due to retries or restarts is measured in E2E-02.
 
 🗂 Mapped Data Quality Requirements
 DQ Ref	Description
-RL DQ03 – Completeness	Ensures all required fields are populated.
-RL DQ05 – Validity	Fields meet expected structure and basic content rules.
-RL DQ01 – Accuracy	Completeness enables trust in record quality across all layers.
+RL DQ01 – Accuracy	Ensures complete and correct retrieval of message stream from EventHub.
+RL DQ03 – Completeness	No records are skipped due to offset jumps.
+RL DQ09 – Traceability	Offset metadata allows full traceability of message lifecycle.
 
 🔐 Pre-requisites & Access Required
 Access to:
 
-Field mapping specification and interface documentation
+EventHub namespace and partition monitoring via Azure Portal
 
-Bronze table schema and DLT job configuration
+DLT pipeline definition and checkpoint folder
 
-Sample MQS messages with complete and incomplete field sets
+Bronze table fields: eventhub_offset, partition_id, _ingest_time
 
-Error log/quarantine zone (if incomplete records are redirected)
+Permissions to simulate job pause, restart, and controlled reprocessing
+
