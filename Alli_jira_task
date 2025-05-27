@@ -1,112 +1,111 @@
-🔍 Test Scenario ID: EH-BR-04 – Null/Corrupted Message Handling
+🔍 Test Scenario ID: EH-BR-05 – Duplication Handling
 🔹 Purpose
-This test scenario validates the system's ability to gracefully handle malformed, null, or incomplete messages received from Azure Event Hub during ingestion. The goal is to ensure that such messages are either quarantined, rejected, or logged, and do not cause pipeline failure or contaminate the Bronze dataset.
+This scenario verifies that the ingestion pipeline properly identifies and handles duplicate messages received from EventHub to prevent redundant or repeated records in the Bronze Layer. The objective is to ensure either deduplication, quarantine, or logging of duplicates based on defined uniqueness logic, while maintaining the integrity of downstream processing.
 
 🔹 Scope and Components Involved
-Message Types: All MQS-originating messages (e.g., Quote Request, PreComp, Rating Request)
+Potential Duplication Points:
 
-Edge Cases:
+Source system retries (e.g., Athena or MQS re-sending same message)
 
-Empty payload ({} or null)
+MuleSoft re-delivery logic
 
-Missing mandatory fields (e.g., quote_id, event_type)
-
-Malformed JSON (e.g., missing braces, truncated strings)
-
-Invalid schema versions or unknown message types
+EventHub message replay due to offset reset or checkpoint rollback
 
 Pipeline Layers:
 
-EventHub → DLT Parse Layer → Bronze Table (Landed Table)
+Azure Event Hub
 
-Optional: Quarantine/Error Table or Dead-letter mechanism
+DLT streaming pipeline (checkpoint and offset logic)
 
-Reference Docs:
+Bronze Landed Table
 
-Technical ingestion specification (defines fallback/quarantine behavior)
+Duplication Criteria (defined in ingestion spec or entity mapping):
 
-DLT expectations or schema enforcement definitions
+Repeated message_id or quote_id
+
+Identical payload hash across multiple records
+
+Same event_type and timestamp combination (depending on message type)
 
 🔹 Validation Objectives
-Ensure messages with corrupt or null payloads are not inserted into the primary Bronze table.
+Ensure that duplicate messages do not create redundant rows in the Bronze table.
 
-Confirm pipeline logs an error, redirects the record to a quarantine table, or triggers an alert.
+Confirm that duplicates are either:
 
-Validate that ingestion continues without interruption when encountering bad records.
+Dropped silently (if idempotency logic is enforced),
+
+Logged/quarantined for traceability, or
+
+Marked with a duplicate indicator (e.g., is_duplicate = true)
+
+Verify correct checkpoint management to avoid offset reprocessing in case of pipeline failures.
 
 🧪 Testing Approach
-✅ Against Ingestion Logic and Pipeline Design
-From your design documentation, messages are streamed into the DLT Landed Table using predefined schema enforcement and transformation logic.
+✅ Against Ingestion Behavior & DLT Checkpoint Logic
+Inject a test message with a known quote_id or message_id multiple times into EventHub:
 
-Corrupt messages must be either:
+Within seconds (simulated retry)
 
-Rejected during parsing, with error logged and pipeline continuing, or
+After a checkpoint reset
 
-Diverted to an error-handling path (e.g., Bronze_Quarantine)
+Monitor how the DLT job processes the reappeared record.
 
-Test cases should include:
+Check for:
 
-A null JSON payload
+Record count difference in Bronze
 
-A payload missing key fields like event_type or quote_id
+Fields like uuid, eventhub_offset, _ingest_time for new insertions
 
-A syntactically invalid JSON message
-
-Review Databricks logs for structured error entries and monitor Bronze table for unintended records.
+Any deduplication logic applied at Bronze level (e.g., Spark dropDuplicates, hash filters)
 
 📋 Validation Methods
-Inject controlled invalid messages into EventHub.
+Send N identical messages from Mule to EventHub.
 
 Confirm whether:
 
-They are excluded from bronze_landed_table
+Only 1 record appears in the Bronze table.
 
-They appear in an error-handling/quarantine table
+Additional records are flagged or captured in a duplicate log table.
 
-Error messages are logged in the DLT job monitoring interface
-
-Review retry behavior or job continuation state.
+Inspect _ingest_time, eventhub_offset, or any hash key to detect redundancy.
 
 ✅ Success Criteria
-Corrupted or null records do not appear in the main Bronze layer.
+No duplicate records exist in Bronze for the same logical message.
 
-They are either:
+Records with matching payloads are:
 
-Logged, with identifiers and failure reason
+Filtered out at Bronze ingestion time, OR
 
-Redirected to a dedicated quarantine table (if configured)
+Clearly marked/logged with duplication info
 
-Pipeline ingestion process continues without failure or retry loop.
+Pipeline maintains stability and does not reprocess offsets during restart or retries.
 
-No schema inference errors are triggered.
+No impact to downstream Silver or Gold pipelines due to redundant Bronze records.
 
 🧾 Exclusions
-Validation of field presence/type in valid records is part of EH-BR-02 – Schema Conformance Check.
+Deduplication during downstream transformation (Silver Layer) is separately covered under BR-SL-01 and BR-SL-05.
 
-Deduplication and idempotency are tested in EH-BR-05/E2E-03.
-
-Latency or performance effects from bad records are handled in OBS scenarios.
+Offset continuity and recovery validation is handled in EH-BR-07.
 
 🗂 Mapped Data Quality Requirements
 DQ Ref	Description
-RL DQ03 – Completeness	Ensures system handles missing or incomplete data without silently failing.
-RL DQ05 – Validity	Validates data conforms to expected formats and rules.
-RL DQ09 – Traceability	Requires bad records to be logged with identifiers for audit/troubleshooting.
+RL DQ06 – Uniqueness	Ensures duplicate records are identified and managed.
+RL DQ09 – Traceability	If duplicates are retained or logged, message lineage must remain clear.
+RL DQ03 – Completeness	Reprocessing must not result in partial data due to duplicate discards.
 
 🔐 Pre-requisites & Access Required
-Ability to send malformed or test messages to EventHub.
-
 Access to:
 
-Bronze table
+EventHub (to send known test messages repeatedly)
 
-Quarantine/Error table (if configured)
+Bronze table (to inspect message presence, ingest metadata, and UUID fields)
 
-DLT pipeline logs or job monitoring dashboard
+Quarantine/duplicate log table (if applicable)
 
-Knowledge of:
+DLT notebook or streaming pipeline logic (to confirm deduplication logic)
 
-Field-level validations defined in schema enforcement or parsing notebook
+Understand how DLT handles:
 
-Retry behavior of DLT in case of failure
+Checkpoint tracking (.checkpointLocation)
 
+Streaming deduplication (e.g., via Spark dropDuplicates or UUID hash)
