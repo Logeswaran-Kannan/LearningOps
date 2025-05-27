@@ -1,27 +1,18 @@
-Data Quality Standard Discussion and SIT Standards Collaboration"
+Hey everyone,
 
-JIRA Task Name:
-Define and Align Data Quality Standards with SIT Coverage
+Just to get us all on the same page — for validating the Silver and outbound transmit files through the automation framework, we were initially looking at using STD001. But for consistency in the three-way reconciliation and downstream layer validation, Paul, I believe you were suggesting that core_tst might be the better schema to work with — just want to confirm that’s still the recommendation?
 
-| Sub-Task                                            | How to Achieve                                                                                              | Description                                                                                    | Definition of Done                                                              |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **1. Schedule Joint DQ & SIT Workshop**             | Identify key stakeholders from the Data Governance, QA, and SIT teams. Schedule and facilitate a session.   | A collaborative workshop where DQ standards and SIT validation objectives are aligned.         | Workshop held with minutes of meeting (MoM) shared and approved by all parties. |
-| **2. Document Data Quality Dimensions**             | Define core DQ metrics (e.g., completeness, accuracy, timeliness, uniqueness, validity).                    | Establish what constitutes quality for data at various pipeline stages (Bronze, Silver, Gold). | DQ metric definitions documented and agreed upon.                               |
-| **3. Map SIT Test Cases to DQ Metrics**             | Review SIT test scope and overlay relevant DQ rules where testable (e.g., null checks, threshold breaches). | Demonstrates how SIT testing supports or complements DQ controls.                              | Mapping document created showing SIT support for DQ rules.                      |
-| **4. Identify Gaps and Propose Enhancements**       | Highlight areas not covered by SIT (e.g., referential integrity, metadata consistency).                     | Recommend new test cases or controls to bridge coverage gaps.                                  | Gap list documented and actions assigned.                                       |
-| **5. Define Common Reporting & Escalation Process** | Align on how DQ breaches and SIT failures are reported, tracked, and escalated.                             | Standard escalation and reporting workflow covering both aspects.                              | Reporting template finalized and shared.                                        |
-| **6. Review and Sign-Off**                          | Present compiled standards, coverage mapping, and process changes to leadership.                            | Final agreement and approval to proceed with implementation.                                   | Document approved by Data Governance and QA leadership.                         |
+From a testing perspective — Graham — the aim for both manual and automated validation is to ensure that the cloud version of the data doesn’t introduce any issues in the Silver or downstream layers, whether it’s in terms of data mismatches or count differences. So ideally, the same test data from STD001 should be flowing through into Silver and then downstream, right?
 
+To achieve that, Paul — is the plan to create the cloud version of the tables inside core_tst, and then repoint the Silver schema logic to read from those? Just want to make sure I’ve understood this correctly.
 
+As an example:
+If we take the veh_coverage_premium_trans table — in the ODS view, I see two versions — one coming from the legacy sys9, and another based on the cloud data in STD001.
+So the question is:
 
-📌 Overall Description:
-This task aims to ensure that data quality standards and SIT (System Integration Testing) standards are not handled in silos. It facilitates a structured collaboration to enhance quality coverage, reduce duplication, and ensure data quality checks are embedded into QA automation where feasible.
+Are we loading data into the same Silver table and switching the source between legacy (sys9) and cloud (STD001) during testing?
+Or
 
-✅ Definition of Done (Main Task):
-DQ metrics and SIT coverage mapped and documented
+Will there be two separate versions of the Silver table — one pointing to the legacy data and the other to the cloud version — to compare side-by-side?
 
-Gaps identified and action plan agreed
-
-Escalation/reporting framework aligned
-
-Final sign-off from QA and DQ stakeholders
+Would be great to align on the approach so we can plan the automation accordingly.
