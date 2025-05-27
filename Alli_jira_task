@@ -1,56 +1,87 @@
-Test Scenario: EH-BR-01 – Message Receipt Validation
+🔍 Test Scenario ID: EH-BR-01 – Message Receipt Validation
+🔹 Purpose
+This test verifies that all messages sent from Athena (or other MQS-integrated applications) through MuleSoft to Azure Event Hub are successfully ingested into the Bronze (Landed) table via Databricks DLT. The test ensures the integrity and completeness of raw data ingestion, which is foundational for all downstream data transformations, analytics, and business processes.
 
-This test ensures that every message sent from Azure EventHub is successfully captured and stored in the Bronze layer of the data platform. It's about confirming that the ingestion pipeline does not drop or miss any events during processing.
+🔹 Scope and Components Involved
+Source Application: Athena / CRS → MQS
 
-🔍 Description (Simplified):
-Whenever an event is published to EventHub, it should show up in the Bronze Delta table.
+Integration: MuleSoft (MQS Adapter publishes to EventHub)
 
-This test validates that there’s a 1:1 match between sent and received messages.
+Stream Target: Azure Event Hub (dedicated for Radar Live)
 
-It helps catch issues like message loss, connectivity failure, or ingestion logic errors.
+Processing Layer: Databricks DLT pipeline
 
-✅ Key Integrity Checks:
-Record count comparison between EventHub and Bronze.
+Storage Layer: Bronze (ODS / Landed Table in Delta Lake)
 
-Presence of expected message IDs in the Bronze layer.
+🔹 Key Validation Objectives
+Validate message delivery from source to Bronze with no loss or duplication.
 
-Timestamps showing timely ingestion.
+Confirm all messages have been correctly tagged with ingestion metadata such as eventhub_enqueued_time and _ingest_time.
 
-🧪 Example:
-If 1,000 messages are sent to EventHub during a test window, we should find 1,000 matching records in the Bronze table (within the same timeframe), including metadata like message ID, ingestion time, and payload.
+Establish traceability of records from source system identifiers (e.g., quote_id, message_id) through to the Bronze layer.
 
-🎯 Expected Result:
-All messages sent via EventHub are received in the Bronze layer with no loss or duplication.
+🧪 Testing Options & Analysis
+✅ Option 1: Validate message count at the source (Athena or Mule logs) vs. Bronze table
+Description: Compare outbound log counts or intermediate staging tables (e.g., CosmosDB or audit trail in Mule) with Bronze records.
 
-📌 Requirement Mapped:
-RL DQ01 – Accuracy
-(Ensures data received is exactly what was sent, no more, no less.)
+Feasibility: Possible only if Mule logs or database records are available and contain unique identifiers (e.g., quote_id).
 
----------------------------------------
+Risk:
 
-🧩 Verification Criteria
-Match Count: Count of records in Bronze = number of test messages sent.
+Logs may be truncated or sampled.
 
-Match IDs: All test_ids from your payload exist in the Bronze table.
+Retry logic could lead to overcounting.
 
-Ingestion Timestamp: _ingest_time or ingestion metadata exists and is current.
+Lack of access or schema drift may hinder comparison.
 
-📋 Outcome
-PASS: All test messages are present in Bronze with correct data.
+✅ Option 2: Compare EventHub message count from Azure diagnostics vs. Bronze table
+Description: Use EventHub diagnostic logs or metrics (e.g., incoming requests per partition) to validate Bronze DLT consumption.
 
-FAIL: Missing messages, partial ingestion, or incorrect data fields.
+Feasibility: Very feasible using Azure Monitor or diagnostic settings.
 
-🔐 Tools & Access Needed
-Access to EventHub (send permissions)
+Risk:
 
-Access to query Bronze Delta Table
+Time skew could cause inaccurate match unless test window is clearly defined.
 
-Monitoring/logs access for ingestion job
+Metric granularity may be too coarse (not message-specific).
 
-📌 Requirement Mapping
-RL DQ01 – Accuracy
+✅ Option 3: Create controlled message batch and match to Bronze
+Description: Push known message count (e.g., 100 unique quote_id messages) to EventHub and validate exact count lands in Bronze.
 
-RL DQ03 – Completeness
+Feasibility: Highly controlled and reliable for regression or smoke testing.
 
-RL DQ09 – Traceability (if message_id is tracked)
+Risk:
 
+Requires test data isolation.
+
+May not represent production-scale performance or failures.
+
+🧾 Additional Validations
+In addition to count matching, validate that the following metadata fields are present and accurate in Bronze:
+
+message_id / quote_id – unique identifiers from source
+
+eventhub_enqueued_time – EventHub system time of receipt
+
+_ingest_time – Databricks DLT ingestion timestamp
+
+event_type, source_system – to enable filtering and lineage
+
+✅ Success Criteria
+Message count in Bronze exactly matches expected from the source or EventHub for the defined test window.
+
+No duplicate message_id or quote_id values unless allowed by design.
+
+Ingestion metadata is populated and accurate.
+
+All messages are traceable back to their original event stream.
+
+📌 Data Quality Requirement Traceability
+DQ Code	Dimension	Mapping to EH-BR-01
+RL DQ01	Accuracy	Ensures the records in Bronze match those sent from source without modification.
+RL DQ03	Completeness	Validates no message is lost between EventHub and Bronze.
+RL DQ06	Uniqueness	Prevents duplicates by ensuring one-to-one mapping of message_id or quote_id.
+RL DQ09	Traceability	Enables lineage by verifying message_id, eventhub_enqueued_time, _ingest_time, etc.
+RL DQ04	Timeliness	Ensures ingestion is in near real-time, validated by _ingest_time vs. enqueued time.
+
+Let me know if you’d like this scenario added into your consolidated Excel test suite, or if you'd like similar full-detail entries for the rest of your scenarios (like EH-BR-02: Schema Conformance).
