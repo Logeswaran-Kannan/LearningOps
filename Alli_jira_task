@@ -1,89 +1,112 @@
-🔍 Test Scenario ID: EH-BR-03 – Timestamp Capture
+🔍 Test Scenario ID: EH-BR-04 – Null/Corrupted Message Handling
 🔹 Purpose
-This scenario verifies that ingestion-related timestamps (such as eventhub_enqueued_time, load_dt, _ingest_time, etc.) are accurately captured and persisted in the Bronze Layer for every message. Accurate timestamping is essential for data traceability, time-window partitioning, latency tracking, and replay handling.
+This test scenario validates the system's ability to gracefully handle malformed, null, or incomplete messages received from Azure Event Hub during ingestion. The goal is to ensure that such messages are either quarantined, rejected, or logged, and do not cause pipeline failure or contaminate the Bronze dataset.
 
 🔹 Scope and Components Involved
-Source of Truth:
+Message Types: All MQS-originating messages (e.g., Quote Request, PreComp, Rating Request)
 
-Azure Event Hub enqueuedTimeUtc (system metadata)
+Edge Cases:
 
-Technical Ingestion Mapping Documentation (defines timestamp fields)
+Empty payload ({} or null)
 
-Databricks DLT logic for ingestion and metadata capture
+Missing mandatory fields (e.g., quote_id, event_type)
 
-Ingestion Pipeline:
+Malformed JSON (e.g., missing braces, truncated strings)
 
-EventHub → DLT Parse Stage → Bronze Table
+Invalid schema versions or unknown message types
 
-System-generated metadata fields should be injected at the ingestion point and stored persistently in Bronze
+Pipeline Layers:
+
+EventHub → DLT Parse Layer → Bronze Table (Landed Table)
+
+Optional: Quarantine/Error Table or Dead-letter mechanism
+
+Reference Docs:
+
+Technical ingestion specification (defines fallback/quarantine behavior)
+
+DLT expectations or schema enforcement definitions
 
 🔹 Validation Objectives
-Confirm that eventhub_enqueued_time (from Azure Event Hub) is captured and mapped to load_dt or equivalent column in Bronze.
+Ensure messages with corrupt or null payloads are not inserted into the primary Bronze table.
 
-Verify _ingest_time (system ingestion timestamp by DLT) is generated and available.
+Confirm pipeline logs an error, redirects the record to a quarantine table, or triggers an alert.
 
-Validate logical consistency between all timestamps:
-
-eventhub_enqueued_time ≤ _ingest_time ≤ bronze_written_time (if available)
-
-Ensure timezones (UTC/local) are handled uniformly.
+Validate that ingestion continues without interruption when encountering bad records.
 
 🧪 Testing Approach
-✅ Cross-verify with Technical Ingestion Documentation
-As seen in the DLT ingestion architecture diagram, the documentation states:
+✅ Against Ingestion Logic and Pipeline Design
+From your design documentation, messages are streamed into the DLT Landed Table using predefined schema enforcement and transformation logic.
 
-“Ehub Enqueued Timestamp will be the value for Load_DT”
+Corrupt messages must be either:
 
-“Ehub Enqueued Date will be the value for Anchor Date”
+Rejected during parsing, with error logged and pipeline continuing, or
 
-This implies a direct mapping must exist from EventHub’s enqueuedTimeUtc system property to a Bronze layer field.
+Diverted to an error-handling path (e.g., Bronze_Quarantine)
 
-Ensure these fields are populated consistently in every record.
+Test cases should include:
 
-Review DLT expectations or transformations where this timestamp is injected.
+A null JSON payload
+
+A payload missing key fields like event_type or quote_id
+
+A syntactically invalid JSON message
+
+Review Databricks logs for structured error entries and monitor Bronze table for unintended records.
 
 📋 Validation Methods
-Compare the raw message metadata from Event Hub (via diagnostics/logs) to the timestamp values stored in the Bronze table.
+Inject controlled invalid messages into EventHub.
 
-Use test data with known delays or variations to confirm timestamp capture fidelity.
+Confirm whether:
 
-Monitor ingestion logs or failures to identify if timestamp capture is missed or inconsistent.
+They are excluded from bronze_landed_table
+
+They appear in an error-handling/quarantine table
+
+Error messages are logged in the DLT job monitoring interface
+
+Review retry behavior or job continuation state.
 
 ✅ Success Criteria
-Every record in Bronze contains a valid:
+Corrupted or null records do not appear in the main Bronze layer.
 
-eventhub_enqueued_time or mapped load_dt
+They are either:
 
-_ingest_time (if system field)
+Logged, with identifiers and failure reason
 
-The timestamps reflect correct order of ingestion and no fields are null or defaulted.
+Redirected to a dedicated quarantine table (if configured)
 
-Values follow expected formatting (ISO8601, UTC) and no timezone drift is observed.
+Pipeline ingestion process continues without failure or retry loop.
+
+No schema inference errors are triggered.
 
 🧾 Exclusions
-Latency measurement end-to-end is validated in E2E-02 – Latency Measurement.
+Validation of field presence/type in valid records is part of EH-BR-02 – Schema Conformance Check.
 
-Time-window aggregation or SLA alerts (like delay detection) are covered under OBS-03 – Time Window Lag Analysis.
+Deduplication and idempotency are tested in EH-BR-05/E2E-03.
+
+Latency or performance effects from bad records are handled in OBS scenarios.
 
 🗂 Mapped Data Quality Requirements
 DQ Ref	Description
-RL DQ04 – Timeliness	Ensures timestamps reflect real-time data arrival and readiness.
-RL DQ09 – Traceability	Timestamp is essential metadata for tracing ingestion lifecycle.
-RL DQ01 – Accuracy	Accurate timestamping reflects the true event sequence.
+RL DQ03 – Completeness	Ensures system handles missing or incomplete data without silently failing.
+RL DQ05 – Validity	Validates data conforms to expected formats and rules.
+RL DQ09 – Traceability	Requires bad records to be logged with identifiers for audit/troubleshooting.
 
 🔐 Pre-requisites & Access Required
+Ability to send malformed or test messages to EventHub.
+
 Access to:
 
-Azure Event Hub diagnostic logs (for enqueuedTimeUtc)
+Bronze table
 
-Bronze table schema and DLT pipeline definitions
+Quarantine/Error table (if configured)
 
-Ingestion mapping specification and timestamp derivation logic
+DLT pipeline logs or job monitoring dashboard
 
-Field References:
+Knowledge of:
 
-eventhub_enqueued_time → load_dt
+Field-level validations defined in schema enforcement or parsing notebook
 
-_ingest_time → auto-generated by DLT
+Retry behavior of DLT in case of failure
 
-anchor_date → for deduping and historical tagging
