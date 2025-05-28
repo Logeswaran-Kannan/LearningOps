@@ -1,3 +1,55 @@
-I believe the list we've scoped mainly relates to the FAH report and the relevant upstream and curated view tables, right?
+Here’s a sample Jira task for **EH-BR-01 – Message Receipt Validation**, formatted for a typical software development/testing board:
 
-Also, just to confirm — looks like today’s load handled the boolean and claim timestamp issues. So is it just the PC and BC history tables that failed this time?
+---
+
+### **Jira Task: EH-BR-01 – Message Receipt Validation**
+
+**Title:**
+Implement Test for EH-BR-01 – Message Receipt Validation from EventHub to Bronze Layer
+
+**Type:**
+Task / Test Case Implementation
+
+**Epic/Feature:**
+EventHub Ingestion Validation
+
+**Assignee:**
+\[Assign QA/Engineer Name]
+
+**Priority:**
+High
+
+**Description:**
+Develop and execute a validation mechanism to ensure all incoming messages from EventHub are successfully received and logged into the Bronze layer. The objective is to confirm no message loss between EventHub and the Bronze Delta Live Table stream.
+
+This task includes defining the test logic, setting up message injection (if needed), and verifying counts between source, EventHub, and Bronze.
+
+**Acceptance Criteria:**
+
+* [ ] Validate all messages pushed to EventHub are received in the Bronze layer
+* [ ] Compare EventHub message count (Azure Monitor or REST API) with Bronze record count
+* [ ] Implement a test case for known volume (e.g., inject 100 test messages and verify 100 in Bronze)
+* [ ] Log discrepancies and report validation result
+* [ ] Account for ingestion timestamp presence (`_ingest_time`)
+* [ ] Ensure pipeline logs confirm no dropped messages or ingestion failures
+
+**Subtasks:**
+
+* [ ] Identify method to capture EventHub message counts (Azure portal/API)
+* [ ] Identify or confirm Bronze table for validation
+* [ ] Inject known test messages for count verification
+* [ ] Run validation script and document results
+* [ ] Align test with RL DQ01 – Accuracy requirement
+* [ ] Add test to regression suite (if automated)
+
+**Linked Issues:**
+
+* Parent Epic: \[EventHub to Bronze Ingestion Test Suite]
+* Related: DQ01 – Accuracy Compliance
+
+**Labels:**
+`ingestion-validation`, `eventhub`, `bronze-layer`, `data-quality`, `test-case`
+
+---
+
+Let me know if you'd like a version written for another tool like Azure DevOps, Confluence, or if you need subtasks broken out further (e.g., automation vs manual test).
