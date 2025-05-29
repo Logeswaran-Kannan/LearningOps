@@ -1,7 +1,31 @@
-✅ 1. Operational & Pipeline Integrity Scenarios	
-ID	Test Scenario
-OP-01	Pipeline Failure Recovery
-OP-02	Checkpoint Verification
-OP-03	Multiple Message Type Processing
-OP-04	Rate Limiting/Throttling Test
-OP-05	Alerting on Message Lag
+Title:
+Radar Live – Technical Ingestion Scenario Validation Against DQ Standards
+
+Description:
+As part of the Radar Live project, we need to validate the technical ingestion scenarios to ensure they meet established Data Quality (DQ) standards. The goal is to systematically test and confirm that data ingested through the pipeline adheres to business rules, data integrity checks, and conforms to format and accuracy standards.
+
+This ticket covers:
+
+Reviewing existing ingestion logic and workflow
+
+Identifying key data quality checks (e.g., null validation, data type conformity, timestamp format)
+
+Mapping test scenarios to each applicable DQ rule
+
+Documenting gaps or deviations
+
+Providing test evidence for successful ingestion
+
+Acceptance Criteria / Definition of Done (DoD):
+ All technical ingestion touchpoints identified and documented
+
+ DQ standards mapped to relevant ingestion points
+
+ At least one test scenario created and executed per DQ rule
+
+ All failed cases documented and flagged
+
+ Summary report with scenario outcomes attached to the ticket
+
+ Walkthrough/demo completed with testing/engineering team
+
