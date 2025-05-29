@@ -4,8 +4,9 @@
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lit, lower, regexp_replace
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+import matplotlib.pyplot as plt
 
 spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
 
@@ -19,6 +20,7 @@ filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
 
 results = []
+progress_counter = 0
 
 def normalize_column_names(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
@@ -98,6 +100,7 @@ def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True
     return exprs
 
 def compare_table(table):
+    global progress_counter
     source_table = f"{source_catalog}.{source_db}.{table}"
     target_table = generate_target_table_name(table)
     target_table_full = f"{target_catalog}.{target_db}.{target_table}"
@@ -179,18 +182,23 @@ def compare_table(table):
 
         casted_sql = f"%sql \n{source_sql}\n except \n{target_sql}"
 
+        progress_counter += 1
+        print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
+
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
                 post_dedup_count, duplicate_count, bool_cols, decimal_cols,
                 source_only, target_only, missing_in_source, missing_in_target,
                 source_only, target_only, comment, casted_sql)
 
     except Exception as e:
+        progress_counter += 1
+        print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
 
-# Run comparisons concurrently
+# Run comparisons concurrently and track progress
 with ThreadPoolExecutor() as executor:
-    result_futures = executor.map(compare_table, table_names)
-    results = list(result_futures)
+    result_futures = [executor.submit(compare_table, tbl) for tbl in table_names]
+    results = [f.result() for f in as_completed(result_futures)]
 
 # Define output schema
 schema = StructType([
@@ -214,6 +222,16 @@ schema = StructType([
     StructField("casted_comparison_sql", StringType(), True)
 ])
 
-# Save results
+# Save and visualize results
 final_df = spark.createDataFrame(results, schema=schema)
 final_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
+
+# Visualization: generate pie chart from results
+result_summary = final_df.groupBy("comment").count().collect()
+labels = [row["comment"] for row in result_summary]
+sizes = [row["count"] for row in result_summary]
+plt.figure(figsize=(6, 6))
+plt.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140)
+plt.title("Validation Results Summary")
+plt.axis("equal")
+plt.show()
