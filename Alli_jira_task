@@ -90,6 +90,12 @@ def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True
                 exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
             else:
                 exprs.append(f"CAST({c} AS STRING) AS {c}")
+        elif source and c in decimal_cols:
+            exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
+        elif not source and c in decimal_cols:
+            exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
+        else:
+                exprs.append(f"CAST({c} AS STRING) AS {c}")
         elif not source and c in decimal_cols:
             exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
         else:
@@ -136,12 +142,12 @@ def compare_table(table):
         casted_common_cols = [c for c in common_cols if c in filtered_source_df.columns and c in filtered_target_df.columns]
 
         for c in casted_common_cols:
-        if c in decimal_cols:
+        if c in bool_cols:
+            filtered_source_df = correct_boolean_cast(filtered_source_df, c, bool_patterns.get(c))
+        elif c in decimal_cols:
             filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("double"))
-
-                filtered_source_df = correct_boolean_cast(filtered_source_df, c, bool_patterns.get(c))
-            else:
-                filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
+        else:
+            filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
 
         for c in casted_common_cols:
             if c in decimal_cols:
