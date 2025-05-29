@@ -1,31 +1,5 @@
-Title:
-Radar Live – Technical Ingestion Scenario Validation Against DQ Standards
+Hey all, I’ve completed the ingestion technical test scenarios for the streaming source using MQS messages. In yesterday’s meeting with Nate and Nita, I walked through how these scenarios also align with the data quality standards. Most of the DQ requirements are already covered, though there are a few operational-type scenarios where we might need Glen’s input.
 
-Description:
-As part of the Radar Live project, we need to validate the technical ingestion scenarios to ensure they meet established Data Quality (DQ) standards. The goal is to systematically test and confirm that data ingested through the pipeline adheres to business rules, data integrity checks, and conforms to format and accuracy standards.
+I’ll be sharing the full list of technical scenarios with the team that we’ll be using for test execution and will do a walkthrough next week. I’ll share the Confluence page before that so everyone has a chance to review.
 
-This ticket covers:
-
-Reviewing existing ingestion logic and workflow
-
-Identifying key data quality checks (e.g., null validation, data type conformity, timestamp format)
-
-Mapping test scenarios to each applicable DQ rule
-
-Documenting gaps or deviations
-
-Providing test evidence for successful ingestion
-
-Acceptance Criteria / Definition of Done (DoD):
- All technical ingestion touchpoints identified and documented
-
- DQ standards mapped to relevant ingestion points
-
- At least one test scenario created and executed per DQ rule
-
- All failed cases documented and flagged
-
- Summary report with scenario outcomes attached to the ticket
-
- Walkthrough/demo completed with testing/engineering team
-
+We’ve also mapped the DQ-related build and testing work in Jira to maintain requirement traceability. Apart from that, I’m currently working on the test strategy and might need a quick sync with Adrian soon.
