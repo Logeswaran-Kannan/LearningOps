@@ -109,6 +109,7 @@ def compare_table(table):
         for c in source_df.columns:
             if source_df.schema[c].dataType.simpleString() == "string":
                 source_df = source_df.withColumn(c, regexp_replace(col(c), "�", "-"))
+                source_df = source_df.withColumn(c, regexp_replace(col(c), '""+', '"'))
 
         source_df, bool_cols, bool_patterns = boolean_transform_patterned(source_df)
         target_df = remove_column(target_df, "azure_load_date")
@@ -118,15 +119,14 @@ def compare_table(table):
             if c in source_df.columns:
                 source_df = source_df.withColumn(c, col(c).cast("double"))
 
-        creation_time_present = "createtime" in target_df.columns
         update_time_present = "updatetime" in target_df.columns
         full_target_count = target_df.count()
-        dedup_target_df = target_df.dropDuplicates() if not (creation_time_present and update_time_present) else target_df
+        dedup_target_df = target_df.dropDuplicates() if not update_time_present else target_df
         post_dedup_count = dedup_target_df.count()
 
-        if full_target_count > 3000 and creation_time_present:
-            filtered_source_df = source_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
-            filtered_target_df = dedup_target_df.filter((col("createtime") >= filter_start) & (col("createtime") <= filter_end))
+        if full_target_count > 3000 and update_time_present:
+            filtered_source_df = source_df.filter((col("updatetime") >= filter_start) & (col("updatetime") <= filter_end))
+            filtered_target_df = dedup_target_df.filter((col("updatetime") >= filter_start) & (col("updatetime") <= filter_end))
         else:
             filtered_source_df = source_df
             filtered_target_df = dedup_target_df
@@ -173,11 +173,11 @@ def compare_table(table):
         source_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, bool_patterns, True))} FROM {source_table}"
         target_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, bool_patterns, False))} FROM {target_table_full}"
 
-        if full_target_count > 3000 and creation_time_present:
-            source_sql += f" WHERE createtime BETWEEN '{filter_start}' AND '{filter_end}'"
-            target_sql += f" WHERE createtime BETWEEN '{filter_start}' AND '{filter_end}'"
+        if full_target_count > 3000 and update_time_present:
+            source_sql += f" WHERE updatetime BETWEEN '{filter_start}' AND '{filter_end}'"
+            target_sql += f" WHERE updatetime BETWEEN '{filter_start}' AND '{filter_end}'"
 
-        casted_sql = f"SOURCE_SQL:\n{source_sql}\nTARGET_SQL:\n{target_sql}"
+        casted_sql = f"%sql \n{source_sql}\n except \n{target_sql}"
 
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
                 post_dedup_count, duplicate_count, bool_cols, decimal_cols,
