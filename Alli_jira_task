@@ -134,13 +134,13 @@ def compare_table(table):
         common_cols = list(set(filtered_source_df.columns) & set(filtered_target_df.columns))
         casted_common_cols = [c for c in common_cols if c in filtered_source_df.columns and c in filtered_target_df.columns]
 
-        for c in casted_common_cols:
-    if c in bool_cols:
-        filtered_source_df = correct_boolean_cast(filtered_source_df, c, bool_patterns.get(c))
-    elif c in source_decimal_cols:
-        filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("double"))
-    else:
-        filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
+            for c in casted_common_cols:
+        if c in bool_cols:
+            filtered_source_df = correct_boolean_cast(filtered_source_df, c, bool_patterns.get(c))
+        elif c in source_decimal_cols:
+            filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("double"))
+        else:
+            filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
 
         for c in casted_common_cols:
             if c in decimal_cols:
