@@ -6,7 +6,6 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lit, lower, regexp_replace
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
-import matplotlib.pyplot as plt
 
 spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
 
@@ -196,21 +195,6 @@ def compare_table(table):
         print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
 
-# Run comparisons sequentially and update final_df incrementally
-final_results = []
-from pyspark.sql import Row
-
-for tbl in table_names:
-    result = compare_table(tbl)
-    final_results.append(result)
-    result_df = spark.createDataFrame([result], schema=schema)
-    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
-        result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
-    else:
-        result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
-
-final_df = spark.createDataFrame(final_results, schema=schema)
-
 # Define output schema
 schema = StructType([
     StructField("tablename", StringType(), True),
@@ -233,35 +217,18 @@ schema = StructType([
     StructField("casted_comparison_sql", StringType(), True)
 ])
 
-# Save and visualize results
-final_df = spark.createDataFrame(results, schema=schema)
-final_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
+# Run comparisons sequentially and update final_df incrementally
+final_results = []
+from pyspark.sql import Row
 
-# Visualization: enhanced pie chart with category mapping
-def categorize(comment):
-    if comment.startswith("[TABLE_OR_VIEW_NOT_FOUND"):
-        return "Table Not Found"
-    return comment
-
-categorized_df = final_df.withColumn("category", when(col("comment").startswith("[TABLE_OR_VIEW_NOT_FOUND"), "Table Not Found").otherwise(col("comment")))
-category_summary = categorized_df.groupBy("category").count().collect()
-labels = [row["category"] for row in category_summary]
-sizes = [row["count"] for row in category_summary]
-
-from collections import defaultdict
-
-result_summary = defaultdict(int)
-for row in final_df.select("comment").collect():
-    if row["comment"].startswith("[TABLE_OR_VIEW_NOT_FOUND"):
-        result_summary["Table Not Found"] += 1
+for tbl in table_names:
+    result = compare_table(tbl)
+    final_results.append(result)
+    result_df = spark.createDataFrame([result], schema=schema)
+    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
+        result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
     else:
-        result_summary[row["comment"]] += 1
+        result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
 
-labels = list(result_summary.keys())
-sizes = list(result_summary.values())
-
-plt.figure(figsize=(6, 6))
-plt.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140)
-plt.title("Validation Results Summary")
-plt.axis("equal")
-plt.show()
+final_df = spark.createDataFrame(final_results, schema=schema)
+final_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
