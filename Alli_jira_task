@@ -6,6 +6,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lit, lower, regexp_replace
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+import time
 
 spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
 
@@ -17,9 +18,6 @@ target_db = "ods"
 table_names = ["cc_matter", "btable2", "ctable3"]
 filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
-
-results = []
-progress_counter = 0
 
 def normalize_column_names(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
@@ -99,7 +97,6 @@ def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True
     return exprs
 
 def compare_table(table):
-    global progress_counter
     source_table = f"{source_catalog}.{source_db}.{table}"
     target_table = generate_target_table_name(table)
     target_table_full = f"{target_catalog}.{target_db}.{target_table}"
@@ -182,17 +179,12 @@ def compare_table(table):
 
         casted_sql = f"%sql \n{source_sql}\n except \n{target_sql}"
 
-        progress_counter += 1
-        print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
-
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
                 post_dedup_count, duplicate_count, bool_cols, decimal_cols,
                 source_only, target_only, missing_in_source, missing_in_target,
                 source_only, target_only, comment, casted_sql)
 
     except Exception as e:
-        progress_counter += 1
-        print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
 
 # Define output schema
@@ -217,18 +209,16 @@ schema = StructType([
     StructField("casted_comparison_sql", StringType(), True)
 ])
 
-# Run comparisons sequentially and update final_df incrementally
-final_results = []
-from pyspark.sql import Row
-
-for tbl in table_names:
+for idx, tbl in enumerate(table_names):
+    start_time = time.time()
     result = compare_table(tbl)
-    final_results.append(result)
+    end_time = time.time()
+    duration = end_time - start_time
     result_df = spark.createDataFrame([result], schema=schema)
-    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
+    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results") and idx == 0:
         result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
     else:
         result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
+    print(f"Progress: {idx + 1}/{len(table_names)} tables compared in {duration:.2f} seconds")
 
-final_df = spark.createDataFrame(final_results, schema=schema)
-final_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
+final_df = spark.table("core_tst_sys9.default.validation_results")
