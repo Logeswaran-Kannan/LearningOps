@@ -196,10 +196,20 @@ def compare_table(table):
         print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
 
-# Run comparisons concurrently and track progress
-with ThreadPoolExecutor() as executor:
-    result_futures = [executor.submit(compare_table, tbl) for tbl in table_names]
-    results = [f.result() for f in as_completed(result_futures)]
+# Run comparisons sequentially and update final_df incrementally
+final_results = []
+from pyspark.sql import Row
+
+for tbl in table_names:
+    result = compare_table(tbl)
+    final_results.append(result)
+    result_df = spark.createDataFrame([result], schema=schema)
+    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
+        result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
+    else:
+        result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
+
+final_df = spark.createDataFrame(final_results, schema=schema)
 
 # Define output schema
 schema = StructType([...])
