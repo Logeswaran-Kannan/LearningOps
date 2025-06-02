@@ -212,7 +212,26 @@ for tbl in table_names:
 final_df = spark.createDataFrame(final_results, schema=schema)
 
 # Define output schema
-schema = StructType([...])
+schema = StructType([
+    StructField("tablename", StringType(), True),
+    StructField("source_table", StringType(), True),
+    StructField("target_table", StringType(), True),
+    StructField("source_count", IntegerType(), True),
+    StructField("targetfullcount", IntegerType(), True),
+    StructField("targetfiltercount", IntegerType(), True),
+    StructField("targetcountpostdedup", IntegerType(), True),
+    StructField("duplicate_check_in_target", IntegerType(), True),
+    StructField("converted_boolean_columns", ArrayType(StringType()), True),
+    StructField("decimal_columns", ArrayType(StringType()), True),
+    StructField("source_only_count", IntegerType(), True),
+    StructField("target_only_count", IntegerType(), True),
+    StructField("missing_in_source", ArrayType(StringType()), True),
+    StructField("missing_in_target", ArrayType(StringType()), True),
+    StructField("data_mismatches_source_to_target", IntegerType(), True),
+    StructField("data_mismatches_target_to_source", IntegerType(), True),
+    StructField("comment", StringType(), True),
+    StructField("casted_comparison_sql", StringType(), True)
+])
 
 # Save and visualize results
 final_df = spark.createDataFrame(results, schema=schema)
