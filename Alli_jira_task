@@ -1,6 +1,4 @@
-# This script performs a comprehensive comparison between source and target
-# tables across different catalogs using Apache Spark, focusing on column normalization,
-# boolean pattern handling, and data matching.
+# Full updated script with progress tracking, concurrent execution, and final DataFrame display
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lit, lower, regexp_replace
@@ -8,6 +6,8 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType, 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import time
+import pandas as pd
+from threading import Lock
 
 spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
 
@@ -20,11 +20,11 @@ table_names = ["cc_matter", "btable2", "ctable3"]
 filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
 
-# Load external metadata
+# Load metadata from CSV
 boolean_df = spark.read.option("header", True).csv("/mnt/data/Booleancol.csv")
 filtercol_df = spark.read.option("header", True).csv("/mnt/data/filtercol.csv")
 
-# Define output schema
+# Output schema
 schema = StructType([
     StructField("tablename", StringType(), True),
     StructField("source_table", StringType(), True),
@@ -46,11 +46,12 @@ schema = StructType([
     StructField("casted_comparison_sql", StringType(), True)
 ])
 
-from threading import Lock
-progress_lock = Lock()
+# Progress tracking
 progress_counter = 0
-start_time = time.time()
+progress_lock = Lock()
+all_results = []
 
+# Utility functions
 def normalize_column_names(df):
     return df.select([col(c).alias(c.lower()) for c in df.columns])
 
@@ -64,9 +65,7 @@ def generate_target_table_name(table):
     return table
 
 def correct_boolean_cast(df, column):
-    return df.withColumn(column, when(lower(col(column)) == "t", lit(1))
-                                  .when(lower(col(column)) == "f", lit(0))
-                                  .otherwise(None).cast("int"))
+    return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
 
 def cast_decimal_to_double(df):
     decimal_cols = [f.name for f in df.schema.fields if f.dataType.simpleString().startswith("decimal")]
@@ -91,6 +90,7 @@ def build_sql_exprs(columns, bool_cols, decimal_cols, source=True):
 def compare_table(table):
     global progress_counter
     table_start = time.time()
+
     source_table = f"{source_catalog}.{source_db}.{table}"
     target_table = generate_target_table_name(table)
     target_table_full = f"{target_catalog}.{target_db}.{target_table}"
@@ -180,8 +180,7 @@ def compare_table(table):
 
         with progress_lock:
             progress_counter += 1
-            remaining = len(table_names) - progress_counter
-            print(f"[Progress] {progress_counter}/{len(table_names)} | {table} compared in {duration}s | {remaining} remaining")
+            print(f"[Progress] {progress_counter}/{len(table_names)} | {table} completed in {duration}s")
 
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
                 post_dedup_count, duplicate_count, bool_cols, decimal_cols,
@@ -191,17 +190,21 @@ def compare_table(table):
     except Exception as e:
         with progress_lock:
             progress_counter += 1
-            remaining = len(table_names) - progress_counter
-            print(f"[Error] {progress_counter}/{len(table_names)} | {table} failed | {remaining} remaining")
+            print(f"[Error] {progress_counter}/{len(table_names)} | {table} failed: {str(e)}")
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
 
-# Run comparisons concurrently
+# Run comparisons concurrently and update final table as each completes
 with ThreadPoolExecutor() as executor:
     future_to_table = {executor.submit(compare_table, tbl): tbl for tbl in table_names}
     for future in as_completed(future_to_table):
         result = future.result()
+        all_results.append(result)
         result_df = spark.createDataFrame([result], schema=schema)
         if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
             result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
         else:
             result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
+
+# Create and display consolidated final DataFrame
+final_df = spark.createDataFrame(all_results, schema=schema)
+final_df.show(truncate=False)
