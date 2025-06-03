@@ -4,9 +4,7 @@
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lit, lower, regexp_replace
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
-import matplotlib.pyplot as plt
 
 spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
 
@@ -19,7 +17,32 @@ table_names = ["cc_matter", "btable2", "ctable3"]
 filter_start = '2025-05-12T00:00:01.0025+00:00'
 filter_end = '2025-05-13T00:00:01.0025+00:00'
 
-results = []
+# Load external metadata
+boolean_df = spark.read.option("header", True).csv("/mnt/data/Booleancol.csv")
+filtercol_df = spark.read.option("header", True).csv("/mnt/data/filtercol.csv")
+
+# Define output schema
+schema = StructType([
+    StructField("tablename", StringType(), True),
+    StructField("source_table", StringType(), True),
+    StructField("target_table", StringType(), True),
+    StructField("source_count", IntegerType(), True),
+    StructField("targetfullcount", IntegerType(), True),
+    StructField("targetfiltercount", IntegerType(), True),
+    StructField("targetcountpostdedup", IntegerType(), True),
+    StructField("duplicate_check_in_target", IntegerType(), True),
+    StructField("converted_boolean_columns", ArrayType(StringType()), True),
+    StructField("decimal_columns", ArrayType(StringType()), True),
+    StructField("source_only_count", IntegerType(), True),
+    StructField("target_only_count", IntegerType(), True),
+    StructField("missing_in_source", ArrayType(StringType()), True),
+    StructField("missing_in_target", ArrayType(StringType()), True),
+    StructField("data_mismatches_source_to_target", IntegerType(), True),
+    StructField("data_mismatches_target_to_source", IntegerType(), True),
+    StructField("comment", StringType(), True),
+    StructField("casted_comparison_sql", StringType(), True)
+])
+
 progress_counter = 0
 
 def normalize_column_names(df):
@@ -34,45 +57,10 @@ def generate_target_table_name(table):
         return f"claimcenter_std001_{table}"
     return table
 
-def identify_boolean_pattern(df, col_name):
-    values = set([r[0] for r in df.select(col_name).distinct().collect()])
-    if values.issubset({"t", "f", None}):
-        if "t" in values and "f" in values:
-            return "tf"
-        elif "t" in values and None in values:
-            return "t_null"
-        elif "f" in values and None in values:
-            return "f_null"
-        elif "t" in values:
-            return "t"
-        elif "f" in values:
-            return "f"
-        elif None in values:
-            return "null_only"
-    return None
-
 def correct_boolean_cast(df, column, pattern):
-    if pattern == "tf":
-        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
-    elif pattern == "t_null":
-        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).otherwise(None).cast("int"))
-    elif pattern == "f_null":
-        return df.withColumn(column, when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
-    elif pattern in ["t", "f"]:
-        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
-    elif pattern == "null_only":
-        return df.withColumn(column, lit(None).cast("int"))
-    else:
-        return df
-
-def boolean_transform_patterned(df, table, boolean_lookup):
-    bool_cols = boolean_lookup.get(table, [])
-    patterns = {}
-    for c in bool_cols:
-        pattern = identify_boolean_pattern(df, c)
-        if pattern:
-            patterns[c] = pattern
-    return df, bool_cols, patterns
+    return df.withColumn(column, when(lower(col(column)) == "t", lit(1))
+                                  .when(lower(col(column)) == "f", lit(0))
+                                  .otherwise(None).cast("int"))
 
 def cast_decimal_to_double(df):
     decimal_cols = [f.name for f in df.schema.fields if f.dataType.simpleString().startswith("decimal")]
@@ -83,24 +71,16 @@ def cast_decimal_to_double(df):
 def remove_column(df, colname):
     return df.drop(colname) if colname in df.columns else df
 
-def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True):
+def build_sql_exprs(columns, bool_cols, decimal_cols, source=True):
     exprs = []
     for c in columns:
         if source and c in bool_cols:
-            pattern = bool_patterns.get(c)
-            if pattern in ["tf", "t_null", "f_null", "t", "f"]:
-                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN 1 WHEN 'f' THEN 0 ELSE NULL END AS STRING) AS {c}")
-            else:
-                exprs.append(f"CAST({c} AS STRING) AS {c}")
+            exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN 1 WHEN 'f' THEN 0 ELSE NULL END AS STRING) AS {c}")
         elif c in decimal_cols:
             exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
         else:
             exprs.append(f"CAST({c} AS STRING) AS {c}")
     return exprs
-
-import pandas as pd
-boolean_lookup = pd.read_csv("/dbfs/path/to/Booleancol.csv").groupby("tablename")["booleancolumn"].apply(list).to_dict()
-filtercol_lookup = pd.read_csv("/dbfs/path/to/filtercol.csv").set_index("tablename")["filtercol"].to_dict()
 
 def compare_table(table):
     global progress_counter
@@ -118,20 +98,23 @@ def compare_table(table):
                 source_df = source_df.withColumn(c, regexp_replace(col(c), '""', '"'))
                 source_df = source_df.withColumn(c, regexp_replace(col(c), '^"(.*)"$', '$1'))
 
-        source_df, bool_cols, bool_patterns = boolean_transform_patterned(source_df, table, boolean_lookup)
+        bool_cols = [row["booleancolumn"] for row in boolean_df.filter(col("tablename") == table.lower()).collect()]
+        bool_patterns = {colname: "tf" for colname in bool_cols}
+
         target_df = remove_column(target_df, "azure_load_date")
         target_df, decimal_cols = cast_decimal_to_double(target_df)
-
         for c in decimal_cols:
             if c in source_df.columns:
                 source_df = source_df.withColumn(c, col(c).cast("double"))
 
-        filter_col = filtercol_lookup.get(table)
+        filter_col_row = filtercol_df.filter(col("tablename") == table.lower()).select("filtercol").first()
+        filter_col = filter_col_row["filtercol"] if filter_col_row and filter_col_row["filtercol"] in source_df.columns else None
+
         full_target_count = target_df.count()
-        dedup_target_df = target_df.dropDuplicates() if not update_time_present else target_df
+        dedup_target_df = target_df.dropDuplicates()
         post_dedup_count = dedup_target_df.count()
 
-        if full_target_count > 3000 and filter_col and filter_col in source_df.columns and filter_col in target_df.columns:
+        if full_target_count > 3000 and filter_col:
             filtered_source_df = source_df.filter((col(filter_col) >= filter_start) & (col(filter_col) <= filter_end))
             filtered_target_df = dedup_target_df.filter((col(filter_col) >= filter_start) & (col(filter_col) <= filter_end))
         else:
@@ -177,8 +160,8 @@ def compare_table(table):
 
         comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
 
-        source_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, bool_patterns, True))} FROM {source_table}"
-        target_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, bool_patterns, False))} FROM {target_table_full}"
+        source_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, source=True))} FROM {source_table}"
+        target_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, source=False))} FROM {target_table_full}"
 
         if full_target_count > 3000 and filter_col:
             source_sql += f" WHERE {filter_col} BETWEEN '{filter_start}' AND '{filter_end}'"
@@ -199,43 +182,11 @@ def compare_table(table):
         print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
 
-# Run comparisons concurrently and track progress
-with ThreadPoolExecutor() as executor:
-    result_futures = [executor.submit(compare_table, tbl) for tbl in table_names]
-    results = [f.result() for f in as_completed(result_futures)]
-
-# Define output schema
-schema = StructType([...])
-
-# Save and visualize results
-final_df = spark.createDataFrame(results, schema=schema)
-final_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
-
-# Visualization: enhanced pie chart with category mapping
-def categorize(comment):
-    if comment.startswith("[TABLE_OR_VIEW_NOT_FOUND"):
-        return "Table Not Found"
-    return comment
-
-categorized_df = final_df.withColumn("category", when(col("comment").startswith("[TABLE_OR_VIEW_NOT_FOUND"), "Table Not Found").otherwise(col("comment")))
-category_summary = categorized_df.groupBy("category").count().collect()
-labels = [row["category"] for row in category_summary]
-sizes = [row["count"] for row in category_summary]
-
-from collections import defaultdict
-
-result_summary = defaultdict(int)
-for row in final_df.select("comment").collect():
-    if row["comment"].startswith("[TABLE_OR_VIEW_NOT_FOUND"):
-        result_summary["Table Not Found"] += 1
+# Run comparisons sequentially and update results incrementally
+for tbl in table_names:
+    result = compare_table(tbl)
+    result_df = spark.createDataFrame([result], schema=schema)
+    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
+        result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
     else:
-        result_summary[row["comment"]] += 1
-
-labels = list(result_summary.keys())
-sizes = list(result_summary.values())
-
-plt.figure(figsize=(6, 6))
-plt.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140)
-plt.title("Validation Results Summary")
-plt.axis("equal")
-plt.show()
+        result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
