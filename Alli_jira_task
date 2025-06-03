@@ -1,224 +1,29 @@
-# This script performs a comprehensive comparison between source and target
-# tables across different catalogs using Apache Spark, focusing on column normalization,
-# boolean pattern handling, and data matching.
+Hi all,
 
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, lit, lower, regexp_replace
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
-import time
+I’ve shared the list of ingestion technical test scenarios in the Confluence page linked below. These will form part of our Day 1 test execution scope for the streaming source.
 
-spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
+The scenarios are also mapped to our data quality standards, and I’ll be linking them to the project requirements shortly. Just to clarify — this focuses purely on technical validation related to data and engineering workflows. Business data validations will be handled separately.
 
-# Configuration
-source_catalog = "core_tst_sys9"
-source_db = "rr_source"
-target_catalog = "core_tst_std001"
-target_db = "ods"
-table_names = ["cc_matter", "btable2", "ctable3"]
-filter_start = '2025-05-12T00:00:01.0025+00:00'
-filter_end = '2025-05-13T00:00:01.0025+00:00'
+Please have a look and share any feedback you may have. I’ll set up a walkthrough session around mid-month, once everyone is back from leave.
 
-def normalize_column_names(df):
-    return df.select([col(c).alias(c.lower()) for c in df.columns])
+Thanks in advance for your input!
 
-def generate_target_table_name(table):
-    if table.startswith("p"):
-        return f"policycenter_std001_{table}"
-    elif table.startswith("b"):
-        return f"billingcenter_std001_{table}"
-    elif table.startswith("c"):
-        return f"claimcenter_std001_{table}"
-    return table
 
-def identify_boolean_pattern(df, col_name):
-    values = set([r[0] for r in df.select(col_name).distinct().collect()])
-    if values.issubset({"t", "f", None}):
-        if "t" in values and "f" in values:
-            return "tf"
-        elif "t" in values and None in values:
-            return "t_null"
-        elif "f" in values and None in values:
-            return "f_null"
-        elif "t" in values:
-            return "t"
-        elif "f" in values:
-            return "f"
-        elif None in values:
-            return "null_only"
-    return None
 
-def correct_boolean_cast(df, column, pattern):
-    if pattern == "tf":
-        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
-    elif pattern == "t_null":
-        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).otherwise(None).cast("int"))
-    elif pattern == "f_null":
-        return df.withColumn(column, when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
-    elif pattern in ["t", "f"]:
-        return df.withColumn(column, when(lower(col(column)) == "t", lit(1)).when(lower(col(column)) == "f", lit(0)).otherwise(None).cast("int"))
-    elif pattern == "null_only":
-        return df.withColumn(column, lit(None).cast("int"))
-    else:
-        return df
+)----------------------------
 
-def boolean_transform_patterned(df):
-    bool_cols = []
-    patterns = {}
-    for c in df.columns:
-        pattern = identify_boolean_pattern(df, c)
-        if pattern:
-            bool_cols.append(c)
-            patterns[c] = pattern
-    return df, bool_cols, patterns
 
-def cast_decimal_to_double(df):
-    decimal_cols = [f.name for f in df.schema.fields if f.dataType.simpleString().startswith("decimal")]
-    for c in decimal_cols:
-        df = df.withColumn(c, col(c).cast("double"))
-    return df, decimal_cols
 
-def remove_column(df, colname):
-    return df.drop(colname) if colname in df.columns else df
+DDL validation is done — we’ve checked for missing columns, additional columns, extra tables, and datatype mismatches. Next step is to clean up the automation pack by removing unnecessary columns and tables. One missing column has downstream impact, and we’ve already flagged it to the business team for post-Day 1 handling.
 
-def build_sql_exprs(columns, bool_cols, decimal_cols, bool_patterns, source=True):
-    exprs = []
-    for c in columns:
-        if source and c in bool_cols:
-            pattern = bool_patterns.get(c)
-            if pattern in ["tf", "t_null", "f_null", "t", "f"]:
-                exprs.append(f"CAST(CASE LOWER({c}) WHEN 't' THEN 1 WHEN 'f' THEN 0 ELSE NULL END AS STRING) AS {c}")
-            else:
-                exprs.append(f"CAST({c} AS STRING) AS {c}")
-        elif c in decimal_cols:
-            exprs.append(f"CAST({c} AS DOUBLE) AS {c}")
-        else:
-            exprs.append(f"CAST({c} AS STRING) AS {c}")
-    return exprs
+For RAW to ODS, about 70% of scoped tables (that’s 692 across PC, BC, CC) have passed validation. The rest are still under review, mostly due to claim workflow failures and frequent updates on the source DB. Plan is to close that off today.
 
-def compare_table(table):
-    source_table = f"{source_catalog}.{source_db}.{table}"
-    target_table = generate_target_table_name(table)
-    target_table_full = f"{target_catalog}.{target_db}.{target_table}"
+ODS to Staging validation has completed one round — we’re now running this under orchestration to widen coverage.
 
-    try:
-        source_df = normalize_column_names(spark.read.table(source_table))
-        target_df = normalize_column_names(spark.read.table(target_table_full))
+ODS to ODS_VIEW: also one round completed, and it’s now being run under orchestration to check for any CDC issues.
 
-        for c in source_df.columns:
-            if source_df.schema[c].dataType.simpleString() == "string":
-                source_df = source_df.withColumn(c, regexp_replace(col(c), "�", "-"))
-                source_df = source_df.withColumn(c, regexp_replace(col(c), '""', '"'))
-                source_df = source_df.withColumn(c, regexp_replace(col(c), '^"(.*)"$', '$1'))
+Silver layer test design is in progress using our automated query extraction. But for execution, there’s a dependency — 151 tables still need to be loaded. Devs are working on switching schemas manually in the test env, something that’ll be handled via ADF in prod. This might delay the timeline a bit, so we’ve raised it as a risk and may look to reduce scope based on priority.
 
-        source_df, bool_cols, bool_patterns = boolean_transform_patterned(source_df)
-        target_df = remove_column(target_df, "azure_load_date")
-        target_df, decimal_cols = cast_decimal_to_double(target_df)
+Manual test data entry for PC is done for both legacy and automation flows — scenario validation is ongoing. BC and CC test data key-in is next.
 
-        for c in decimal_cols:
-            if c in source_df.columns:
-                source_df = source_df.withColumn(c, col(c).cast("double"))
-
-        update_time_present = "updatetime" in target_df.columns
-        full_target_count = target_df.count()
-        dedup_target_df = target_df.dropDuplicates() if not update_time_present else target_df
-        post_dedup_count = dedup_target_df.count()
-
-        if full_target_count > 3000 and update_time_present:
-            filtered_source_df = source_df.filter((col("updatetime") >= filter_start) & (col("updatetime") <= filter_end))
-            filtered_target_df = dedup_target_df.filter((col("updatetime") >= filter_start) & (col("updatetime") <= filter_end))
-        else:
-            filtered_source_df = source_df
-            filtered_target_df = dedup_target_df
-
-        targetfiltercount = filtered_target_df.count()
-        source_count = filtered_source_df.count()
-        common_cols = list(set(filtered_source_df.columns) & set(filtered_target_df.columns))
-
-        for c in common_cols:
-            if c in bool_cols:
-                filtered_source_df = correct_boolean_cast(filtered_source_df, c, bool_patterns.get(c))
-            elif c in decimal_cols:
-                filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("double"))
-            else:
-                filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("string"))
-
-        for c in common_cols:
-            if c in decimal_cols:
-                filtered_target_df = filtered_target_df.withColumn(c, col(c).cast("double"))
-            else:
-                filtered_target_df = filtered_target_df.withColumn(c, col(c).cast("string"))
-
-        source_only = filtered_source_df.select(common_cols).exceptAll(filtered_target_df.select(common_cols)).count()
-        target_only = filtered_target_df.select(common_cols).exceptAll(filtered_source_df.select(common_cols)).count()
-
-        missing_in_source = list(set(filtered_target_df.columns) - set(filtered_source_df.columns))
-        missing_in_target = list(set(filtered_source_df.columns) - set(filtered_target_df.columns))
-        duplicate_count = full_target_count - post_dedup_count
-
-        comment_parts = []
-        if source_count != post_dedup_count:
-            comment_parts.append("count mismatch")
-        if missing_in_source:
-            comment_parts.append("missing columns in source")
-        if missing_in_target:
-            comment_parts.append("missing columns in target")
-        if source_only + target_only > 0:
-            comment_parts.append("data mismatch")
-        if duplicate_count > 0:
-            comment_parts.append("duplicates in target")
-
-        comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-
-        source_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, bool_patterns, True))} FROM {source_table}"
-        target_sql = f"SELECT {', '.join(build_sql_exprs(common_cols, bool_cols, decimal_cols, bool_patterns, False))} FROM {target_table_full}"
-
-        if full_target_count > 3000 and update_time_present:
-            source_sql += f" WHERE updatetime BETWEEN '{filter_start}' AND '{filter_end}'"
-            target_sql += f" WHERE updatetime BETWEEN '{filter_start}' AND '{filter_end}'"
-
-        casted_sql = f"%sql \n{source_sql}\n except \n{target_sql}"
-
-        return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
-                post_dedup_count, duplicate_count, bool_cols, decimal_cols,
-                source_only, target_only, missing_in_source, missing_in_target,
-                source_only, target_only, comment, casted_sql)
-
-    except Exception as e:
-        return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
-
-# Define output schema
-schema = StructType([
-    StructField("tablename", StringType(), True),
-    StructField("source_table", StringType(), True),
-    StructField("target_table", StringType(), True),
-    StructField("source_count", IntegerType(), True),
-    StructField("targetfullcount", IntegerType(), True),
-    StructField("targetfiltercount", IntegerType(), True),
-    StructField("targetcountpostdedup", IntegerType(), True),
-    StructField("duplicate_check_in_target", IntegerType(), True),
-    StructField("converted_boolean_columns", ArrayType(StringType()), True),
-    StructField("decimal_columns", ArrayType(StringType()), True),
-    StructField("source_only_count", IntegerType(), True),
-    StructField("target_only_count", IntegerType(), True),
-    StructField("missing_in_source", ArrayType(StringType()), True),
-    StructField("missing_in_target", ArrayType(StringType()), True),
-    StructField("data_mismatches_source_to_target", IntegerType(), True),
-    StructField("data_mismatches_target_to_source", IntegerType(), True),
-    StructField("comment", StringType(), True),
-    StructField("casted_comparison_sql", StringType(), True)
-])
-
-for idx, tbl in enumerate(table_names):
-    start_time = time.time()
-    result = compare_table(tbl)
-    end_time = time.time()
-    duration = end_time - start_time
-    result_df = spark.createDataFrame([result], schema=schema)
-    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results") and idx == 0:
-        result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
-    else:
-        result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
-    print(f"Progress: {idx + 1}/{len(table_names)} tables compared in {duration:.2f} seconds")
-
-final_df = spark.table("core_tst_sys9.default.validation_results")
+Defect-wise, we’ve made good progress — most open ones are now closed, and triage discussions are going well.
