@@ -5,6 +5,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, lit, lower, regexp_replace
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 spark = SparkSession.builder.appName("CatalogComparison").getOrCreate()
 
@@ -43,6 +44,8 @@ schema = StructType([
     StructField("casted_comparison_sql", StringType(), True)
 ])
 
+from threading import Lock
+progress_lock = Lock()
 progress_counter = 0
 
 def normalize_column_names(df):
@@ -57,7 +60,7 @@ def generate_target_table_name(table):
         return f"claimcenter_std001_{table}"
     return table
 
-def correct_boolean_cast(df, column, pattern):
+def correct_boolean_cast(df, column):
     return df.withColumn(column, when(lower(col(column)) == "t", lit(1))
                                   .when(lower(col(column)) == "f", lit(0))
                                   .otherwise(None).cast("int"))
@@ -127,7 +130,7 @@ def compare_table(table):
 
         for c in common_cols:
             if c in bool_cols:
-                filtered_source_df = correct_boolean_cast(filtered_source_df, c, bool_patterns.get(c))
+                filtered_source_df = correct_boolean_cast(filtered_source_df, c)
             elif c in decimal_cols:
                 filtered_source_df = filtered_source_df.withColumn(c, col(c).cast("double"))
             else:
@@ -169,8 +172,9 @@ def compare_table(table):
 
         casted_sql = f"%sql \n{source_sql}\n except \n{target_sql}"
 
-        progress_counter += 1
-        print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
+        with progress_lock:
+            progress_counter += 1
+            print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
 
         return (table, source_table, target_table_full, source_count, full_target_count, targetfiltercount,
                 post_dedup_count, duplicate_count, bool_cols, decimal_cols,
@@ -178,15 +182,18 @@ def compare_table(table):
                 source_only, target_only, comment, casted_sql)
 
     except Exception as e:
-        progress_counter += 1
-        print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
+        with progress_lock:
+            progress_counter += 1
+            print(f"Progress: {progress_counter}/{len(table_names)} tables compared")
         return (table, source_table, target_table_full, 0, 0, 0, 0, 0, [], [], 0, 0, [], [], 0, 0, str(e), "")
 
-# Run comparisons sequentially and update results incrementally
-for tbl in table_names:
-    result = compare_table(tbl)
-    result_df = spark.createDataFrame([result], schema=schema)
-    if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
-        result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
-    else:
-        result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
+# Run comparisons concurrently
+with ThreadPoolExecutor() as executor:
+    future_to_table = {executor.submit(compare_table, tbl): tbl for tbl in table_names}
+    for future in as_completed(future_to_table):
+        result = future.result()
+        result_df = spark.createDataFrame([result], schema=schema)
+        if not spark._jsparkSession.catalog().tableExists("core_tst_sys9.default.validation_results"):
+            result_df.write.mode("overwrite").saveAsTable("core_tst_sys9.default.validation_results")
+        else:
+            result_df.write.mode("append").saveAsTable("core_tst_sys9.default.validation_results")
