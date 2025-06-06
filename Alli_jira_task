@@ -1,5 +1,19 @@
-Following the data fix applied for pc_history and bc_history, we observed absolute duplicate records in both the test and production environments. The issue has been triaged, and the root cause has been identified — a fix is currently in progress. Once implemented, we’ll revalidate to ensure no absolute duplicates exist in both the ODS and ODS View layers.
+Weekly Testing Update – Summary
 
-We’ve also noticed some records from the Guidewire source are carrying special characters. These need to be cleansed appropriately in the target ODS layer to meet data quality and cleansing standards.
+Structure Validation
+Validation of schema structure—covering missing columns, additional columns, extra tables, and data type differences—has been completed. Based on the findings, unnecessary tables and columns with no downstream dependencies have been excluded from the automation pack as part of risk acceptance. For the missing column that is used downstream, the impact has been assessed and business users have been notified of a post-Day 1 update.
 
-The decimal conversion issue has been addressed. However, in a few tables, we’re still seeing Databricks display errors or exponential values. This behavior also exists in the current production environment, and it's confirmed that it doesn't affect the actual numeric meaning. Based on that, we’re good to close this defect.
+RAW to ODS Validation (Partial Automation – Test Environment)
+As part of a shift-left testing approach, we completed the first execution cycle covering nearly 90% of the 692 active tables across PC, BC, and CC. Failed cases are currently under review, and defect fixes are in progress. This additional layer of testing improves early detection and overall data quality assurance.
+
+ODS Staging to ODS Validation
+One full round of automated validation has been completed. We're now integrating this into orchestration to ensure broader coverage during daily test loads.
+
+ODS to ODS_VIEW Validation
+A full automated execution run was also completed here. We’re continuing to monitor under orchestration to catch any issues related to change data capture logic.
+
+Silver Layer Testing
+Test design is underway using automated query extraction. However, test execution is currently blocked due to delays in data load for 151 identified tables. The delays are tied to dependent table creation and required configuration updates. This has been flagged as a risk, and we’re working to mitigate it by prioritizing tables and potentially trimming scope to stay aligned with revised timelines.
+
+Manual Test Execution
+Test data entry for PC (both legacy and automation paths) has been completed. Script validation is ongoing. For BC and CC, test data entry is scheduled to start next week.
