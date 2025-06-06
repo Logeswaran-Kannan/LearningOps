@@ -1,7 +1,5 @@
-On the ingestion side, we’ve completed the technical test scenario list for streaming — this covers all ingestion-related flows and has been aligned with the data quality standards.
+Following the data fix applied for pc_history and bc_history, we observed absolute duplicate records in both the test and production environments. The issue has been triaged, and the root cause has been identified — a fix is currently in progress. Once implemented, we’ll revalidate to ensure no absolute duplicates exist in both the ODS and ODS View layers.
 
-We also have a few E2E ingestion scenarios, and after chatting with Adrian yesterday, I’ll be sharing those with him for review.
+We’ve also noticed some records from the Guidewire source are carrying special characters. These need to be cleansed appropriately in the target ODS layer to meet data quality and cleansing standards.
 
-For the test script design, we’ve used sample payloads available in the environment to complete scripting for the mapped components. Automation of those scripts is currently in progress.
-
-On the test data front, from yesterday's conversation with Adrian, it looks like..
+The decimal conversion issue has been addressed. However, in a few tables, we’re still seeing Databricks display errors or exponential values. This behavior also exists in the current production environment, and it's confirmed that it doesn't affect the actual numeric meaning. Based on that, we’re good to close this defect.
