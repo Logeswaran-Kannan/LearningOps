@@ -63,8 +63,12 @@ for idx, row in enumerate(table_list_filtered.collect()):
     print(f"Validating table: {table} ({idx+1}/{len(table_list)})")
 
     try:
+        now = datetime.now()
+        start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = start_time + timedelta(hours=23, minutes=59, seconds=59)
+
         full_src_df = spark.table(src_table)
-        full_tgt_df = spark.table(tgt_table).filter(col("AZURE_LOAD_DATE") >= (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'))
+        full_tgt_df = spark.table(tgt_table).filter((col("AZURE_LOAD_DATE") >= start_time) & (col("AZURE_LOAD_DATE") <= end_time))
 
         src_df = full_src_df.drop(*excluded_columns)
         tgt_df = full_tgt_df.drop(*excluded_columns)
@@ -97,15 +101,17 @@ for idx, row in enumerate(table_list_filtered.collect()):
             comment_parts.append("duplicate issue")
         if mismatches or mismatches_reverse:
             comment_parts.append("data issue")
+        if src_count == 0 and tgt_count == 0:
+            comment_parts = ["no data loaded"]
 
         comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-        status = "Failed" if comment_parts else "Success"
+        status = "Failed" if comment_parts and comment != "All checks passed" else "Success"
 
         all_src_cols = ", ".join(full_src_df.columns)
         all_tgt_cols = ", ".join(full_tgt_df.columns)
 
         src_sql = f"SELECT {all_src_cols} FROM {src_table}"
-        tgt_sql = f"SELECT {all_tgt_cols} FROM {tgt_table} WHERE AZURE_LOAD_DATE >= '{(datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')}'"
+        tgt_sql = f"SELECT {all_tgt_cols} FROM {tgt_table} WHERE AZURE_LOAD_DATE BETWEEN '{start_time}' AND '{end_time}'"
 
         result.append((run_id, table, "ods_stg_copy", "ods", str(src_missing), str(tgt_missing), src_count, tgt_count, src_dupes, tgt_dupes,
                        mismatches, mismatches_reverse, str(null_diff), str([]), status, comment,
