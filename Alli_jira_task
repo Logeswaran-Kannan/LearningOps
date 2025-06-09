@@ -12,7 +12,8 @@ excluded_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG", "AZUR
 # Load list of tables to validate
 csv_path = "/Workspace/your_path_here.csv"
 table_list_df = spark.read.option("header", True).csv(csv_path)
-table_list = table_list_df.filter(col("excludeindicator") == 'Y').select("tablename").rdd.flatMap(lambda x: x).collect()
+table_list_filtered = table_list_df.filter(col("excludeindicator") == 'Y')
+table_list = table_list_filtered.select("tablename").rdd.flatMap(lambda x: x).collect()
 
 # Define schema
 schema = StructType([
@@ -53,10 +54,12 @@ result = []
 run_id = int(time.time())
 start_all = time.time()
 
-for idx, table in enumerate(table_list):
+for idx, row in enumerate(table_list_filtered.collect()):
     start = time.time()
-    src_table = f"ods_stg_copy.{table}"
-    tgt_table = f"ods.{table}"
+    table = row["tablename"]
+    catalog = row["catalog"]
+    src_table = f"{catalog}.ods_stg_copy.{table}"
+    tgt_table = f"{catalog}.ods.{table}"
     print(f"Validating table: {table} ({idx+1}/{len(table_list)})")
 
     try:
