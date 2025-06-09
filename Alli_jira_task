@@ -14,10 +14,6 @@ csv_path = "/Workspace/your_path_here.csv"
 table_list_df = spark.read.option("header", True).csv(csv_path)
 table_list = table_list_df.filter(col("excludeindicator") == 'Y').select("tablename").rdd.flatMap(lambda x: x).collect()
 
-# Housekeeping - retain only last 6 days
-retention_date = datetime.now() - timedelta(days=6)
-spark.sql(f"DELETE FROM core_tst_std001.result_table WHERE validation_timestamp < '{retention_date.strftime('%Y-%m-%d')}'")
-
 # Define schema
 schema = StructType([
     StructField("run_id", IntegerType(), False),
@@ -43,6 +39,15 @@ schema = StructType([
     StructField("test_case_detail", StringType(), True),
     StructField("junk_columns", StringType(), True)
 ])
+
+# Check if result table exists, if not create it
+if not spark._jsparkSession.catalog().tableExists("core_tst_std001.result_table"):
+    print("Creating Delta table core_tst_std001.result_table")
+    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable("core_tst_std001.result_table")
+
+# Housekeeping - retain only last 6 days
+retention_date = datetime.now() - timedelta(days=6)
+spark.sql(f"DELETE FROM core_tst_std001.result_table WHERE validation_timestamp < '{retention_date.strftime('%Y-%m-%d')}'")
 
 result = []
 run_id = int(time.time())
