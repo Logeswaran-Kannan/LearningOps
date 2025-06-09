@@ -1,18 +1,22 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit, count, when, current_timestamp, regexp_extract, length, isnan
 from pyspark.sql.types import *
-import datetime
+from pyspark.sql.functions import col, countDistinct, lit, current_timestamp
 import time
+from datetime import datetime, timedelta
 
-spark = SparkSession.builder.appName("SchemaAndDataValidation").enableHiveSupport().getOrCreate()
+spark = SparkSession.builder.appName("SchemaValidation").getOrCreate()
 
-EXCLUDED_COLUMNS = ["DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG", "AZURE_LOAD_DATE"]
-SOURCE_DB = "ods_stg_copy"
-TARGET_DB = "ods"
-CATALOG = "core_tst_std001"
-OUTPUT_TABLE = f"{CATALOG}.validation_results"
-RUN_ID = int(time.time())
-VALIDATION_TIMESTAMP = datetime.datetime.now()
+# Define excluded columns
+excluded_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG", "AZURE_LOAD_DATE"}
+
+# Load list of tables to validate
+csv_path = "/Workspace/your_path_here.csv"
+table_list_df = spark.read.option("header", True).csv(csv_path)
+table_list = table_list_df.filter(col("excludeindicator") == 'Y').select("tablename").rdd.flatMap(lambda x: x).collect()
+
+# Housekeeping - retain only last 6 days
+retention_date = datetime.now() - timedelta(days=6)
+spark.sql(f"DELETE FROM core_tst_std001.result_table WHERE validation_timestamp < '{retention_date.strftime('%Y-%m-%d')}'")
 
 # Define schema
 schema = StructType([
@@ -30,7 +34,6 @@ schema = StructType([
     StructField("tgt_vs_src_data_mismatch_count", IntegerType(), True),
     StructField("null_diff_columns", StringType(), True),
     StructField("data_mismatch_columns", StringType(), True),
-    StructField("junk_values_columns", StringType(), True),
     StructField("status", StringType(), False),
     StructField("comment", StringType(), True),
     StructField("time_taken_seconds", DoubleType(), True),
@@ -38,89 +41,64 @@ schema = StructType([
     StructField("target_sql", StringType(), True),
     StructField("validation_timestamp", TimestampType(), True),
     StructField("test_case_detail", StringType(), True),
+    StructField("junk_columns", StringType(), True)
 ])
 
-# Housekeeping
-spark.sql(f"DELETE FROM {OUTPUT_TABLE} WHERE validation_timestamp < DATE_SUB(CURRENT_DATE(), 7)")
+result = []
+run_id = int(time.time())
+start_all = time.time()
 
-# Get list of tables
-tables = [row.tableName for row in spark.catalog.listTables(SOURCE_DB)]
-results = []
+for idx, table in enumerate(table_list):
+    start = time.time()
+    src_table = f"ods_stg_copy.{table}"
+    tgt_table = f"ods.{table}"
+    print(f"Validating table: {table} ({idx+1}/{len(table_list)})")
 
-for idx, table in enumerate(tables):
-    start_time = time.time()
     try:
-        src_df = spark.table(f"{SOURCE_DB}.{table}").drop(*EXCLUDED_COLUMNS)
-        tgt_df = spark.table(f"{TARGET_DB}.{table}").drop(*EXCLUDED_COLUMNS)
+        src_df = spark.table(src_table).drop(*excluded_columns)
+        tgt_df = spark.table(tgt_table).drop(*excluded_columns)
 
-        src_cols = set(src_df.columns)
-        tgt_cols = set(tgt_df.columns)
-
-        src_only = src_cols - tgt_cols
-        tgt_only = tgt_cols - src_cols
-        common_cols = list(src_cols & tgt_cols)
+        # Validation logic: count, schema, data mismatch, duplicates, null, junk
+        src_cols, tgt_cols = set(src_df.columns), set(tgt_df.columns)
+        src_missing = list(tgt_cols - src_cols)
+        tgt_missing = list(src_cols - tgt_cols)
 
         src_count = src_df.count()
         tgt_count = tgt_df.count()
 
-        src_dup = src_df.groupBy(common_cols).count().filter("count > 1").count()
-        tgt_dup = tgt_df.groupBy(common_cols).count().filter("count > 1").count()
+        src_dupes = src_df.groupBy(src_df.columns).count().filter("count > 1").count()
+        tgt_dupes = tgt_df.groupBy(tgt_df.columns).count().filter("count > 1").count()
 
-        mismatch_columns = []
-        for col_name in common_cols:
-            mismatches = src_df.select(col_name).subtract(tgt_df.select(col_name)).union(tgt_df.select(col_name).subtract(src_df.select(col_name)))
-            if mismatches.count() > 0:
-                mismatch_columns.append(col_name)
+        common_cols = list(src_cols & tgt_cols)
+        mismatches = src_df.select(common_cols).subtract(tgt_df.select(common_cols)).count()
+        mismatches_reverse = tgt_df.select(common_cols).subtract(src_df.select(common_cols)).count()
 
-        mismatch_count = len(mismatch_columns)
+        null_diff = [col for col in common_cols if src_df.filter(f"{col} IS NOT NULL").count() == 0 or tgt_df.filter(f"{col} IS NOT NULL").count() == 0]
 
-        null_diff_cols = [col for col in common_cols if src_df.filter(col(col).isNull()).count() == src_count and tgt_df.filter(col(col).isNull()).count() != tgt_count]
+        junk_cols = [c for c in common_cols if src_df.filter(col(c).rlike("[�]")) .count() > 0 or tgt_df.filter(col(c).rlike("[�]")) .count() > 0]
 
-        junk_columns = []
-        junk_pattern = r"[^a-zA-Z0-9\s\.,;:@\-]"
-        for col_name in common_cols:
-            if src_df.filter(regexp_extract(col(col_name).cast("string"), junk_pattern, 0) != "").count() > 0:
-                junk_columns.append(col_name)
-
-        comment_list = []
-        if src_only or tgt_only:
-            comment_list.append("schema mismatch")
+        comment_parts = []
+        if src_missing or tgt_missing:
+            comment_parts.append("schema issue")
         if src_count != tgt_count:
-            comment_list.append("count issue")
-        if src_dup > 0 or tgt_dup > 0:
-            comment_list.append("duplicate issue")
-        if mismatch_columns:
-            comment_list.append("data issue")
-        if junk_columns:
-            comment_list.append("junk values issue")
+            comment_parts.append("count issue")
+        if src_dupes or tgt_dupes:
+            comment_parts.append("duplicate issue")
+        if mismatches or mismatches_reverse:
+            comment_parts.append("data issue")
 
-        comment = " | ".join(comment_list) if comment_list else "All checks passed"
+        comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
+        status = "Failed" if comment_parts else "Success"
 
-        results.append((
-            RUN_ID, table, SOURCE_DB, TARGET_DB,
-            ",".join(src_only), ",".join(tgt_only),
-            src_count, tgt_count,
-            src_dup, tgt_dup,
-            mismatch_count, mismatch_count,
-            ",".join(null_diff_cols), ",".join(mismatch_columns), ",".join(junk_columns),
-            "Success" if not comment_list else "Failure",
-            comment,
-            time.time() - start_time,
-            f"SELECT * FROM {SOURCE_DB}.{table}",
-            f"SELECT * FROM {TARGET_DB}.{table}",
-            VALIDATION_TIMESTAMP,
-            ""
-        ))
-        print(f"Completed validation for table: {table} | Remaining: {len(tables) - idx - 1} | Time: {time.time() - start_time:.2f}s")
-
+        result.append((run_id, table, "ods_stg_copy", "ods", str(src_missing), str(tgt_missing), src_count, tgt_count, src_dupes, tgt_dupes,
+                       mismatches, mismatches_reverse, str(null_diff), str([]), status, comment,
+                       time.time()-start, f"SELECT * FROM {src_table}", f"SELECT * FROM {tgt_table}",
+                       datetime.now(), "", str(junk_cols)))
     except Exception as e:
-        results.append((
-            RUN_ID, table, SOURCE_DB, TARGET_DB,
-            "", "", 0, 0, 0, 0, 0, 0, "", "", "", "Error", str(e),
-            time.time() - start_time,
-            "", "", VALIDATION_TIMESTAMP, ""
-        ))
-        print(f"Error validating table: {table} | {str(e)}")
+        result.append((run_id, table, "ods_stg_copy", "ods", "", "", 0, 0, 0, 0, 0, 0, "", "", "Error", f"Error: {str(e)}",
+                       time.time()-start, "", "", datetime.now(), "", ""))
 
-# Save result
-spark.createDataFrame(results, schema).write.format("delta").mode("overwrite").saveAsTable(OUTPUT_TABLE)
+    print(f"Completed table: {table}, Remaining: {len(table_list) - idx - 1}, Time taken: {time.time() - start:.2f} sec")
+
+# Write results
+spark.createDataFrame(result, schema).write.format("delta").mode("overwrite").saveAsTable("core_tst_std001.result_table")
