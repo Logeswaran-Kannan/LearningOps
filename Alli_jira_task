@@ -1,112 +1,44 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.types import *
-from pyspark.sql.functions import col, countDistinct, lit, current_timestamp
-import time
-from datetime import datetime, timedelta
+🧩 Testing Team Roles and Responsibilities
+1. Test Manager
+Define strategy and objectives
 
-spark = SparkSession.builder.appName("SchemaValidation").getOrCreate()
+Manage resources and timelines
 
-# Define excluded columns
-excluded_columns = {"DWH_FROM_DATE", "DWH_UNTIL_DATE", "DWH_CURRENT_FLAG", "AZURE_LOAD_DATE"}
+Report status and risks
 
-# Load list of tables to validate
-csv_path = "/Workspace/your_path_here.csv"
-table_list_df = spark.read.option("header", True).csv(csv_path)
-table_list_filtered = table_list_df.filter(col("excludeindicator") == 'Y')
-table_list = table_list_filtered.select("tablename").rdd.flatMap(lambda x: x).collect()
+Coordinate test environments
 
-# Define schema
-schema = StructType([
-    StructField("run_id", IntegerType(), False),
-    StructField("table_name", StringType(), False),
-    StructField("src_database", StringType(), False),
-    StructField("tgt_database", StringType(), False),
-    StructField("src_vs_tgt_missing_columns", StringType(), True),
-    StructField("tgt_vs_src_missing_columns", StringType(), True),
-    StructField("src_count", IntegerType(), True),
-    StructField("tgt_count", IntegerType(), True),
-    StructField("src_duplicate_count", IntegerType(), True),
-    StructField("tgt_duplicate_count", IntegerType(), True),
-    StructField("src_vs_tgt_data_mismatch_count", IntegerType(), True),
-    StructField("tgt_vs_src_data_mismatch_count", IntegerType(), True),
-    StructField("null_diff_columns", StringType(), True),
-    StructField("data_mismatch_columns", StringType(), True),
-    StructField("status", StringType(), False),
-    StructField("comment", StringType(), True),
-    StructField("time_taken_seconds", DoubleType(), True),
-    StructField("source_sql", StringType(), True),
-    StructField("target_sql", StringType(), True),
-    StructField("validation_timestamp", TimestampType(), True),
-    StructField("test_case_detail", StringType(), True),
-    StructField("junk_columns", StringType(), True)
-])
+Works with: Business, Developers, DevOps, Platform
 
-# Check if result table exists, if not create it
-if not spark._jsparkSession.catalog().tableExists("core_tst_std001.result_table"):
-    print("Creating Delta table core_tst_std001.result_table")
-    spark.createDataFrame([], schema).write.format("delta").mode("overwrite").saveAsTable("core_tst_std001.result_table")
+2. Test Architect
+Design test frameworks
 
-# Housekeeping - retain only last 6 days
-retention_date = datetime.now() - timedelta(days=6)
-spark.sql(f"DELETE FROM core_tst_std001.result_table WHERE validation_timestamp < '{retention_date.strftime('%Y-%m-%d')}'")
+Define testing standards
 
-result = []
-run_id = int(time.time())
-start_all = time.time()
+Evaluate tools
 
-for idx, row in enumerate(table_list_filtered.collect()):
-    start = time.time()
-    table = row["tablename"]
-    catalog = row["catalog"]
-    src_table = f"{catalog}.ods_stg_copy.{table}"
-    tgt_table = f"{catalog}.ods.{table}"
-    print(f"Validating table: {table} ({idx+1}/{len(table_list)})")
+Guide technical approach
 
-    try:
-        src_df = spark.table(src_table).drop(*excluded_columns)
-        tgt_df = spark.table(tgt_table).drop(*excluded_columns)
+Works with: Business, Developers, DevOps, Platform
 
-        # Validation logic: count, schema, data mismatch, duplicates, null, junk
-        src_cols, tgt_cols = set(src_df.columns), set(tgt_df.columns)
-        src_missing = list(tgt_cols - src_cols)
-        tgt_missing = list(src_cols - tgt_cols)
+3. Test Analyst
+Analyze requirements
 
-        src_count = src_df.count()
-        tgt_count = tgt_df.count()
+Define test cases
 
-        src_dupes = src_df.groupBy(src_df.columns).count().filter("count > 1").count()
-        tgt_dupes = tgt_df.groupBy(tgt_df.columns).count().filter("count > 1").count()
+Validate data and functionality
 
-        common_cols = list(src_cols & tgt_cols)
-        mismatches = src_df.select(common_cols).subtract(tgt_df.select(common_cols)).count()
-        mismatches_reverse = tgt_df.select(common_cols).subtract(src_df.select(common_cols)).count()
+Log defects
 
-        null_diff = [col for col in common_cols if src_df.filter(f"{col} IS NOT NULL").count() == 0 or tgt_df.filter(f"{col} IS NOT NULL").count() == 0]
+Works with: Business, Developers, DevOps, Platform
 
-        junk_cols = [c for c in common_cols if src_df.filter(col(c).rlike("[�]")) .count() > 0 or tgt_df.filter(col(c).rlike("[�]")) .count() > 0]
+4. Quality Engineer
+Implement automation
 
-        comment_parts = []
-        if src_missing or tgt_missing:
-            comment_parts.append("schema issue")
-        if src_count != tgt_count:
-            comment_parts.append("count issue")
-        if src_dupes or tgt_dupes:
-            comment_parts.append("duplicate issue")
-        if mismatches or mismatches_reverse:
-            comment_parts.append("data issue")
+Integrate with CI/CD pipelines
 
-        comment = " | ".join(comment_parts) if comment_parts else "All checks passed"
-        status = "Failed" if comment_parts else "Success"
+Support continuous testing
 
-        result.append((run_id, table, "ods_stg_copy", "ods", str(src_missing), str(tgt_missing), src_count, tgt_count, src_dupes, tgt_dupes,
-                       mismatches, mismatches_reverse, str(null_diff), str([]), status, comment,
-                       time.time()-start, f"SELECT * FROM {src_table}", f"SELECT * FROM {tgt_table}",
-                       datetime.now(), "", str(junk_cols)))
-    except Exception as e:
-        result.append((run_id, table, "ods_stg_copy", "ods", "", "", 0, 0, 0, 0, 0, 0, "", "", "Error", f"Error: {str(e)}",
-                       time.time()-start, "", "", datetime.now(), "", ""))
+Enable shift-left practices
 
-    print(f"Completed table: {table}, Remaining: {len(table_list) - idx - 1}, Time taken: {time.time() - start:.2f} sec")
-
-# Write results
-spark.createDataFrame(result, schema).write.format("delta").mode("overwrite").saveAsTable("core_tst_std001.result_table")
+Works with: Business, Developers, DevOps, Platform
