@@ -1,16 +1,1 @@
-Hi Paul,
-Hope you’re enjoying the sessions and everything’s going well! Don’t want to pull you away from anything, but when you get a moment—only if time permits—could you please take a look at a few defect items below? No urgency at all; happy to wait if you’re tied up.
-
-For the CC_NOTE table, we're seeing data in the ODS only from mid-May 2025, whereas in the Read Replica, data is available from Feb 2025—might be worth checking.
-
-In a few tables, we’ve noticed some odd characters (like question marks in black diamonds) showing up in the ODS, even though the same values are coming in cleanly from the Read Replica. Looks like we might need to handle this in the ODS layer.
-
-The bc_history table is still showing duplicate records in the ODS even after incremental loads—needs a bit of digging.
-
-For the priorpolicy table, there's a schema mismatch between Read Replica and ODS. As discussed earlier, I believe we planned to manually align the schema on the ODS side?
-
-Lastly, regarding the Frozen column and its downstream impact—if I recall, the plan was to either exclude it or adjust the views to include it where needed. Just confirming the next step there.
-
-Let me know what you think when you get the chance. Appreciate your help as always!
-
-Thanks :)
+Prepare defect summary and defect explanation - Policy center workflow failure for STD001 flow leads to truncate of ods_stg_copy for few tables that causes mismatch of data and count between ods_stg_copy and ODS layer , based on run on 10th June we see around 144 tables having mismatch on automated orechestration validation
