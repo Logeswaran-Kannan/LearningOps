@@ -1,11 +1,16 @@
-Just a quick update on next actions from the defect observations:
+Hi Paul,
+Hope you’re enjoying the sessions and everything’s going well! Don’t want to pull you away from anything, but when you get a moment—only if time permits—could you please take a look at a few defect items below? No urgency at all; happy to wait if you’re tied up.
 
-For the CC_NOTE table, we noticed that in the ODS layer, data seems to be loading only from mid-May 2025, whereas in Read Replica, records go back to Feb 2025. Need to check what’s causing the delay in load.
+For the CC_NOTE table, we're seeing data in the ODS only from mid-May 2025, whereas in the Read Replica, data is available from Feb 2025—might be worth checking.
 
-We've seen three tables so far where strange characters (like the black diamond with a question mark) are appearing in the ODS output. Since they’re already coming from the source, looks like it’s on us to handle this cleanly in the ODS layer.
+In a few tables, we’ve noticed some odd characters (like question marks in black diamonds) showing up in the ODS, even though the same values are coming in cleanly from the Read Replica. Looks like we might need to handle this in the ODS layer.
 
-The bc_history table is still showing duplicates even in the incremental loads, which definitely needs a deeper look.
+The bc_history table is still showing duplicate records in the ODS even after incremental loads—needs a bit of digging.
 
-The priorpolicy table has a schema mismatch between Read Replica and ODS. We had a chat on this, and the agreed workaround is to manually align the schema metadata in ODS to get things flowing.
+For the priorpolicy table, there's a schema mismatch between Read Replica and ODS. As discussed earlier, I believe we planned to manually align the schema on the ODS side?
 
-On the Frozen column’s downstream impact—we’re going ahead with excluding the view or adjusting the column mapping where needed based on earlier discussions.
+Lastly, regarding the Frozen column and its downstream impact—if I recall, the plan was to either exclude it or adjust the views to include it where needed. Just confirming the next step there.
+
+Let me know what you think when you get the chance. Appreciate your help as always!
+
+Thanks :)
