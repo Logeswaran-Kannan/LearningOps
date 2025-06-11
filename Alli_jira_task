@@ -1,1 +1,24 @@
-Prepare defect summary and defect explanation - Policy center workflow failure for STD001 flow leads to truncate of ods_stg_copy for few tables that causes mismatch of data and count between ods_stg_copy and ODS layer , based on run on 10th June we see around 144 tables having mismatch on automated orechestration validation
+Subject: Team Sync: Client Concerns & Alignment on Way of Working
+
+Body:
+
+Hi Team,
+
+I’ve scheduled a short session to align on a few points following some recent client concerns that have been raised. The agenda will cover:
+
+Summary of concerns/escalation points from the client
+
+Discussion on current challenges or blockers from our side
+
+Expectations going forward and suggested improvements in our way of working
+
+Roles, responsibilities, and ownership clarity across the test lifecycle
+
+Open floor for any feedback, suggestions, or risks we should flag proactively
+
+This is more of an open and collaborative session to ensure we’re all on the same page and taking the right steps forward as a team.
+
+📅 [Insert Date & Time]
+📍 [Insert Location / Meeting Link]
+
+Please make sure to join, and feel free to bring up anything that might help us improve both delivery and communication.
