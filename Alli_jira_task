@@ -1,1 +1,42 @@
-Thanks, Anthony — I really appreciate you giving me access! Also noted on the other owners being there too — good to know in case anything comes up in the future. Cheers!
+✅ 3. Security & Access Control Tests
+ID
+SEC-01
+SEC-02
+
+✅ 4. Business-Specific Semantic Checks
+ID
+BIZ-01
+BIZ-02
+BIZ-03
+
+✅ 5. Observability & Metrics Scenarios
+ID
+OBS-01
+OBS-02
+OBS-03
+
+✅ 6. Edge Case & Resilience Tests
+ID
+EDGE-01
+EDGE-02
+EDGE-03
+
+
+DQ09 – Traceability Enhancements
+Test ID
+DQ-09-01
+DQ-09-02
+
+🔹 DQ07 – Referential Integrity (Detailed)
+Test ID
+DQ-07-01
+DQ-07-02
+
+🔹 DQ08 – Relevance (User Feedback)
+Test ID
+DQ-08-01
+
+🔹 General Observability Enhancements
+Test ID
+MON-01
+MON-02
