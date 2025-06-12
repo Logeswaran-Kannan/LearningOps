@@ -1,9 +1,7 @@
-On the test strategy side, I’ve captured the technical test scenarios for the ingestion process all the way up to the silverish layer in the Confluence page. Planning to do a walkthrough with the team next week to get your feedback.
+On the test strategy front, we’ve documented the technical test scenarios for the ingestion process up to the silver-ish layer in the Confluence page. I’ll be walking the team through it next week to get feedback.
 
-There are still a few grey areas around environment setup and platform alignment with the E2E test team. From what I can see, things are a bit delayed on their end—especially around test data preparation methods like SoapUI or alternatives. Jimmy’s managed to get something working for PreCom, but there’s an issue with passing request/response due to a datatype mismatch.
+There are still a few grey areas from the E2E team’s side — things like environment setup and platform clarity are still in progress. Right now, test data preparation (via SoapUI or other tools) seems delayed. Jimmy managed to get some setup going for pre-com, but there are issues with request/response due to data type mismatches.
 
-As Hazel flagged earlier, setting up connectors and defining a clear method for correlated test data prep is still pending from the E2E perspective.
+Adrian is back next week, so I plan to have daily connects with the E2E team to align on their plan and look at any tactical workarounds we can apply for test data creation. As Hazel mentioned, test data prep is a bit tricky at this point — connectors still need to be set up, and a proper approach for bringing in correlated data is yet to be finalised.
 
-In the meantime, we’re focusing on building up our in-house test coverage and getting the scripts ready for all six message types up to the silverish layer. I was also planning to start on the automation POC setup, but that’s been slightly delayed due to higher priority work on the Guidewire upgrade.
-
-Will keep you posted as things progress.
+Meanwhile, we’re continuing on our end with in-house readiness for scripts covering all six message types up to the silver layer. I was planning to start the automation POC setup already, but due to prioritisation of Guidewire upgrade work, that’s been slightly pushed back.
