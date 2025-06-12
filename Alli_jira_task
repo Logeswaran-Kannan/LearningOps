@@ -1,5 +1,9 @@
-On the test strategy side, I’ve captured the technical test scenarios for the ingestion process up to the silver-ish layer in the Confluence page. Planning to walk through it with the team next week to gather feedback.
+On the test strategy side, I’ve captured the technical test scenarios for the ingestion process all the way up to the silverish layer in the Confluence page. Planning to do a walkthrough with the team next week to get your feedback.
 
-Other areas like test environment and platform setup – we’ve started initial discussions with the E2E team, but things seem a bit delayed, especially around test data preparation methods like using SoapUI. Jimmy has managed to get the basics going for precom, but there’s an issue with how the request/response is handled – seems to be a data type mismatch.
+There are still a few grey areas around environment setup and platform alignment with the E2E test team. From what I can see, things are a bit delayed on their end—especially around test data preparation methods like SoapUI or alternatives. Jimmy’s managed to get something working for PreCom, but there’s an issue with passing request/response due to a datatype mismatch.
 
-In the meantime, we're focusing on getting the scripts ready for all six message types up to the silver layer. I was planning to start the automation POC setup too, but with Guidewire upgrade taking priority, that’s been pushed out a bit.
+As Hazel flagged earlier, setting up connectors and defining a clear method for correlated test data prep is still pending from the E2E perspective.
+
+In the meantime, we’re focusing on building up our in-house test coverage and getting the scripts ready for all six message types up to the silverish layer. I was also planning to start on the automation POC setup, but that’s been slightly delayed due to higher priority work on the Guidewire upgrade.
+
+Will keep you posted as things progress.
