@@ -1,42 +1,5 @@
-✅ 3. Security & Access Control Tests
-ID
-SEC-01
-SEC-02
+On the test strategy side, I’ve captured the technical test scenarios for the ingestion process up to the silver-ish layer in the Confluence page. Planning to walk through it with the team next week to gather feedback.
 
-✅ 4. Business-Specific Semantic Checks
-ID
-BIZ-01
-BIZ-02
-BIZ-03
+Other areas like test environment and platform setup – we’ve started initial discussions with the E2E team, but things seem a bit delayed, especially around test data preparation methods like using SoapUI. Jimmy has managed to get the basics going for precom, but there’s an issue with how the request/response is handled – seems to be a data type mismatch.
 
-✅ 5. Observability & Metrics Scenarios
-ID
-OBS-01
-OBS-02
-OBS-03
-
-✅ 6. Edge Case & Resilience Tests
-ID
-EDGE-01
-EDGE-02
-EDGE-03
-
-
-DQ09 – Traceability Enhancements
-Test ID
-DQ-09-01
-DQ-09-02
-
-🔹 DQ07 – Referential Integrity (Detailed)
-Test ID
-DQ-07-01
-DQ-07-02
-
-🔹 DQ08 – Relevance (User Feedback)
-Test ID
-DQ-08-01
-
-🔹 General Observability Enhancements
-Test ID
-MON-01
-MON-02
+In the meantime, we're focusing on getting the scripts ready for all six message types up to the silver layer. I was planning to start the automation POC setup too, but with Guidewire upgrade taking priority, that’s been pushed out a bit.
