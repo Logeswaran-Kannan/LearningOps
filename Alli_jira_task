@@ -1,7 +1,7 @@
-On the test strategy front, we’ve documented the technical test scenarios for the ingestion process up to the silver-ish layer in the Confluence page. I’ll be walking the team through it next week to get feedback.
+Just wanted to give you an early heads-up — I’m planning to take leave from August 26th to September 12th as my dad has a surgery scheduled during that time back home.
 
-There are still a few grey areas from the E2E team’s side — things like environment setup and platform clarity are still in progress. Right now, test data preparation (via SoapUI or other tools) seems delayed. Jimmy managed to get some setup going for pre-com, but there are issues with request/response due to data type mismatches.
+From what I foresee, the Guidewire upgrade should have settled into production by then, and for Radar Live, the testing team is likely to be entering the execution phase. I’ll make sure everything is lined up and ready from the testing side before I head off.
 
-Adrian is back next week, so I plan to have daily connects with the E2E team to align on their plan and look at any tactical workarounds we can apply for test data creation. As Hazel mentioned, test data prep is a bit tricky at this point — connectors still need to be set up, and a proper approach for bringing in correlated data is yet to be finalised.
+Also, from the week of September 8th, I should be able to connect remotely from India if needed — happy to support the team where possible while I’m there. Let me know if that works.
 
-Meanwhile, we’re continuing on our end with in-house readiness for scripts covering all six message types up to the silver layer. I was planning to start the automation POC setup already, but due to prioritisation of Guidewire upgrade work, that’s been slightly pushed back.
+I don’t have any other leave planned before or after this period.
