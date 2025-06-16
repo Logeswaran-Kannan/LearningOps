@@ -1,7 +1,59 @@
-Just wanted to give you an early heads-up — I’m planning to take leave from 26th August to 12th September as my dad has a surgery scheduled during that time back in my home country.
+Title
+Manual Validation of Policy Data Between Oracle and Read Replica for Motor, Home, and Combined Lines
 
-I’ve looked at the timelines, and I believe by then the Guidewire upgrade should have settled into production, and for Radar Live, the testing team would be entering the execution phase. I’ll ensure that everything from my side is in place for a smooth handover and readiness before I head off.
+Description
+Conduct manual validation to compare the data between the primary Oracle database and the Read Replica for policies created via the Guidewire PolicyCenter UI. The validation will cover:
 
-Also, just in case support is needed, I’m happy to connect remotely from India starting the week of 8th September, provided that’s allowed. I should be available to assist if required.
+Motor Line, Home Line, and Motor + Home (Both Lines) scenarios.
 
-I don’t have any other leave planned before or after this, so just wanted to get this period approved early. Let me know if you’d like to discuss or plan around it.
+A consistent set of policy creation scenarios for each line of business.
+
+Comparison of Policy, Coverage, Account, and Party data at the database table level.
+
+Use the script already created in PolicyCenter to generate the test policies. Validate data in both databases to ensure replication integrity and consistency of business-critical data.
+
+Tasks
+Execute existing policy creation scripts in PolicyCenter for:
+
+Motor line
+
+Home line
+
+Combined Motor + Home lines
+
+Identify the list of relevant tables for:
+
+Policy data
+
+Coverage data
+
+Account data
+
+Party data
+
+Extract and compare records from Oracle DB and Read Replica.
+
+Document any inconsistencies or mismatches with screenshots/logs.
+
+Raise defects if any critical data mismatches are found.
+
+Definition of Done
+ Policies created successfully in PolicyCenter for all 3 lines of business.
+
+ Relevant table-level data extracted from Oracle and Read Replica.
+
+ Data comparison completed and results documented for:
+
+Policy
+
+Coverage
+
+Account
+
+Party
+
+ No critical mismatches found OR discrepancies logged with detailed analysis.
+
+ Summary validation report shared with stakeholders.
+
+ Any defects raised are linked in the JIRA ticket (if applicable).
