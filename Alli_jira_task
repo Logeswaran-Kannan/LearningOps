@@ -1,59 +1,31 @@
-Title
-Manual Validation of Policy Data Between Oracle and Read Replica for Motor, Home, and Combined Lines
+Test Data Comparison Summary: Motor Scenario (Legacy vs Cloud Versions)
+PolicyLine Reference Mismatch
+In the test environment, the PolicyLine reference values differ between legacy and cloud systems. This is likely due to each version generating its own line-specific references independently. Example: Scenario 6 – VehicleRatingFactor shows mismatched PolicyLine column values.
+This variance may lead to data inconsistencies during switchovers or synchronization between environments.
 
-Description
-Conduct manual validation to compare the data between the primary Oracle database and the Read Replica for policies created via the Guidewire PolicyCenter UI. The validation will cover:
+PolicyLine Count Difference in Production
+In production, the legacy version includes three PolicyLines, while the cloud version contains only two. This structural discrepancy could impact policy processing or reporting.
 
-Motor Line, Home Line, and Motor + Home (Both Lines) scenarios.
+Renewal Transaction Coverage
+The legacy sample lacks a renewal transaction in the test data, which leads to a transaction count mismatch. However, this is an expected and acceptable deviation.
 
-A consistent set of policy creation scenarios for each line of business.
+Car Hire Add-On
+The Car Hire add-on was included in both versions, and data matches accurately.
 
-Comparison of Policy, Coverage, Account, and Party data at the database table level.
+MTA – Policy Change (No Temporary Driver)
+An MTA (Mid-Term Adjustment) was created in both systems.
 
-Use the script already created in PolicyCenter to generate the test policies. Validate data in both databases to ensure replication integrity and consistency of business-critical data.
+In the legacy version, the MTA is in expired draft status.
 
-Tasks
-Execute existing policy creation scripts in PolicyCenter for:
+In the cloud version, it remains in draft with a future effective date.
+While the MTA status is consistent across systems, no temporary driver was added.
 
-Motor line
+MTA – Policy Change (No Temporary Vehicle)
+A second MTA test revealed the same draft status behavior, but no temporary vehicle was included.
+The bound transaction data remains consistent across both systems.
 
-Home line
+Renewal Draft with Additions
+A renewal draft transaction was executed in both versions. An additional driver and vehicle were added successfully and consistently in both.
 
-Combined Motor + Home lines
-
-Identify the list of relevant tables for:
-
-Policy data
-
-Coverage data
-
-Account data
-
-Party data
-
-Extract and compare records from Oracle DB and Read Replica.
-
-Document any inconsistencies or mismatches with screenshots/logs.
-
-Raise defects if any critical data mismatches are found.
-
-Definition of Done
- Policies created successfully in PolicyCenter for all 3 lines of business.
-
- Relevant table-level data extracted from Oracle and Read Replica.
-
- Data comparison completed and results documented for:
-
-Policy
-
-Coverage
-
-Account
-
-Party
-
- No critical mismatches found OR discrepancies logged with detailed analysis.
-
- Summary validation report shared with stakeholders.
-
- Any defects raised are linked in the JIRA ticket (if applicable).
+MTA on Multiline Policy – Driver Count Mismatch
+An MTA was performed on a multiline policy, adding extra drivers and vehicles. While most data matches, the number of drivers differs between versions, leading to a partial mismatch.
