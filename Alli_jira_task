@@ -1,7 +1,1 @@
-From the Motor side, we've completed validation for 7 out of 8 scenarios. The remaining one—Scenario 24—has been removed from scope, as mentioned earlier.
-
-Aside from one observation related to the PolicyLine field (I've shared the sample in the tracker sheet), everything else looks pretty much aligned with the legacy format. Would appreciate your input on that PolicyLine point for clarification.
-
-The minor differences we saw in record counts are mostly due to certain scenarios not being fully reflected in the test data for one version or the other, which we’re treating as an acceptable deviation.
-
-So with that, the Motor samples are done. For Home, I’m just waiting on Suraj to confirm which scenario we should pick up next.
+I noticed that not all the PolicyLines are showing up in STD001, but they’re all there in SYS9 and Production. Not sure if that’s expected or not—just wanted to check with you to confirm.
