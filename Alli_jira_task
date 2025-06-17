@@ -1,5 +1,7 @@
-From the Motor side, we’ve completed validation for 7 out of the 8 scenarios. The one that’s left—Scenario 24—has been dropped from scope, as mentioned earlier. Aside from a minor observation related to the PolicyLine field, everything else is pretty much in line with the legacy format.
+From the Motor side, we've completed validation for 7 out of 8 scenarios. The remaining one—Scenario 24—has been removed from scope, as mentioned earlier.
 
-The small mismatches in counts mostly come down to differences in how the test data was set up in each version, which I think is an acceptable deviation.
+Aside from one observation related to the PolicyLine field (I've shared the sample in the tracker sheet), everything else looks pretty much aligned with the legacy format. Would appreciate your input on that PolicyLine point for clarification.
 
-So with that, all 7 Motor samples are done. For Home, I’m just waiting on Suraj to confirm which one we should pick up next.
+The minor differences we saw in record counts are mostly due to certain scenarios not being fully reflected in the test data for one version or the other, which we’re treating as an acceptable deviation.
+
+So with that, the Motor samples are done. For Home, I’m just waiting on Suraj to confirm which scenario we should pick up next.
