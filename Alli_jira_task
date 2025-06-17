@@ -1,31 +1,5 @@
-Test Data Comparison Summary: Motor Scenario (Legacy vs Cloud Versions)
-PolicyLine Reference Mismatch
-In the test environment, the PolicyLine reference values differ between legacy and cloud systems. This is likely due to each version generating its own line-specific references independently. Example: Scenario 6 – VehicleRatingFactor shows mismatched PolicyLine column values.
-This variance may lead to data inconsistencies during switchovers or synchronization between environments.
+From the Motor side, we’ve completed validation for 7 out of the 8 scenarios. The one that’s left—Scenario 24—has been dropped from scope, as mentioned earlier. Aside from a minor observation related to the PolicyLine field, everything else is pretty much in line with the legacy format.
 
-PolicyLine Count Difference in Production
-In production, the legacy version includes three PolicyLines, while the cloud version contains only two. This structural discrepancy could impact policy processing or reporting.
+The small mismatches in counts mostly come down to differences in how the test data was set up in each version, which I think is an acceptable deviation.
 
-Renewal Transaction Coverage
-The legacy sample lacks a renewal transaction in the test data, which leads to a transaction count mismatch. However, this is an expected and acceptable deviation.
-
-Car Hire Add-On
-The Car Hire add-on was included in both versions, and data matches accurately.
-
-MTA – Policy Change (No Temporary Driver)
-An MTA (Mid-Term Adjustment) was created in both systems.
-
-In the legacy version, the MTA is in expired draft status.
-
-In the cloud version, it remains in draft with a future effective date.
-While the MTA status is consistent across systems, no temporary driver was added.
-
-MTA – Policy Change (No Temporary Vehicle)
-A second MTA test revealed the same draft status behavior, but no temporary vehicle was included.
-The bound transaction data remains consistent across both systems.
-
-Renewal Draft with Additions
-A renewal draft transaction was executed in both versions. An additional driver and vehicle were added successfully and consistently in both.
-
-MTA on Multiline Policy – Driver Count Mismatch
-An MTA was performed on a multiline policy, adding extra drivers and vehicles. While most data matches, the number of drivers differs between versions, leading to a partial mismatch.
+So with that, all 7 Motor samples are done. For Home, I’m just waiting on Suraj to confirm which one we should pick up next.
