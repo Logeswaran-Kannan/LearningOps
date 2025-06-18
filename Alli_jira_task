@@ -1,1 +1,3 @@
-I noticed that not all the PolicyLines are showing up in STD001, but they’re all there in SYS9 and Production. Not sure if that’s expected or not—just wanted to check with you to confirm.
+just a quick update — the frozen column has been added to the pc_account table. There's no data coming from the read replica in the DDL on the target ODS, but we added it to support the silver view validation.
+
+This also ties in with the Day 1 changes for the SPV updates, so we're marking the defect as deferred and will handle it as part of those Day 1 changes.
