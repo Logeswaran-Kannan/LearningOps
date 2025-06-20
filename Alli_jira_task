@@ -1,3 +1,5 @@
-just a quick update — the frozen column has been added to the pc_account table. There's no data coming from the read replica in the DDL on the target ODS, but we added it to support the silver view validation.
+We've observed a data formatting issue in certain claim-related tables where some symbols (e.g., diamond with a question mark �) appear in the data values. This seems to be a read or encoding issue, possibly due to how the data is stored in Guidewire or how it’s being interpreted when read into the PostgreSQL Read Replica.
 
-This also ties in with the Day 1 changes for the SPV updates, so we're marking the defect as deferred and will handle it as part of those Day 1 changes.
+Since the BICOE team is consuming the data as-is from the replica, we believe this may require investigation and resolution either at the Guidewire source or at the replica extraction layer.
+
+Let us know your thoughts or if further details are needed from our end to support this analysis.
