@@ -3,3 +3,5 @@ We've observed a data formatting issue in certain claim-related tables where som
 Since the BICOE team is consuming the data as-is from the replica, we believe this may require investigation and resolution either at the Guidewire source or at the replica extraction layer.
 
 Let us know your thoughts or if further details are needed from our end to support this analysis.
+
+Special Character Read Issue in Claim Table Data
