@@ -1,7 +1,1 @@
-We've observed a data formatting issue in certain claim-related tables where some symbols (e.g., diamond with a question mark �) appear in the data values. This seems to be a read or encoding issue, possibly due to how the data is stored in Guidewire or how it’s being interpreted when read into the PostgreSQL Read Replica.
-
-Since the BICOE team is consuming the data as-is from the replica, we believe this may require investigation and resolution either at the Guidewire source or at the replica extraction layer.
-
-Let us know your thoughts or if further details are needed from our end to support this analysis.
-
-Special Character Read Issue in Claim Table Data
+Yes, I got a message during our call—Amirtha had informed just about half an hour earlier that she's on skill leave today. There are a few action items that were with her, so Rahul and I will pick those up and take them forward in the meantime
