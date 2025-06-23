@@ -1,14 +1,19 @@
-| **ID / Name**              | **Scenario Description**                  | **How It’s Simulated**                       | **Expected Outcome**                             | **Checkpoint with Development Team**                                                                       |
-| -------------------------- | ----------------------------------------- | -------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `Source System Issues_001` | Source data is **unavailable**            | Simulate total unavailability before RR load | Fails gracefully; alert raised                   | Confirm if this scenario can be simulated in test. Has this occurred before? What was the observed impact? |
-| `Source System Issues_002` | Source data is **partially available**    | Simulate partial unavailability              | Fails gracefully; alert raised                   | Can partial loads be mimicked in the test environment? Has the team encountered this in production?        |
-| `Connectivity_001`         | **Network is down**                       | Simulate network downtime before load        | Fails gracefully; alert raised                   | Can network disconnects be artificially triggered in lower environments?                                   |
-| `Connectivity_002`         | **Invalid credentials**                   | Use invalid auth for RR load                 | Fails gracefully; alert raised                   | Ask dev team if they have observed auth/token errors. What recovery mechanism was triggered?               |
-| `Schema_Mismatches_001`    | **New columns added** in source           | Add a column before load                     | New columns are ignored                          | Can source schema be altered in test? Did similar changes happen in prod before?                           |
-| `Schema_Mismatches_002`    | **Expected columns are missing**          | Remove a column then load                    | Load fails; reset needed; columns loaded as NULL | Can this test be run in UAT without corrupting schema? What was the fallback strategy used earlier?        |
-| `Schema_Mismatches_003`    | **Data type mismatch**                    | Amend data type before load                  | May fail or cast based on type                   | Verify with dev team if data type mismatches can be injected easily. Any prior incidents?                  |
-| `Schema_Mismatches_004`    | **Column order changed**                  | Change order before load                     | No impact; process succeeds                      | Confirm with devs if column reordering ever caused ingestion issues in the past.                           |
-| `System_001`               | **Azure storage write failure**           | Simulate storage failure                     | Fails gracefully; alert raised                   | Ask if the team can simulate storage write errors or throttling in a safe test environment.                |
-| `System_002`               | **Databricks cluster down** mid-ingestion | Bring down cluster mid-run                   | Fails gracefully; alert raised                   | Is it feasible to manually shut down cluster mid-load during testing? What happens to jobs in such cases?  |
-| `System_003`               | **Insufficient compute**                  | Simulate low compute resources               | Fails gracefully; alert raised                   | Can resource quota be throttled in test? Have performance bottlenecks been observed before?                |
-| `System_004`               | **Re-ingestion after failure**            | Retry after failure                          | Same batch loaded again correctly into Bronze    | Confirm if duplicate ingestion due to retries has been seen. What de-duplication strategy exists (if any)? |
+Subject: Request for Discussion: Error Handling Scenarios Validation – Guidewire Upgrade
+
+Hi [Developer's Name],
+
+I hope you're doing well.
+
+As part of the Guidewire upgrade project, we've outlined several error handling scenarios related to the PostgreSQL ADF ingestion into the Bronze ODS layer. I'd like to walk through each of these with you to:
+
+Confirm whether these scenarios can be simulated in the test environment
+
+Understand if any of them have already occurred and how they were managed
+
+Discuss if fallback/mitigation processes are in place, especially where simulation isn't possible
+
+Capture any gaps or risks to production for formal acceptance
+
+Would you be available for a short sync (20–30 mins) this week to go over this? I’ll share the working sheet with details ahead of the call.
+
+Please let me know your availability.
