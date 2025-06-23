@@ -1,36 +1,16 @@
-Source System Issues_001
-If there’s no data generated in the source for a particular day (e.g., weekends), the ingestion process will not fail unless there is a network-related issue. It will check and log the count for that day but continue without interruption. This is the expected behavior and is working as designed.
+Subject: Update: Error Handling Scenarios – Outcome & Next Steps
 
-Source System Issues_002
-When only a partial dataset is available, the process does not fail—it proceeds to load whatever is present. This might lead to inconsistencies downstream due to incomplete integration, but the ingestion will pick up the missing data in the next scheduled run once available. This behavior is also expected.
+Hi Team,
 
-Connectivity_001
-In cases of network failure, the process attempts to reconnect up to three times. If the issue persists, it fails and alerts are triggered. Application support will then manually resolve the network issue and reprocess the data, especially during weekdays. If the failure happens over the weekend, the next scheduled job will pick up the missed data automatically.
+Following our discussion with the development team, we've reviewed and documented the actual outcomes for each of the identified error handling scenarios related to the Guidewire upgrade ingestion process.
 
-Connectivity_002
-If service account credentials (e.g., license or authentication tokens) are invalid or expired, the process will fail immediately and alert the application support team. The team is responsible for updating the credentials to resume processing.
+Based on the inputs received:
 
-Schema_Mismatches_001
-New columns introduced in the source are not automatically reflected in the ODS because metadata control is enforced in the read replica. This excludes unauthorized schema drift. If the new column is required, it must be manually added. Automated schema drift will only be supported once the CDA (Change Data Automation) process is implemented.
+I will update the test cases to reflect the pass status for scenarios that are working as expected.
 
-Schema_Mismatches_002
-If a previously ingested column is missing from the current source, the ingestion fails. However, if the source team officially notifies that a column is being deprecated, the corresponding column remains in the Databricks ODS table but gets populated with null values moving forward. This dual-handling ensures continuity and traceability.
+For scenarios where observations differ from initial expectations, I will discuss the details further with Graham in our session tomorrow.
 
-Schema_Mismatches_003
-Two outcomes are possible depending on the nature of the data type change. If the change is incompatible (e.g., boolean to date), the pipeline fails. If the change is between compatible types (e.g., double to int), the process continues by casting. This scenario requires an automated regression check to detect type mismatches and a BAU (Business As Usual) process to notify the BI CoE team about such changes in advance.
+Any required actions or deviations will be tracked and addressed accordingly in JIRA.
 
-Schema_Mismatches_004
-Changes in column order or letter casing do not cause failures. The ingestion mapping handles columns by name and standardizes them to lowercase automatically. The process flow remains unaffected.
-
-System_001 (Azure Storage Unavailable)
-If Azure storage becomes unavailable, the ingestion fails. Once the service is restored, either manual reprocessing is performed or the next scheduled job resumes from the last successful checkpoint.
-
-System_002 (Databricks Cluster Downtime)
-Cluster downtime results in job failure. Similar to storage issues, the process resumes from the last checkpoint once services are restored, either through manual rerun or automatically during the next schedule.
-
-System_003 (Insufficient Compute)
-The system is configured to auto-scale up to a limit. As long as minimum compute resources are available, processing continues (up to a 7-day backlog). If no nodes are available, the process fails. Application support monitors performance closely and intervenes as needed.
-
-System_004 (Re-ingestion after Failure)
-The restore logic checks the maximum process time in the SQL Server as a checkpoint to resume delta ingestion. There is also a deduplication mechanism in place, so reprocessing does not lead to duplicates. The process does not fail in this scenario.
+Thanks again for your support and collaboration. Please feel free to reach out if you need access to the updated scenario sheet or have further inputs.
 
