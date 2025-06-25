@@ -1,3 +1,5 @@
+"Hey everyone, thanks for joining. I wanted to quickly walk you through the test scenarios we've built around the ingestion pipeline—from EventHub all the way through to the Silver layer and beyond. The goal here is to make sure we're catching any potential issues early, whether it's message loss, schema mismatches, timing delays, or data integrity gaps. We’ve mapped these against our data quality standards as well, so it’s not just about tech validation—it’s aligned with what the business expects from a reliability and accuracy point of view. I’ll also highlight a few edge cases and real-world scenarios like out-of-sequence messages and missing versions to help us think through the system's expected behavior. Let’s dive in!"
+
 🔄 Message Lifecycle & Sequence Management
 Scenario	Description
 Out-of-Sequence Quote Arrival	A later version of a quote (e.g., renewal) arrives before its prior version (e.g., new business) – the system should be able to queue, delay, or flag this.
