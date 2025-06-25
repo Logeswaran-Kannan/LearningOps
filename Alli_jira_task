@@ -1,16 +1,76 @@
-Subject: Update: Error Handling Scenarios – Outcome & Next Steps
+Subject: Team Updates, Roles, Responsibilities & Ways of Working – Please Align Accordingly
 
 Hi Team,
 
-Following our discussion with the development team, we've reviewed and documented the actual outcomes for each of the identified error handling scenarios related to the Guidewire upgrade ingestion process.
+As you may already be aware, a few structural and operational changes have come into effect based on recent discussions with the client and our engagement leadership. These are intended to better align our delivery with expectations and ensure smooth collaboration across projects. Please go through the updates below and adjust your working approach accordingly:
 
-Based on the inputs received:
+1. Team Resourcing:
+Amitha’s backfill resource is expected to join in the second week of July.
 
-I will update the test cases to reflect the pass status for scenarios that are working as expected.
+Until July 18th, please continue to collaborate with Amitha as much as possible to support knowledge transition.
 
-For scenarios where observations differ from initial expectations, I will discuss the details further with Graham in our session tomorrow.
+2. Role Allocations:
+Mani will take up the Test Lead role for Guidewire Upgrade – CDA Implementation & Read Replica Readiness.
 
-Any required actions or deviations will be tracked and addressed accordingly in JIRA.
+Rahul will be the Test Lead for Radar Live, responsible for daily test operations and coordination.
 
-Thanks again for your support and collaboration. Please feel free to reach out if you need access to the updated scenario sheet or have further inputs.
+I will continue to oversee both programs as the overall Test Manager, including upcoming deliveries. Please escalate any test-related blockers, risks, or timeline concerns promptly.
 
+We'll also set up a weekly connect to monitor progress and resolve escalations in a timely manner.
+
+3. Working Practices – Areas to Improve & Align:
+The client and our leadership team expect certain operational standards. Please take note and adhere to the following:
+
+3.1 Leave Planning: Keep the leave tracker up to date. All planned leaves must be internally approved before reaching out to the client, to assess effort and impact.
+
+3.2 Meeting Etiquette: Join all meetings on time. If there’s a conflict or you’re unable to attend, please inform the PM or Scrum Master in advance.
+
+3.3 Jira Hygiene: Ensure your tasks are up to date in Jira, with planned vs. actual effort logged. Backlog items should be defined proactively.
+
+3.4 Communication: Improve clarity and avoid repetition. Don’t overcommit—when in doubt, align with me before confirming testing timelines or effort.
+
+3.5 Test Artifacts: Begin maintaining proper documentation (Test Strategy, Plan, Test Cases, Jira setup). We will conduct frequent test audits to ensure client alignment.
+
+3.6 Availability: Stay active during agreed working hours. In case of emergency or time off, update your Teams status and Outlook accordingly.
+
+3.7 Reporting Discipline: Daily Status Reports (DSR) and Weekly Status Reports (WSR) must be submitted without compromise. The client emphasizes this—start implementing immediately.
+
+3.8 Automation Stream Tracking: Please start tracking automation effort within your respective streams.
+
+4. Upcoming Leaves:
+I’ll be on annual vacation from August 26th for three weeks. Mani – please plan your travel accordingly so we can prepare and align responsibilities in advance.
+
+5. Testing Path to Maturity:
+The client is interested in moving toward a more mature testing model. I’ll be supporting this transition with leadership to strengthen our footprint and capability delivery.
+
+6. Daily Planning & Feedback:
+Please share your daily plan with me, and I will be joining your stand-up calls going forward to capture live feedback from the client.
+
+Immediate Action Items:
+Mani – For GW Upgrade RR Release:
+
+Please provide by EOD today:
+
+Count of successful automation runs and test environment evidence (dashboard/report)
+
+List of open defects, risks, and limitations
+
+Automation framework production deployment plan
+
+Performance report of the automation suite (to support TSR sign-off for Friday)
+
+Rahul – Radar Live:
+
+Begin reverse KT on data flow and architecture
+
+Walkthrough of provided test scenarios
+
+Start leading and updating the Radar Live daily status tracker
+
+If anything is unclear or needs clarification, I’m happy to discuss. We can also arrange a call with Anukul or Nat if needed for further clarity on roles and expectations.
+
+Thanks for your ongoing support and commitment—it’s essential to ensure we move forward smoothly.
+
+Best regards,
+[Your Name]
+Test Manager | BICOE Team
