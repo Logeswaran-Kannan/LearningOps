@@ -1,41 +1,116 @@
-"Hey everyone, thanks for joining. I wanted to quickly walk you through the test scenarios we've built around the ingestion pipeline—from EventHub all the way through to the Silver layer and beyond. The goal here is to make sure we're catching any potential issues early, whether it's message loss, schema mismatches, timing delays, or data integrity gaps. We’ve mapped these against our data quality standards as well, so it’s not just about tech validation—it’s aligned with what the business expects from a reliability and accuracy point of view. I’ll also highlight a few edge cases and real-world scenarios like out-of-sequence messages and missing versions to help us think through the system's expected behavior. Let’s dive in!"
+🔧 1. Pre-Implementation Phase
+✅ Preparation & Planning (All Teams)
+ Confirm resource allocation across all teams (BICOE, AZ Infra, Source System, QA, Downstream, Change Mgmt).
 
-🔄 Message Lifecycle & Sequence Management
-Scenario	Description
-Out-of-Sequence Quote Arrival	A later version of a quote (e.g., renewal) arrives before its prior version (e.g., new business) – the system should be able to queue, delay, or flag this.
-Duplicate Quote Versions	Multiple identical quote versions are received – system should detect and ignore duplicates without processing again.
-Skipped Version Numbers	A quote with version 3 is received, but version 2 never arrived – system should detect gaps and either wait or process based on policy rules.
-Concurrent Quote Versions	NB and MTA quotes generated within seconds – system must ensure one doesn’t overwrite or incorrectly link the other.
+ Ensure all required PROD access is granted (Read Replica, Databricks PROD workspace, ADF PROD).
 
-🧩 Cross-Message Correlation Integrity
-Scenario	Description
-Missing Correlation Fields	MQSQuoteId or CacheId missing – system should quarantine or flag for retry.
-Mismatch Between Linked Messages	PreComp, RatingRequest, RatingResponse carry mismatched QuoteIDs – the system must detect inconsistencies.
-Incorrect Linking to Original Quote	For MTAs and Renewals, ensure linkage to original NB quote is maintained correctly.
+ Confirm test summary and sign-off document for BICOE dry run is finalized.
 
-⏱️ Timing and Latency
-Scenario	Description
-Delayed Message Arrival	Messages arrive significantly after expected SLA (e.g., >10 minutes) – test alerting and system retry logic.
-Message Arrives Post-Cutoff	Quote data arrives after cutoff for pricing run – validate handling rules (discard, queue, mark stale).
+ Confirm runbook and rollback plan is reviewed and approved by stakeholders.
 
-🧪 Invalid or Partial Data Scenarios
-Scenario	Description
-Partial Payload	Message contains only partial JSON or missing key nested structures like rawEnrichments.
-Invalid Enum/Reference Values	E.g., invalid productIdentifier or transactionTypeCode – should fail validation.
-Unsupported Format or Schema Drift	E.g., unexpected data structure in enrichment – schema validation must catch and isolate.
+✅ BICOE Tasks
+ Send MI user communication regarding dry run window and data availability impact.
 
-🔐 Security & Access Issues
-Scenario	Description
-Unauthorized Field Access	PII like policyholder email/phone exposed to roles without access – verify role-based field-level access.
-Audit Gaps in Sensitive Quote Update	Missing audit trail on sensitive quote updates – ensure every write is traceable.
+ Pause MI data pipelines to avoid ingesting incorrect or partial data during switch.
 
-🛠️ Infrastructure & Monitoring
-Scenario	Description
-EventHub Partition Skew	One partition receives too much load – test autoscaling or throttling alerts.
-Message Reprocessing After Failure	Ensure idempotency – no duplicate records generated after system retries.
-Unacknowledged EventHub Messages	Messages stay unconsumed beyond expected SLA – alerting and recovery needed.
+ Deploy ADF code and configuration changes to PROD (switch linked service to PROD Read Replica).
 
-📦 Backfill / Historical Loads
-Scenario	Description
-Historical Quotes in Wrong Format	Backfilled quotes might not align to current schema – test backward compatibility logic.
-Large-Volume Backfill	Ensure system can process high volume historical messages without impacting real-time flows.
+ Validate pipeline triggers are disabled temporarily to allow for manual control.
+
+ Review and ensure all smoke test scripts are prepared and approved for post-deployment validation.
+
+ Notify Azure Infra team to prepare for source switch.
+
+✅ AZ Infra / Source Team
+ Prepare Guidewire Cloud PROD Read Replica and validate access from Data Factory & Databricks.
+
+ Validate monitoring tools for Read Replica (query logs, CPU/memory, etc.).
+
+ Confirm switch-over script/process is in place for Guidewire data source redirection.
+
+✅ QA / Validation Teams
+ Ensure test datasets, use cases, and checkpoints are documented.
+
+ Finalize baseline validation templates for post-switch comparison.
+
+✅ Checkpoints
+ Pre-implementation checkpoint call (Dry Run Kickoff).
+
+ Checklist review: Access, code deployments, scripts, comms sent, backout prep.
+
+🔁 2. Implementation Phase
+✅ AZ Infra / Source Team
+ Switch Guidewire source system from legacy Oracle to new Cloud version.
+
+ Confirm handshake and readiness signal to BICOE after switch.
+
+✅ BICOE Tasks
+ Manually trigger data pipelines from PROD ADF using new linked service.
+
+ Monitor initial data load – ensure expected volume, schema match, and no critical failures.
+
+ Validate schema of data ingested from PROD Read Replica.
+
+ Run smoke test scripts on Databricks against new data.
+
+✅ QA / Validation Teams
+ Execute post-switch validation tests for key tables.
+
+ Confirm format, record counts, null checks, and known defects.
+
+✅ Checkpoints
+ Mid-implementation checkpoint call: Confirm source switched, data flow started, initial load healthy.
+
+🧪 3. Post-Implementation Phase
+✅ BICOE Tasks
+ Full health check on Azure Data Factory, Databricks pipelines, and data completeness.
+
+ Confirm metadata syncs (schemas, tables, logs).
+
+ Run full smoke test and record results.
+
+ Compare against historical data snapshots.
+
+✅ Downstream Impact & Communications
+ Notify downstream teams (e.g., Marketing, MI, SPV, etc.) of data availability status.
+
+ Confirm any temporary pauses (e.g., SPV team processing) are lifted with timing clarity.
+
+ Document any new issues/defects and their mitigation steps.
+
+✅ Backout Planning (if triggered)
+ Revert ADF linked service to legacy Oracle if major failure.
+
+ Manually resume pipelines from fallback.
+
+ Run backout smoke test scripts to confirm legacy source data intact.
+
+ Communicate backout success to all teams and stakeholders.
+
+✅ Checkpoints
+ Post-implementation checkpoint call: Validate system health, test results, defects.
+
+ Backout window checkpoint (only if required).
+
+✅ 4. Closure Activities
+✅ All Teams
+ Final dry run test results shared and signed off.
+
+ Update runbook with learnings and issue logs.
+
+ Submit change tasks closure in ServiceNow.
+
+ Update rollback plan based on lessons from dry run.
+
+ Confirm availability for production cutover readiness.
+
+✅ Change Management
+ Finalize and document dry run outcome.
+
+ Update RFC notes with successful execution and checklist.
+
+ Confirm Go/No-Go criteria for production deployment.
+
+✅ Final Checkpoint
+ Closure checkpoint call: Dry run wrap-up, post-mortem items, Go-Live prep.
+
