@@ -337,41 +337,41 @@ Extension Plan:
 ----------------------------------------------------------------
 
 
-Title:
-Walkthrough Session: Ingestion Pipeline & Data Quality Test Scenarios with Dev/Design Team
+Subject: Mandatory Process for Planned Leaves – No Exceptions
 
-Type:
-Task / Meeting / Technical Review
+Dear Team,
 
-Assignee:
-[Your Name]
+This is a reminder and directive regarding the process for managing planned leaves, as set by both Cognizant and our Client organization. Please read this carefully and ensure full adherence moving forward — no exceptions.
 
-Description:
-Conduct a walkthrough session with the development and design team to present the defined test scenarios for the EventHub-to-Bronze-to-Silver ingestion flow. This includes alignment to data quality standards, identification of edge cases (e.g., schema drift, sequence issues), and discussion of validation logic, expected behavior, and system expectations.
+🚨 Why This Matters:
+We’ve had escalations recently due to last-minute or uninformed leave notifications. These not only impact client planning and delivery timelines but also put unfair workload pressure on peers. While emergencies are fully understood, planned leaves must never be communicated the day before or at the last moment. This creates operational and client trust issues and leads to unnecessary escalations.
 
-The session will also cover how these tests are being mapped into automation, monitored through metrics, and traced via lineage and referential integrity rules.
+Let me be clear: You are absolutely entitled to take your leaves — that’s your earned benefit. The issue arises only when the leave is communicated late or not tracked properly, disrupting timelines and team balance.
 
-Sub-Tasks (Optional):
+✅ Going forward, follow this process without exception:
+1. Cognizant Leave Process:
+Deva will continue sharing the leave tracker for the upcoming months. Update your planned leaves proactively.
 
-Prepare presentation material (visual storyboard, test matrix)
+If you're not currently on the tracker, please ask Deva to include you.
 
-Schedule meeting with team (Dev, QA, Data Engineering, Architects)
+Apply the leave in the Cognizant system in advance and inform the team via email.
 
-Capture feedback and suggestions
+2. Client Leave Process:
+Update the client-side leave tracker at least two weeks in advance.
 
-Identify gaps or new scenarios from team input
+This allows the PM to assess impact, assign temporary coverage, or adjust timelines early.
 
-Update test documentation post-walkthrough
+Set an Out of Office message, block your Outlook calendar, and notify all stakeholders you work closely with.
 
-✅ Definition of Done (DoD):
- Walkthrough meeting conducted with key stakeholders
+Everyone on the client side follows this standard – we expect you to do the same.
 
- Scenarios explained across categories (Bronze, Silver, E2E, Operational, Edge Cases)
+If you’re unable to update the tracker or foresee any constraint, please inform me directly in advance so we can handle it appropriately.
 
- Questions from dev/design team addressed
+Let’s avoid unnecessary escalations and ensure a smoother experience for everyone involved.
 
- Feedback points captured and documented
+ Note:
+Emergency leave is understandable—please notify your reporting manager and the team at the earliest in such cases.
 
- Any new/adjusted scenarios are logged as follow-up tasks or tickets
+For onshore team members, planned leaves typically require replacement planning and client approval at least 2 months in advance.
 
- Final updated version of test scenario document shared
+Thanks for your cooperation,
