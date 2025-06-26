@@ -161,4 +161,177 @@
 31	Execute backout data tests for Oracle source	QA / BICOE	Run basic validations to ensure rollback integrity.
 32	Notify MI users on rollback	BICOE	With estimated new timeline.
 33	Close out backout ServiceNow tasks	PMO	Attach rollback validation proof.
+--------------------------------
+✅ 1. Pre-Implementation Phase
+🔹 BICOE Team
+ Send communication to MI users on planned upgrade and data unavailability window.
+
+ Announce dry run timeline to downstream teams, support, and stakeholders.
+
+ Pause MI pipeline execution (ADF triggers or job disables).
+
+ Deploy all updated ADF pipelines to production.
+
+ Update ADF pipeline configuration to point to Prod Read Replica linked service.
+
+ Ensure access to Prod Read Replica is available for all integration services and teams.
+
+ Ensure Databricks production environment has required secrets, tokens, and libraries in place.
+
+ Verify schema compatibility in production Read Replica.
+
+ Review and finalize smoke test scripts.
+
+ Confirm test data sufficiency in Read Replica for validation cases.
+
+ Validate and document baseline metrics for downstream jobs (pre-upgrade).
+
+🔹 AZ Infra Team
+ Final verification of Read Replica availability.
+
+ Confirm source switch readiness (Guidewire cloud source endpoint available).
+
+ Prepare rollback/restore steps (snapshots or re-pointing non-cloud DB).
+
+🔹 Data Engineering / MI
+ Validate manual and automated validation scripts for key pipelines.
+
+ Review and sign off test case coverage for post-load validation.
+
+ Confirm data lineage documentation is current.
+
+ Schedule checkpoint and validation calls during release window.
+
+🔹 Change & Coordination
+ Ensure CAB approval is in place for dry run.
+
+ Setup communication bridge (MS Teams/Zoom) for release window.
+
+ Assign owners for each checkpoint and validation task.
+
+🚀 2. Implementation Phase
+🔹 AZ Infra Team
+ Initiate source switch from legacy Guidewire (Oracle) to Cloud Guidewire (Read Replica).
+
+ Confirm successful connection via test query.
+
+ Notify BICOE and Data Eng team to trigger data loads.
+
+🔹 BICOE / Data Eng
+ Manually trigger data pipelines to start ingestion from new Read Replica source.
+
+ Monitor ADF pipeline execution, track failure/retries.
+
+ Perform initial health check on ingestion success rate.
+
+ Validate schema match on ingested data tables (sampled check).
+
+🔎 3. Post-Implementation Testing
+🔹 BICOE / Data Eng / QA
+ Run smoke test scripts across PC, CC, BC datasets.
+
+ Validate high-priority dashboards/MI reports reflect updated data.
+
+ Validate at least one complete record from all major entities flows end-to-end.
+
+ Check special character handling, decimals, and date formats.
+
+ Monitor pipeline success for delta loads (if applicable).
+
+ Validate no critical schema drift observed.
+
+ Capture logs and metrics for defect triage.
+
+🔹 Downstream Data Consumers (Marketing, SPV, etc.)
+ Validate impact on Gold views, Silver layer, and key aggregations.
+
+ Confirm no unexpected data breaks or delays.
+
+ Apply temporary pause (if agreed) for SPV or sensitive downstream apps.
+
+📘 4. Post-Testing Activities
+🔹 All Teams
+ Review and sign off test summary reports.
+
+ Capture known issues, accepted risks, and resolved defects.
+
+ Notify stakeholders of successful validation.
+
+ Finalize documentation (validation logs, screenshots, signoffs).
+
+🔁 5. Backout Plan (if required)
+🔹 AZ Infra / BICOE
+ Revert source from Cloud Guidewire to legacy Oracle (non-cloud).
+
+ Re-point ADF pipelines back to legacy DB linked service.
+
+ Deploy previous pipeline versions (via CI/CD rollback or Git version).
+
+ Re-enable MI jobs with Oracle source.
+
+ Inform all stakeholders of rollback.
+
+✅ 6. Post-Backout Plan Testing
+🔹 BICOE / QA / MI
+ Run sanity checks to validate rollback success.
+
+ Compare current data load with pre-dry-run baseline.
+
+ Run sample reports and critical dashboards.
+
+ Confirm recovery of SPV or paused downstream processes.
+
+📦 7. Closure
+🔹 Change/Release Management
+ Close ServiceNow change tasks.
+
+ Archive logs, validation reports, and incident records.
+
+ Conduct a dry run retrospective (lessons learned).
+
+ Confirm readiness for actual go-live upgrade.
+
+📌 Additional Key Inclusions
+Test Summary Signoff:
+
+ Signed by: BICOE, QA Lead, Downstream Consumers
+
+ Summary includes defect list, resolved/accepted risks, test case coverage.
+
+Access Checklist:
+
+ Source Read Replica DB (Prod)
+
+ ADF Prod Workspace
+
+ Databricks Prod Workspace
+
+ Monitoring dashboards (ADF/Log Analytics)
+
+Checkpoints:
+
+ T-2 hrs: Dry run readiness check
+
+ T+0 hrs: Source switch checkpoint
+
+ T+2 hrs: Ingestion completion validation
+
+ T+6 hrs: Downstream validation checkpoint
+
+ T+10 hrs: Final signoff checkpoint
+
+Risks & Mitigation:
+
+Schema drift handling not fully tested in prod – Mitigation: enable alert rules, post-release monitoring
+
+Delta load failure in test env – Mitigation: validate in prod under monitored mode
+
+Read Replica access delay – Mitigation: validate access 24h in advance
+
+Extension Plan:
+
+ If any critical defect or block: 4-hour release window extension pre-approved
+
+ Post 4-hour threshold: backout plan triggers automatically
+
 
