@@ -113,4 +113,52 @@
 
 ✅ Final Checkpoint
  Closure checkpoint call: Dry run wrap-up, post-mortem items, Go-Live prep.
+------------------------------------------
+
+
+✅ Dry Run Runbook: Guidewire Cloud Upgrade in Production
+📌 Pre-Implementation Phase
+#	Task	Owner	Notes
+1	Finalize test summary & sign-off documentation	BICOE	Ensure formal sign-offs for schema, data validation, and manual checks.
+2	Confirm resource availability for all teams	Project PM	BICOE, AZ, GW App team, downstream teams.
+3	Send communication to MI users about upcoming migration	BICOE	Include MI user outage window, impact scope.
+4	Pause all MI pipelines	BICOE / Data Platform	Disable triggers in Azure Data Factory.
+5	Deploy latest code package to production	BICOE	Includes schema alignment, ETL logic, and configuration scripts.
+6	Update ADF linked services to point to PROD Read Replica	BICOE	Update securely using Key Vault references.
+7	Review & confirm smoke test scripts	BICOE + QA	Ensure test coverage includes top-priority tables and known edge cases.
+8	Pre-check: Validate access to PROD Read Replica & Databricks	BICOE / Security	Confirm required service principals and human access are working.
+9	Schedule checkpoint call with all stakeholders	PMO	Define timing before, during, and after release.
+10	Create ServiceNow change ticket & attach runbook	Project PM	Ensure backout steps and risk sections are detailed.
+11	Validate orchestration availability and resource capacity in PROD	Data Platform	Confirm autoscaling, cluster quotas, SQL performance.
+
+🔁 Implementation Phase
+#	Task	Owner	Notes
+12	Confirm pre-migration checkpoint call (T-0)	PMO	All teams on-call and ready.
+13	AZ Team: Switch GW source from non-cloud to cloud	AZ Team	Await explicit handshake from GW App team.
+14	BICOE: Trigger data pipeline manually to pull from PROD Read Replica	BICOE	Monitor for load completion & any lag/delays.
+15	ADF: Enable triggers if required for real-time sync	BICOE	Post verification of initial loads.
+16	Monitor Azure Data Factory for pipeline failures	BICOE / Data Platform	Use alerts & dashboard checks.
+17	Perform smoke tests for top 20 critical tables	BICOE / QA	Validate record counts, recent updates, business logic integrity.
+18	Perform health checks on data platform	Data Platform	Validate cluster health, pipeline stats, ingestion logs.
+19	Validate access to tables in Databricks / MI layer	MI Team	Confirm business users can read required views.
+20	Confirm status on checkpoint call	PMO	Capture initial issues, risks, or delays.
+
+📦 Post-Implementation Phase
+#	Task	Owner	Notes
+21	Notify MI users of resumption post-validation	BICOE	Include validation outcome summary.
+22	Downstream impact analysis	BICOE + SPV/Marketing	Confirm no job failures or missing input for SPV, PowerBI, etc.
+23	Confirm all data feeds are running as expected	Data Platform	Ensure scheduled triggers are enabled.
+24	Risk and deviation log capture	PMO / BICOE	Record unplanned events, manual interventions.
+25	Final checkpoint call (Go / No-Go Decision)	PMO	Ensure all criteria met for closure.
+26	If all validations successful, update ServiceNow task to Complete	Project PM	Attach testing evidence and confirmation emails.
+27	Archive and store runbook, test results, logs	BICOE	For audit & rollback tracking.
+
+🔙 Backout Plan (Only if Needed)
+#	Task	Owner	Notes
+28	Trigger rollback in ADF (switch linked service back to legacy Oracle)	BICOE	Requires rollback scripts pre-deployed.
+29	AZ Team: Rollback source to previous GW instance	AZ Team	Requires GW App rollback readiness.
+30	Disable cloud source pipelines in ADF	BICOE	Avoid partial ingestion.
+31	Execute backout data tests for Oracle source	QA / BICOE	Run basic validations to ensure rollback integrity.
+32	Notify MI users on rollback	BICOE	With estimated new timeline.
+33	Close out backout ServiceNow tasks	PMO	Attach rollback validation proof.
 
