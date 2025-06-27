@@ -1,7 +1,21 @@
-Hi Graham,
+Hi [Team Member's Name],
 
-I’ve updated the checklist for the release activity — could you please take a look and let me know if I’ve missed anything? I haven’t filled in the task duration and timing yet, as that would need to align with the overall release plan. If you get a chance to add that part based on the broader timeline, that would be great.
+We’re getting close to test closure, and there are questions being raised from the signoff side. I need your updates on the below tasks as soon as possible:
 
-Looking forward to your feedback!
+TSR from an automation perspective: I need confirmation on the number of successful scheduled runs.
+
+Review completion with the project team on automation framework readiness against requirements – plan this for Monday so we can get a consistent 3-day result set.
+
+Smoke test readiness for release – please review this with Graham and Suraj and have it finalized before Tuesday.
+
+Test coverage and completion – ensure this is reflected in Jira and aligned with the requirement. This needs to be closed in line with the test plan.
+
+Smoke test readiness for production – complete the review and get the signoff.
+
+Silver automation completion level – where do we stand?
+
+Performance benchmark for automation runs – share the numbers.
+
+Let me know if anything is blocked or needs support, but please treat this as high priority.
 
 Thanks,
