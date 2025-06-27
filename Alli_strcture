@@ -1,21 +1,100 @@
-Hi [Team Member's Name],
+from pyspark.sql import SparkSession, functions as F, types as T
+from datetime import datetime, timedelta
 
-We’re getting close to test closure, and there are questions being raised from the signoff side. I need your updates on the below tasks as soon as possible:
+spark = SparkSession.builder.appName("DDL_Baseline_Comparison").getOrCreate()
 
-TSR from an automation perspective: I need confirmation on the number of successful scheduled runs.
+# File paths
+baseline_file = "/path/to/readreplica_schema_file_2025_04_30_13_10_04.csv"
+exclusion_file = "/path/to/exclusion_list_std001_test.csv"
+output_table = "core_tst_std001.ods.ddl_comparison_results"
+catalog = "core_tst_std001"
+database = "ods"
 
-Review completion with the project team on automation framework readiness against requirements – plan this for Monday so we can get a consistent 3-day result set.
+# Read baseline and exclusion data
+baseline_df = (spark.read.option("header", True)
+               .csv(baseline_file)
+               .withColumnRenamed("table_name", "source_table")
+               .withColumnRenamed("colmun_name", "source_column")
+               .withColumnRenamed("data_type", "source_dtype"))
 
-Smoke test readiness for release – please review this with Graham and Suraj and have it finalized before Tuesday.
+# Normalize data types
+baseline_df = baseline_df.withColumn(
+    "source_dtype", 
+    F.when(F.col("source_dtype").rlike("(?i)^character$"), "string")
+     .otherwise(F.col("source_dtype"))
+)
 
-Test coverage and completion – ensure this is reflected in Jira and aligned with the requirement. This needs to be closed in line with the test plan.
+exclusion_df = spark.read.option("header", True).csv(exclusion_file)
 
-Smoke test readiness for production – complete the review and get the signoff.
+# Filter only tables marked with 'Y'
+target_tables_df = exclusion_df.filter(F.col("excludeindicator") == 'Y')
 
-Silver automation completion level – where do we stand?
+# Initialize schema for output
+schema = T.StructType([
+    T.StructField("id", T.StringType()),
+    T.StructField("tablename", T.StringType()),
+    T.StructField("sourcetablename", T.StringType()),
+    T.StructField("sourcecolmunname", T.StringType()),
+    T.StructField("sourcedatatype", T.StringType()),
+    T.StructField("targettablename", T.StringType()),
+    T.StructField("targetcolmunname", T.StringType()),
+    T.StructField("targetdatatype", T.StringType()),
+    T.StructField("comment", T.StringType()),
+    T.StructField("status", T.StringType()),
+    T.StructField("load_timestamp", T.TimestampType())
+])
 
-Performance benchmark for automation runs – share the numbers.
+results = []
+load_timestamp = datetime.now()
 
-Let me know if anything is blocked or needs support, but please treat this as high priority.
+for row in target_tables_df.collect():
+    table = row["tablenames"]
+    try:
+        source_table_df = baseline_df.filter(F.col("source_table") == table)
+        target_table_df = spark.read.table(f"{catalog}.{database}.{table}")
 
-Thanks,
+        target_schema_df = spark.createDataFrame(
+            [(table, field.name, field.dataType.simpleString()) for field in target_table_df.schema.fields],
+            ["target_table", "target_column", "target_dtype"]
+        )
+
+        joined_df = source_table_df.join(
+            target_schema_df,
+            (source_table_df.source_column == target_schema_df.target_column),
+            how="outer"
+        )
+
+        joined_df = joined_df.withColumn("tablename", F.lit(table))
+        joined_df = joined_df.withColumn("status", 
+            F.when(
+                (F.col("source_column").isNotNull()) &
+                (F.col("target_column").isNotNull()) &
+                (F.col("source_dtype") == F.col("target_dtype")),
+                "All Pass"
+            ).otherwise("Fail")
+        )
+
+        joined_df = joined_df.withColumn("comment",
+            F.when(F.col("source_column").isNull(), "Column added from baseline version")
+             .when(F.col("target_column").isNull(), "Column removed from baseline version")
+             .when(F.col("source_dtype") != F.col("target_dtype"), "Datatype changed from baseline version")
+             .otherwise("All match")
+        )
+
+        joined_df = joined_df.withColumn("id", F.expr("uuid()"))
+        joined_df = joined_df.withColumn("load_timestamp", F.lit(load_timestamp))
+
+        results.append(joined_df.select(schema.fieldNames()))
+    except Exception as e:
+        error_df = spark.createDataFrame([
+            (str(e), table, None, None, None, None, None, None, "Error: " + str(e), "Fail", load_timestamp)
+        ], schema)
+        results.append(error_df)
+
+if results:
+    final_df = results[0].unionByName(*results[1:]) if len(results) > 1 else results[0]
+    final_df.write.mode("append").saveAsTable(output_table)
+
+# Housecleaning logic: delete records older than 7 days
+threshold_time = load_timestamp - timedelta(days=7)
+spark.sql(f"DELETE FROM {output_table} WHERE load_timestamp < TIMESTAMP '{threshold_time.strftime('%Y-%m-%d %H:%M:%S')}'")
