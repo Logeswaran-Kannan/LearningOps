@@ -1,42 +1,7 @@
-Subject: Follow-up & MoM: Ingestion Test Scenario Walkthrough
+Hi Graham,
 
-Hi Team,
+I’ve updated the checklist for the release activity — could you please take a look and let me know if I’ve missed anything? I haven’t filled in the task duration and timing yet, as that would need to align with the overall release plan. If you get a chance to add that part based on the broader timeline, that would be great.
 
-Thanks everyone for joining today’s session.
+Looking forward to your feedback!
 
-Below are the key points and minutes from our walkthrough of the ingestion validation test scenarios:
-
-✅ Agenda Recap:
-Walked through the end-to-end technical test scenarios covering both streaming sources (EventHub) and file-based sources.
-
-Reviewed the Confluence page, which outlines:
-
-Scope and objective of validation
-
-Testing options and assumptions
-
-Success criteria and validation methods
-
-💬 Discussion & Feedback:
-Test coverage was acknowledged as comprehensive and aligned with data quality standards.
-
-Open questions were identified:
-
-Handling of out-of-sequence messages needs further clarification, especially around business expectations.
-
-Need to confirm whether upstream systems (e.g., Athena/Mule) have accessible data stores or logs to support reconciliation.
-
-It was agreed that the current scenarios focus solely on technical ingestion validation. We’ll need to prepare a UAT-oriented Data Scenario Document separately for business-level data flow validation.
-
-A follow-up is required with Nikki to address assumptions and handling rules related to data transformation and enrichment.
-
-📝 Next Steps:
-Capture and publish the open questions in the same Confluence page.
-
-Assign ownership to follow up with relevant teams for resolution.
-
-Start drafting the Data Scenario Document for UAT.
-
-Schedule a clarification session with Nikki on data handling.
-
-Let me know if you’d like to add anything I’ve missed.
+Thanks,
