@@ -92,7 +92,9 @@ for row in target_tables_df.collect():
         results.append(error_df)
 
 if results:
-    final_df = results[0].unionByName(*results[1:]) if len(results) > 1 else results[0]
+    final_df = results[0]
+    for df in results[1:]:
+        final_df = final_df.unionByName(df)
     final_df.write.mode("append").saveAsTable(output_table)
 
 # Housecleaning logic: delete records older than 7 days
