@@ -67,6 +67,20 @@ schema = StructType([
 # Create final result DataFrame
 result_df = spark.createDataFrame(results, schema=schema)
 
+# Create output table if it does not exist
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (
+        id STRING,
+        run_id STRING,
+        table_name STRING,
+        ods_stg_copy_count INT,
+        ods_count INT,
+        ods_views_count INT,
+        timestamp TIMESTAMP
+    )
+    USING DELTA
+""")
+
 # Cleanup records older than 7 days from output table
 seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 spark.sql(f"DELETE FROM {OUTPUT_TABLE} WHERE timestamp < DATE('{seven_days_ago}')")
