@@ -1,8 +1,8 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit, when, concat_ws, monotonically_increasing_id, row_number
-from pyspark.sql.window import Window
+from pyspark.sql.functions import col, lit, when, concat_ws, monotonically_increasing_id
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
 from datetime import datetime, timedelta
+import uuid
 
 # Initialize Spark session
 spark = SparkSession.builder.appName("CountCheckValidation").getOrCreate()
@@ -31,6 +31,9 @@ now = datetime.now()
 start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
 end_time = start_time + timedelta(hours=23, minutes=59, seconds=59)
 
+# Generate unique run_id for this batch
+run_id_value = uuid.uuid4().int >> 96  # short int-style UUID
+
 # Helper function to apply prefix mapping for ods_views tables
 def get_view_table_name(base_name):
     for prefix, view_prefix in prefix_mapping.items():
@@ -51,11 +54,12 @@ for table in table_list:
             table_counts[db] = count
         except Exception as e:
             table_counts[db] = None
-    results.append((table, table_counts.get("ods_stg_copy"),
+    results.append((run_id_value, table, table_counts.get("ods_stg_copy"),
                     table_counts.get("ods"), table_counts.get("ods_views"), now))
 
 # Define schema explicitly
 schema = StructType([
+    StructField("run_id", IntegerType(), False),
     StructField("table_name", StringType(), False),
     StructField("ods_stg_copy_count", IntegerType(), True),
     StructField("ods_count", IntegerType(), True),
@@ -66,16 +70,14 @@ schema = StructType([
 # Create final result DataFrame
 df = spark.createDataFrame(results, schema=schema)
 
-# Add sequential run_id
-window_spec = Window.orderBy("table_name")
-df = df.withColumn("run_id", row_number().over(window_spec))
-
 # Add comment column based on rules
 df = df.withColumn("comment", concat_ws(" | ",
     when((col("ods_stg_copy_count") == 0) & (col("ods_count") == 0) & (col("ods_views_count") == 0), "no data loaded").otherwise(None),
     when(col("ods_stg_copy_count").isNull() & col("ods_count").isNull() & col("ods_views_count").isNull(), "table not created").otherwise(None),
     when((col("ods_stg_copy_count") > 0) & ((col("ods_count") == 0) | (col("ods_views_count") == 0)), "data load issue").otherwise(None),
-    when(((col("ods_count") > 0) | (col("ods_views_count") > 0)) & (col("ods_stg_copy_count").isNull() | (col("ods_stg_copy_count") == 0)), "stage copy load issue").otherwise(None)
+    when(((col("ods_count") > 0) | (col("ods_views_count") > 0)) & (col("ods_stg_copy_count").isNull() | (col("ods_stg_copy_count") == 0)), "stage copy load issue").otherwise(None),
+    when((col("ods_stg_copy_count") > 0) & (col("ods_count") > 0) & (col("ods_views_count") > 0), "data loaded").otherwise(None),
+    when(col("ods_stg_copy_count").isNull() & (col("ods_count") == 0) & (col("ods_views_count") == 0), "data not loaded").otherwise(None)
 ))
 
 # Create output table if it does not exist
