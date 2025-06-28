@@ -1,102 +1,109 @@
-from pyspark.sql import SparkSession, functions as F, types as T
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
 from datetime import datetime, timedelta
 
-spark = SparkSession.builder.appName("DDL_Baseline_Comparison").getOrCreate()
+spark = SparkSession.builder.getOrCreate()
 
-# File paths
-baseline_file = "/path/to/readreplica_schema_file_2025_04_30_13_10_04.csv"
-exclusion_file = "/path/to/exclusion_list_std001_test.csv"
-output_table = "core_tst_std001.ods.ddl_comparison_results"
-catalog = "core_tst_std001"
-database = "ods"
+# Paths to the files
+schema_file_path = "/dbfs/mnt/yourmount/readreplica_schema_file_2025_04_30_13_10_04.csv"
+exclusion_file_path = "/dbfs/mnt/yourmount/exclusion_list_std001_test.csv"
 
-# Read baseline and exclusion data
-baseline_df = (spark.read.option("header", True)
-               .csv(baseline_file)
-               .withColumnRenamed("table_name", "source_table")
-               .withColumnRenamed("colmun_name", "source_column")
-               .withColumnRenamed("data_type", "source_dtype"))
-
-# Normalize data types
-baseline_df = baseline_df.withColumn(
-    "source_dtype", 
-    F.when(F.col("source_dtype").rlike("(?i)^character$"), "string")
-     .otherwise(F.col("source_dtype"))
+# Read schema file and normalize data types
+schema_df = (
+    spark.read.option("header", True).csv(schema_file_path)
+    .withColumn("data_type", when(lower(col("data_type")).like("%char%"), "string").otherwise(col("data_type")))
+    .withColumn("table_name", 
+                when(col("table_name").startswith("p"), concat(lit("policycenter_std001_"), col("table_name")))
+                .when(col("table_name").startswith("b"), concat(lit("billingcenter_std001_"), col("table_name")))
+                .when(col("table_name").startswith("c"), concat(lit("claimcenter_std001_"), col("table_name")))
+                .otherwise(col("table_name")))
 )
 
-exclusion_df = spark.read.option("header", True).csv(exclusion_file)
+# Read exclusion list
+exclusion_df = (
+    spark.read.option("header", True).csv(exclusion_file_path)
+    .filter(col("excludeindicator") == "Y")
+)
 
-# Filter only tables marked with 'Y'
-target_tables_df = exclusion_df.filter(F.col("excludeindicator") == 'Y')
-
-# Initialize schema for output
-schema = T.StructType([
-    T.StructField("id", T.StringType()),
-    T.StructField("tablename", T.StringType()),
-    T.StructField("sourcetablename", T.StringType()),
-    T.StructField("sourcecolmunname", T.StringType()),
-    T.StructField("sourcedatatype", T.StringType()),
-    T.StructField("targettablename", T.StringType()),
-    T.StructField("targetcolmunname", T.StringType()),
-    T.StructField("targetdatatype", T.StringType()),
-    T.StructField("comment", T.StringType()),
-    T.StructField("status", T.StringType()),
-    T.StructField("load_timestamp", T.TimestampType())
-])
+# Filter relevant tables
+tables_to_check = [row['tablename'] for row in exclusion_df.select("tablename").collect()]
 
 results = []
-load_timestamp = datetime.now()
+current_timestamp = datetime.now()
 
-for row in target_tables_df.collect():
-    table = row["tablenames"]
+for table in tables_to_check:
     try:
-        source_table_df = baseline_df.filter(F.col("source_table") == table)
-        target_table_df = spark.read.table(f"{catalog}.{database}.{table}")
+        baseline = schema_df.filter(col("table_name") == table)
 
-        target_schema_df = spark.createDataFrame(
-            [(table, field.name, field.dataType.simpleString()) for field in target_table_df.schema.fields],
-            ["target_table", "target_column", "target_dtype"]
-        )
+        try:
+            target = spark.table(f"core_tst_std001.ods.{table}")
+            target_schema = target.schema
+            target_details = [(table, f.name.lower(), f.dataType.simpleString().lower()) for f in target_schema]
+            target_df = spark.createDataFrame(target_details, ["table_name", "column_name", "data_type"])
+        except:
+            for row in baseline.collect():
+                results.append((table, row['table_name'], row['column_name'], row['data_type'], None, None, None, "table missing in target ODS Layer", "Fail", current_timestamp))
+            continue
 
-        joined_df = source_table_df.join(
-            target_schema_df,
-            (source_table_df.source_column == target_schema_df.target_column),
-            how="outer"
-        )
+        baseline_df = baseline.selectExpr("table_name as source_table_name", "column_name as source_column_name", "data_type as source_data_type")
+        target_df = target_df.selectExpr("table_name as target_table_name", "column_name as target_column_name", "data_type as target_data_type")
 
-        joined_df = joined_df.withColumn("tablename", F.lit(table))
-        joined_df = joined_df.withColumn("status", 
-            F.when(
-                (F.col("source_column").isNotNull()) &
-                (F.col("target_column").isNotNull()) &
-                (F.col("source_dtype") == F.col("target_dtype")),
-                "All Pass"
-            ).otherwise("Fail")
-        )
+        joined = baseline_df.join(target_df, baseline_df.source_column_name == target_df.target_column_name, how="fullouter")
 
-        joined_df = joined_df.withColumn("comment",
-            F.when(F.col("source_column").isNull(), "Column added from baseline version")
-             .when(F.col("target_column").isNull(), "Column removed from baseline version")
-             .when(F.col("source_dtype") != F.col("target_dtype"), "Datatype changed from baseline version")
-             .otherwise("All match")
-        )
+        for row in joined.collect():
+            source_col = row['source_column_name']
+            target_col = row['target_column_name']
+            comment = ""
+            status = "All Pass"
 
-        joined_df = joined_df.withColumn("id", F.expr("uuid()"))
-        joined_df = joined_df.withColumn("load_timestamp", F.lit(load_timestamp))
+            if row['source_column_name'] is None:
+                comment = "Column added from baseline version"
+                status = "Fail"
+            elif row['target_column_name'] is None:
+                comment = "Column removed from baseline ddl version"
+                status = "Fail"
+            elif row['source_data_type'] != row['target_data_type']:
+                comment = "Datatype changed from baseline version"
+                status = "Fail"
 
-        results.append(joined_df.select(schema.fieldNames()))
+            results.append((table, row['source_table_name'], source_col, row['source_data_type'],
+                            row['target_table_name'], target_col, row['target_data_type'], comment, status, current_timestamp))
+
     except Exception as e:
-        error_df = spark.createDataFrame([
-            (str(e), table, None, None, None, None, None, None, "Error: " + str(e), "Fail", load_timestamp)
-        ], schema)
-        results.append(error_df)
+        results.append((table, None, None, None, None, None, None, str(e), "Fail", current_timestamp))
 
-if results:
-    final_df = results[0]
-    for df in results[1:]:
-        final_df = final_df.unionByName(df)
-    final_df.write.mode("append").saveAsTable(output_table)
+# Create output DataFrame
+output_schema = ["tablename", "sourcetablename", "sourcecolmunname", "sourcedatatype", 
+                 "targettablename", "targetcolmunname", "targetdatatype", 
+                 "comment", "status", "load_timestamp"]
 
-# Housecleaning logic: delete records older than 7 days
-threshold_time = load_timestamp - timedelta(days=7)
-spark.sql(f"DELETE FROM {output_table} WHERE load_timestamp < TIMESTAMP '{threshold_time.strftime('%Y-%m-%d %H:%M:%S')}'")
+output_df = spark.createDataFrame(results, output_schema).withColumn("id", monotonically_increasing_id())
+
+# Output table location
+output_table = "core_tst_sys9.default.ddl_comparison_results"
+
+# Create the table if it doesn't exist
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {output_table} (
+        id BIGINT,
+        tablename STRING,
+        sourcetablename STRING,
+        sourcecolmunname STRING,
+        sourcedatatype STRING,
+        targettablename STRING,
+        targetcolmunname STRING,
+        targetdatatype STRING,
+        comment STRING,
+        status STRING,
+        load_timestamp TIMESTAMP
+    )
+    USING DELTA
+""")
+
+# Delete old records (>7 days)
+spark.sql(f"DELETE FROM {output_table} WHERE load_timestamp < TIMESTAMP '{(current_timestamp - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')}'")
+
+# Append new results
+output_df.select("id", *output_schema).write.format("delta").mode("append").saveAsTable(output_table)
+
+print("DDL comparison completed and results stored.")
