@@ -1,5 +1,6 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit, current_timestamp, expr
+from pyspark.sql.functions import col, lit
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
 from datetime import datetime, timedelta
 import uuid
 
@@ -50,11 +51,21 @@ for table in table_list:
         except Exception as e:
             table_counts[db] = None  # log error if needed
     results.append((str(uuid.uuid4()), run_id, table, table_counts.get("ods_stg_copy"),
-                    table_counts.get("ods"), table_counts.get("ods_views"), current_timestamp()))
+                    table_counts.get("ods"), table_counts.get("ods_views"), datetime.now()))
+
+# Define schema explicitly
+schema = StructType([
+    StructField("id", StringType(), False),
+    StructField("run_id", StringType(), False),
+    StructField("table_name", StringType(), False),
+    StructField("ods_stg_copy_count", IntegerType(), True),
+    StructField("ods_count", IntegerType(), True),
+    StructField("ods_views_count", IntegerType(), True),
+    StructField("timestamp", TimestampType(), False)
+])
 
 # Create final result DataFrame
-result_df = spark.createDataFrame(results, ["id", "run_id", "table_name", "ods_stg_copy_count",
-                                            "ods_count", "ods_views_count", "timestamp"])
+result_df = spark.createDataFrame(results, schema=schema)
 
 # Cleanup records older than 7 days from output table
 seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
