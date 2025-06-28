@@ -11,15 +11,16 @@ exclusion_file_path = "/dbfs/mnt/yourmount/exclusion_list_std001_test.csv"
 # Generate a unique run_id based on timestamp
 run_id = int(datetime.now().strftime("%Y%m%d%H%M%S"))
 
-# Read schema file and normalize data types
+# Read schema file and normalize table names
+schema_df_raw = spark.read.option("header", True).csv(schema_file_path)
+
 schema_df = (
-    spark.read.option("header", True).csv(schema_file_path)
-    .withColumn("data_type", when(lower(col("data_type")).like("%char%"), "string").otherwise(col("data_type")))
+    schema_df_raw
     .withColumn("table_name", 
-                when(col("table_name").startswith("p"), concat(lit("policycenter_std001_"), col("table_name")))
-                .when(col("table_name").startswith("b"), concat(lit("billingcenter_std001_"), col("table_name")))
-                .when(col("table_name").startswith("c"), concat(lit("claimcenter_std001_"), col("table_name")))
-                .otherwise(col("table_name")))
+        when(col("table_name").startswith("p"), concat(lit("policycenter_std001_"), col("table_name")))
+        .when(col("table_name").startswith("b"), concat(lit("billingcenter_std001_"), col("table_name")))
+        .when(col("table_name").startswith("c"), concat(lit("claimcenter_std001_"), col("table_name")))
+        .otherwise(col("table_name")))
 )
 
 # Read exclusion list
@@ -75,12 +76,13 @@ for table in tables_to_check:
     except Exception as e:
         results.append((run_id, table, None, None, None, None, None, None, str(e), "Fail", current_timestamp))
 
-# Create output DataFrame
+# Define output schema explicitly with strings to avoid type inference issues
 output_schema = ["run_id", "tablename", "sourcetablename", "sourcecolmunname", "sourcedatatype", 
                  "targettablename", "targetcolmunname", "targetdatatype", 
                  "comment", "status", "load_timestamp"]
 
-output_df = spark.createDataFrame(results, output_schema)
+output_rdd = spark.sparkContext.parallelize(results)
+output_df = spark.createDataFrame(output_rdd, schema=output_schema)
 
 # Output table location
 output_table = "core_tst_sys9.default.ddl_comparison_results"
