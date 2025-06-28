@@ -8,6 +8,9 @@ spark = SparkSession.builder.getOrCreate()
 schema_file_path = "/dbfs/mnt/yourmount/readreplica_schema_file_2025_04_30_13_10_04.csv"
 exclusion_file_path = "/dbfs/mnt/yourmount/exclusion_list_std001_test.csv"
 
+# Generate a unique run_id based on timestamp
+run_id = int(datetime.now().strftime("%Y%m%d%H%M%S"))
+
 # Read schema file and normalize data types
 schema_df = (
     spark.read.option("header", True).csv(schema_file_path)
@@ -42,7 +45,7 @@ for table in tables_to_check:
             target_df = spark.createDataFrame(target_details, ["table_name", "column_name", "data_type"])
         except:
             for row in baseline.collect():
-                results.append((table, row['table_name'], row['column_name'], row['data_type'], None, None, None, "table missing in target ODS Layer", "Fail", current_timestamp))
+                results.append((run_id, table, row['table_name'], row['column_name'], row['data_type'], None, None, None, "table missing in target ODS Layer", "Fail", current_timestamp))
             continue
 
         baseline_df = baseline.selectExpr("table_name as source_table_name", "column_name as source_column_name", "data_type as source_data_type")
@@ -66,18 +69,18 @@ for table in tables_to_check:
                 comment = "Datatype changed from baseline version"
                 status = "Fail"
 
-            results.append((table, row['source_table_name'], source_col, row['source_data_type'],
+            results.append((run_id, table, row['source_table_name'], source_col, row['source_data_type'],
                             row['target_table_name'], target_col, row['target_data_type'], comment, status, current_timestamp))
 
     except Exception as e:
-        results.append((table, None, None, None, None, None, None, str(e), "Fail", current_timestamp))
+        results.append((run_id, table, None, None, None, None, None, None, str(e), "Fail", current_timestamp))
 
 # Create output DataFrame
-output_schema = ["tablename", "sourcetablename", "sourcecolmunname", "sourcedatatype", 
+output_schema = ["run_id", "tablename", "sourcetablename", "sourcecolmunname", "sourcedatatype", 
                  "targettablename", "targetcolmunname", "targetdatatype", 
                  "comment", "status", "load_timestamp"]
 
-output_df = spark.createDataFrame(results, output_schema).withColumn("id", monotonically_increasing_id())
+output_df = spark.createDataFrame(results, output_schema)
 
 # Output table location
 output_table = "core_tst_sys9.default.ddl_comparison_results"
@@ -85,7 +88,7 @@ output_table = "core_tst_sys9.default.ddl_comparison_results"
 # Create the table if it doesn't exist
 spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {output_table} (
-        id BIGINT,
+        run_id BIGINT,
         tablename STRING,
         sourcetablename STRING,
         sourcecolmunname STRING,
@@ -104,6 +107,6 @@ spark.sql(f"""
 spark.sql(f"DELETE FROM {output_table} WHERE load_timestamp < TIMESTAMP '{(current_timestamp - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')}'")
 
 # Append new results
-output_df.select("id", *output_schema).write.format("delta").mode("append").saveAsTable(output_table)
+output_df.write.format("delta").mode("append").saveAsTable(output_table)
 
 print("DDL comparison completed and results stored.")
