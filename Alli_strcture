@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 from pyspark.sql.functions import *
 from datetime import datetime, timedelta
 
@@ -10,47 +11,40 @@ exclusion_file_path = "/dbfs/mnt/yourmount/exclusion_list_std001_test.csv"
 
 # Generate a unique run_id based on timestamp
 run_id = int(datetime.now().strftime("%Y%m%d%H%M%S"))
+current_timestamp = datetime.now()
 
-# Read schema file and normalize table names
-schema_df_raw = spark.read.option("header", True).csv(schema_file_path)
+# Read baseline schema CSV
+schema_df = spark.read.option("header", True).csv(schema_file_path)
 
-schema_df = (
-    schema_df_raw
-    .withColumn("table_name", 
-        when(col("table_name").startswith("p"), concat(lit("policycenter_std001_"), col("table_name")))
-        .when(col("table_name").startswith("b"), concat(lit("billingcenter_std001_"), col("table_name")))
-        .when(col("table_name").startswith("c"), concat(lit("claimcenter_std001_"), col("table_name")))
-        .otherwise(col("table_name")))
-)
-
-# Read exclusion list
+# Read and filter exclusion list
 exclusion_df = (
     spark.read.option("header", True).csv(exclusion_file_path)
     .filter(col("excludeindicator") == "Y")
 )
 
-# Filter relevant tables
-tables_to_check = [row['tablename'] for row in exclusion_df.select("tablename").collect()]
+# Extract list of target tables
+tables_to_check = [row['tablename'] for row in exclusion_df.select("tablename").distinct().collect()]
 
 results = []
-current_timestamp = datetime.now()
 
 for table in tables_to_check:
     try:
-        baseline = schema_df.filter(col("table_name") == table)
+        baseline = schema_df.filter(col("table_name") == table).cache()
 
         try:
             target = spark.table(f"core_tst_std001.ods.{table}")
             target_schema = target.schema
-            target_details = [(table, f.name.lower(), f.dataType.simpleString().lower()) for f in target_schema]
-            target_df = spark.createDataFrame(target_details, ["table_name", "column_name", "data_type"])
+            target_rows = [(table, f.name.lower(), f.dataType.simpleString().lower()) for f in target_schema]
+            target_df = spark.createDataFrame(target_rows, ["table_name", "column_name", "data_type"]).cache()
         except:
             for row in baseline.collect():
-                results.append((run_id, table, row['table_name'], row['column_name'], row['data_type'], None, None, None, "table missing in target ODS Layer", "Fail", current_timestamp))
+                results.append((str(run_id), table, row['table_name'], row['column_name'], row['data_type'], None, None, None, "table missing in target ODS Layer", "Fail", current_timestamp))
             continue
 
-        baseline_df = baseline.selectExpr("table_name as source_table_name", "column_name as source_column_name", "data_type as source_data_type")
-        target_df = target_df.selectExpr("table_name as target_table_name", "column_name as target_column_name", "data_type as target_data_type")
+        baseline_df = baseline.selectExpr(
+            "table_name as source_table_name", "column_name as source_column_name", "data_type as source_data_type")
+        target_df = target_df.selectExpr(
+            "table_name as target_table_name", "column_name as target_column_name", "data_type as target_data_type")
 
         joined = baseline_df.join(target_df, baseline_df.source_column_name == target_df.target_column_name, how="fullouter")
 
@@ -60,37 +54,46 @@ for table in tables_to_check:
             comment = ""
             status = "All Pass"
 
-            if row['source_column_name'] is None:
+            if source_col is None:
                 comment = "Column added from baseline version"
                 status = "Fail"
-            elif row['target_column_name'] is None:
+            elif target_col is None:
                 comment = "Column removed from baseline ddl version"
                 status = "Fail"
             elif row['source_data_type'] != row['target_data_type']:
                 comment = "Datatype changed from baseline version"
                 status = "Fail"
 
-            results.append((run_id, table, row['source_table_name'], source_col, row['source_data_type'],
+            results.append((str(run_id), table, row['source_table_name'], source_col, row['source_data_type'],
                             row['target_table_name'], target_col, row['target_data_type'], comment, status, current_timestamp))
-
+    
     except Exception as e:
-        results.append((run_id, table, None, None, None, None, None, None, str(e), "Fail", current_timestamp))
+        results.append((str(run_id), table, None, None, None, None, None, None, str(e), "Fail", current_timestamp))
 
-# Define output schema explicitly with strings to avoid type inference issues
-output_schema = ["run_id", "tablename", "sourcetablename", "sourcecolmunname", "sourcedatatype", 
-                 "targettablename", "targetcolmunname", "targetdatatype", 
-                 "comment", "status", "load_timestamp"]
+# Define schema explicitly
+output_schema = StructType([
+    StructField("run_id", StringType(), True),
+    StructField("tablename", StringType(), True),
+    StructField("sourcetablename", StringType(), True),
+    StructField("sourcecolmunname", StringType(), True),
+    StructField("sourcedatatype", StringType(), True),
+    StructField("targettablename", StringType(), True),
+    StructField("targetcolmunname", StringType(), True),
+    StructField("targetdatatype", StringType(), True),
+    StructField("comment", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("load_timestamp", TimestampType(), True)
+])
 
-output_rdd = spark.sparkContext.parallelize(results)
-output_df = spark.createDataFrame(output_rdd, schema=output_schema)
+output_df = spark.createDataFrame(results, schema=output_schema)
 
-# Output table location
+# Output table
 output_table = "core_tst_sys9.default.ddl_comparison_results"
 
 # Create the table if it doesn't exist
 spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {output_table} (
-        run_id BIGINT,
+        run_id STRING,
         tablename STRING,
         sourcetablename STRING,
         sourcecolmunname STRING,
@@ -105,10 +108,10 @@ spark.sql(f"""
     USING DELTA
 """)
 
-# Delete old records (>7 days)
+# Cleanup records older than 7 days
 spark.sql(f"DELETE FROM {output_table} WHERE load_timestamp < TIMESTAMP '{(current_timestamp - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')}'")
 
-# Append new results
+# Append current run
 output_df.write.format("delta").mode("append").saveAsTable(output_table)
 
 print("DDL comparison completed and results stored.")
