@@ -14,11 +14,28 @@ run_id = int(datetime.now().strftime("%Y%m%d%H%M%S"))
 current_timestamp = datetime.now()
 
 # Read baseline schema CSV and normalize values to lowercase
+schema_df_raw = spark.read.option("header", True).csv(schema_file_path)
+
+# Apply data type normalization
 schema_df = (
-    spark.read.option("header", True).csv(schema_file_path)
-    .withColumn("table_name", lower(col("table_name")))
+    schema_df_raw
+    .withColumn("table_name", lower(
+        when(col("table_name").startswith("p"), concat(lit("policycenter_std001_"), col("table_name")))
+        .when(col("table_name").startswith("b"), concat(lit("billingcenter_std001_"), col("table_name")))
+        .when(col("table_name").startswith("c"), concat(lit("claimcenter_std001_"), col("table_name")))
+        .otherwise(col("table_name"))))
     .withColumn("column_name", lower(col("column_name")))
-    .withColumn("data_type", lower(col("data_type")))
+    .withColumn("data_type", lower(
+        when(col("data_type").isin("character", "character varying", "text", "boolean", "user-defined"), "string")
+        .when(col("data_type") == "timestamp without time zone", "timestamp")
+        .when(col("data_type") == "timestamp with time zone", "timestamp")
+        .when((col("data_type") == "numeric") & (col("numeric_precision") > 0), 
+              concat(lit("decimal("), col("numeric_precision"), lit(","), col("numeric_scale"), lit(")")))
+        .when(col("data_type") == "bytea", "binary")
+        .when(col("data_type") == "integer", "int")
+        .when(col("data_type") == "bigint", "bigint")
+        .otherwise(col("data_type")))
+    )
 )
 
 # Read and filter exclusion list
@@ -37,12 +54,20 @@ for table in tables_to_check:
     try:
         baseline = schema_df.filter(col("table_name") == table).cache()
 
+        target_exists = True
         try:
             target = spark.table(f"core_tst_std001.ods.{table}")
             target_schema = target.schema
             target_rows = [(table, f.name.lower(), f.dataType.simpleString().lower()) for f in target_schema]
             target_df = spark.createDataFrame(target_rows, ["table_name", "column_name", "data_type"]).cache()
         except:
+            target_exists = False
+
+        if baseline.count() == 0 and not target_exists:
+            results.append((str(run_id), table, None, None, None, None, None, None, "table not created in ods layer", "Fail", current_timestamp))
+            continue
+
+        if not target_exists:
             for row in baseline.collect():
                 results.append((str(run_id), table, row['table_name'], row['column_name'], row['data_type'], None, None, None, "table missing in target ODS Layer", "Fail", current_timestamp))
             continue
@@ -72,7 +97,7 @@ for table in tables_to_check:
 
             results.append((str(run_id), table, row['source_table_name'], source_col, row['source_data_type'],
                             row['target_table_name'], target_col, row['target_data_type'], comment, status, current_timestamp))
-    
+
     except Exception as e:
         results.append((str(run_id), table, None, None, None, None, None, None, str(e), "Fail", current_timestamp))
 
