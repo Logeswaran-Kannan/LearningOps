@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit
+from pyspark.sql.functions import col, lit, when, concat_ws
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
 from datetime import datetime, timedelta
 import uuid
@@ -49,7 +49,7 @@ for table in table_list:
             count = df.filter(col("AZURE_LOAD_DATE") == current_date).count()
             table_counts[db] = count
         except Exception as e:
-            table_counts[db] = None  # log error if needed
+            table_counts[db] = None
     results.append((str(uuid.uuid4()), run_id, table, table_counts.get("ods_stg_copy"),
                     table_counts.get("ods"), table_counts.get("ods_views"), datetime.now()))
 
@@ -65,7 +65,15 @@ schema = StructType([
 ])
 
 # Create final result DataFrame
-result_df = spark.createDataFrame(results, schema=schema)
+df = spark.createDataFrame(results, schema=schema)
+
+# Add comment column based on rules
+df = df.withColumn("comment", concat_ws(" | ",
+    when((col("ods_stg_copy_count") == 0) & (col("ods_count") == 0) & (col("ods_views_count") == 0), "no data loaded").otherwise(None),
+    when(col("ods_stg_copy_count").isNull() & col("ods_count").isNull() & col("ods_views_count").isNull(), "table not created").otherwise(None),
+    when((col("ods_stg_copy_count") > 0) & ((col("ods_count") == 0) | (col("ods_views_count") == 0)), "data load issue").otherwise(None),
+    when(((col("ods_count") > 0) | (col("ods_views_count") > 0)) & (col("ods_stg_copy_count").isNull() | (col("ods_stg_copy_count") == 0)), "stage copy load issue").otherwise(None)
+))
 
 # Create output table if it does not exist
 spark.sql(f"""
@@ -76,7 +84,8 @@ spark.sql(f"""
         ods_stg_copy_count INT,
         ods_count INT,
         ods_views_count INT,
-        timestamp TIMESTAMP
+        timestamp TIMESTAMP,
+        comment STRING
     )
     USING DELTA
 """)
@@ -86,4 +95,4 @@ seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 spark.sql(f"DELETE FROM {OUTPUT_TABLE} WHERE timestamp < DATE('{seven_days_ago}')")
 
 # Write new results to output table
-result_df.write.mode("append").saveAsTable(OUTPUT_TABLE)
+df.write.mode("append").saveAsTable(OUTPUT_TABLE)
