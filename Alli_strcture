@@ -13,13 +13,19 @@ exclusion_file_path = "/dbfs/mnt/yourmount/exclusion_list_std001_test.csv"
 run_id = int(datetime.now().strftime("%Y%m%d%H%M%S"))
 current_timestamp = datetime.now()
 
-# Read baseline schema CSV
-schema_df = spark.read.option("header", True).csv(schema_file_path)
+# Read baseline schema CSV and normalize values to lowercase
+schema_df = (
+    spark.read.option("header", True).csv(schema_file_path)
+    .withColumn("table_name", lower(col("table_name")))
+    .withColumn("column_name", lower(col("column_name")))
+    .withColumn("data_type", lower(col("data_type")))
+)
 
 # Read and filter exclusion list
 exclusion_df = (
     spark.read.option("header", True).csv(exclusion_file_path)
     .filter(col("excludeindicator") == "Y")
+    .withColumn("tablename", lower(col("tablename")))
 )
 
 # Extract list of target tables
@@ -46,7 +52,7 @@ for table in tables_to_check:
         target_df = target_df.selectExpr(
             "table_name as target_table_name", "column_name as target_column_name", "data_type as target_data_type")
 
-        joined = baseline_df.join(target_df, baseline_df.source_column_name == target_df.target_column_name, how="fullouter")
+        joined = baseline_df.join(target_df, lower(baseline_df.source_column_name) == lower(target_df.target_column_name), how="fullouter")
 
         for row in joined.collect():
             source_col = row['source_column_name']
