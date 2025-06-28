@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, lit, when, concat_ws, monotonically_increasing_id
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, LongType
 from datetime import datetime, timedelta
 import uuid
 
@@ -59,7 +59,7 @@ for table in table_list:
 
 # Define schema explicitly
 schema = StructType([
-    StructField("run_id", IntegerType(), False),
+    StructField("run_id", LongType(), False),
     StructField("table_name", StringType(), False),
     StructField("ods_stg_copy_count", IntegerType(), True),
     StructField("ods_count", IntegerType(), True),
@@ -83,7 +83,7 @@ df = df.withColumn("comment", concat_ws(" | ",
 # Create output table if it does not exist
 spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (
-        run_id INT,
+        run_id BIGINT,
         table_name STRING,
         ods_stg_copy_count INT,
         ods_count INT,
