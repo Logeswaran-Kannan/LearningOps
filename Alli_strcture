@@ -1,21 +1,53 @@
-1. Document Purpose
-This Test Summary Report (TSR) presents a consolidated overview of the test execution activities, outcomes, and quality assessment conducted as part of Phase 1 of the Guidewire Data Migration project. This phase specifically focuses on the Read Replica-based ingestion validation for migrating data from the legacy Oracle source systems to the Azure Data Lake platform.
+4. Test Objectives
+The primary objective of this testing phase was to validate the ingestion pipelines and target data consistency after migrating from the legacy on-premises Oracle system to the Read Replica PostgreSQL-based ingestion into Azure Data Lake’s Bronze layer, as part of the Guidewire cloud migration Phase 1 release.
 
-The purpose of this report is to:
+This included a comprehensive validation strategy encompassing automated testing, manual data verification, and reconciliation checks, to ensure readiness for production deployment.
 
-Summarize the validation activities completed for the Read Replica ingestion flow.
+Key Test Objectives:
+✅ Schema Validation
+Validate that the table structures (column names, data types, constraints) in the Read Replica ingestion mirror those of the legacy Oracle schema. A total of 692 active tables identified by the BICOE team were scoped for validation.
 
-Provide key findings, defects, risks, and acceptance criteria.
+✅ Data Load Validation
+Verify correctness and completeness of initial full loads and subsequent one-day delta loads into the Bronze layer:
 
-Present a formal recommendation regarding the readiness of the Read Replica ingestion process for production release.
+Row counts, duplicate checks, NULL value patterns, and SCD2 field behaviors were evaluated.
 
-2. Introduction
-The Guidewire Data Migration project is transitioning the existing data ingestion process from on-premises Oracle databases to a cloud-native architecture leveraging Azure Data Lake, Databricks, and Read Replica PostgreSQL sources. The full migration strategy involves two key phases:
+Detected discrepancies such as Boolean type mismatches and decimal precision issues were flagged and tracked as defects.
 
-Phase 1: Interim solution using Read Replica as the ingestion source.
+✅ Manual Validation Through Guidewire UI
+Execute manual business flow validation by entering identical data in the legacy Oracle-backed and cloud-based Guidewire environments:
 
-Phase 2 (Future): Final ingestion using Cloud Data Access (CDA) files from Amazon S3.
+Evaluate if any data pattern deviation or anomalies appear post-ingestion.
 
-This report pertains only to Phase 1, which focuses exclusively on testing and validating the ingestion and transformation of Guidewire data — specifically from PolicyCenter, BillingCenter, and ClaimCenter — via the Read Replica into the Bronze Layer of the Azure Data Lake.
+Helps ensure business-critical field accuracy from end-user perspective.
 
-Testing was conducted using a Databricks-based automation framework, integrated with Azure DevOps for pipeline execution and defect tracking. Manual data checks and three-way reconciliation were also performed in collaboration with BICOE and the business QA team.
+✅ Error Handling Validation
+Simulate pipeline interruption scenarios (e.g., cluster disconnect, job failure) and observe recovery:
+
+Test whether data ingestion processes fail gracefully, resume reliably, and maintain data integrity upon rerun.
+
+✅ Three-Way Reconciliation (FAH Report - STD009)
+Perform manual three-way reconciliation between legacy Oracle, Read Replica source, and Azure Lake layers for select high-priority datasets, such as the FAH report.
+
+✅ Risk-Based Testing for Silver Layer (PolicyCenter Only)
+Automate and execute targeted validations for Silver-layer PolicyCenter tables:
+
+Includes transformed output for a subset of key datasets only.
+
+BillingCenter and ClaimCenter Silver-layer validations were excluded due to missing source dependencies and incomplete sync across related domains.
+
+Automation scripts for Silver were deployed, but test execution failures remain under investigation.
+
+✅ High-Level Performance Benchmarking
+Conduct basic ingestion timing comparison using one-day delta loads:
+
+ADF vs. Databricks execution time comparison captured in logs (non-benchmarked).
+
+✅ Defect Management and Triage
+Identify ingestion errors, metadata mismatches, or formatting issues.
+
+Defects logged, tracked, and retested in scope.
+
+Downstream impact noted (e.g., SPV processing dependencies handled with business stakeholder alignment).
+
+
