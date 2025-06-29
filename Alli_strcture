@@ -50,4 +50,111 @@ Defects logged, tracked, and retested in scope.
 
 Downstream impact noted (e.g., SPV processing dependencies handled with business stakeholder alignment).
 
+-----------------------------
+
+4. Test Objectives
+The core objective of the testing effort was to validate the successful ingestion of Guidewire data from the Read Replica (PostgreSQL) source into the Azure Data Lake Bronze Layer, ensuring data consistency with the legacy Oracle setup. The goal was to ensure that the new ingestion mechanism reliably replaces the legacy ingestion process from Oracle without loss of data quality, structure, or usability.
+
+Key Test Objectives:
+✅ Schema Validation
+
+Ensure table structures, including column names, data types, and constraints in Read Replica, are aligned with the Oracle source for all 692 in-scope tables approved by BICOE.
+
+Validate missing, additional, or altered columns to identify structural anomalies early.
+
+✅ Data Load Validation
+
+Perform initial bulk load validation from Read Replica into STG → ODS → ODS_VIEW.
+
+Validate daily delta ingestion (1-day load) to confirm incremental load behaviors.
+
+Conduct row count checks, duplicate detection, null checks, and data value consistency validations.
+
+✅ Manual Scenario-Based Validation
+
+Execute selected functional scenarios in legacy (Oracle) and cloud Guidewire (Read Replica-fed) environments.
+
+Input identical data across both platforms and verify if any data representation or storage pattern differences are introduced post-ingestion.
+
+This helps validate end-to-end real-time behavior and compatibility of the migrated system.
+
+✅ Error Handling & Pipeline Interruption Recovery
+
+Test pipeline behavior when interrupted (failures, transient errors, cluster restarts) and ensure resume capabilities without data corruption.
+
+Validate checkpoint and recovery configurations for robust data ingestion lifecycle handling.
+
+✅ Risk-Based Testing – Silver Layer
+
+Conduct risk-based testing for Silver Layer (PolicyCenter only) due to partial availability.
+
+Focus areas included transformation logic, reference joins, and binary column comparison.
+
+Note: Automation execution for Silver Layer completed, but some test failures are under investigation.
+
+BillingCenter and ClaimCenter were excluded from Silver validation due to incomplete environment setup and missing upstream data.
+
+✅ Performance Validation
+
+Capture high-level performance statistics comparing ADF (Oracle) vs. Databricks (Read Replica) execution timelines for one-day delta loads, as a benchmark check.
+
+No detailed stress testing or tuning was performed in this phase.
+
+✅ Three-Way Reconciliation Support – FAH Report (STD009)
+
+Support functional teams in executing three-way reconciliation between:
+
+Legacy Oracle
+
+Read Replica
+
+Final output in Azure (ODS/ODS_VIEW)
+
+Specifically validated for the FAH report pipeline.
+
+✅ Validation Automation
+
+Orchestrated automated scripts via Databricks Workflows.
+
+Workflows included schema checks, row count comparisons, delta validations, and transformation coverage for Bronze and select Silver tables.
+
+Scripts were source-controlled in Azure DevOps and executed as per defined CI/CD process.
+
+--------------------------------------------
+
+6. Test Execution Coverage and Methods
+6.1 Coverage Summary
+The testing for Guidewire Upgrade Phase 1 – Read Replica Release was executed with a hybrid approach combining automation and manual testing to ensure accuracy, completeness, and resiliency of data pipelines across environments.
+
+Test Type	Coverage	Notes
+Automated Testing	Schema validation, row count checks, duplication, referential integrity, field-level match, and SCD2 logic.	Executed in Databricks via orchestrated workflows, across Bronze and selected Silver tables.
+Manual Testing	Keyed same test data in SYS9 (Legacy) and STD001 (Cloud) environments to observe differences.	Verified for ClaimCenter, PolicyCenter, and BillingCenter.
+Delta Load Validation	One-day delta ingestion load into Bronze layer.	Used to benchmark ADF vs. Databricks performance.
+Error Handling Checks	Simulated pipeline interruption and tested system’s ability to resume from failure points.	Validated using test orchestration in STD001.
+Performance Benchmark	High-level load time comparison between ADF and Databricks on delta loads.	Findings recorded for optimization input.
+Three-Way Reconciliation	Executed for FAH Report (STD009) comparing Read Replica, Bronze, and Silver data.	Reconciliation successfully validated.
+
+6.2 Silver Layer Testing (PolicyCenter Only)
+Scope: Risk-based validation for transformation logic on PolicyCenter Silver tables only.
+
+Status: Automation test setup and execution began but encountered failures. Root cause analysis pending.
+
+BillingCenter and ClaimCenter were excluded due to incomplete Silver environment setup caused by missing dependent source data.
+
+🟨 Note: All Silver layer validations (except FAH three-way reconciliation) were executed in STD001 (cloud) and cross-referenced with SYS9 (legacy) to verify consistency.
+
+6.3 Out-of-Scope Test Items
+CDA validation (deferred for a future release).
+
+Complete Silver validation for BillingCenter and ClaimCenter.
+
+Full business logic testing for Gold and outbound layers.
+
+Downstream analytics or UI-based validation.
+
+Let me know if you'd like this added directly into the Test Summary Report (TSR) Word document or also converted into presentation content.
+
+
+
+
 
