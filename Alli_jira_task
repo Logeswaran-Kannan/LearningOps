@@ -1,1 +1,3 @@
-I think the 1 AM run on Saturday will be our final one from the BICOE side. Ideally, once the last expected delta from Oracle is completed, I’ll go ahead and kick off the benchmark script. That way, even if it takes a bit longer to run, it should still comfortably finish before the Saturday morning 7-ish 
+so the Friday 1 AM run (which actually picks up Thursday's application data from Guidewire) would be the last run from the BICOE side, right? Then the source switch happens on Friday. So, does Friday’s application data get picked up in the Saturday 1 AM run? Or do we only load that on Sunday at 1 AM?
+
+Sorry, just trying to understand — in production, do the jobs usually run at 1 AM to capture the previous day’s data?
