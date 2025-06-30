@@ -1,50 +1,98 @@
 from pyspark.sql import SparkSession
-from datetime import datetime
+from pyspark.sql.functions import col, lit, when, concat_ws
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, LongType
+from datetime import datetime, timedelta
+import uuid
 
 # Initialize Spark session
-spark = SparkSession.builder.getOrCreate()
+spark = SparkSession.builder.appName("CountCheckValidation").getOrCreate()
 
-# Catalog and databases to check
-catalog_name = "core_tst"
-databases_to_check = [
-    "ods",
-    "ods_views",
-    "ods_stg_copy",
-    "curated_edw",
-    "curated_edw_insert_views",
-    "curated_idw"
-]
+# Constants
+CATALOG_NAME = "core_tst_std001"
+EXCLUSION_LIST_PATH = "/mnt/data/exclusion_list_std001_test.csv"
+OUTPUT_TABLE = "core_tst_std001.audit_table_count_check"
 
-# Output list
+# Load exclusion list CSV
+exclusion_df = spark.read.option("header", True).csv(EXCLUSION_LIST_PATH)
+filtered_tables_df = exclusion_df.filter(col("excludeindicator") == 'Y')
+
+table_list = [row["tablename"] for row in filtered_tables_df.collect()]
+
+# Databases to compare
+dbs = ["ods_stg_copy", "ods", "ods_views"]
+prefix_mapping = {
+    "policycenter_std001_": "vw_policycenter_std001_current_",
+    "billingcenter_std001_": "vw_billingcenter_std001_current_",
+    "claimcenter_std001_": "vw_claimcenter_std001_current_"
+}
+
+# Generate unique run_id for this batch
+now = datetime.now()
+run_id_value = uuid.uuid4().int >> 96
+
+# Helper function to apply prefix mapping for ods_views tables
+def get_view_table_name(base_name):
+    for prefix, view_prefix in prefix_mapping.items():
+        if base_name.startswith(prefix):
+            return base_name.replace(prefix, view_prefix)
+    return base_name
+
+# Collect total counts (no date filtering)
 results = []
+for table in table_list:
+    table_counts = {}
+    for db in dbs:
+        tbl_name = get_view_table_name(table) if db == "ods_views" else table
+        full_table_name = f"{CATALOG_NAME}.{db}.{tbl_name}"
+        try:
+            df = spark.read.table(full_table_name)
+            count = df.count()
+            table_counts[db] = count
+        except Exception:
+            table_counts[db] = None
+    results.append((run_id_value, table, table_counts.get("ods_stg_copy"),
+                    table_counts.get("ods"), table_counts.get("ods_views"), now))
 
-# Current timestamp
-timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# Define schema explicitly
+schema = StructType([
+    StructField("run_id", LongType(), False),
+    StructField("table_name", StringType(), False),
+    StructField("ods_stg_copy_count", IntegerType(), True),
+    StructField("ods_count", IntegerType(), True),
+    StructField("ods_views_count", IntegerType(), True),
+    StructField("timestamp", TimestampType(), False)
+])
 
-for db in databases_to_check:
-    print(f"Checking database: {db}")
-    try:
-        tables = spark.catalog.listTables(f"{catalog_name}.{db}")
-        for table in tables:
-            table_name = table.name
-            full_table_name = f"{catalog_name}.{db}.{table_name}"
-            try:
-                count = spark.table(full_table_name).count()
-                print(f"  Table: {table_name} - Count: {count}")
-                results.append((db, table_name, count, timestamp))
-            except Exception as e:
-                print(f"  Failed to count {full_table_name}: {e}")
-                results.append((db, table_name, -1, timestamp))  # -1 indicates error
-    except Exception as e:
-        print(f"Failed to list tables in database {db}: {e}")
+# Create final result DataFrame
+df = spark.createDataFrame(results, schema=schema)
 
-# Convert to DataFrame
-results_df = spark.createDataFrame(results, ["database", "table_name", "row_count", "count_time"])
+# Add comment column based on rules
+df = df.withColumn("comment", concat_ws(" | ",
+    when((col("ods_stg_copy_count") == 0) & (col("ods_count") == 0) & (col("ods_views_count") == 0), "no data loaded").otherwise(None),
+    when(col("ods_stg_copy_count").isNull() & col("ods_count").isNull() & col("ods_views_count").isNull(), "table not created").otherwise(None),
+    when((col("ods_stg_copy_count") > 0) & ((col("ods_count") == 0) | (col("ods_views_count") == 0)), "data load issue").otherwise(None),
+    when(((col("ods_count") > 0) | (col("ods_views_count") > 0)) & (col("ods_stg_copy_count").isNull() | (col("ods_stg_copy_count") == 0)), "stage copy load issue").otherwise(None),
+    when((col("ods_stg_copy_count") > 0) & (col("ods_count") > 0) & (col("ods_views_count") > 0), "data loaded").otherwise(None),
+    when(col("ods_stg_copy_count").isNull() & (col("ods_count") == 0) & (col("ods_views_count") == 0), "data not loaded").otherwise(None)
+))
 
-# Define output table location
-output_table = "core_tst_sys9.default.release_validation_counts"
+# Create output table if it does not exist
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (
+        run_id BIGINT,
+        table_name STRING,
+        ods_stg_copy_count INT,
+        ods_count INT,
+        ods_views_count INT,
+        timestamp TIMESTAMP,
+        comment STRING
+    )
+    USING DELTA
+""")
 
-# Write the results to the output table (overwrite or append as needed)
-results_df.write.mode("append").saveAsTable(output_table)
+# Cleanup records older than 7 days from output table
+seven_days_ago = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+spark.sql(f"DELETE FROM {OUTPUT_TABLE} WHERE timestamp < DATE('{seven_days_ago}')")
 
-print(f"Counts stored successfully in {output_table}")
+# Write new results to output table
+df.write.mode("append").saveAsTable(OUTPUT_TABLE)
