@@ -1,53 +1,50 @@
--- Step 1: Aggregate count of loaded tables per domain, per run_id, per date
--- Assuming 'data loaded' means successful load in `comment`
+from pyspark.sql import SparkSession
+from datetime import datetime
 
-WITH loaded_tables AS (
-  SELECT
-    run_id,
-    domain,
-    DATE(timestamp) AS load_date,
-    COUNT(*) AS tables_loaded
-  FROM core_tst_sys9.default.audit_table_count_check
-  WHERE LOWER(comment) = 'data loaded'
-  GROUP BY run_id, domain, DATE(timestamp)
-),
+# Initialize Spark session
+spark = SparkSession.builder.getOrCreate()
 
--- Step 2: Total tables checked per domain per run_id per day
-all_tables AS (
-  SELECT
-    run_id,
-    domain,
-    DATE(timestamp) AS load_date,
-    COUNT(*) AS total_tables
-  FROM core_tst_sys9.default.audit_table_count_check
-  GROUP BY run_id, domain, DATE(timestamp)
-),
+# Catalog and databases to check
+catalog_name = "core_tst"
+databases_to_check = [
+    "ods",
+    "ods_views",
+    "ods_stg_copy",
+    "curated_edw",
+    "curated_edw_insert_views",
+    "curated_idw"
+]
 
--- Step 3: Combine and calculate not loaded count
-load_summary AS (
-  SELECT
-    a.run_id,
-    a.domain,
-    a.load_date,
-    COALESCE(l.tables_loaded, 0) AS tables_loaded,
-    a.total_tables,
-    a.total_tables - COALESCE(l.tables_loaded, 0) AS not_loaded
-  FROM all_tables a
-  LEFT JOIN loaded_tables l
-    ON a.run_id = l.run_id AND a.domain = l.domain AND a.load_date = l.load_date
-)
+# Output list
+results = []
 
--- Step 4: Final alert generation with detailed load status
-SELECT
-  run_id,
-  domain,
-  load_date,
-  tables_loaded,
-  total_tables,
-  not_loaded,
-  CASE 
-    WHEN not_loaded >= 100 THEN CONCAT('ALERT: Only ', tables_loaded, ' of ', total_tables, ' tables loaded')
-    ELSE CONCAT('OK: ', tables_loaded, ' of ', total_tables, ' tables loaded')
-  END AS load_status
-FROM load_summary
-ORDER BY load_date DESC, run_id, domain;
+# Current timestamp
+timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+for db in databases_to_check:
+    print(f"Checking database: {db}")
+    try:
+        tables = spark.catalog.listTables(f"{catalog_name}.{db}")
+        for table in tables:
+            table_name = table.name
+            full_table_name = f"{catalog_name}.{db}.{table_name}"
+            try:
+                count = spark.table(full_table_name).count()
+                print(f"  Table: {table_name} - Count: {count}")
+                results.append((db, table_name, count, timestamp))
+            except Exception as e:
+                print(f"  Failed to count {full_table_name}: {e}")
+                results.append((db, table_name, -1, timestamp))  # -1 indicates error
+    except Exception as e:
+        print(f"Failed to list tables in database {db}: {e}")
+
+# Convert to DataFrame
+results_df = spark.createDataFrame(results, ["database", "table_name", "row_count", "count_time"])
+
+# Define output table location
+output_table = "core_tst_sys9.default.release_validation_counts"
+
+# Write the results to the output table (overwrite or append as needed)
+results_df.write.mode("append").saveAsTable(output_table)
+
+print(f"Counts stored successfully in {output_table}")
