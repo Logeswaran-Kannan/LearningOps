@@ -37,7 +37,7 @@ load_summary AS (
     ON a.run_id = l.run_id AND a.domain = l.domain AND a.load_date = l.load_date
 )
 
--- Step 4: Final alert generation
+-- Step 4: Final alert generation with detailed load status
 SELECT
   run_id,
   domain,
@@ -45,6 +45,9 @@ SELECT
   tables_loaded,
   total_tables,
   not_loaded,
-  CASE WHEN not_loaded >= 100 THEN 'ALERT: Data load issue' ELSE 'OK' END AS load_status
+  CASE 
+    WHEN not_loaded >= 100 THEN CONCAT('ALERT: Only ', tables_loaded, ' of ', total_tables, ' tables loaded')
+    ELSE CONCAT('OK: ', tables_loaded, ' of ', total_tables, ' tables loaded')
+  END AS load_status
 FROM load_summary
 ORDER BY load_date DESC, run_id, domain;
