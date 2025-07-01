@@ -1,9 +1,12 @@
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'your_table_name';
+
+
+
 SELECT
-    t.relname AS table_name,
     i.relname AS index_name,
-    a.attname AS column_name,
-    ix.indisunique AS is_unique,
-    ix.indisprimary AS is_primary
+    a.attname AS column_name
 FROM
     pg_class t,
     pg_class i,
@@ -14,4 +17,4 @@ WHERE
     AND i.oid = ix.indexrelid
     AND a.attrelid = t.oid
     AND a.attnum = ANY(ix.indkey)
-    AND t.relname = 'your_table_name';  -- replace with your table name
+    AND t.relname = 'your_table_name';
