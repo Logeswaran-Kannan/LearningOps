@@ -3,9 +3,17 @@ from datetime import datetime
 import re
 import uuid
 import pandas as pd
+import os
+
+# Define the file path
+html_file_path = "/Workspace/Core_bld/data_quality_load_report.html"
+
+# Verify file exists
+if not os.path.exists(html_file_path):
+    raise FileNotFoundError(f"HTML report not found at: {html_file_path}")
 
 # Load the HTML report
-with open("/dbfs/mnt/<your_volume_path>/data_quality_load_report.html", "r") as f:
+with open(html_file_path, "r") as f:
     soup = BeautifulSoup(f, "html.parser")
 
 # Extract report generated time
