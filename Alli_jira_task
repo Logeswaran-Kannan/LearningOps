@@ -1,3 +1,17 @@
-So just to confirm — the Friday 1 AM run from our side (BICOE) actually picks up Thursday's application data from Guidewire, right? That’s the last load we handle before the source team switches things over on Friday. Then once they complete the handover on Saturday, we manually load Friday’s data, and Sunday kicks off the delta load as scheduled.
-
-Quick question — in production, do the jobs usually run at 1 AM to capture the previous day’s data? Just wanted to make sure I got that part right.
+SELECT
+    t.relname AS table_name,
+    i.relname AS index_name,
+    a.attname AS column_name,
+    ix.indisunique AS is_unique,
+    ix.indisprimary AS is_primary
+FROM
+    pg_class t,
+    pg_class i,
+    pg_index ix,
+    pg_attribute a
+WHERE
+    t.oid = ix.indrelid
+    AND i.oid = ix.indexrelid
+    AND a.attrelid = t.oid
+    AND a.attnum = ANY(ix.indkey)
+    AND t.relname = 'your_table_name';  -- replace with your table name
