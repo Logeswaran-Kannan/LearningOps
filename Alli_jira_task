@@ -1,4 +1,4 @@
-# Final fully-corrected script for Databricks Teams notification with bar charts
+# Final fully-corrected script for Databricks Teams notification with bar charts using pandas for row access
 
 import requests
 import json
@@ -19,7 +19,7 @@ data_status_df = spark.sql(f"""
     FROM core_tst_sys9.default.audit_table_count_check
     WHERE run_id = '{latest_run_id}'
     GROUP BY domain
-""")
+""").toPandas()
 
 # 2. Schema Deviation Result
 latest_ts = spark.sql("SELECT MAX(load_timestamp) AS latest_ts FROM core_tst_sys9.default.ddl_comparison_results").collect()[0]["latest_ts"]
@@ -29,7 +29,7 @@ schema_deviation_df = spark.sql(f"""
     FROM core_tst_sys9.default.ddl_comparison_results
     WHERE load_timestamp = '{latest_ts}'
     GROUP BY status
-""")
+""").toPandas()
 
 # 3. ODS Data Validation
 ods_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.result_table").collect()[0]["latest_run_id"]
@@ -44,7 +44,7 @@ ods_validation_df = spark.sql(f"""
         WHERE run_id = '{ods_run_id}'
     )
     GROUP BY processed_comment
-""")
+""").toPandas()
 
 # 4. ODS_VIEW Data Validation
 ods_view_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.result_view_table").collect()[0]["latest_run_id"]
@@ -59,7 +59,7 @@ ods_view_validation_df = spark.sql(f"""
         WHERE run_id = '{ods_view_run_id}'
     )
     GROUP BY processed_comment
-""")
+""").toPandas()
 
 # Helper function to create bar charts
 
@@ -75,7 +75,7 @@ html = "<h2>📊 ETL Health Dashboard</h2>"
 
 # Section 1: Data Load Status
 html += "<h3>Data Load Status</h3>"
-for row in data_status_df.collect():
+for _, row in data_status_df.iterrows():
     total = row["total_tables"]
     segments = [
         ("#4CAF50", row["stg_loaded"]),
@@ -86,23 +86,29 @@ for row in data_status_df.collect():
 
 # Section 2: Schema Deviation
 html += "<h3>Schema Deviation</h3>"
-schema_rows = schema_deviation_df.collect()
-schema_total = sum([r["count"] for r in schema_rows])
-schema_segments = [("#4CAF50" if r["status"] == "All Pass" else "#F44336", r["count"]) for r in schema_rows]
+schema_total = schema_deviation_df["count"].sum()
+schema_segments = [
+    ("#4CAF50" if row["status"] == "All Pass" else "#F44336", row["count"])
+    for _, row in schema_deviation_df.iterrows()
+]
 html += bar_chart_row("Schema Deviation", schema_total, schema_segments)
 
 # Section 3: ODS Validation
 html += "<h3>ODS Validation</h3>"
-ods_rows = ods_validation_df.collect()
-ods_total = sum([r["count"] for r in ods_rows])
-ods_segments = [("#4CAF50" if "passed" in r["processed_comment"].lower() else "#F44336", r["count"]) for r in ods_rows]
+ods_total = ods_validation_df["count"].sum()
+ods_segments = [
+    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"])
+    for _, row in ods_validation_df.iterrows()
+]
 html += bar_chart_row("ODS Checks", ods_total, ods_segments)
 
 # Section 4: ODS_VIEW Validation
 html += "<h3>ODS_VIEW Validation</h3>"
-ods_view_rows = ods_view_validation_df.collect()
-ods_view_total = sum([r["count"] for r in ods_view_rows])
-ods_view_segments = [("#4CAF50" if "passed" in r["processed_comment"].lower() else "#F44336", r["count"]) for r in ods_view_rows]
+ods_view_total = ods_view_validation_df["count"].sum()
+ods_view_segments = [
+    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"])
+    for _, row in ods_view_validation_df.iterrows()
+]
 html += bar_chart_row("ODS_VIEW Checks", ods_view_total, ods_view_segments)
 
 # Final Teams message
