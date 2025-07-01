@@ -1,1 +1,100 @@
-Just to confirm—for the curated EDW and IDW runs planned as part of the DR setup, the correct schema should be under the core_tst catalog. Also, the curated_edw and its views should be pointing to the Read Replica ODS version, not the SYS9 version—am I right?
+# Databricks Notebook
+# Description: Teams notification script using webhook for data quality checks with HTML-based message card
+
+import requests
+import json
+from pyspark.sql.functions import col, max, sum
+
+# Teams Webhook URL
+webhook_url = "<YOUR_TEAMS_WEBHOOK_URL>"
+
+# 1. Data Load Status Notification
+df1 = spark.sql("SELECT * FROM core_tst_sys9.default.audit_table_count_check")
+latest_run_id_df1 = df1.agg({"run_id": "max"}).collect()[0][0]
+df1_filtered = df1.filter(col("run_id") == latest_run_id_df1)
+
+grouped_df1 = df1_filtered.groupBy("domain").agg(
+    sum((col("ods_stg_copy_count") > 0).cast("int")).alias("ods_stg_copy_loaded"),
+    sum((col("ods_count") > 0).cast("int")).alias("ods_loaded"),
+    sum((col("ods_views_count") > 0).cast("int")).alias("ods_views_loaded")
+)
+load_status = grouped_df1.collect()
+
+# 2. Schema Deviation Notification
+df2 = spark.sql("SELECT * FROM core_tst_sys9.default.ddl_comparison_results")
+latest_timestamp_df2 = df2.agg({"load_timestamp": "max"}).collect()[0][0]
+df2_filtered = df2.filter(col("load_timestamp") == latest_timestamp_df2)
+grouped_df2 = df2_filtered.groupBy("targettablename", "status").count()
+schema_status = grouped_df2.collect()
+
+# 3. ODS Data Validation Notification
+df3 = spark.sql("""
+    SELECT *, CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' 
+    THEN 'TABLE_OR_VIEW_NOT_FOUND' ELSE comment END AS processed_comment 
+    FROM core_tst_sys9.default.result_table
+""")
+latest_run_id_df3 = df3.agg({"run_id": "max"}).collect()[0][0]
+df3_filtered = df3.filter(col("run_id") == latest_run_id_df3)
+grouped_df3 = df3_filtered.groupBy("processed_comment").count()
+ods_validation = grouped_df3.collect()
+
+# 4. ODS View Data Validation Notification
+df4 = spark.sql("""
+    SELECT *, CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' 
+    THEN 'TABLE_OR_VIEW_NOT_FOUND' ELSE comment END AS processed_comment 
+    FROM core_tst_sys9.default.result_view_table
+""")
+latest_run_id_df4 = df4.agg({"run_id": "max"}).collect()[0][0]
+df4_filtered = df4.filter(col("run_id") == latest_run_id_df4)
+grouped_df4 = df4_filtered.groupBy("processed_comment").count()
+ods_view_validation = grouped_df4.collect()
+
+# Build HTML content with progress bars
+def build_html_section(title, rows, label_key, value_key):
+    html = f"<h3>{title}</h3><table border='1' style='border-collapse: collapse; width: 100%'>"
+    html += "<tr><th>Name</th><th>Progress</th></tr>"
+    for row in rows:
+        label = row[label_key]
+        value = row[value_key]
+        percent = min(int(value) * 10, 100)
+        html += f"<tr><td>{label}</td><td><div style='width: 100%; background-color: #eee;'><div style='width: {percent}%; background-color: #4CAF50; text-align: center; color: white;'>{value}</div></div></td></tr>"
+    html += "</table>"
+    return html
+
+html_content = "<h2>Data Quality Report</h2>"
+
+# Section 1
+for row in load_status:
+    html_content += f"<h3>Data Load Status - Domain: {row['domain']}</h3>"
+    html_content += build_html_section("ODS STG Copy Count", [{"name": "ODS STG", "value": row['ods_stg_copy_loaded']}], "name", "value")
+    html_content += build_html_section("ODS Count", [{"name": "ODS", "value": row['ods_loaded']}], "name", "value")
+    html_content += build_html_section("ODS Views Count", [{"name": "Views", "value": row['ods_views_loaded']}], "name", "value")
+
+# Section 2
+html_content += build_html_section("Schema Deviation (Status by Table)", 
+    [{"name": row["targettablename"], "value": row["count"]} for row in schema_status], "name", "value")
+
+# Section 3
+html_content += build_html_section("ODS Validation", 
+    [{"name": row["processed_comment"], "value": row["count"]} for row in ods_validation], "name", "value")
+
+# Section 4
+html_content += build_html_section("ODS View Validation", 
+    [{"name": row["processed_comment"], "value": row["count"]} for row in ods_view_validation], "name", "value")
+
+# Message payload
+message = {
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "summary": "Data Quality Report",
+    "themeColor": "0076D7",
+    "text": html_content
+}
+
+# Send message to Teams
+response = requests.post(webhook_url, headers={"Content-Type": "application/json"}, data=json.dumps(message))
+
+if response.status_code == 200:
+    print("Notification sent to Microsoft Teams")
+else:
+    print("Failed to send notification", response.status_code, response.text)
