@@ -4,7 +4,7 @@
 import requests
 import json
 from datetime import datetime
-from pyspark.sql.functions import col, countDistinct, max as spark_max
+from pyspark.sql.functions import col, count, max as spark_max
 
 # TEAMS WEBHOOK URL
 webhook_url = "<Your-Teams-Webhook-URL>"
@@ -18,6 +18,7 @@ latest_run_id = latest_run_id_df.collect()[0]["latest_run_id"]
 
 data_status_df = spark.sql(f"""
     SELECT domain,
+           COUNT(*) AS total_tables,
            SUM(CASE WHEN ods_stg_copy_count > 0 THEN 1 ELSE 0 END) AS stg_loaded,
            SUM(CASE WHEN ods_count > 0 THEN 1 ELSE 0 END) AS ods_loaded,
            SUM(CASE WHEN ods_views_count > 0 THEN 1 ELSE 0 END) AS view_loaded
@@ -78,55 +79,33 @@ ods_view_validation_df = spark.sql(f"""
     GROUP BY processed_comment
 """)
 
-# Create message card
+# Construct HTML
+def df_to_html_table(title, df, headers):
+    rows = "".join([f"<tr>{''.join([f'<td>{row[h]}</td>' for h in headers])}</tr>" for row in df.collect()])
+    table = f"""
+    <h3 style='color:#0076D7'>📊 {title}</h3>
+    <table border='1' style='border-collapse:collapse;width:100%;text-align:left;'>
+        <tr>{''.join([f'<th>{h}</th>' for h in headers])}</tr>
+        {rows}
+    </table>
+    """
+    return table
+
+html_sections = ""
+html_sections += df_to_html_table("Data Load Status", data_status_df, ["domain", "total_tables", "stg_loaded", "ods_loaded", "view_loaded"])
+html_sections += df_to_html_table("Schema Deviation", schema_deviation_df, ["status", "count"])
+html_sections += df_to_html_table("ODS Data Validation", ods_validation_df, ["processed_comment", "count"])
+html_sections += df_to_html_table("ODS_VIEW Data Validation", ods_view_validation_df, ["processed_comment", "count"])
+
+# Create message card with HTML content
 card = {
     "@type": "MessageCard",
     "@context": "http://schema.org/extensions",
-    "summary": "Daily ETL Health Check Report",
+    "summary": "ETL Health Report",
     "themeColor": "0076D7",
-    "title": "ETL Health Status - {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-    "sections": []
+    "title": "📥 ETL Health Status - {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+    "text": html_sections
 }
-
-# Section 1: Data Load Status
-section1 = {
-    "activityTitle": "📊 Data Load Status",
-    "facts": [
-        {"name": row['domain'], "value": f"Stg: {row['stg_loaded']}, ODS: {row['ods_loaded']}, View: {row['view_loaded']}"}
-        for row in data_status_df.collect()
-    ]
-}
-card['sections'].append(section1)
-
-# Section 2: Schema Deviation
-section2 = {
-    "activityTitle": "🧬 Schema Deviation Status",
-    "facts": [
-        {"name": row['status'], "value": str(row['count'])}
-        for row in schema_deviation_df.collect()
-    ]
-}
-card['sections'].append(section2)
-
-# Section 3: ODS Data Validation
-section3 = {
-    "activityTitle": "🔍 ODS Data Validation",
-    "facts": [
-        {"name": row['processed_comment'], "value": str(row['count'])}
-        for row in ods_validation_df.collect()
-    ]
-}
-card['sections'].append(section3)
-
-# Section 4: ODS View Validation
-section4 = {
-    "activityTitle": "🔎 ODS_VIEW Data Validation",
-    "facts": [
-        {"name": row['processed_comment'], "value": str(row['count'])}
-        for row in ods_view_validation_df.collect()
-    ]
-}
-card['sections'].append(section4)
 
 # Post to Teams
 response = requests.post(webhook_url, headers={"Content-Type": "application/json"}, data=json.dumps(card))
