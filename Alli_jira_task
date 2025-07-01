@@ -1,90 +1,137 @@
+# Databricks notebook or job script for Teams Notification
+# Make sure to install the required library: requests
+
 import requests
 import json
-from pyspark.sql.functions import col, max as spark_max, countDistinct
+from datetime import datetime
+from pyspark.sql.functions import col, countDistinct, max as spark_max
 
-# Webhook URL for Teams
-webhook_url = "<YOUR_TEAMS_WEBHOOK_URL>"
+# TEAMS WEBHOOK URL
+webhook_url = "<Your-Teams-Webhook-URL>"
 
 # 1. Data Load Status
-latest_run_id = df_audit_table_count_check.select(spark_max("run_id")).first()[0]
-data_load_df = (
-    df_audit_table_count_check.filter(col("run_id") == latest_run_id)
-    .withColumn("valid_load", ((col("ods_stg_copy_count") > 0) & (col("ods_count") > 0) & (col("ods_views_count") > 0)).cast("int"))
-    .groupBy("domain")
-    .agg({"table_name": "count"})
-    .withColumnRenamed("count(table_name)", "table_count")
-)
+latest_run_id_df = spark.sql("""
+    SELECT MAX(run_id) AS latest_run_id 
+    FROM core_tst_sys9.default.audit_table_count_check
+""")
+latest_run_id = latest_run_id_df.collect()[0]["latest_run_id"]
+
+data_status_df = spark.sql(f"""
+    SELECT domain,
+           SUM(CASE WHEN ods_stg_copy_count > 0 THEN 1 ELSE 0 END) AS stg_loaded,
+           SUM(CASE WHEN ods_count > 0 THEN 1 ELSE 0 END) AS ods_loaded,
+           SUM(CASE WHEN ods_views_count > 0 THEN 1 ELSE 0 END) AS view_loaded
+    FROM core_tst_sys9.default.audit_table_count_check
+    WHERE run_id = '{latest_run_id}'
+    GROUP BY domain
+""")
 
 # 2. Schema Deviation Result
-latest_schema_ts = df_ddl_comparison_results.select(spark_max("load_timestamp")).first()[0]
-schema_dev_df = (
-    df_ddl_comparison_results.filter(col("load_timestamp") == latest_schema_ts)
-    .groupBy("status")
-    .agg(countDistinct("targettablename").alias("table_count"))
-)
+latest_ts_df = spark.sql("""
+    SELECT MAX(load_timestamp) AS latest_ts 
+    FROM core_tst_sys9.default.ddl_comparison_results
+""")
+latest_ts = latest_ts_df.collect()[0]["latest_ts"]
+
+schema_deviation_df = spark.sql(f"""
+    SELECT status, COUNT(DISTINCT targettablename) AS count
+    FROM core_tst_sys9.default.ddl_comparison_results
+    WHERE load_timestamp = '{latest_ts}'
+    GROUP BY status
+""")
 
 # 3. ODS Data Validation
-latest_result_run_id = df_result_table.select(spark_max("run_id")).first()[0]
-ods_validation_df = (
-    df_result_table.filter(col("run_id") == latest_result_run_id)
-    .groupBy("processed_comment")
-    .agg(countDistinct("run_id").alias("table_count"))
-)
+ods_validation_run_df = spark.sql("""
+    SELECT MAX(run_id) AS latest_run_id 
+    FROM core_tst_sys9.default.result_table
+""")
+ods_run_id = ods_validation_run_df.collect()[0]["latest_run_id"]
 
-# 4. ODS View Data Validation
-latest_view_run_id = df_result_view_table.select(spark_max("run_id")).first()[0]
-ods_view_validation_df = (
-    df_result_view_table.filter(col("run_id") == latest_view_run_id)
-    .groupBy("processed_comment")
-    .agg(countDistinct("run_id").alias("table_count"))
-)
+ods_validation_df = spark.sql(f"""
+    SELECT processed_comment, COUNT(*) AS count
+    FROM (
+        SELECT *, 
+               CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' THEN 'TABLE_OR_VIEW_NOT_FOUND'
+                    ELSE comment END AS processed_comment
+        FROM core_tst_sys9.default.result_table
+        WHERE run_id = '{ods_run_id}'
+    )
+    GROUP BY processed_comment
+""")
 
-# Generate message sections
-section1 = "\n".join([f"<li>📁 <b>{row['domain']}</b>: {row['table_count']} tables loaded</li>" for row in data_load_df.collect()])
-section2 = "\n".join([f"<li>🔍 <b>{row['status']}</b>: {row['table_count']} tables</li>" for row in schema_dev_df.collect()])
-section3 = "\n".join([f"<li>✅ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>" for row in ods_validation_df.collect()])
-section4 = "\n".join([f"<li>🖼️ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>" for row in ods_view_validation_df.collect()])
+# 4. ODS_VIEW Data Validation
+ods_view_validation_run_df = spark.sql("""
+    SELECT MAX(run_id) AS latest_run_id 
+    FROM core_tst_sys9.default.result_view_table
+""")
+ods_view_run_id = ods_view_validation_run_df.collect()[0]["latest_run_id"]
 
-# Final HTML message
-html_message = f"""
-<h2>📊 Data Pipeline Status</h2>
-<h3>1️⃣ Data Load Status (Run ID: {latest_run_id})</h3>
-<ul>{section1}</ul>
-<h3>2️⃣ Schema Deviation Result (Load Timestamp: {latest_schema_ts})</h3>
-<ul>{section2}</ul>
-<h3>3️⃣ ODS Data Validation</h3>
-<ul>{section3}</ul>
-<h3>4️⃣ ODS View Data Validation</h3>
-<ul>{section4}</ul>
-"""
+ods_view_validation_df = spark.sql(f"""
+    SELECT processed_comment, COUNT(*) AS count
+    FROM (
+        SELECT *, 
+               CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' THEN 'TABLE_OR_VIEW_NOT_FOUND'
+                    ELSE comment END AS processed_comment
+        FROM core_tst_sys9.default.result_view_table
+        WHERE run_id = '{ods_view_run_id}'
+    )
+    GROUP BY processed_comment
+""")
 
-# Send message to Teams
-payload = {
-    "type": "message",
-    "attachments": [
-        {
-            "contentType": "application/vnd.microsoft.card.adaptive",
-            "content": {
-                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                "type": "AdaptiveCard",
-                "version": "1.2",
-                "body": [
-                    {
-                        "type": "TextBlock",
-                        "text": "📢 Data Pipeline Status Update",
-                        "weight": "Bolder",
-                        "size": "Medium"
-                    },
-                    {
-                        "type": "TextBlock",
-                        "text": html_message,
-                        "wrap": True
-                    }
-                ]
-            }
-        }
-    ]
+# Create message card
+card = {
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "summary": "Daily ETL Health Check Report",
+    "themeColor": "0076D7",
+    "title": "ETL Health Status - {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+    "sections": []
 }
 
-response = requests.post(webhook_url, data=json.dumps(payload), headers={"Content-Type": "application/json"})
-print("Notification sent with status:", response.status_code)
+# Section 1: Data Load Status
+section1 = {
+    "activityTitle": "📊 Data Load Status",
+    "facts": [
+        {"name": row['domain'], "value": f"Stg: {row['stg_loaded']}, ODS: {row['ods_loaded']}, View: {row['view_loaded']}"}
+        for row in data_status_df.collect()
+    ]
+}
+card['sections'].append(section1)
+
+# Section 2: Schema Deviation
+section2 = {
+    "activityTitle": "🧬 Schema Deviation Status",
+    "facts": [
+        {"name": row['status'], "value": str(row['count'])}
+        for row in schema_deviation_df.collect()
+    ]
+}
+card['sections'].append(section2)
+
+# Section 3: ODS Data Validation
+section3 = {
+    "activityTitle": "🔍 ODS Data Validation",
+    "facts": [
+        {"name": row['processed_comment'], "value": str(row['count'])}
+        for row in ods_validation_df.collect()
+    ]
+}
+card['sections'].append(section3)
+
+# Section 4: ODS View Validation
+section4 = {
+    "activityTitle": "🔎 ODS_VIEW Data Validation",
+    "facts": [
+        {"name": row['processed_comment'], "value": str(row['count'])}
+        for row in ods_view_validation_df.collect()
+    ]
+}
+card['sections'].append(section4)
+
+# Post to Teams
+response = requests.post(webhook_url, headers={"Content-Type": "application/json"}, data=json.dumps(card))
+
+if response.status_code != 200:
+    raise ValueError(f"Request to Teams returned error {response.status_code}, the response is:\n{response.text}")
+else:
+    print("Notification sent successfully!")
