@@ -1,103 +1,104 @@
-# Databricks Notebook
-# Compact Teams Notification for Data Quality Summary
-
 import requests
 import json
-from pyspark.sql.functions import col, max, sum
+from pyspark.sql.functions import col, max as spark_max, countDistinct
 
-# Teams Webhook URL
+# Webhook URL for Teams
 webhook_url = "<YOUR_TEAMS_WEBHOOK_URL>"
 
 # 1. Data Load Status
-
-df1 = spark.sql("SELECT * FROM core_tst_sys9.default.audit_table_count_check")
-latest_run_id_df1 = df1.agg({"run_id": "max"}).collect()[0][0]
-df1_filtered = df1.filter(col("run_id") == latest_run_id_df1)
-grouped_df1 = df1_filtered.groupBy("domain").agg(
-    sum((col("ods_stg_copy_count") > 0).cast("int")).alias("ods_stg_copy_loaded"),
-    sum((col("ods_count") > 0).cast("int")).alias("ods_loaded"),
-    sum((col("ods_views_count") > 0).cast("int")).alias("ods_views_loaded")
+latest_run_id = df_audit_table_count_check.select(spark_max("run_id")).first()[0]
+data_load_df = (
+    df_audit_table_count_check.filter(col("run_id") == latest_run_id)
+    .withColumn("valid_load", ((col("ods_stg_copy_count") > 0) & (col("ods_count") > 0) & (col("ods_views_count") > 0)).cast("int"))
+    .groupBy("domain")
+    .agg({"table_name": "count"})
+    .withColumnRenamed("count(table_name)", "table_count")
 )
-load_status = grouped_df1.collect()
 
-# 2. Schema Deviation
-
-df2 = spark.sql("SELECT * FROM core_tst_sys9.default.ddl_comparison_results")
-latest_timestamp_df2 = df2.agg({"load_timestamp": "max"}).collect()[0][0]
-df2_filtered = df2.filter(col("load_timestamp") == latest_timestamp_df2)
-grouped_df2 = df2_filtered.groupBy("targettablename", "status").count()
-schema_status = grouped_df2.collect()
+# 2. Schema Deviation Result
+latest_schema_ts = df_ddl_comparison_results.select(spark_max("load_timestamp")).first()[0]
+schema_dev_df = (
+    df_ddl_comparison_results.filter(col("load_timestamp") == latest_schema_ts)
+    .groupBy("status")
+    .agg(countDistinct("targettablename").alias("table_count"))
+)
 
 # 3. ODS Data Validation
-
-df3 = spark.sql("""
-    SELECT *, CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' 
-    THEN 'TABLE_OR_VIEW_NOT_FOUND' ELSE comment END AS processed_comment 
-    FROM core_tst_sys9.default.result_table
-""")
-latest_run_id_df3 = df3.agg({"run_id": "max"}).collect()[0][0]
-df3_filtered = df3.filter(col("run_id") == latest_run_id_df3)
-grouped_df3 = df3_filtered.groupBy("processed_comment").count()
-ods_validation = grouped_df3.collect()
+latest_result_run_id = df_result_table.select(spark_max("run_id")).first()[0]
+ods_validation_df = (
+    df_result_table.filter(col("run_id") == latest_result_run_id)
+    .groupBy("processed_comment")
+    .agg(countDistinct("run_id").alias("table_count"))
+)
 
 # 4. ODS View Data Validation
+latest_view_run_id = df_result_view_table.select(spark_max("run_id")).first()[0]
+ods_view_validation_df = (
+    df_result_view_table.filter(col("run_id") == latest_view_run_id)
+    .groupBy("processed_comment")
+    .agg(countDistinct("run_id").alias("table_count"))
+)
 
-df4 = spark.sql("""
-    SELECT *, CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' 
-    THEN 'TABLE_OR_VIEW_NOT_FOUND' ELSE comment END AS processed_comment 
-    FROM core_tst_sys9.default.result_view_table
-""")
-latest_run_id_df4 = df4.agg({"run_id": "max"}).collect()[0][0]
-df4_filtered = df4.filter(col("run_id") == latest_run_id_df4)
-grouped_df4 = df4_filtered.groupBy("processed_comment").count()
-ods_view_validation = grouped_df4.collect()
+# Prepare HTML message with icons
+html_message = f"""
+<h2>📊 Data Pipeline Status</h2>
+<h3>1️⃣ Data Load Status (Run ID: {latest_run_id})</h3>
+<ul>
+" + "".join([
+    f"<li>📁 <b>{row['domain']}</b>: {row['table_count']} tables loaded</li>"
+    for row in data_load_df.collect()
+]) + """
+</ul>
+<h3>2️⃣ Schema Deviation Result (Load Timestamp: {latest_schema_ts})</h3>
+<ul>
+" + "".join([
+    f"<li>🔍 <b>{row['status']}</b>: {row['table_count']} tables</li>"
+    for row in schema_dev_df.collect()
+]) + """
+</ul>
+<h3>3️⃣ ODS Data Validation</h3>
+<ul>
+" + "".join([
+    f"<li>✅ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>"
+    for row in ods_validation_df.collect()
+]) + """
+</ul>
+<h3>4️⃣ ODS View Data Validation</h3>
+<ul>
+" + "".join([
+    f"<li>🖼️ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>"
+    for row in ods_view_validation_df.collect()
+]) + """
+</ul>
+"""
 
-# Helper to summarize rows
-
-def summarize_rows(rows, label_key, value_key, max_items=5):
-    summary = ""
-    for row in rows[:max_items]:
-        label = row[label_key]
-        value = row[value_key]
-        summary += f"**{label}:** {value}\n\n"
-    if len(rows) > max_items:
-        summary += f"...and {len(rows) - max_items} more.\n\n"
-    return summary
-
-# Build compact summary
-compact_summary = ""
-
-compact_summary += "### Data Load Summary\n"
-for row in load_status:
-    compact_summary += f"**Domain: {row['domain']}**\n"
-    compact_summary += f"ODS STG: {row['ods_stg_copy_loaded']}, ODS: {row['ods_loaded']}, Views: {row['ods_views_loaded']}\n\n"
-
-compact_summary += "---\n### Schema Deviations\n"
-compact_summary += summarize_rows(
-    [{"name": row["targettablename"], "value": row["count"]} for row in schema_status], "name", "value")
-
-compact_summary += "---\n### ODS Validation\n"
-compact_summary += summarize_rows(
-    [{"name": row["processed_comment"], "value": row["count"]} for row in ods_validation], "name", "value")
-
-compact_summary += "---\n### ODS View Validation\n"
-compact_summary += summarize_rows(
-    [{"name": row["processed_comment"], "value": row["count"]} for row in ods_view_validation], "name", "value")
-
-# Create Teams message
-message = {
-    "@type": "MessageCard",
-    "@context": "http://schema.org/extensions",
-    "summary": "Compact Data Quality Report",
-    "themeColor": "0076D7",
-    "title": "Data Quality Summary",
-    "text": compact_summary
+# Send message to Teams
+payload = {
+    "type": "message",
+    "attachments": [
+        {
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard",
+                "version": "1.2",
+                "body": [
+                    {
+                        "type": "TextBlock",
+                        "text": "📢 Data Pipeline Status Update",
+                        "weight": "Bolder",
+                        "size": "Medium"
+                    },
+                    {
+                        "type": "TextBlock",
+                        "text": html_message,
+                        "wrap": True
+                    }
+                ]
+            }
+        }
+    ]
 }
 
-# Send message
-response = requests.post(webhook_url, headers={"Content-Type": "application/json"}, data=json.dumps(message))
-
-if response.status_code == 200:
-    print("Compact notification sent to Microsoft Teams")
-else:
-    print("Failed to send compact notification", response.status_code, response.text)
+response = requests.post(webhook_url, data=json.dumps(payload), headers={"Content-Type": "application/json"})
+print("Notification sent with status:", response.status_code)
