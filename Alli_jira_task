@@ -1,4 +1,4 @@
-# Final fully-corrected script for Databricks Teams notification with bar charts using pandas for row access
+# Final script with both tables and bar charts including values
 
 import requests
 import json
@@ -61,52 +61,62 @@ ods_view_validation_df = spark.sql(f"""
     GROUP BY processed_comment
 """).toPandas()
 
-# Helper function to create bar charts
+# Helper functions
 
 def bar_chart_row(label, total, segments):
-    html = f"<p><strong>{label}</strong></p><div style='display:flex;width:100%;height:20px;border:1px solid #ccc;'>"
-    for color, value in segments:
+    html = f"<p><strong>{label}</strong></p><div style='display:flex;width:100%;height:24px;border:1px solid #ccc;'>"
+    for color, value, name in segments:
         width = (value / total * 100) if total else 0
-        html += f"<div style='width:{width:.2f}%;background:{color};'></div>"
+        html += f"<div style='width:{width:.2f}%;background:{color};text-align:center;font-size:12px;color:white;' title='{name}: {value}'>{value}</div>"
     html += "</div><br/>"
+    return html
+
+def dataframe_to_html_table(title, df):
+    headers = df.columns.tolist()
+    rows = df.values.tolist()
+    html = f"<h4>{title}</h4><table border='1' style='border-collapse:collapse;width:100%;text-align:left;'>"
+    html += "<tr>" + "".join([f"<th>{h}</th>" for h in headers]) + "</tr>"
+    for row in rows:
+        html += "<tr>" + "".join([f"<td>{v}</td>" for v in row]) + "</tr>"
+    html += "</table><br/>"
     return html
 
 html = "<h2>📊 ETL Health Dashboard</h2>"
 
 # Section 1: Data Load Status
-html += "<h3>Data Load Status</h3>"
+html += dataframe_to_html_table("Data Load Status", data_status_df)
 for _, row in data_status_df.iterrows():
     total = row["total_tables"]
     segments = [
-        ("#4CAF50", row["stg_loaded"]),
-        ("#2196F3", row["ods_loaded"]),
-        ("#FFC107", row["view_loaded"])
+        ("#4CAF50", row["stg_loaded"], "STG"),
+        ("#2196F3", row["ods_loaded"], "ODS"),
+        ("#FFC107", row["view_loaded"], "VIEW")
     ]
     html += bar_chart_row(row["domain"], total, segments)
 
 # Section 2: Schema Deviation
-html += "<h3>Schema Deviation</h3>"
+html += dataframe_to_html_table("Schema Deviation", schema_deviation_df)
 schema_total = schema_deviation_df["count"].sum()
 schema_segments = [
-    ("#4CAF50" if row["status"] == "All Pass" else "#F44336", row["count"])
+    ("#4CAF50" if row["status"] == "All Pass" else "#F44336", row["count"], row["status"])
     for _, row in schema_deviation_df.iterrows()
 ]
 html += bar_chart_row("Schema Deviation", schema_total, schema_segments)
 
 # Section 3: ODS Validation
-html += "<h3>ODS Validation</h3>"
+html += dataframe_to_html_table("ODS Validation", ods_validation_df)
 ods_total = ods_validation_df["count"].sum()
 ods_segments = [
-    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"])
+    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"], row["processed_comment"])
     for _, row in ods_validation_df.iterrows()
 ]
 html += bar_chart_row("ODS Checks", ods_total, ods_segments)
 
 # Section 4: ODS_VIEW Validation
-html += "<h3>ODS_VIEW Validation</h3>"
+html += dataframe_to_html_table("ODS_VIEW Validation", ods_view_validation_df)
 ods_view_total = ods_view_validation_df["count"].sum()
 ods_view_segments = [
-    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"])
+    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"], row["processed_comment"])
     for _, row in ods_view_validation_df.iterrows()
 ]
 html += bar_chart_row("ODS_VIEW Checks", ods_view_total, ods_view_segments)
