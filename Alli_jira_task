@@ -1,20 +1,17 @@
-# Databricks notebook or job script for Teams Notification using Markdown and Color Coding
-# Required library: requests
+# Databricks script with HTML-style horizontal segmented bar charts for Teams notification
 
 import requests
 import json
 from datetime import datetime
 from pyspark.sql.functions import col, count, max as spark_max
 
-# TEAMS WEBHOOK URL
 webhook_url = "<Your-Teams-Webhook-URL>"
 
 # 1. Data Load Status
-latest_run_id_df = spark.sql("""
+latest_run_id = spark.sql("""
     SELECT MAX(run_id) AS latest_run_id 
     FROM core_tst_sys9.default.audit_table_count_check
-""")
-latest_run_id = latest_run_id_df.collect()[0]["latest_run_id"]
+""").collect()[0]["latest_run_id"]
 
 data_status_df = spark.sql(f"""
     SELECT domain,
@@ -28,11 +25,10 @@ data_status_df = spark.sql(f"""
 """)
 
 # 2. Schema Deviation Result
-latest_ts_df = spark.sql("""
+latest_ts = spark.sql("""
     SELECT MAX(load_timestamp) AS latest_ts 
     FROM core_tst_sys9.default.ddl_comparison_results
-""")
-latest_ts = latest_ts_df.collect()[0]["latest_ts"]
+""").collect()[0]["latest_ts"]
 
 schema_deviation_df = spark.sql(f"""
     SELECT status, COUNT(DISTINCT targettablename) AS count
@@ -42,11 +38,10 @@ schema_deviation_df = spark.sql(f"""
 """)
 
 # 3. ODS Data Validation
-ods_validation_run_df = spark.sql("""
+ods_run_id = spark.sql("""
     SELECT MAX(run_id) AS latest_run_id 
     FROM core_tst_sys9.default.result_table
-""")
-ods_run_id = ods_validation_run_df.collect()[0]["latest_run_id"]
+""").collect()[0]["latest_run_id"]
 
 ods_validation_df = spark.sql(f"""
     SELECT processed_comment, COUNT(*) AS count
@@ -61,11 +56,10 @@ ods_validation_df = spark.sql(f"""
 """)
 
 # 4. ODS_VIEW Data Validation
-ods_view_validation_run_df = spark.sql("""
+ods_view_run_id = spark.sql("""
     SELECT MAX(run_id) AS latest_run_id 
     FROM core_tst_sys9.default.result_view_table
-""")
-ods_view_run_id = ods_view_validation_run_df.collect()[0]["latest_run_id"]
+""").collect()[0]["latest_run_id"]
 
 ods_view_validation_df = spark.sql(f"""
     SELECT processed_comment, COUNT(*) AS count
@@ -79,53 +73,59 @@ ods_view_validation_df = spark.sql(f"""
     GROUP BY processed_comment
 """)
 
-# Create markdown tables for Teams (HTML is not fully supported)
-def df_to_markdown_table(title, df, headers, color_logic=None):
-    header_row = " | ".join(headers)
-    separator = " | ".join(["---"] * len(headers))
-    rows = []
-    for row in df.collect():
-        row_cells = []
-        for h in headers:
-            val = row[h]
-            if color_logic:
-                color = color_logic(h, val)
-                val = f"<span style='color:{color}'>{val}</span>"
-            row_cells.append(str(val))
-        rows.append(" | ".join(row_cells))
-    return f"### 📊 {title}\n\n{header_row}\n{separator}\n" + "\n".join(rows)
+# Create HTML-style horizontal segmented bar chart
 
-# Define color logic
+def bar_chart_row(label, total, segments):
+    html = f"<p><strong>{label}</strong></p><div style='display:flex;width:100%;height:20px;border:1px solid #ccc;'>"
+    for color, value in segments:
+        width = (value / total * 100) if total else 0
+        html += f"<div style='width:{width}%;background:{color};'></div>"
+    html += "</div><br/>"
+    return html
 
-def load_status_color(column, value):
-    try:
-        if column in ["stg_loaded", "ods_loaded", "view_loaded"]:
-            return "green" if value > 0 else "red"
-    except:
-        pass
-    return "black"
+html = "<h2>📊 ETL Health Dashboard</h2>"
 
-# Compose markdown report
-markdown_sections = ""
-markdown_sections += df_to_markdown_table("Data Load Status", data_status_df, ["domain", "total_tables", "stg_loaded", "ods_loaded", "view_loaded"], load_status_color)
-markdown_sections += "\n\n"
-markdown_sections += df_to_markdown_table("Schema Deviation", schema_deviation_df, ["status", "count"])
-markdown_sections += "\n\n"
-markdown_sections += df_to_markdown_table("ODS Data Validation", ods_validation_df, ["processed_comment", "count"])
-markdown_sections += "\n\n"
-markdown_sections += df_to_markdown_table("ODS_VIEW Data Validation", ods_view_validation_df, ["processed_comment", "count"])
+# Section 1 - Data Load Status
+html += "<h3>Data Load Status</h3>"
+for row in data_status_df.collect():
+    total = row['total_tables']
+    segments = [
+        ("#4CAF50", row['stg_loaded']),  # Green
+        ("#2196F3", row['ods_loaded']), # Blue
+        ("#FFC107", row['view_loaded']) # Amber
+    ]
+    html += bar_chart_row(row['domain'], total, segments)
 
-# Construct MessageCard for Teams
+# Section 2 - Schema Deviation
+html += "<h3>Schema Deviation</h3>"
+schema_total = sum([r['count'] for r in schema_deviation_df.collect()])
+schema_segments = [("#4CAF50", r['count']) for r in schema_deviation_df.collect() if r['status'] == 'All Pass'] + \
+                  [("#F44336", r['count']) for r in schema_deviation_df.collect() if r['status'] != 'All Pass']
+html += bar_chart_row("Schema Deviation", schema_total, schema_segments)
+
+# Section 3 - ODS Validation
+html += "<h3>ODS Validation</h3>"
+ods_total = sum([r['count'] for r in ods_validation_df.collect()])
+ods_segments = [("#4CAF50", r['count']) if 'passed' in r['processed_comment'].lower() else ("#F44336", r['count']) for r in ods_validation_df.collect()]
+html += bar_chart_row("ODS Checks", ods_total, ods_segments)
+
+# Section 4 - ODS View Validation
+html += "<h3>ODS_VIEW Validation</h3>"
+ods_view_total = sum([r['count'] for r in ods_view_validation_df.collect()])
+ods_view_segments = [("#4CAF50", r['count']) if 'passed' in r['processed_comment'].lower() else ("#F44336", r['count']) for r in ods_view_validation_df.collect()]
+html += bar_chart_row("ODS_VIEW Checks", ods_view_total, ods_view_segments)
+
+# MessageCard
 card = {
     "@type": "MessageCard",
     "@context": "http://schema.org/extensions",
     "summary": "ETL Health Report",
     "themeColor": "0076D7",
     "title": "📥 ETL Health Status - {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-    "text": markdown_sections
+    "text": html
 }
 
-# Send the notification
+# Send to Teams
 response = requests.post(webhook_url, headers={"Content-Type": "application/json"}, data=json.dumps(card))
 
 if response.status_code != 200:
