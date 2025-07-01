@@ -39,37 +39,23 @@ ods_view_validation_df = (
     .agg(countDistinct("run_id").alias("table_count"))
 )
 
-# Prepare HTML message with icons
+# Generate message sections
+section1 = "\n".join([f"<li>📁 <b>{row['domain']}</b>: {row['table_count']} tables loaded</li>" for row in data_load_df.collect()])
+section2 = "\n".join([f"<li>🔍 <b>{row['status']}</b>: {row['table_count']} tables</li>" for row in schema_dev_df.collect()])
+section3 = "\n".join([f"<li>✅ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>" for row in ods_validation_df.collect()])
+section4 = "\n".join([f"<li>🖼️ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>" for row in ods_view_validation_df.collect()])
+
+# Final HTML message
 html_message = f"""
 <h2>📊 Data Pipeline Status</h2>
 <h3>1️⃣ Data Load Status (Run ID: {latest_run_id})</h3>
-<ul>
-" + "".join([
-    f"<li>📁 <b>{row['domain']}</b>: {row['table_count']} tables loaded</li>"
-    for row in data_load_df.collect()
-]) + """
-</ul>
+<ul>{section1}</ul>
 <h3>2️⃣ Schema Deviation Result (Load Timestamp: {latest_schema_ts})</h3>
-<ul>
-" + "".join([
-    f"<li>🔍 <b>{row['status']}</b>: {row['table_count']} tables</li>"
-    for row in schema_dev_df.collect()
-]) + """
-</ul>
+<ul>{section2}</ul>
 <h3>3️⃣ ODS Data Validation</h3>
-<ul>
-" + "".join([
-    f"<li>✅ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>"
-    for row in ods_validation_df.collect()
-]) + """
-</ul>
+<ul>{section3}</ul>
 <h3>4️⃣ ODS View Data Validation</h3>
-<ul>
-" + "".join([
-    f"<li>🖼️ <b>{row['processed_comment']}</b>: {row['table_count']} tables</li>"
-    for row in ods_view_validation_df.collect()
-]) + """
-</ul>
+<ul>{section4}</ul>
 """
 
 # Send message to Teams
