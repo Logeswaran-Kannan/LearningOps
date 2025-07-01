@@ -1,4 +1,4 @@
-# Databricks script with HTML-style horizontal segmented bar charts for Teams notification
+# Databricks script with fixed column access and bar charts for Teams notification
 
 import requests
 import json
@@ -8,10 +8,8 @@ from pyspark.sql.functions import col, count, max as spark_max
 webhook_url = "<Your-Teams-Webhook-URL>"
 
 # 1. Data Load Status
-latest_run_id = spark.sql("""
-    SELECT MAX(run_id) AS latest_run_id 
-    FROM core_tst_sys9.default.audit_table_count_check
-""").collect()[0]["latest_run_id"]
+latest_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.audit_table_count_check")
+latest_run_id = latest_run_id.collect()[0]["latest_run_id"]
 
 data_status_df = spark.sql(f"""
     SELECT domain,
@@ -25,10 +23,7 @@ data_status_df = spark.sql(f"""
 """)
 
 # 2. Schema Deviation Result
-latest_ts = spark.sql("""
-    SELECT MAX(load_timestamp) AS latest_ts 
-    FROM core_tst_sys9.default.ddl_comparison_results
-""").collect()[0]["latest_ts"]
+latest_ts = spark.sql("SELECT MAX(load_timestamp) AS latest_ts FROM core_tst_sys9.default.ddl_comparison_results").collect()[0]["latest_ts"]
 
 schema_deviation_df = spark.sql(f"""
     SELECT status, COUNT(DISTINCT targettablename) AS count
@@ -38,10 +33,7 @@ schema_deviation_df = spark.sql(f"""
 """)
 
 # 3. ODS Data Validation
-ods_run_id = spark.sql("""
-    SELECT MAX(run_id) AS latest_run_id 
-    FROM core_tst_sys9.default.result_table
-""").collect()[0]["latest_run_id"]
+ods_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.result_table").collect()[0]["latest_run_id"]
 
 ods_validation_df = spark.sql(f"""
     SELECT processed_comment, COUNT(*) AS count
@@ -56,10 +48,7 @@ ods_validation_df = spark.sql(f"""
 """)
 
 # 4. ODS_VIEW Data Validation
-ods_view_run_id = spark.sql("""
-    SELECT MAX(run_id) AS latest_run_id 
-    FROM core_tst_sys9.default.result_view_table
-""").collect()[0]["latest_run_id"]
+ods_view_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.result_view_table").collect()[0]["latest_run_id"]
 
 ods_view_validation_df = spark.sql(f"""
     SELECT processed_comment, COUNT(*) AS count
@@ -73,11 +62,12 @@ ods_view_validation_df = spark.sql(f"""
     GROUP BY processed_comment
 """)
 
-# Create HTML-style horizontal segmented bar chart
+# Create bar chart row as HTML segments
 
 def bar_chart_row(label, total, segments):
     html = f"<p><strong>{label}</strong></p><div style='display:flex;width:100%;height:20px;border:1px solid #ccc;'>"
-    for color, value in segments:
+    for seg in segments:
+        color, value = seg
         width = (value / total * 100) if total else 0
         html += f"<div style='width:{width}%;background:{color};'></div>"
     html += "</div><br/>"
@@ -85,37 +75,48 @@ def bar_chart_row(label, total, segments):
 
 html = "<h2>📊 ETL Health Dashboard</h2>"
 
-# Section 1 - Data Load Status
+# Data Load Section
 html += "<h3>Data Load Status</h3>"
 for row in data_status_df.collect():
     total = row['total_tables']
     segments = [
-        ("#4CAF50", row['stg_loaded']),  # Green
-        ("#2196F3", row['ods_loaded']), # Blue
-        ("#FFC107", row['view_loaded']) # Amber
+        ("#4CAF50", row['stg_loaded']),
+        ("#2196F3", row['ods_loaded']),
+        ("#FFC107", row['view_loaded'])
     ]
     html += bar_chart_row(row['domain'], total, segments)
 
-# Section 2 - Schema Deviation
+# Schema Deviation Section
 html += "<h3>Schema Deviation</h3>"
-schema_total = sum([r['count'] for r in schema_deviation_df.collect()])
-schema_segments = [("#4CAF50", r['count']) for r in schema_deviation_df.collect() if r['status'] == 'All Pass'] + \
-                  [("#F44336", r['count']) for r in schema_deviation_df.collect() if r['status'] != 'All Pass']
+schema_rows = schema_deviation_df.collect()
+schema_total = sum([r['count'] for r in schema_rows])
+schema_segments = []
+for r in schema_rows:
+    color = "#4CAF50" if r['status'] == 'All Pass' else "#F44336"
+    schema_segments.append((color, r['count']))
 html += bar_chart_row("Schema Deviation", schema_total, schema_segments)
 
-# Section 3 - ODS Validation
+# ODS Validation Section
 html += "<h3>ODS Validation</h3>"
-ods_total = sum([r['count'] for r in ods_validation_df.collect()])
-ods_segments = [("#4CAF50", r['count']) if 'passed' in r['processed_comment'].lower() else ("#F44336", r['count']) for r in ods_validation_df.collect()]
+ods_rows = ods_validation_df.collect()
+ods_total = sum([r['count'] for r in ods_rows])
+ods_segments = []
+for r in ods_rows:
+    color = "#4CAF50" if 'passed' in r['processed_comment'].lower() else "#F44336"
+    ods_segments.append((color, r['count']))
 html += bar_chart_row("ODS Checks", ods_total, ods_segments)
 
-# Section 4 - ODS View Validation
+# ODS View Validation Section
 html += "<h3>ODS_VIEW Validation</h3>"
-ods_view_total = sum([r['count'] for r in ods_view_validation_df.collect()])
-ods_view_segments = [("#4CAF50", r['count']) if 'passed' in r['processed_comment'].lower() else ("#F44336", r['count']) for r in ods_view_validation_df.collect()]
+ods_view_rows = ods_view_validation_df.collect()
+ods_view_total = sum([r['count'] for r in ods_view_rows])
+ods_view_segments = []
+for r in ods_view_rows:
+    color = "#4CAF50" if 'passed' in r['processed_comment'].lower() else "#F44336"
+    ods_view_segments.append((color, r['count']))
 html += bar_chart_row("ODS_VIEW Checks", ods_view_total, ods_view_segments)
 
-# MessageCard
+# MessageCard for Teams
 card = {
     "@type": "MessageCard",
     "@context": "http://schema.org/extensions",
