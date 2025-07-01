@@ -1,139 +1,52 @@
-# Final script with both tables and bar charts including values
-
-import requests
-import json
+from bs4 import BeautifulSoup
 from datetime import datetime
-from pyspark.sql.functions import col, count, max as spark_max
+import re
+import uuid
+import pandas as pd
 
-webhook_url = "<Your-Teams-Webhook-URL>"
+# Load the HTML report
+with open("/dbfs/mnt/<your_volume_path>/data_quality_load_report.html", "r") as f:
+    soup = BeautifulSoup(f, "html.parser")
 
-# 1. Data Load Status
-latest_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.audit_table_count_check").collect()[0]["latest_run_id"]
+# Extract report generated time
+report_time_str = soup.find(text=re.compile("Report generated on")).strip().split(" on ")[-1].split(" by")[0]
+report_time = datetime.strptime(report_time_str, "%d-%b-%Y at %H:%M:%S")
 
-data_status_df = spark.sql(f"""
-    SELECT domain,
-           COUNT(*) AS total_tables,
-           SUM(CASE WHEN ods_stg_copy_count > 0 THEN 1 ELSE 0 END) AS stg_loaded,
-           SUM(CASE WHEN ods_count > 0 THEN 1 ELSE 0 END) AS ods_loaded,
-           SUM(CASE WHEN ods_views_count > 0 THEN 1 ELSE 0 END) AS view_loaded
-    FROM core_tst_sys9.default.audit_table_count_check
-    WHERE run_id = '{latest_run_id}'
-    GROUP BY domain
-""").toPandas()
+# Extract test took time
+summary_div = soup.find("div", string=re.compile("test took"))
+summary_text = summary_div.text if summary_div else ""
+test_took_match = re.search(r"(\d{2}:\d{2}:\d{2})", summary_text)
+test_took = test_took_match.group(1) if test_took_match else None
 
-# 2. Schema Deviation Result
-latest_ts = spark.sql("SELECT MAX(load_timestamp) AS latest_ts FROM core_tst_sys9.default.ddl_comparison_results").collect()[0]["latest_ts"]
+# Extract error block with stdout call (text after 'Captured stdout call')
+error_text_block = soup.find(string=re.compile("Captured stdout call"))
+error_lines = []
+if error_text_block:
+    # Collect all lines following the error block until the next whitespace or section
+    for sibling in error_text_block.find_all_next(string=True):
+        line = sibling.strip()
+        if not line:
+            break
+        if line.startswith("In table"):
+            error_lines.append(line)
 
-schema_deviation_df = spark.sql(f"""
-    SELECT status, COUNT(DISTINCT targettablename) AS count
-    FROM core_tst_sys9.default.ddl_comparison_results
-    WHERE load_timestamp = '{latest_ts}'
-    GROUP BY status
-""").toPandas()
+# Build output table
+run_id = str(uuid.uuid4())
+timestamp = datetime.now()
 
-# 3. ODS Data Validation
-ods_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.result_table").collect()[0]["latest_run_id"]
+data = [{
+    "run_id": run_id,
+    "error_message": line,
+    "timestamp": timestamp,
+    "report_generate_time": report_time,
+    "test_took_time": test_took
+} for line in error_lines]
 
-ods_validation_df = spark.sql(f"""
-    SELECT processed_comment, COUNT(*) AS count
-    FROM (
-        SELECT *, 
-               CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' THEN 'TABLE_OR_VIEW_NOT_FOUND'
-                    ELSE comment END AS processed_comment
-        FROM core_tst_sys9.default.result_table
-        WHERE run_id = '{ods_run_id}'
-    )
-    GROUP BY processed_comment
-""").toPandas()
+# Convert to DataFrame (Databricks Table-ready)
+df = pd.DataFrame(data)
 
-# 4. ODS_VIEW Data Validation
-ods_view_run_id = spark.sql("SELECT MAX(run_id) AS latest_run_id FROM core_tst_sys9.default.result_view_table").collect()[0]["latest_run_id"]
+display(df)  # For visual output in Databricks Notebook
 
-ods_view_validation_df = spark.sql(f"""
-    SELECT processed_comment, COUNT(*) AS count
-    FROM (
-        SELECT *, 
-               CASE WHEN comment LIKE 'Error: [TABLE_OR_VIEW_NOT_FOUND]%' THEN 'TABLE_OR_VIEW_NOT_FOUND'
-                    ELSE comment END AS processed_comment
-        FROM core_tst_sys9.default.result_view_table
-        WHERE run_id = '{ods_view_run_id}'
-    )
-    GROUP BY processed_comment
-""").toPandas()
-
-# Helper functions
-
-def bar_chart_row(label, total, segments):
-    html = f"<p><strong>{label}</strong></p><div style='display:flex;width:100%;height:24px;border:1px solid #ccc;'>"
-    for color, value, name in segments:
-        width = (value / total * 100) if total else 0
-        html += f"<div style='width:{width:.2f}%;background:{color};text-align:center;font-size:12px;color:white;' title='{name}: {value}'>{value}</div>"
-    html += "</div><br/>"
-    return html
-
-def dataframe_to_html_table(title, df):
-    headers = df.columns.tolist()
-    rows = df.values.tolist()
-    html = f"<h4>{title}</h4><table border='1' style='border-collapse:collapse;width:100%;text-align:left;'>"
-    html += "<tr>" + "".join([f"<th>{h}</th>" for h in headers]) + "</tr>"
-    for row in rows:
-        html += "<tr>" + "".join([f"<td>{v}</td>" for v in row]) + "</tr>"
-    html += "</table><br/>"
-    return html
-
-html = "<h2>📊 ETL Health Dashboard</h2>"
-
-# Section 1: Data Load Status
-html += dataframe_to_html_table("Data Load Status", data_status_df)
-for _, row in data_status_df.iterrows():
-    total = row["total_tables"]
-    segments = [
-        ("#4CAF50", row["stg_loaded"], "STG"),
-        ("#2196F3", row["ods_loaded"], "ODS"),
-        ("#FFC107", row["view_loaded"], "VIEW")
-    ]
-    html += bar_chart_row(row["domain"], total, segments)
-
-# Section 2: Schema Deviation
-html += dataframe_to_html_table("Schema Deviation", schema_deviation_df)
-schema_total = schema_deviation_df["count"].sum()
-schema_segments = [
-    ("#4CAF50" if row["status"] == "All Pass" else "#F44336", row["count"], row["status"])
-    for _, row in schema_deviation_df.iterrows()
-]
-html += bar_chart_row("Schema Deviation", schema_total, schema_segments)
-
-# Section 3: ODS Validation
-html += dataframe_to_html_table("ODS Validation", ods_validation_df)
-ods_total = ods_validation_df["count"].sum()
-ods_segments = [
-    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"], row["processed_comment"])
-    for _, row in ods_validation_df.iterrows()
-]
-html += bar_chart_row("ODS Checks", ods_total, ods_segments)
-
-# Section 4: ODS_VIEW Validation
-html += dataframe_to_html_table("ODS_VIEW Validation", ods_view_validation_df)
-ods_view_total = ods_view_validation_df["count"].sum()
-ods_view_segments = [
-    ("#4CAF50" if "passed" in row["processed_comment"].lower() else "#F44336", row["count"], row["processed_comment"])
-    for _, row in ods_view_validation_df.iterrows()
-]
-html += bar_chart_row("ODS_VIEW Checks", ods_view_total, ods_view_segments)
-
-# Final Teams message
-card = {
-    "@type": "MessageCard",
-    "@context": "http://schema.org/extensions",
-    "summary": "ETL Health Report",
-    "themeColor": "0076D7",
-    "title": "📥 ETL Health Status - {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-    "text": html
-}
-
-response = requests.post(webhook_url, headers={"Content-Type": "application/json"}, data=json.dumps(card))
-
-if response.status_code != 200:
-    raise ValueError(f"Request to Teams returned error {response.status_code}, the response is:\n{response.text}")
-else:
-    print("Notification sent successfully!")
+# Optional: Save to a Delta table
+# spark_df = spark.createDataFrame(df)
+# spark_df.write.format("delta").mode("append").saveAsTable("data_quality_errors")
