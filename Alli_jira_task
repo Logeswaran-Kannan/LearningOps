@@ -13,19 +13,24 @@ with open(html_file_path, "r") as f:
 
 # Extract report generated time
 report_time_match = re.search(r"Report generated on (\d{2}-[A-Za-z]{3}-\d{4} at \d{2}:\d{2}:\d{2})", html_content)
-report_time = datetime.strptime(report_time_match.group(1), "%d-%b-%Y at %H:%M:%S") if report_time_match else None
+report_time = None
+if report_time_match and report_time_match.group(1):
+    report_time = datetime.strptime(report_time_match.group(1), "%d-%b-%Y at %H:%M:%S")
 
 # Extract test took time
 test_took_match = re.search(r"test took (\d{2}:\d{2}:\d{2})", html_content)
-test_took = test_took_match.group(1) if test_took_match else None
+test_took = None
+if test_took_match and test_took_match.group(1):
+    test_took = test_took_match.group(1)
 
 # Extract error block cleanly
-stdout_block_match = re.search(r"Captured stdout call.*?-{5,}(.*?)={5,}", html_content, re.DOTALL)
+stdout_block_match = re.search(r"Captured stdout call.*?-{5,}(.*?)(?:={5,}|</div>)", html_content, re.DOTALL)
 error_lines = []
 if stdout_block_match:
     block = stdout_block_match.group(1)
     # Extract only valid lines starting with 'In table ...'
-    error_lines = re.findall(r"(In table .*?valid list|out of range)", block)
+    error_lines = re.findall(r"(In table .*?(valid list|out of range))", block)
+    error_lines = [e[0].strip() for e in error_lines]  # Extract full matched lines
 
 # Build output table
 run_id = str(uuid.uuid4())
@@ -42,8 +47,8 @@ data = [{
 # Convert to DataFrame (Databricks Table-ready)
 df = pd.DataFrame(data)
 
-display(df)
+display(df)  # For visual output in Databricks Notebook
 
-# Optional: save to Delta
+# Optional: Save to a Delta table
 # spark_df = spark.createDataFrame(df)
 # spark_df.write.format("delta").mode("append").saveAsTable("data_quality_errors")
