@@ -1,10 +1,87 @@
-Quick Meeting Request – Data Quality & Test Environment Discussion
+from datetime import datetime
+import re
+import uuid
+import pandas as pd
+import os
 
-Hi Robert,
+# Use path variables defined in earlier notebook cells
+log_date = datetime.now().strftime("%Y-%m-%d")
+vol_log = f"/Volumes/{catalog_name}/{schema_name}/log/"
+log_dir = f"{vol_log}{log_date}/"
 
-Hope you're doing well. Could we schedule a quick catch-up after the infra stand-up today to go over the XML/HTML data quality report and test environment validation?
+# List all subfolders by date
+all_data = []
+for date_folder in os.listdir(vol_log):
+    folder_path = os.path.join(vol_log, date_folder)
+    if not os.path.isdir(folder_path):
+        continue
 
-Let me know what time works best for you.
+    # Look for all HTML files inside this folder
+    for file in os.listdir(folder_path):
+        if file.endswith(".html"):
+            html_file_path = os.path.join(folder_path, file)
 
-Thanks,
-[Your Name]
+            dash_run_id = str(uuid.uuid4())
+            timestamp = datetime.now()
+            report_time = None
+            test_took = None
+
+            try:
+                with open(html_file_path, "r") as f:
+                    html_content = f.read()
+
+                # Extract report generated time
+                report_time_match = re.search(r"Report generated on (\d{2}-[A-Za-z]{3}-\d{4} at \d{2}:\d{2}:\d{2})", html_content)
+                if report_time_match:
+                    report_time = datetime.strptime(report_time_match.group(1), "%d-%b-%Y at %H:%M:%S")
+
+                # Extract test duration
+                test_took_match = re.search(r"test took (\d{2}:\d{2}:\d{2})", html_content)
+                if test_took_match:
+                    test_took = test_took_match.group(1)
+
+                # Extract test errors
+                stdout_block_match = re.search(r"Captured stdout call.*?-{5,}(.*?)(?:={5,}|</div>)", html_content, re.DOTALL)
+                error_lines = []
+                if stdout_block_match:
+                    block = stdout_block_match.group(1)
+                    error_lines = re.findall(r"(In table .*?(valid list|out of range))", block)
+                    error_lines = [e[0].strip() for e in error_lines]
+
+                if error_lines:
+                    for line in error_lines:
+                        all_data.append({
+                            "dash_run_id": dash_run_id,
+                            "error_message": line,
+                            "timestamp": timestamp,
+                            "report_generate_time": report_time,
+                            "test_took_time": test_took,
+                            "file": html_file_path
+                        })
+                else:
+                    all_data.append({
+                        "dash_run_id": dash_run_id,
+                        "error_message": "All pass, no error",
+                        "timestamp": timestamp,
+                        "report_generate_time": report_time,
+                        "test_took_time": test_took,
+                        "file": html_file_path
+                    })
+
+            except Exception as e:
+                all_data.append({
+                    "dash_run_id": dash_run_id,
+                    "error_message": f"Error reading file: {str(e)}",
+                    "timestamp": timestamp,
+                    "report_generate_time": None,
+                    "test_took_time": None,
+                    "file": html_file_path
+                })
+
+# Convert to DataFrame
+df = pd.DataFrame(all_data)
+display(df)
+
+# Save to Delta table in the specified catalog and schema
+spark_df = spark.createDataFrame(df)
+spark_df.write.format("delta").mode("append").saveAsTable(f"{catalog_name}.{schema_name}.data_quality_errors_dashboard")
