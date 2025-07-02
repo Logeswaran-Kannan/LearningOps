@@ -7,10 +7,6 @@ import os
 # Define the file path
 html_file_path = "/Workspace/Core_bld/data_quality_load_report.html"
 
-# Verify file exists
-if not os.path.exists(html_file_path):
-    raise FileNotFoundError(f"HTML report not found at: {html_file_path}")
-
 # Load the HTML report as plain text
 with open(html_file_path, "r") as f:
     html_content = f.read()
@@ -19,16 +15,17 @@ with open(html_file_path, "r") as f:
 report_time_match = re.search(r"Report generated on (\d{2}-[A-Za-z]{3}-\d{4} at \d{2}:\d{2}:\d{2})", html_content)
 report_time = datetime.strptime(report_time_match.group(1), "%d-%b-%Y at %H:%M:%S") if report_time_match else None
 
-# Extract test duration
+# Extract test took time
 test_took_match = re.search(r"test took (\d{2}:\d{2}:\d{2})", html_content)
 test_took = test_took_match.group(1) if test_took_match else None
 
-# Extract error messages from 'Captured stdout call'
-error_section_match = re.search(r"Captured stdout call.*?(In table.*?)(?:\n\s*\n|$)", html_content, re.DOTALL)
+# Extract error block cleanly
+stdout_block_match = re.search(r"Captured stdout call.*?-{5,}(.*?)={5,}", html_content, re.DOTALL)
 error_lines = []
-if error_section_match:
-    error_text_block = error_section_match.group(1)
-    error_lines = [line.strip() for line in error_text_block.splitlines() if line.strip().startswith("In table")]
+if stdout_block_match:
+    block = stdout_block_match.group(1)
+    # Extract only valid lines starting with 'In table ...'
+    error_lines = re.findall(r"(In table .*?valid list|out of range)", block)
 
 # Build output table
 run_id = str(uuid.uuid4())
@@ -45,8 +42,8 @@ data = [{
 # Convert to DataFrame (Databricks Table-ready)
 df = pd.DataFrame(data)
 
-display(df)  # For visual output in Databricks Notebook
+display(df)
 
-# Optional: Save to a Delta table
+# Optional: save to Delta
 # spark_df = spark.createDataFrame(df)
 # spark_df.write.format("delta").mode("append").saveAsTable("data_quality_errors")
