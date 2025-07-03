@@ -1,87 +1,30 @@
-from datetime import datetime
-import re
-import uuid
-import pandas as pd
-import os
+Subject: Summary of Key Updates & Next Steps
 
-# Use path variables defined in earlier notebook cells
-log_date = datetime.now().strftime("%Y-%m-%d")
-vol_log = f"/Volumes/{catalog_name}/{schema_name}/log/"
-log_dir = f"{vol_log}{log_date}/"
+Hi Team,
 
-# List all subfolders by date
-all_data = []
-for date_folder in os.listdir(vol_log):
-    folder_path = os.path.join(vol_log, date_folder)
-    if not os.path.isdir(folder_path):
-        continue
+Here’s a quick summary of the latest updates based on recent discussions and ongoing activities:
 
-    # Look for all HTML files inside this folder
-    for file in os.listdir(folder_path):
-        if file.endswith(".html"):
-            html_file_path = os.path.join(folder_path, file)
+Sunday Load Issue Fix (ODS & ODS_View):
+Paul plans to apply a fix this week to address the recurring data anomalies happening on Sundays in both ODS and ODS_View layers. The same issue seems to be causing the stage copy truncation post-load. We’ll monitor this weekend's load to validate the fix.
 
-            dash_run_id = str(uuid.uuid4())
-            timestamp = datetime.now()
-            report_time = None
-            test_took = None
+Missing Tables in Load List:
+Mani has shared the list of missing scoped tables with Paul. Using Paul’s query, Logesh will ensure all 692 tables are covered in the final mapping list. If anything is still missing, we’ll need Simon’s support to get those included.
 
-            try:
-                with open(html_file_path, "r") as f:
-                    html_content = f.read()
+Schema Mismatch in Test Environment:
+The mismatches identified for some empty tables seem to be limited to the test environment. According to Paul, these should auto-correct in production during ingestion. Suraj to reconfirm, as schema mismatches are showing a 50% failure rate in the report.
 
-                # Extract report generated time
-                report_time_match = re.search(r"Report generated on (\d{2}-[A-Za-z]{3}-\d{4} at \d{2}:\d{2}:\d{2})", html_content)
-                if report_time_match:
-                    report_time = datetime.strptime(report_time_match.group(1), "%d-%b-%Y at %H:%M:%S")
+FAH Report Validation:
+Graham has shared the July 1st extract with the finance team. We’re awaiting feedback. Once confirmed, July 2nd will follow, and if both are good, we’ll proceed with the rest of the month’s files.
 
-                # Extract test duration
-                test_took_match = re.search(r"test took (\d{2}:\d{2}:\d{2})", html_content)
-                if test_took_match:
-                    test_took = test_took_match.group(1)
+Silver Load – Dress Rehearsal Approach:
+After reviewing options with Paul, the team decided to proceed with core_tst for the dress rehearsal load (instead of switching to core_preprod). Glen and others using core_tst will have access to prod data post-release. Testing in sys9 would require extra pipeline setup, which we’re avoiding.
+5.1 There’s still some confusion around why we can't use std001 for validating the silver script. We’ll revisit the earlier discussions and clarify any limitations. Mani to help summarize this background.
 
-                # Extract test errors
-                stdout_block_match = re.search(r"Captured stdout call.*?-{5,}(.*?)(?:={5,}|</div>)", html_content, re.DOTALL)
-                error_lines = []
-                if stdout_block_match:
-                    block = stdout_block_match.group(1)
-                    error_lines = re.findall(r"(In table .*?(valid list|out of range))", block)
-                    error_lines = [e[0].strip() for e in error_lines]
+TSR Draft:
+The draft is ready, just awaiting closure of the above points to finalize and capture all risks appropriately.
 
-                if error_lines:
-                    for line in error_lines:
-                        all_data.append({
-                            "dash_run_id": dash_run_id,
-                            "error_message": line,
-                            "timestamp": timestamp,
-                            "report_generate_time": report_time,
-                            "test_took_time": test_took,
-                            "file": html_file_path
-                        })
-                else:
-                    all_data.append({
-                        "dash_run_id": dash_run_id,
-                        "error_message": "All pass, no error",
-                        "timestamp": timestamp,
-                        "report_generate_time": report_time,
-                        "test_took_time": test_took,
-                        "file": html_file_path
-                    })
+Smoke Test Readiness:
+Yet to be initiated — we’ll need to start this soon.
 
-            except Exception as e:
-                all_data.append({
-                    "dash_run_id": dash_run_id,
-                    "error_message": f"Error reading file: {str(e)}",
-                    "timestamp": timestamp,
-                    "report_generate_time": None,
-                    "test_took_time": None,
-                    "file": html_file_path
-                })
-
-# Convert to DataFrame
-df = pd.DataFrame(all_data)
-display(df)
-
-# Save to Delta table in the specified catalog and schema
-spark_df = spark.createDataFrame(df)
-spark_df.write.format("delta").mode("append").saveAsTable(f"{catalog_name}.{schema_name}.data_quality_errors_dashboard")
+Access Check (PC):
+Access check has been completed for PC. Other environments are pending validation. Last check from Bournemouth office showed connectivity issues, likely firewall-related — similar to past test access issues. Needs rechecking.
