@@ -1,23 +1,31 @@
-Subject: Follow-up on Silver Load Test Assumptions Discussion – Next Steps
+Subject: Testing Activities Update – Vehicle & Area LRT Validation
 
 Hi Team,
 
-Thanks again for your time yesterday and for the valuable inputs during our discussion around the test assumptions for the silver load process — specifically on out-of-sequence messages, late arrivals, handling of missing messages, and reconciling message counts with the source.
+Just sharing a quick update on where we are with the testing activities for the Vehicle and Area LRT service validation, based on the KT session we had with Robert on the current data load process in the dev environment.
 
-Here’s a quick recap and next steps:
+Here’s what’s in progress or pending:
 
-Source Message Handling:
-There’s currently no setup on the source application side to store or cache incoming messages. While metrics are expected to be logged, this raises a risk in case the source is unable to reprocess or resend missed messages when reconciliation issues are identified later in the process. We’ll need clearer test data to fully understand out-of-sequence or late-arrival scenarios more reliably.
+File Share Access:
+We’ve requested access to the SharePoint location where the pricing team places their files — currently pending Phil’s approval. That said, during the demo, the pricing team mentioned they’re considering placing files directly into the Databricks environment. If that’s confirmed, we may not need SharePoint access after all — will need to align on this.
 
-Documenting Test Assumptions:
-Nate and Glen will start capturing test-related assumptions for the ingestion process directly in the Confluence page. This will help ensure that everyone is aligned on what can be tested and what’s expected during execution.
-👉 Please find the [Confluence link here] — it would be great if you could add comments or notes against any of the action scenarios listed.
+Cosmo DB Access:
+As per Shashi’s discussion with Paul, the preferred approach is to connect to Cosmo DB using Databricks key vault secrets. Loges is checking the feasibility and setup options for this.
 
-Pending Areas:
-We still need to have a detailed discussion on non-functional aspects of ingestion such as schema drifting, backfill handling, and how business expects to use these reports in light of reconciliation gaps.
+Test Scenario Design:
+We’ve started drafting the business-level test scenarios aligned with the functional requirements and the HLD.
 
+Environment Readiness:
+We’ll need to sync with Robert to confirm if the test environment is fully ready so we can begin scripting.
 
-Pending Items – Non-Functional Requirements:
-There are still a few topics we need to discuss further, including schema drift, backfill handling, and business reporting expectations — we’ll plan to cover those in upcoming sessions.
+E2E Collaboration:
+Initial discussions have kicked off with the E2E test team. A bridge is set up, and once the scenarios are finalized, we’ll plan a walkthrough with them.
 
-Let me know if I missed anything or if you have anything to add.
+Scope Clarifications:
+There were some additional scope items raised in today’s demo session — Nikki mentioned they’ll be clarified and shared shortly.
+
+Let me know if you need anything else or if I’ve missed anything.
+
+Thanks,
+[Your Name]
+
