@@ -1,5 +1,13 @@
-Apologies, I should’ve provided a bit more context earlier. The SQL shared by Paul is just to help ensure we’re not missing any tables in the data load process — we had found a few missed tables previously, which were later added back in.
+Just a quick note — we have another tester, Shashi, joining the BICOE testing team to help out, especially on the vehicle area file validation side. To help us collaborate more closely and stay in sync with the E2E test plan, I wanted to touch base on a few things:
 
-At the moment, I can see all the other tables under std001 except this one. Would it be possible for you to include this table in the std001 load process as well?
+Could we get Vijay added to this group as well?
 
-Thanks!
+Since Shashi is starting with the vehicle file validation on our side, we’d like to understand how best to align with the E2E test scenarios for that process.
+
+Is there an E2E defect triage meeting already running? If so, could you please add me to it?
+
+Where can I find the E2E test plan?
+
+If any testing workshops are already scheduled, I’d appreciate it if you could include me in those too.
+
+Thanks a lot! Looking forward to working more closely with you both.
