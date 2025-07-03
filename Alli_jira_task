@@ -1,31 +1,5 @@
-Subject: Testing Activities Update – Vehicle & Area LRT Validation
+Apologies, I should’ve provided a bit more context earlier. The SQL shared by Paul is just to help ensure we’re not missing any tables in the data load process — we had found a few missed tables previously, which were later added back in.
 
-Hi Team,
+At the moment, I can see all the other tables under std001 except this one. Would it be possible for you to include this table in the std001 load process as well?
 
-Just sharing a quick update on where we are with the testing activities for the Vehicle and Area LRT service validation, based on the KT session we had with Robert on the current data load process in the dev environment.
-
-Here’s what’s in progress or pending:
-
-File Share Access:
-We’ve requested access to the SharePoint location where the pricing team places their files — currently pending Phil’s approval. That said, during the demo, the pricing team mentioned they’re considering placing files directly into the Databricks environment. If that’s confirmed, we may not need SharePoint access after all — will need to align on this.
-
-Cosmo DB Access:
-As per Shashi’s discussion with Paul, the preferred approach is to connect to Cosmo DB using Databricks key vault secrets. Loges is checking the feasibility and setup options for this.
-
-Test Scenario Design:
-We’ve started drafting the business-level test scenarios aligned with the functional requirements and the HLD.
-
-Environment Readiness:
-We’ll need to sync with Robert to confirm if the test environment is fully ready so we can begin scripting.
-
-E2E Collaboration:
-Initial discussions have kicked off with the E2E test team. A bridge is set up, and once the scenarios are finalized, we’ll plan a walkthrough with them.
-
-Scope Clarifications:
-There were some additional scope items raised in today’s demo session — Nikki mentioned they’ll be clarified and shared shortly.
-
-Let me know if you need anything else or if I’ve missed anything.
-
-Thanks,
-[Your Name]
-
+Thanks!
