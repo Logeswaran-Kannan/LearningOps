@@ -1,22 +1,23 @@
-Subject: Follow-up on Message Handling Test Assumptions Discussion
+Subject: Follow-up on Silver Load Test Assumptions Discussion – Next Steps
 
-Hi [Recipient's Name],
+Hi Team,
 
-Thanks again for taking the time yesterday to walk through the assumptions and clarifications around message handling in the silver load process — especially around out-of-sequence, late arrival, and missing messages, as well as how resending from the source side would work.
+Thanks again for your time yesterday and for the valuable inputs during our discussion around the test assumptions for the silver load process — specifically on out-of-sequence messages, late arrivals, handling of missing messages, and reconciling message counts with the source.
 
-Here’s a quick summary of the key takeaways:
+Here’s a quick recap and next steps:
 
-Message Resend Handling:
-We discussed that there's currently no plan to store incoming messages on the source application side. The expectation is to log metrics, but this poses a risk if a reconciliation issue arises later and the source isn’t able to resend or reprocess the messages.
+Source Message Handling:
+There’s currently no setup on the source application side to store or cache incoming messages. While metrics are expected to be logged, this raises a risk in case the source is unable to reprocess or resend missed messages when reconciliation issues are identified later in the process. We’ll need clearer test data to fully understand out-of-sequence or late-arrival scenarios more reliably.
 
-Test Assumptions Alignment:
-Nate and Glen will start updating the Confluence page with the key ingestion-related test assumptions so we’re all aligned on what’s expected and what can be realistically tested during execution. I’ve shared the Confluence link below — if you could review and drop your comments on the relevant action scenarios, that would be super helpful.
+Documenting Test Assumptions:
+Nate and Glen will start capturing test-related assumptions for the ingestion process directly in the Confluence page. This will help ensure that everyone is aligned on what can be tested and what’s expected during execution.
+👉 Please find the [Confluence link here] — it would be great if you could add comments or notes against any of the action scenarios listed.
 
-Out-of-Sequence / Late Arrival Data:
-We’ll need more reliable test data to better simulate and understand these scenarios. That will help us validate how the system behaves under such conditions.
+Pending Areas:
+We still need to have a detailed discussion on non-functional aspects of ingestion such as schema drifting, backfill handling, and how business expects to use these reports in light of reconciliation gaps.
 
-Let me know if I’ve missed anything or if there’s anything else we need to follow up on.
 
-Thanks again,
-[Your Name]
-[Confluence Page Link]
+Pending Items – Non-Functional Requirements:
+There are still a few topics we need to discuss further, including schema drift, backfill handling, and business reporting expectations — we’ll plan to cover those in upcoming sessions.
+
+Let me know if I missed anything or if you have anything to add.
