@@ -1,13 +1,49 @@
-Just a quick note — we have another tester, Shashi, joining the BICOE testing team to help out, especially on the vehicle area file validation side. To help us collaborate more closely and stay in sync with the E2E test plan, I wanted to touch base on a few things:
+# Import required libraries
+from azure.cosmos import CosmosClient, PartitionKey
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+import logging
 
-Could we get Vijay added to this group as well?
+# Set up logger
+logger = logging.getLogger("cosmos_logger")
+logging.basicConfig(level=logging.INFO)
 
-Since Shashi is starting with the vehicle file validation on our side, we’d like to understand how best to align with the E2E test scenarios for that process.
+# Widgets (used in Databricks to pass parameters)
+dbutils.widgets.text("cosmos_account_key", "")
+dbutils.widgets.text("cosmos_end_point", "")
+dbutils.widgets.text("cosmos_container_name", "vehicle-area-factors")
+dbutils.widgets.text("cosmos_db_name", "vehicle-area-cdb")
 
-Is there an E2E defect triage meeting already running? If so, could you please add me to it?
+# Retrieve widget values
+cosmos_account_key = dbutils.widgets.get("cosmos_account_key")
+cosmos_end_point = dbutils.widgets.get("cosmos_end_point")
+cosmos_container_name = dbutils.widgets.get("cosmos_container_name")
+cosmos_db_name = dbutils.widgets.get("cosmos_db_name")
 
-Where can I find the E2E test plan?
+# Set Spark configuration settings for Cosmos DB
+config = {
+    "spark.cosmos.accountEndpoint": cosmos_end_point,
+    "spark.cosmos.accountKey": cosmos_account_key,
+    "spark.cosmos.container": cosmos_container_name,
+    "spark.cosmos.database": cosmos_db_name,
+    "spark.cosmos.read.inferSchema.enabled": "true"
+}
 
-If any testing workshops are already scheduled, I’d appreciate it if you could include me in those too.
+# Configure Catalog API
+spark.conf.set("spark.sql.catalog.cosmosCatalog", "com.azure.cosmos.spark.CosmosCatalog")
+spark.conf.set("spark.sql.catalog.cosmosCatalog.spark.cosmos.accountEndpoint", config["spark.cosmos.accountEndpoint"])
+spark.conf.set("spark.sql.catalog.cosmosCatalog.spark.cosmos.accountKey", config["spark.cosmos.accountKey"])
+logger.info("Cosmos configuration settings loaded")
 
-Thanks a lot! Looking forward to working more closely with you both.
+# Define a method to read data from Cosmos DB
+def read_data_from_cosmos():
+    try:
+        cosmos_df = spark.read.format("cosmos.oltp").options(**config).load()
+        display(cosmos_df)
+        return cosmos_df
+    except Exception as e:
+        logger.error(f"Error reading data from Cosmos DB: {e}")
+        return None
+
+# Read and display data as table
+read_data_from_cosmos()
