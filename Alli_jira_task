@@ -3,3 +3,6 @@ I completely agree — the idea would definitely make things much easier by redu
 In the meantime, we’ve submitted a ServiceNow request for the shared folder access, which has already been approved by Phil. I believe the fulfillment is currently in progress. I’ll keep an eye on it and let you know if any follow-up is needed.
 
 Also, please find the script attached to connect to and read from Cosmos DB. Let me know if there’s anything else you need on that front.
+
+
+Just give us a green light once the latest code is deployed in the test environment. In the meantime, the team will continue working on the test scenarios and scripts.
