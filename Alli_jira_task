@@ -1,7 +1,5 @@
-I completely agree — the idea would definitely make things a lot smoother by reducing dependencies on shared folder access and cutting down on DevOps involvement for end users. But as you rightly pointed out, it does require proper assessment, permissions, and approvals.
+I completely agree — the idea would definitely make things much easier by reducing dependencies on shared folder access and cutting down the DevOps overhead for end users. But as you rightly pointed out, it does require proper assessment, permissions, and approvals.
 
-In the meantime, we’ve gone ahead and raised a ServiceNow request for the shared folder access, which has already been approved by Phil. I believe the fulfillment is currently in progress.
+In the meantime, we’ve submitted a ServiceNow request for the shared folder access, which has already been approved by Phil. I believe the fulfillment is currently in progress. I’ll keep an eye on it and let you know if any follow-up is needed.
 
-Also, please find attached the script to connect to and read from Cosmos DB. Let me know if there’s anything else you’d need from my side.
-
-Thanks again!
+Also, please find the script attached to connect to and read from Cosmos DB. Let me know if there’s anything else you need on that front.
