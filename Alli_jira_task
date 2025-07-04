@@ -1,1 +1,39 @@
-Hey team, just a heads-up — I’ll be unavailable from 10:30 to 11:30 due to a doctor’s appointment that got preponed. Ping me if anything urgent, I’ll get back soon after."
+# Import required libraries
+import pyspark.sql.functions as F
+import re
+
+# Widgets (already created in your notebook UI)
+dbutils.widgets.text("cosmos_account_key_name", "lrf-dev-cosmosdb-key")
+dbutils.widgets.text("cosmos_end_point_name", "lrf-dev-cosmosdb-endpoint")
+dbutils.widgets.text("cosmos_container_name", "vehicle-area-factors")
+dbutils.widgets.text("cosmos_db_name", "vehicle-area-cdb")
+
+# Get widget values
+cosmos_account_key_name = dbutils.widgets.get("cosmos_account_key_name")
+cosmos_end_point_name = dbutils.widgets.get("cosmos_end_point_name")
+cosmos_container_name = dbutils.widgets.get("cosmos_container_name")
+cosmos_db_name = dbutils.widgets.get("cosmos_db_name")
+
+# Load secrets from Azure Key Vault
+cosmos_account_key = dbutils.secrets.get(scope="Azure-secret-key-vault", key=cosmos_account_key_name)
+cosmos_end_point = dbutils.secrets.get(scope="Azure-secret-key-vault", key=cosmos_end_point_name)
+
+# Validate endpoint URI format
+uri_pattern = r"^https://[a-zA-Z0-9-]+\\.documents\\.azure\\.com:443/?$"
+if not re.match(uri_pattern, cosmos_end_point):
+    raise ValueError(f"Invalid Cosmos DB endpoint URI: {cosmos_end_point}")
+
+# Set Cosmos DB Spark configuration
+config = {
+    "spark.cosmos.accountEndpoint": cosmos_end_point,
+    "spark.cosmos.accountKey": cosmos_account_key,
+    "spark.cosmos.database": cosmos_db_name,
+    "spark.cosmos.container": cosmos_container_name,
+    "spark.cosmos.read.inferSchema.enabled": "true"
+}
+
+# Read data from Cosmos DB
+cosmos_df = spark.read.format("cosmos.oltp").options(**config).load()
+
+# Display in table format
+display(cosmos_df)
