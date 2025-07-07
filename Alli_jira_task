@@ -1,8 +1,3 @@
-I completely agree — the idea would definitely make things much easier by reducing dependencies on shared folder access and cutting down the DevOps overhead for end users. But as you rightly pointed out, it does require proper assessment, permissions, and approvals.
-
-In the meantime, we’ve submitted a ServiceNow request for the shared folder access, which has already been approved by Phil. I believe the fulfillment is currently in progress. I’ll keep an eye on it and let you know if any follow-up is needed.
-
-Also, please find the script attached to connect to and read from Cosmos DB. Let me know if there’s anything else you need on that front.
-
-
-Just give us a green light once the latest code is deployed in the test environment. In the meantime, the team will continue working on the test scenarios and scripts.
+Thanks, Munish — that’s really helpful.
+@Mani, could you please make the changes Munish pointed out and help us get one clean run of the Silver PC script validation?
+@Suraj, when you get a chance, can you share the BC and CC view extract scripts so we can run and double-check their correctness?
