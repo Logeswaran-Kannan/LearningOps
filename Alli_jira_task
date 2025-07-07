@@ -1,3 +1,1 @@
-Thanks, Munish — that’s really helpful.
-@Mani, could you please make the changes Munish pointed out and help us get one clean run of the Silver PC script validation?
-@Suraj, when you get a chance, can you share the BC and CC view extract scripts so we can run and double-check their correctness?
+df.write.format("delta").mode("overwrite").saveAsTable("rr_source.your_table_name")
