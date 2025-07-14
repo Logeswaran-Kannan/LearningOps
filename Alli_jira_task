@@ -1,17 +1,18 @@
 from pyspark.sql import SparkSession
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from delta.tables import DeltaTable
-import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Initialize Spark session
+# Initialize Spark
 spark = SparkSession.builder.getOrCreate()
 
-# Catalog and database
+# Config
 catalog = "core"
 database = "ods"
 prefixes = ("policy", "billing", "claim")
+max_threads = 10  # Adjust based on cluster size
+result_table = "default.table_record_counts_parallel"
 
-# Get all tables from the catalog and database
+# Fetch tables
 tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{database}")
 filtered_tables = tables_df.filter(
     tables_df.tableName.startswith(prefixes[0]) |
@@ -19,37 +20,38 @@ filtered_tables = tables_df.filter(
     tables_df.tableName.startswith(prefixes[2])
 )
 
-# Create full table names
-table_names = [f"{catalog}.{database}.{row.tableName}" for row in filtered_tables.collect()]
+# Get full table names
+qualified_tables = [
+    f"{catalog}.{database}.{row.tableName}"
+    for row in filtered_tables.collect()
+]
 
-# Thread-safe list to store results
-lock = threading.Lock()
-results = []
-
-def get_table_count(table):
+# Function to get record count
+def get_table_count(table_name):
     try:
-        # Use Delta metadata if available
-        detail_df = spark.sql(f"DESCRIBE DETAIL {table}")
-        count = detail_df.collect()[0]['numRecords']
-        if count is None:
-            # Fallback to full count if metadata not available
-            count = spark.read.table(table).count()
+        # Try Delta metadata-based count
+        detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
+        num_records = detail.get("numRecords", None)
+        if num_records is not None:
+            return (table_name, num_records)
+        else:
+            # Fallback to full scan
+            count = spark.read.table(table_name).count()
+            return (table_name, count)
     except Exception as e:
-        count = f"Error: {str(e)}"
-    
-    with lock:
-        results.append((table, count))
+        return (table_name, f"Error: {str(e)}")
 
-# Use ThreadPoolExecutor for parallel processing
-MAX_THREADS = min(16, len(table_names))  # Adjust as needed
-with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-    futures = [executor.submit(get_table_count, table) for table in table_names]
-    for _ in as_completed(futures):
-        pass  # Wait for all to complete
+# Run in parallel
+results = []
+with ThreadPoolExecutor(max_workers=max_threads) as executor:
+    future_to_table = {executor.submit(get_table_count, tbl): tbl for tbl in qualified_tables}
+    for future in as_completed(future_to_table):
+        result = future.result()
+        results.append(result)
 
-# Convert results to DataFrame and show/save
-result_df = spark.createDataFrame(results, ["TableName", "RecordCount"])
-result_df.write.mode("overwrite").format("delta").saveAsTable("default.delta_table_counts_parallel")
+# Convert results to DataFrame and store
+results_df = spark.createDataFrame(results, ["TableName", "RecordCount"])
+results_df.write.mode("overwrite").format("delta").saveAsTable(result_table)
 
-# Display in notebook
-result_df.display()
+# Display
+results_df.display()
