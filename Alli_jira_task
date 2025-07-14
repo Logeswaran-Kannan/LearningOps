@@ -1,40 +1,58 @@
 from pyspark.sql import SparkSession
+from delta.tables import DeltaTable
+from pyspark.sql.utils import AnalysisException
 
 # Initialize Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Define catalog and database
+# Define catalog, database, and target result table
 catalog_name = "core"
 database_name = "ods"
+target_table = "default.table_record_counts"
 
-# Define table name prefixes
+# Prefixes to filter
 prefixes = ("policy", "billing", "claim")
 
-# Get all tables in the catalog and database
+# Get all table names in the specified catalog and database
 tables_df = spark.sql(f"SHOW TABLES IN {catalog_name}.{database_name}")
 
-# Filter tables that start with specified prefixes
+# Filter tables by prefix
 filtered_tables = tables_df.filter(
     tables_df.tableName.startswith(prefixes[0]) |
     tables_df.tableName.startswith(prefixes[1]) |
     tables_df.tableName.startswith(prefixes[2])
 )
 
-# Generate fully qualified table names
-qualified_tables = [
-    f"{catalog_name}.{database_name}.{row.tableName}"
-    for row in filtered_tables.collect()
-]
-
-# Count records for each filtered table
+# Prepare result list
 results = []
-for table in qualified_tables:
-    try:
-        count = spark.read.table(table).count()
-        results.append((table, count))
-    except Exception as e:
-        results.append((table, f"Error: {e}"))
 
-# Convert result to DataFrame and show
-results_df = spark.createDataFrame(results, ["TableName", "RecordCount"])
-results_df.display()
+# Loop through each qualified table
+for row in filtered_tables.collect():
+    table_name = row.tableName
+    full_table_name = f"{catalog_name}.{database_name}.{table_name}"
+    count = None
+
+    try:
+        # Try to get count from Delta table metadata (if available)
+        dt = DeltaTable.forName(spark, full_table_name)
+        details = spark.sql(f"DESCRIBE DETAIL {full_table_name}").collect()[0]
+        num_records = details['numRecords']
+        count = num_records if num_records is not None else "Metadata not available"
+    except Exception as e:
+        count = f"Metadata Error: {str(e)}"
+        # Fallback to actual count if metadata fails
+        try:
+            count = spark.read.table(full_table_name).count()
+        except Exception as inner_e:
+            count = f"Count Error: {str(inner_e)}"
+    
+    results.append((full_table_name, count))
+
+# Create DataFrame from results
+result_df = spark.createDataFrame(results, ["TableName", "RecordCount"])
+
+# Save results to a Delta table in the default database
+result_df.write.mode("overwrite").format("delta").saveAsTable(target_table)
+
+# Display for immediate visibility
+result_df.display()
