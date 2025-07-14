@@ -1,160 +1,105 @@
-4. Test Objectives
-The primary objective of this testing phase was to validate the ingestion pipelines and target data consistency after migrating from the legacy on-premises Oracle system to the Read Replica PostgreSQL-based ingestion into Azure Data Lake’s Bronze layer, as part of the Guidewire cloud migration Phase 1 release.
-
-This included a comprehensive validation strategy encompassing automated testing, manual data verification, and reconciliation checks, to ensure readiness for production deployment.
-
-Key Test Objectives:
-✅ Schema Validation
-Validate that the table structures (column names, data types, constraints) in the Read Replica ingestion mirror those of the legacy Oracle schema. A total of 692 active tables identified by the BICOE team were scoped for validation.
-
-✅ Data Load Validation
-Verify correctness and completeness of initial full loads and subsequent one-day delta loads into the Bronze layer:
-
-Row counts, duplicate checks, NULL value patterns, and SCD2 field behaviors were evaluated.
-
-Detected discrepancies such as Boolean type mismatches and decimal precision issues were flagged and tracked as defects.
-
-✅ Manual Validation Through Guidewire UI
-Execute manual business flow validation by entering identical data in the legacy Oracle-backed and cloud-based Guidewire environments:
-
-Evaluate if any data pattern deviation or anomalies appear post-ingestion.
-
-Helps ensure business-critical field accuracy from end-user perspective.
-
-✅ Error Handling Validation
-Simulate pipeline interruption scenarios (e.g., cluster disconnect, job failure) and observe recovery:
-
-Test whether data ingestion processes fail gracefully, resume reliably, and maintain data integrity upon rerun.
-
-✅ Three-Way Reconciliation (FAH Report - STD009)
-Perform manual three-way reconciliation between legacy Oracle, Read Replica source, and Azure Lake layers for select high-priority datasets, such as the FAH report.
-
-✅ Risk-Based Testing for Silver Layer (PolicyCenter Only)
-Automate and execute targeted validations for Silver-layer PolicyCenter tables:
-
-Includes transformed output for a subset of key datasets only.
-
-BillingCenter and ClaimCenter Silver-layer validations were excluded due to missing source dependencies and incomplete sync across related domains.
-
-Automation scripts for Silver were deployed, but test execution failures remain under investigation.
-
-✅ High-Level Performance Benchmarking
-Conduct basic ingestion timing comparison using one-day delta loads:
-
-ADF vs. Databricks execution time comparison captured in logs (non-benchmarked).
-
-✅ Defect Management and Triage
-Identify ingestion errors, metadata mismatches, or formatting issues.
-
-Defects logged, tracked, and retested in scope.
-
-Downstream impact noted (e.g., SPV processing dependencies handled with business stakeholder alignment).
-
------------------------------
-
-4. Test Objectives
-The core objective of the testing effort was to validate the successful ingestion of Guidewire data from the Read Replica (PostgreSQL) source into the Azure Data Lake Bronze Layer, ensuring data consistency with the legacy Oracle setup. The goal was to ensure that the new ingestion mechanism reliably replaces the legacy ingestion process from Oracle without loss of data quality, structure, or usability.
-
-Key Test Objectives:
-✅ Schema Validation
-
-Ensure table structures, including column names, data types, and constraints in Read Replica, are aligned with the Oracle source for all 692 in-scope tables approved by BICOE.
-
-Validate missing, additional, or altered columns to identify structural anomalies early.
-
-✅ Data Load Validation
-
-Perform initial bulk load validation from Read Replica into STG → ODS → ODS_VIEW.
-
-Validate daily delta ingestion (1-day load) to confirm incremental load behaviors.
-
-Conduct row count checks, duplicate detection, null checks, and data value consistency validations.
-
-✅ Manual Scenario-Based Validation
-
-Execute selected functional scenarios in legacy (Oracle) and cloud Guidewire (Read Replica-fed) environments.
-
-Input identical data across both platforms and verify if any data representation or storage pattern differences are introduced post-ingestion.
-
-This helps validate end-to-end real-time behavior and compatibility of the migrated system.
-
-✅ Error Handling & Pipeline Interruption Recovery
-
-Test pipeline behavior when interrupted (failures, transient errors, cluster restarts) and ensure resume capabilities without data corruption.
-
-Validate checkpoint and recovery configurations for robust data ingestion lifecycle handling.
-
-✅ Risk-Based Testing – Silver Layer
-
-Conduct risk-based testing for Silver Layer (PolicyCenter only) due to partial availability.
-
-Focus areas included transformation logic, reference joins, and binary column comparison.
-
-Note: Automation execution for Silver Layer completed, but some test failures are under investigation.
-
-BillingCenter and ClaimCenter were excluded from Silver validation due to incomplete environment setup and missing upstream data.
-
-✅ Performance Validation
-
-Capture high-level performance statistics comparing ADF (Oracle) vs. Databricks (Read Replica) execution timelines for one-day delta loads, as a benchmark check.
-
-No detailed stress testing or tuning was performed in this phase.
-
-✅ Three-Way Reconciliation Support – FAH Report (STD009)
-
-Support functional teams in executing three-way reconciliation between:
-
-Legacy Oracle
-
-Read Replica
-
-Final output in Azure (ODS/ODS_VIEW)
-
-Specifically validated for the FAH report pipeline.
-
-✅ Validation Automation
-
-Orchestrated automated scripts via Databricks Workflows.
-
-Workflows included schema checks, row count comparisons, delta validations, and transformation coverage for Bronze and select Silver tables.
-
-Scripts were source-controlled in Azure DevOps and executed as per defined CI/CD process.
-
---------------------------------------------
-
-6. Test Execution Coverage and Methods
-6.1 Coverage Summary
-The testing for Guidewire Upgrade Phase 1 – Read Replica Release was executed with a hybrid approach combining automation and manual testing to ensure accuracy, completeness, and resiliency of data pipelines across environments.
-
-Test Type	Coverage	Notes
-Automated Testing	Schema validation, row count checks, duplication, referential integrity, field-level match, and SCD2 logic.	Executed in Databricks via orchestrated workflows, across Bronze and selected Silver tables.
-Manual Testing	Keyed same test data in SYS9 (Legacy) and STD001 (Cloud) environments to observe differences.	Verified for ClaimCenter, PolicyCenter, and BillingCenter.
-Delta Load Validation	One-day delta ingestion load into Bronze layer.	Used to benchmark ADF vs. Databricks performance.
-Error Handling Checks	Simulated pipeline interruption and tested system’s ability to resume from failure points.	Validated using test orchestration in STD001.
-Performance Benchmark	High-level load time comparison between ADF and Databricks on delta loads.	Findings recorded for optimization input.
-Three-Way Reconciliation	Executed for FAH Report (STD009) comparing Read Replica, Bronze, and Silver data.	Reconciliation successfully validated.
-
-6.2 Silver Layer Testing (PolicyCenter Only)
-Scope: Risk-based validation for transformation logic on PolicyCenter Silver tables only.
-
-Status: Automation test setup and execution began but encountered failures. Root cause analysis pending.
-
-BillingCenter and ClaimCenter were excluded due to incomplete Silver environment setup caused by missing dependent source data.
-
-🟨 Note: All Silver layer validations (except FAH three-way reconciliation) were executed in STD001 (cloud) and cross-referenced with SYS9 (legacy) to verify consistency.
-
-6.3 Out-of-Scope Test Items
-CDA validation (deferred for a future release).
-
-Complete Silver validation for BillingCenter and ClaimCenter.
-
-Full business logic testing for Gold and outbound layers.
-
-Downstream analytics or UI-based validation.
-
-Let me know if you'd like this added directly into the Test Summary Report (TSR) Word document or also converted into presentation content.
-
-
-
-
-
+from pyspark.sql import SparkSession
+import concurrent.futures
+import threading
+
+spark = SparkSession.builder.getOrCreate()
+
+# Configuration
+catalog = "core"
+database = "ods"
+prefixes = ("policy", "billing", "claim")
+benchmark_table = "core_preprod.default.ddl_benchmark"
+anomaly_table = "core_preprod.default.ddl_anomalies"
+max_threads = 10
+
+progress = {"done": 0, "total": 0}
+lock = threading.Lock()
+
+# Get table list
+tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{database}")
+filtered_tables = tables_df.filter(
+    tables_df.tableName.startswith(prefixes[0]) |
+    tables_df.tableName.startswith(prefixes[1]) |
+    tables_df.tableName.startswith(prefixes[2])
+)
+table_list = [f"{catalog}.{database}.{row.tableName}" for row in filtered_tables.collect()]
+progress["total"] = len(table_list)
+
+# Extract DDL details
+def get_table_ddl(table_name):
+    try:
+        desc_df = spark.sql(f"DESCRIBE TABLE EXTENDED {table_name}").filter("col_name NOT LIKE '#%' AND col_name != ''")
+        ddl_rows = desc_df.select("col_name", "data_type", "comment").collect()
+        results = []
+        for row in ddl_rows:
+            col = row["col_name"]
+            dtype = row["data_type"]
+            precision, scale = None, None
+            if "(" in dtype:
+                try:
+                    type_main, params = dtype.strip(")").split("(")
+                    precision, scale = map(int, params.split(","))
+                except:
+                    pass
+            results.append((table_name, col, dtype, precision, scale))
+    except Exception as e:
+        results = [(table_name, "ERROR", str(e), None, None)]
+
+    with lock:
+        progress["done"] += 1
+        print(f"[{progress['done']}/{progress['total']}] Scanned: {table_name}")
+
+    return results
+
+# Run in parallel
+all_results = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+    futures = [executor.submit(get_table_ddl, t) for t in table_list]
+    for f in concurrent.futures.as_completed(futures):
+        all_results.extend(f.result())
+
+# Convert to DataFrame
+ddl_df = spark.createDataFrame(all_results, ["TableName", "ColumnName", "DataType", "Precision", "Scale"])
+
+# Check if benchmark exists
+benchmark_exists = spark._jsparkSession.catalog().tableExists(benchmark_table)
+
+if not benchmark_exists:
+    # First run: store benchmark
+    ddl_df.write.mode("overwrite").format("delta").saveAsTable(benchmark_table)
+    print("✅ Benchmark created.")
+    ddl_df.display()
+else:
+    # Second or later run: compare against benchmark
+    ddl_df.createOrReplaceTempView("current_ddl")
+    spark.read.table(benchmark_table).createOrReplaceTempView("benchmark_ddl")
+
+    comparison_query = """
+    SELECT 'Missing Column' AS Issue, b.TableName, b.ColumnName, b.DataType, b.Precision, b.Scale
+    FROM benchmark_ddl b
+    LEFT ANTI JOIN current_ddl c
+    ON b.TableName = c.TableName AND b.ColumnName = c.ColumnName
+
+    UNION ALL
+
+    SELECT 'New Column' AS Issue, c.TableName, c.ColumnName, c.DataType, c.Precision, c.Scale
+    FROM current_ddl c
+    LEFT ANTI JOIN benchmark_ddl b
+    ON b.TableName = c.TableName AND b.ColumnName = c.ColumnName
+
+    UNION ALL
+
+    SELECT 'Changed DataType' AS Issue, b.TableName, b.ColumnName, CONCAT(b.DataType, ' -> ', c.DataType) AS DataType,
+           CONCAT(b.Precision, ' -> ', c.Precision) AS Precision,
+           CONCAT(b.Scale, ' -> ', c.Scale) AS Scale
+    FROM benchmark_ddl b
+    INNER JOIN current_ddl c
+    ON b.TableName = c.TableName AND b.ColumnName = c.ColumnName
+    WHERE b.DataType != c.DataType OR b.Precision != c.Precision OR b.Scale != c.Scale
+    """
+
+    anomalies_df = spark.sql(comparison_query)
+    anomalies_df.write.mode("overwrite").format("delta").saveAsTable(anomaly_table)
+
+    print("✅ Comparison complete. Anomalies saved.")
+    anomalies_df.display()
