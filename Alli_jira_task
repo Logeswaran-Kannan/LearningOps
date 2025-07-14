@@ -1,21 +1,55 @@
 from pyspark.sql import SparkSession
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from delta.tables import DeltaTable
+import threading
 
 # Initialize Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Define catalog and database
-catalog = "core_preprod"
-database = "default"
-full_table_name = f"{catalog}.{database}.sample_access_check"
+# Catalog and database
+catalog = "core"
+database = "ods"
+prefixes = ("policy", "billing", "claim")
 
-# Create a small DataFrame
-data = [("Alice", 1), ("Bob", 2)]
-columns = ["name", "id"]
-df = spark.createDataFrame(data, columns)
+# Get all tables from the catalog and database
+tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{database}")
+filtered_tables = tables_df.filter(
+    tables_df.tableName.startswith(prefixes[0]) |
+    tables_df.tableName.startswith(prefixes[1]) |
+    tables_df.tableName.startswith(prefixes[2])
+)
 
-# Try writing the DataFrame as a Delta table
-try:
-    df.write.mode("overwrite").format("delta").saveAsTable(full_table_name)
-    print(f"✅ Table created successfully: {full_table_name}")
-except Exception as e:
-    print(f"❌ Failed to create table: {e}")
+# Create full table names
+table_names = [f"{catalog}.{database}.{row.tableName}" for row in filtered_tables.collect()]
+
+# Thread-safe list to store results
+lock = threading.Lock()
+results = []
+
+def get_table_count(table):
+    try:
+        # Use Delta metadata if available
+        detail_df = spark.sql(f"DESCRIBE DETAIL {table}")
+        count = detail_df.collect()[0]['numRecords']
+        if count is None:
+            # Fallback to full count if metadata not available
+            count = spark.read.table(table).count()
+    except Exception as e:
+        count = f"Error: {str(e)}"
+    
+    with lock:
+        results.append((table, count))
+
+# Use ThreadPoolExecutor for parallel processing
+MAX_THREADS = min(16, len(table_names))  # Adjust as needed
+with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+    futures = [executor.submit(get_table_count, table) for table in table_names]
+    for _ in as_completed(futures):
+        pass  # Wait for all to complete
+
+# Convert results to DataFrame and show/save
+result_df = spark.createDataFrame(results, ["TableName", "RecordCount"])
+result_df.write.mode("overwrite").format("delta").saveAsTable("default.delta_table_counts_parallel")
+
+# Display in notebook
+result_df.display()
