@@ -1,54 +1,64 @@
 from pyspark.sql import SparkSession
 from delta.tables import DeltaTable
-import time
+import concurrent.futures
+import threading
 
+# Initialize Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Settings
-source_catalog = "core"
-source_db = "ods"
-target_table = "core_preprod.default.record_counts"
+# Config
+catalog = "core"
+database = "ods"
+target_output_table = "core_preprod.default.delta_table_counts"
 prefixes = ("policy", "billing", "claim")
 
+# Lock for thread-safe progress updates
+progress_lock = threading.Lock()
+progress_counter = {"completed": 0, "total": 0}
+
 # Step 1: Get filtered table list
-tables_df = spark.sql(f"SHOW TABLES IN {source_catalog}.{source_db}")
+tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{database}")
 filtered_tables = tables_df.filter(
     tables_df.tableName.startswith(prefixes[0]) |
     tables_df.tableName.startswith(prefixes[1]) |
     tables_df.tableName.startswith(prefixes[2])
 )
 
-table_list = [f"{source_catalog}.{source_db}.{row.tableName}" for row in filtered_tables.collect()]
-total_tables = len(table_list)
+table_names = [f"{catalog}.{database}.{row.tableName}" for row in filtered_tables.collect()]
+progress_counter["total"] = len(table_names)
 
-# Broadcast the table list for efficient distribution
-sc = spark.sparkContext
-table_rdd = sc.parallelize(table_list, numSlices=min(50, total_tables))  # Adjust numSlices for parallelism
-
-# Function to get row count using Delta metadata
-def get_table_count(table_name):
-    from pyspark.sql import SparkSession
-    spark = SparkSession.builder.getOrCreate()
+# Step 2: Function to get record count
+def get_record_count(full_table_name):
     try:
-        # Try to get count from DESCRIBE DETAIL
-        details = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
-        count = details['numRecords'] if details['numRecords'] is not None else -1
-        return (table_name, count, "OK")
+        # Try metadata-based count
+        details = spark.sql(f"DESCRIBE DETAIL {full_table_name}").collect()[0]
+        count = details.get("numRecords", None)
+
+        # Fallback to full scan count if metadata is missing or None
+        if count is None or count == 0:
+            count = spark.read.table(full_table_name).count()
+
     except Exception as e:
-        return (table_name, None, f"ERROR: {str(e)}")
+        count = f"Error: {str(e)}"
 
-# Step 2: Parallel count with progress tracking
+    # Update progress
+    with progress_lock:
+        progress_counter["completed"] += 1
+        print(f"[{progress_counter['completed']}/{progress_counter['total']}] Counted: {full_table_name}")
+
+    return (full_table_name, count)
+
+# Step 3: Parallel processing with ThreadPoolExecutor
 results = []
-processed = 0
+with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    futures = [executor.submit(get_record_count, table) for table in table_names]
+    for future in concurrent.futures.as_completed(futures):
+        results.append(future.result())
 
-for res in table_rdd.map(get_table_count).toLocalIterator():
-    results.append(res)
-    processed += 1
-    print(f"Progress: {processed} of {total_tables} tables processed.")
+# Step 4: Save results to Delta table
+result_df = spark.createDataFrame(results, ["TableName", "RecordCount"])
+result_df.write.mode("overwrite").format("delta").saveAsTable(target_output_table)
 
-# Step 3: Save results
-results_df = spark.createDataFrame(results, ["TableName", "RecordCount", "Status"])
-results_df.write.mode("overwrite").format("delta").saveAsTable(target_table)
-
-# Display results
-results_df.display()
+# Show final output
+print("\n✅ All table counts completed.")
+result_df.display()
