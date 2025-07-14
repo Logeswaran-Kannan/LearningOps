@@ -1,14 +1,40 @@
-There have been repeated concerns raised by the client around how planned leaves are being handled. Despite clear expectations being set, it’s still coming up that planned time off is being communicated at short notice without proper internal alignment or impact assessment. Naturally, the client is questioning how we're managing things, and this puts both the team and Cognizant in a tough spot.
+from pyspark.sql import SparkSession
 
-From an organizational standpoint, repeated escalations on the same issue are hurting our credibility. I’m not sure what part of the process might be unclear on your end, but let’s sort that out—this needs to be streamlined going forward.
+# Initialize Spark session
+spark = SparkSession.builder.getOrCreate()
 
-Aside from that, there’s been some feedback around working hours availability, communication gaps, and deliverable progress. These are all areas that are making it difficult to justify or support your upcoming travel plans—especially now that the client has started onboarding a contractor as a potential replacement.
+# Define catalog and database
+catalog_name = "core"
+database_name = "ods"
 
-We’ve stood by you to hold your position, but that becomes harder if these gaps aren’t addressed. After the PI 30 planning meeting yesterday, expectations have only grown. If the role isn’t met with the right level of ownership, it reflects poorly on both you and the wider team.
+# Define table name prefixes
+prefixes = ("policy", "billing", "claim")
 
-That said—this is all shared in the spirit of support. If you’re willing to take the feedback on board and step up, I’m more than happy to help guide you. If you have any doubts about your role or expectations, please reach out to me or Nat directly.
+# Get all tables in the catalog and database
+tables_df = spark.sql(f"SHOW TABLES IN {catalog_name}.{database_name}")
 
-Let’s reset and move forward positively.
+# Filter tables that start with specified prefixes
+filtered_tables = tables_df.filter(
+    tables_df.tableName.startswith(prefixes[0]) |
+    tables_df.tableName.startswith(prefixes[1]) |
+    tables_df.tableName.startswith(prefixes[2])
+)
 
+# Generate fully qualified table names
+qualified_tables = [
+    f"{catalog_name}.{database_name}.{row.tableName}"
+    for row in filtered_tables.collect()
+]
 
-I’ll need to start tracking things like VPN/network issues, availability, and downtime more closely moving forward, due to the scrutiny from the client side.
+# Count records for each filtered table
+results = []
+for table in qualified_tables:
+    try:
+        count = spark.read.table(table).count()
+        results.append((table, count))
+    except Exception as e:
+        results.append((table, f"Error: {e}"))
+
+# Convert result to DataFrame and show
+results_df = spark.createDataFrame(results, ["TableName", "RecordCount"])
+results_df.display()
