@@ -24,12 +24,6 @@ Happy to discuss anything openly—please reach out to me or Nat if you need cla
 -----------------
 
 
-Subject: Smoke Test Script Readiness – Phase 1 Read Replica Production Release
+Yes, in last week’s meeting they walked us through the front-end demo portal for both customer and agent views, where they mentioned data creation would happen. Vijay tried to show us how they generate the data, but it wasn’t working at the time.
 
-Hi all,
-
-Following our discussion around the smoke test readiness for the upcoming Phase 1 Read Replica production release, we’ve outlined the scoped action items and next steps below.
-
-Please take a moment to review and start sharing the notebook/script links in this email thread. Also, kindly capture and include the estimated time taken for each script to help us assess the overall testing timeline for the release.
-
-Thanks for your support and let’s keep things moving!
+After that, we discussed BICOE’s test data scenario requirements. I can add you to the chat conversation — if you’re looking for anything specific, feel free to drop it there and we can get it clarified.
