@@ -1,7 +1,6 @@
 from pyspark.sql import SparkSession
-import re
 
-# Start Spark session
+# Start Spark
 spark = SparkSession.builder.getOrCreate()
 
 # Config
@@ -9,15 +8,15 @@ catalog = "core"
 database = "ods_views"
 prefixes = ("vw_billingcenter", "vw_policycenter", "vw_claimcenter")
 
-# Set the catalog and database
+# Use catalog and DB
 spark.sql(f"USE CATALOG {catalog}")
 spark.sql(f"USE {database}")
 
-# Get tables
+# Fetch relevant tables
 tables_df = spark.sql("SHOW TABLES")
 tables = [row.tableName for row in tables_df.collect() if row.tableName.startswith(prefixes)]
 
-# Generate SQL statements
+# Collect generated SQLs
 sql_entries = []
 
 for table in tables:
@@ -25,15 +24,13 @@ for table in tables:
         full_table = f"{catalog}.{database}.{table}"
         df = spark.table(full_table)
 
-        # Exclude AZURE_LOAD_DATE
-        cols = [col for col in df.columns if col != "AZURE_LOAD_DATE"]
-        if not cols:
-            continue  # Skip tables without any columns to group by
+        # Lowercase all column names and drop AZURE_LOAD_DATE
+        columns = [col.lower() for col in df.columns if col.lower() != "azure_load_date"]
+        if not columns:
+            continue
 
-        # Build struct for distinct comparison
-        struct_expr = "struct(" + ", ".join([f"`{c}`" for c in cols]) + ")"
+        struct_expr = "struct(" + ", ".join([f"`{col}`" for col in columns]) + ")"
 
-        # Final SQL string
         sql_text = f"""SELECT '{table}' AS table_name,
        '{catalog}' AS catalog,
        COUNT(*) AS total_count,
@@ -42,10 +39,10 @@ FROM {full_table}"""
 
         sql_entries.append((table, catalog, database, sql_text.strip()))
     except Exception as e:
-        sql_entries.append((table, catalog, database, f"-- ERROR: {str(e)}"))
+        sql_entries.append((table, catalog, database, f"-- ERROR generating SQL: {str(e)}"))
 
 # Convert to DataFrame
 sql_df = spark.createDataFrame(sql_entries, ["table_name", "catalog", "database", "sql_text"])
 
-# Write to Delta table for future execution/review
+# Store to Delta table
 sql_df.write.mode("overwrite").format("delta").saveAsTable("core.admin_scripts.duplicate_check_sqls")
