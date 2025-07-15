@@ -1,3 +1,5 @@
-We’re seeing duplicate records for a couple of tables in the silver view when checking with the key and hash_diff combination. But this seems to be the same behavior we’ve already noticed in production too.
-
-I can share a sample for reference—maybe Paul can take a quick look at it offline.
+SELECT 'table_name' AS table_name,
+       'core' AS catalog,
+       COUNT(*) AS total_count,
+       COUNT(1) - COUNT(DISTINCT struct(...)) AS duplicate_count
+FROM core.ods_views.table_name
