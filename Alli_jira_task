@@ -1,68 +1,76 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, count, lit
+from pyspark.sql.functions import col, count
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 
-# Initialize Spark session
+# Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Configuration
+# Config
 catalog = "core"
 database = "ods_views"
-prefixes = ["vw_billingcenter", "vw_policycenter", "vw_claimcenter"]
-max_threads = 10  # Adjust based on your cluster capacity
+prefixes = ("vw_billingcenter", "vw_policycenter", "vw_claimcenter")
+max_threads = 10  # Tune based on cluster size
 
-# Fetch tables
+# Step 1: Fetch tables
 spark.sql(f"USE CATALOG {catalog}")
 spark.sql(f"USE {database}")
 tables_df = spark.sql("SHOW TABLES")
 
-# Filter relevant tables
+# Step 2: Filter relevant tables
 pattern = re.compile(r"^(vw_billingcenter|vw_policycenter|vw_claimcenter).*")
 filtered_tables = [row.tableName for row in tables_df.collect() if pattern.match(row.tableName)]
 
-# Shared list to collect results
-results = []
-
-# Function to process a table
+# Step 3: Function to check duplicates efficiently
 def check_duplicates(table_name):
     try:
         full_table_name = f"{catalog}.{database}.{table_name}"
-        df = spark.table(full_table_name)
-        
+        df = spark.read.table(full_table_name)
+
         if "AZURE_LOAD_DATE" in df.columns:
             df = df.drop("AZURE_LOAD_DATE")
 
-        dup_count = df.groupBy(df.columns) \
-                      .count() \
-                      .filter("count > 1") \
-                      .count()
+        # Broadcast schema to prevent shuffling unnecessary columns
+        key_cols = df.columns
+        if not key_cols:
+            return (table_name, 0)
 
-        return (table_name, dup_count)
+        # Select only distinct key columns + count groupings
+        duplicates_df = (
+            df.select(*key_cols)
+            .groupBy(key_cols)
+            .agg(count("*").alias("cnt"))
+            .filter(col("cnt") > 1)
+        )
+
+        duplicate_count = duplicates_df.count()
+
+        return (table_name, duplicate_count)
     except Exception as e:
-        return (table_name, f"Error: {str(e)}")
+        return (table_name, f"ERROR: {str(e)}")
 
-# Parallel processing with progress tracking
+# Step 4: Run in parallel with tracking
+results = []
 progress = 0
 total = len(filtered_tables)
 
 with ThreadPoolExecutor(max_workers=max_threads) as executor:
-    future_to_table = {executor.submit(check_duplicates, table): table for table in filtered_tables}
-    
-    for future in as_completed(future_to_table):
-        table = future_to_table[future]
+    futures = {executor.submit(check_duplicates, tbl): tbl for tbl in filtered_tables}
+
+    for future in as_completed(futures):
+        tbl = futures[future]
         try:
             result = future.result()
-            results.append(result)
-        except Exception as exc:
-            results.append((table, f"Error: {str(exc)}"))
-        
+        except Exception as e:
+            result = (tbl, f"ERROR: {str(e)}")
+
+        results.append(result)
         progress += 1
-        print(f"Checked {progress}/{total} tables...")
+        print(f"Progress: {progress}/{total} tables processed.")
 
-# Create final DataFrame with results
-results_df = spark.createDataFrame(results, ["table_name", "duplicate_count"])
-results_df.show(truncate=False)
+# Step 5: Convert to DataFrame and write results
+result_df = spark.createDataFrame(results, ["table_name", "duplicate_count"])
+result_df.show(truncate=False)
 
-# Optionally save to a Delta table
-results_df.write.mode("overwrite").format("delta").saveAsTable("core.validation_results.duplicate_counts")
+# Optional: Save results to Delta table
+result_df.write.mode("overwrite").format("delta").saveAsTable("core.validation_results.duplicate_counts")
