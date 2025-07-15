@@ -1,5 +1,51 @@
-SELECT 'table_name' AS table_name,
-       'core' AS catalog,
+from pyspark.sql import SparkSession
+import re
+
+# Start Spark session
+spark = SparkSession.builder.getOrCreate()
+
+# Config
+catalog = "core"
+database = "ods_views"
+prefixes = ("vw_billingcenter", "vw_policycenter", "vw_claimcenter")
+
+# Set the catalog and database
+spark.sql(f"USE CATALOG {catalog}")
+spark.sql(f"USE {database}")
+
+# Get tables
+tables_df = spark.sql("SHOW TABLES")
+tables = [row.tableName for row in tables_df.collect() if row.tableName.startswith(prefixes)]
+
+# Generate SQL statements
+sql_entries = []
+
+for table in tables:
+    try:
+        full_table = f"{catalog}.{database}.{table}"
+        df = spark.table(full_table)
+
+        # Exclude AZURE_LOAD_DATE
+        cols = [col for col in df.columns if col != "AZURE_LOAD_DATE"]
+        if not cols:
+            continue  # Skip tables without any columns to group by
+
+        # Build struct for distinct comparison
+        struct_expr = "struct(" + ", ".join([f"`{c}`" for c in cols]) + ")"
+
+        # Final SQL string
+        sql_text = f"""SELECT '{table}' AS table_name,
+       '{catalog}' AS catalog,
        COUNT(*) AS total_count,
-       COUNT(1) - COUNT(DISTINCT struct(...)) AS duplicate_count
-FROM core.ods_views.table_name
+       (COUNT(*) - COUNT(DISTINCT {struct_expr})) AS duplicate_count
+FROM {full_table}"""
+
+        sql_entries.append((table, catalog, database, sql_text.strip()))
+    except Exception as e:
+        sql_entries.append((table, catalog, database, f"-- ERROR: {str(e)}"))
+
+# Convert to DataFrame
+sql_df = spark.createDataFrame(sql_entries, ["table_name", "catalog", "database", "sql_text"])
+
+# Write to Delta table for future execution/review
+sql_df.write.mode("overwrite").format("delta").saveAsTable("core.admin_scripts.duplicate_check_sqls")
