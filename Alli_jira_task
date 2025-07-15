@@ -1,82 +1,68 @@
-from pyspark.sql import functions as F
-from pyspark.sql.utils import AnalysisException
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, lit
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
+
+# Initialize Spark session
+spark = SparkSession.builder.getOrCreate()
 
 # Configuration
-catalog_name = "core"
-db_name = "ods"
-target_baseline = "core_preprod.default.ddl_benchmark_baseline"
-target_diff = "core_preprod.default.ddl_benchmark_diff"
+catalog = "core"
+database = "ods_views"
+prefixes = ["vw_billingcenter", "vw_policycenter", "vw_claimcenter"]
+max_threads = 10  # Adjust based on your cluster capacity
 
-# Table name patterns
-prefixes = ["policy", "billing", "claim"]
+# Fetch tables
+spark.sql(f"USE CATALOG {catalog}")
+spark.sql(f"USE {database}")
+tables_df = spark.sql("SHOW TABLES")
 
-# Step 1: Pull current DDL from information_schema
-info_schema = spark.read.table(f"{catalog_name}.information_schema.columns")
+# Filter relevant tables
+pattern = re.compile(r"^(vw_billingcenter|vw_policycenter|vw_claimcenter).*")
+filtered_tables = [row.tableName for row in tables_df.collect() if pattern.match(row.tableName)]
 
-current_ddl = (
-    info_schema
-    .filter(
-        (F.col("table_schema") == db_name) &
-        (F.lower(F.col("table_name")).rlike(f"^({'|'.join(prefixes)})"))
-    )
-    .select(
-        F.lit(catalog_name).alias("catalog_name"),
-        F.col("table_schema").alias("db_name"),
-        F.col("table_name"),
-        F.col("column_name"),
-        F.col("data_type"),
-        F.col("numeric_precision"),
-        F.col("numeric_scale"),
-        F.current_timestamp().alias("ddl_pull_ts")
-    )
-    .cache()
-)
+# Shared list to collect results
+results = []
 
-current_ddl.count()  # Force execution for performance monitoring
+# Function to process a table
+def check_duplicates(table_name):
+    try:
+        full_table_name = f"{catalog}.{database}.{table_name}"
+        df = spark.table(full_table_name)
+        
+        if "AZURE_LOAD_DATE" in df.columns:
+            df = df.drop("AZURE_LOAD_DATE")
 
-# Step 2: Save baseline on first run
-try:
-    baseline = spark.read.table(target_baseline)
-    is_first_run = False
-except AnalysisException:
-    current_ddl.write.mode("overwrite").saveAsTable(target_baseline)
-    print("✅ First run: baseline created.")
-    is_first_run = True
+        dup_count = df.groupBy(df.columns) \
+                      .count() \
+                      .filter("count > 1") \
+                      .count()
 
-# Step 3: Compare with baseline and save diff
-if not is_first_run:
-    join_keys = ["catalog_name", "db_name", "table_name", "column_name"]
+        return (table_name, dup_count)
+    except Exception as e:
+        return (table_name, f"Error: {str(e)}")
 
-    joined = current_ddl.alias("current").join(
-        baseline.alias("base"),
-        on=join_keys,
-        how="outer"
-    )
+# Parallel processing with progress tracking
+progress = 0
+total = len(filtered_tables)
 
-    diff = joined.select(
-        F.coalesce(F.col("current.catalog_name"), F.col("base.catalog_name")).alias("catalog_name"),
-        F.coalesce(F.col("current.db_name"), F.col("base.db_name")).alias("db_name"),
-        F.coalesce(F.col("current.table_name"), F.col("base.table_name")).alias("table_name"),
-        F.coalesce(F.col("current.column_name"), F.col("base.column_name")).alias("column_name"),
-        F.col("base.data_type").alias("old_data_type"),
-        F.col("current.data_type").alias("new_data_type"),
-        F.col("base.numeric_precision").alias("old_precision"),
-        F.col("current.numeric_precision").alias("new_precision"),
-        F.col("base.numeric_scale").alias("old_scale"),
-        F.col("current.numeric_scale").alias("new_scale"),
-        F.when(F.col("base.column_name").isNull(), "added")
-         .when(F.col("current.column_name").isNull(), "removed")
-         .otherwise("modified").alias("change_type"),
-        F.current_timestamp().alias("change_ts")
-    )
+with ThreadPoolExecutor(max_workers=max_threads) as executor:
+    future_to_table = {executor.submit(check_duplicates, table): table for table in filtered_tables}
+    
+    for future in as_completed(future_to_table):
+        table = future_to_table[future]
+        try:
+            result = future.result()
+            results.append(result)
+        except Exception as exc:
+            results.append((table, f"Error: {str(exc)}"))
+        
+        progress += 1
+        print(f"Checked {progress}/{total} tables...")
 
-    # Only capture rows with actual schema differences
-    filtered_diff = diff.filter(
-        (F.col("change_type") != "modified") |
-        (F.col("old_data_type") != F.col("new_data_type")) |
-        (F.col("old_precision") != F.col("new_precision")) |
-        (F.col("old_scale") != F.col("new_scale"))
-    )
+# Create final DataFrame with results
+results_df = spark.createDataFrame(results, ["table_name", "duplicate_count"])
+results_df.show(truncate=False)
 
-    filtered_diff.write.mode("append").saveAsTable(target_diff)
-    print("✅ Changes written to diff table.")
+# Optionally save to a Delta table
+results_df.write.mode("overwrite").format("delta").saveAsTable("core.validation_results.duplicate_counts")
