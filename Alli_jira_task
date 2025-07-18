@@ -1,6 +1,5 @@
- Nat and Anukul,
-Just received confirmation from the client on Renjini's role. I assume the billing and start date discussions will be handled on your end — let me know if anything is needed from my side.
+That would be really helpful. I think part of the confusion may have come from some communication gaps, which probably raised questions about whether testing is actually needed for this. From what I understand, we haven’t officially committed to testing that part yet — it’s still in the early understanding phase based on this morning’s discussion.
 
-Also, can I go ahead and request Deva to allocate the SO?
+In my initial chat with Oliver, he mentioned a few fields being added to an existing table. He explained it’s just a schema-level change and there’s no actual data involved at this stage. Right now, we’re just trying to figure out the E2E impact of this change.
 
-Thanks!
+At least from my end, after this morning’s call, I’m looking to get a clear view of what this change really means — and only then decide if any testing is required, along with what kind of data dependencies or E2E behavior we’d need to consider.
