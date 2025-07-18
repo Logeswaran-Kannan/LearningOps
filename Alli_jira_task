@@ -1,11 +1,20 @@
-the role expectations for your reference:
+Subject: Walkthrough on Radar Live Test Plan – Monday
 
-Test script readiness (SQL and Python)
+Hi [Scrum Master's Name],
 
-Test management activities – test case creation, defect tracking, etc.
+Just a quick note — I’ll walk you through the Test Plan for Radar Live on Monday, covering things from a test management perspective.
 
-Regular updates in daily scrum calls
+We’ll go over:
 
-Collaboration with the dev team on test execution
+High-level test timelines
 
-Awareness of cloud-based validation processes
+Test management setup in Jira
+
+Workflow changes for defect types
+
+Test dependencies and risks
+
+Let me know if there’s anything specific you’d like me to include or if the timing needs to be adjusted.
+
+Thanks,
+[Your Name]
