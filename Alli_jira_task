@@ -1,5 +1,172 @@
-My flight is on the evening of 22nd August, and since 25th is a bank holiday, I believe most people might have planned around that.
+Jira Title: [Test Plan] Review business and technical documentation
+Assignee: Tester 1
+Start Date: 16/07/2025
+End Date: 17/07/2025
+Description:
+Activity: Review business and technical documentation
+This task involves analyzing the available documentation (business process, data schema, architecture, flow diagrams) to fully understand the Rating File Ingestion and related update processes.
+Dependencies: Finalized documentation must be made available by stakeholders.
+Definition of Done:
 
-That said, I’m absolutely fine to support from India on the 23rd if the release goes ahead then — or even later in September. I’ll be available and flexible to help with the release and any post-release issues, just that I’d be supporting remotely from India during that period.
+Documentation reviewed and key points noted
 
-No problem at all from my side doing that — happy to help however needed.
+Clarifications sought and addressed
+
+Ready for test scenario and strategy creation
+
+Jira Title: [Test Plan] Prepare Test Strategy
+Assignee: Test Lead
+Start Date: 16/07/2025
+End Date: 18/07/2025
+Description:
+Activity: Prepare Test Strategy
+This task involves drafting a comprehensive test strategy covering scope, objectives, environments, tools, roles, risks, and coverage across all Rating File Ingestion phases.
+Dependencies: Review of scope and coordination with the delivery team
+Definition of Done:
+
+Test strategy document signed off by stakeholders
+
+Shared with test team and uploaded to repository
+
+Jira Title: [Test Plan] Define Test Scenarios for all phases (Upload, Update, Release)
+Assignee: Tester 2
+Start Date: 18/07/2025
+End Date: 19/07/2025
+Description:
+Activity: Define test scenarios
+This task involves identifying and documenting all possible test scenarios that validate functionality, data quality, schema enforcement, and error handling.
+Dependencies: Completed review of documentation and approved test strategy
+Definition of Done:
+
+Scenarios documented and reviewed by team
+
+Coverage traceable to business and technical requirements
+
+
+
+
+Jira Title: [Test Plan] Design and script Test Cases
+Assignee: Tester 1
+Start Date: 19/07/2025
+End Date: 20/07/2025
+Description:
+This task involves writing detailed test cases that map to each test scenario. Test cases will include steps, expected results, data variations, and validation logic.
+Dependencies: Finalized and approved test scenarios
+Definition of Done:
+
+All test cases scripted and peer-reviewed
+
+Stored in test management tool and linked to requirements
+
+Jira Title: [Test Plan] Prepare Test Data
+Assignee: Tester 2
+Start Date: 20/07/2025
+End Date: 21/07/2025
+Description:
+This task involves creating test data sets (valid, invalid, boundary values) according to schema rules and business logic. Data sets must support all planned test cases.
+Dependencies: Access to schema, Cosmos DB folder structure, and sample data
+Definition of Done:
+
+Data available in correct folders for ingestion
+
+Covers all scenarios and test conditions
+
+Jira Title: [Test Plan] Set up Test Environment
+Assignee: Test Lead
+Start Date: 21/07/2025
+End Date: 22/07/2025
+Description:
+Set up Cosmos DB (Dev/SIT), folder shares, and Databricks access. Validate accessibility for testers. Coordinate with IT for any missing permissions.
+Dependencies: Network, storage, access approvals
+Definition of Done:
+
+Testers able to upload, query and validate data
+
+All required tools installed and connected
+
+Jira Title: [Test Plan] Perform Dry Run of File Upload and Update
+Assignee: Tester 1
+Start Date: 22/07/2025
+End Date: 23/07/2025
+Description:
+Run a dry execution of the file ingestion and update process using a controlled sample file. Validate system behavior and logging.
+Dependencies: Environment setup, test data readiness
+Definition of Done:
+
+Dry run executed successfully or issues logged
+
+Learnings shared with test team
+
+Jira Title: [Test Plan] Execute Functional Testing
+Assignee: Tester 2
+Start Date: 23/07/2025
+End Date: 24/07/2025
+Description:
+Execute all functional test cases against the ingestion pipeline to validate uploads, updates, logging, and data accuracy in Cosmos DB.
+Dependencies: Scripted test cases, setup complete
+Definition of Done:
+
+All test cases executed and results logged
+
+Issues tracked and reported
+
+Jira Title: [Test Plan] Execute Negative and Error Handling Scenarios
+Assignee: Tester 1
+Start Date: 24/07/2025
+End Date: 25/07/2025
+Description:
+Test invalid file structures, incorrect formats, and missing mandatory fields to ensure errors are correctly logged and reported.
+Dependencies: Defined test data and cases for negative conditions
+Definition of Done:
+
+All negative cases tested
+
+System reacts as expected with appropriate logs
+
+Jira Title: [Test Plan] Support E2E Testing
+Assignee: Test Lead
+Start Date: 25/07/2025
+End Date: 26/07/2025
+Description:
+Support integrated testing with IT and Pricing teams. Validate downstream impact in the Rating service and Cosmos DB post-ingestion.
+Dependencies: E2E environments and coordination across teams
+Definition of Done:
+
+Joint tests executed
+
+Outcomes verified end-to-end
+
+Jira Title: [Test Plan] Log and Track Defects
+Assignee: Tester 2
+Start Date: 26/07/2025
+End Date: 27/07/2025
+Description:
+Log all issues encountered during testing, categorize severity, assign for fix, and track resolution progress.
+Dependencies: Defect management tool setup
+Definition of Done:
+
+All issues logged, tracked, and linked to test cases
+
+Jira Title: [Test Plan] Retest and Regression Testing
+Assignee: Tester 1
+Start Date: 27/07/2025
+End Date: 28/07/2025
+Description:
+Re-execute failed test cases and run regression suite to ensure no new issues are introduced from fixes.
+Dependencies: Fix confirmation from Dev/IT
+Definition of Done:
+
+Regression results captured
+
+All retests marked pass/fail
+
+Jira Title: [Test Plan] Provide Test Summary Report
+Assignee: Test Lead
+Start Date: 29/07/2025
+End Date: 29/07/2025
+Description:
+Compile testing outcomes, metrics, and issue logs into a final report. Present status, coverage, defects, and go/no-go recommendation.
+Dependencies: All tests and defect cycles completed
+Definition of Done:
+
+Summary report signed off and shared
