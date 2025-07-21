@@ -1,0 +1,41 @@
+Jira Title,Description,Assignee,Start Date,End Date
+Test Strategy Preparation,"Develop a comprehensive Test Strategy document outlining scope, objectives, test types, environments, timelines, roles & responsibilities. Ensure alignment with business expectations and technical feasibility.
+
+**Dependencies:** Finalized scope and documentation from business and IT stakeholders.
+
+**DOD:** Test Strategy reviewed and approved by stakeholders, uploaded to project repository.",Test Lead,2025-07-16,2025-07-17
+Test Scenario Definition,"Identify and define high-level test scenarios for Rating File Ingestion lifecycle (Upload, Update, Release). Scenarios should cover both positive and negative flows.
+
+**Dependencies:** Availability of process documentation and schema definitions.
+
+**DOD:** All scenarios reviewed by the Test Lead and approved by stakeholders.",Tester 1,2025-07-17,2025-07-18
+Test Case Design and Scripting,"Design detailed test cases for each defined scenario, including preconditions, test steps, expected results, and test data references. Implement scripts where automation is feasible.
+
+**Dependencies:** Approved test scenarios, access to test environment and data structures.
+
+**DOD:** Test cases uploaded to test management tool and reviewed by the Test Lead.",Tester 2,2025-07-18,2025-07-21
+Test Data Preparation,"Prepare and validate test data covering valid, invalid, and edge cases. Ensure coverage across multiple channels and product combinations.
+
+**Dependencies:** Schema structure, Cosmos DB access, sample data templates.
+
+**DOD:** Test data sets ready and accessible in target environments.",Tester 1,2025-07-18,2025-07-21
+Test Environment Setup,"Coordinate with environment team to configure and validate test environments (Dev, SIT). Ensure access to Cosmos DB, file share, and Databricks.
+
+**Dependencies:** Infra and access provisioning from IT and BICOE.
+
+**DOD:** Testers are able to execute and validate files across test environments.",Test Lead,2025-07-16,2025-07-18
+Functional and Error Handling Test Execution,"Execute test cases for functional and error scenarios in upload and update processes. Log defects with detailed logs and evidence.
+
+**Dependencies:** Completed test cases, test data, and environment readiness.
+
+**DOD:** All test cases executed, defects logged and triaged.",Tester 2,2025-07-22,2025-07-25
+End-to-End Testing Support,"Participate in integrated testing with Pricing and IT teams to validate end-to-end ingestion, including email alerts, Cosmos DB updates, and log folder status.
+
+**Dependencies:** Completion of functional tests, coordination with Pricing/IT.
+
+**DOD:** End-to-End flow validated across all test layers, feedback shared.",Tester 1,2025-07-25,2025-07-26
+Test Closure and Summary Report,"Compile testing summary including executed test cases, outcomes, defect status, and recommendations. Conduct closure meeting with stakeholders.
+
+**Dependencies:** Completion of all planned testing and retests.
+
+**DOD:** Report reviewed, signed off, and archived in the project repository.",Test Lead,2025-07-28,2025-07-29
