@@ -1,1 +1,7 @@
-Yeah, I thought the start date would be something you and Anukul would finalize. From my chat with him last week, it sounds like Renjini Ravindran might be available from August 1st, but that still needs confirmation from Anukul. In the meantime, I’m planning to give Renjini some basic KT over the Cognizant network—of course, without sharing any material, in line with our policy.
+Nothing major at the moment.
+
+Paul and Simon are currently looking into the preprod data load issue. Paul mentioned there might be a timestamp format problem causing the load failure, and he’s investigating it now. We’ll be able to plan the dress rehearsal once that’s resolved.
+
+For CDA, we had a discussion around the configuration of the data load to understand it from a testing perspective. Paul and Simon have addressed the queries Mani raised, and we're now working on aligning with the process.
+
+Paul also helped me sort out a read issue on the Radar Live side, which is now resolved.
