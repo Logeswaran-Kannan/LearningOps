@@ -1,5 +1,19 @@
-We'll go over the details on the call, but just to clarify—there aren’t any direct dependencies on Jamie apart from the E2E testing side of things. Jamie had already started testing this part before our phase kicked off this sprint. He’s been working with the schema and data files placed in the shared folder, and we’ve used those (along with the mapping document) mainly as a reference to spot mismatches.
+Test Plan: Vehicle Rating File Ingestion Validation
 
-That said, Rahul has prepared our own set of test files specifically for this testing. So, in short—our execution starts this week, and we’ve already come across some observations. We're just leveraging Jamie’s prior experience to help address them more efficiently.
+Jira Description:
+This test plan covers the validation of the Vehicle Rating File Ingestion process, including file preparation, ingestion, update, release, logging, and error handling. The objective is to ensure end-to-end data integrity, functional accuracy, and system readiness across all ingestion stages.
 
-Our test window officially runs from the 21st to the 29th, and during that time, we’ll only be coordinating with Jamie from an E2E perspective.
+Scope Includes:
+Schema and version validation
+
+File structure and format checks
+
+Upload, update, and release cycle testing
+
+Logging and notification verification
+
+Error scenario and boundary testing
+
+Integration with Cosmos DB and Databricks
+
+End-to-End process validation with IT and Pricing teams
