@@ -1,0 +1,7 @@
+Phase,Business Analyst / PO,Data Engineers / Developers,QA / Test Team,Automation Engineers,Project Manager / Scrum Master,Release Manager / Change Control,Production Support / DataOps
+Requirements Gathering,A,C,R,C,I,I,I
+Design & Development,C,A,C,C,I,I,I
+Test Preparation,C,C,A,R,R,I,I
+Test Execution,C,C,A,R,R,I,I
+UAT & Release Readiness,R,C,C,C,A,A,C
+Post-Release,C,C,R,C,I,R,A
