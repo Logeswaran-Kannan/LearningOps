@@ -1,14 +1,1 @@
-DO $$
-DECLARE
-    rec RECORD;
-    row_count BIGINT;
-BEGIN
-    FOR rec IN
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-    LOOP
-        EXECUTE format('SELECT COUNT(*) FROM public.%I', rec.table_name) INTO row_count;
-        RAISE NOTICE 'Table: %, Row Count: %', rec.table_name, row_count;
-    END LOOP;
-END $$;
+Just a heads-up – the preprod Jump server for Read Replica seems to allow only 2 users to connect at a time, and the environment is running quite slow. Would it be possible to look into increasing the memory or overall resources to help us work more smoothly?
