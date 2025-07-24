@@ -1,10 +1,14 @@
-Hi,
-
-Thank you for your message. I’m currently out of office from Monday, August 26th to Thursday, September 12th, with limited access to emails during this period.
-
-If your request is urgent, please reach out to [alternate contact name] at [alternate contact email]. Otherwise, I’ll get back to you as soon as possible upon my return.
-
-Appreciate your patience and understanding.
-
-Best regards,
-[Your Full Name]
+DO $$
+DECLARE
+    rec RECORD;
+    row_count BIGINT;
+BEGIN
+    FOR rec IN
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    LOOP
+        EXECUTE format('SELECT COUNT(*) FROM public.%I', rec.table_name) INTO row_count;
+        RAISE NOTICE 'Table: %, Row Count: %', rec.table_name, row_count;
+    END LOOP;
+END $$;
