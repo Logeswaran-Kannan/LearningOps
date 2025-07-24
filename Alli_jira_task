@@ -1,14 +1,4 @@
-DO $$
-DECLARE
-    rec RECORD;
-    row_count BIGINT;
-BEGIN
-    FOR rec IN
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-    LOOP
-        EXECUTE format('SELECT COUNT(*) FROM public.%I', rec.table_name) INTO row_count;
-        RAISE NOTICE 'Table: %, Row Count: %', rec.table_name, row_count;
-    END LOOP;
-END $$;
+Hey Chris / Geanina,
+I got a note from someone on the IAM team—they said they reached out to get my line manager's approval to retain my access before the 22nd, but it looks like the approval hasn't come through yet. They’ve asked me to follow up, and since the deadline has passed, I might lose access soon.
+
+Would you mind approving it as soon as you can so I don’t lose access? Really appreciate it!
