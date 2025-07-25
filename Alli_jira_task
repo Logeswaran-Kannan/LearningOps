@@ -1,1 +1,52 @@
-as we discussed — here’s the link to the test execution dashboard. Let’s do a quick high-level walkthrough during our daily connect so we can align on priorities.
+from azure.cosmos import CosmosClient, PartitionKey, exceptions
+
+def write_all_files_to_cosmos(file_list_df):
+    for row in file_list_df.collect():
+        try:
+            # Extract values from row
+            file_name = row["file_name"]
+            schema_file_name = row["schema_file_name"]
+            cosmos_container_name = row["cosmos_container_name"]
+            cosmos_db_name = row["cosmos_db_name"]
+            cosmos_partition_column = row["cosmos_partition_column"]
+
+            # Read Delta table
+            delta_table_df = spark.read.format("delta").table(
+                f"{catalog_name}.{schema_file_name}.{cosmos_container_name}"
+            )
+
+            # Initialize Cosmos client and get DB reference
+            client = CosmosClient(cosmos_end_point, cosmos_account_key)
+            database = client.get_database_client(cosmos_db_name)
+
+            # Check and create container only if it doesn't exist
+            try:
+                database.read_container(cosmos_container_name)
+                logger.info(f"Container {cosmos_container_name} already exists")
+            except exceptions.CosmosResourceNotFoundError:
+                database.create_container_if_not_exists(
+                    id=cosmos_container_name,
+                    partition_key=PartitionKey(path=f"/{cosmos_partition_column}")
+                )
+                logger.info(f"Container {cosmos_container_name} created successfully")
+
+            # Cosmos DB Spark config
+            config = {
+                "spark.cosmos.accountEndpoint": cosmos_end_point,
+                "spark.cosmos.accountKey": cosmos_account_key,
+                "spark.cosmos.database": cosmos_db_name,
+                "spark.cosmos.container": cosmos_container_name,
+                "spark.cosmos.write.bulk.enabled": "true"
+            }
+
+            # Write to Cosmos DB using bulk mode
+            delta_table_df.write \
+                .format("cosmos.oltp") \
+                .options(**config) \
+                .mode("append") \
+                .save()
+
+            logger.info(f"File '{file_name}' successfully written to Cosmos container: {cosmos_container_name}")
+
+        except Exception as e:
+            logger.error(f"Error writing file '{file_name}' to Cosmos container '{cosmos_container_name}': {e}")
