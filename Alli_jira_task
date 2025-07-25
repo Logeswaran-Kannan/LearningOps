@@ -1,3 +1,9 @@
+
+
+
+
+
+
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 
 def write_all_files_to_cosmos(file_list_df):
