@@ -1,38 +1,52 @@
-# Initialize file counter
-files_transferred = 0
+from azure.cosmos import CosmosClient, PartitionKey, exceptions
 
-# Loop through target directories
-for directory_name in load_from_directories:
-
-    # Get list of files in directory
-    parent_dir = ShareDirectoryClient.from_connection_string(
-        conn_str=file_share_connection_string,
-        share_name=file_share_connection_name,
-        directory_path=directory_name
-    )
-
-    directory = list(parent_dir.list_directories_and_files())
-
-    # Loop through files and copy to corresponding volume
-    for file_or_directory in directory:
+def write_all_files_to_cosmos(file_list_df):
+    for row in file_list_df.collect():
         try:
-            # Get file
-            file_client = ShareFileClient.from_connection_string(
-                conn_str=file_share_connection_string,
-                share_name=file_share_connection_name,
-                file_path=f"{directory_name}/{file_or_directory.name}"
+            # Extract values from row
+            file_name = row["file_name"]
+            schema_file_name = row["schema_file_name"]
+            cosmos_container_name = row["cosmos_container_name"]
+            cosmos_db_name = row["cosmos_db_name"]
+            cosmos_partition_column = row["cosmos_partition_column"]
+
+            # Read Delta table
+            delta_table_df = spark.read.format("delta").table(
+                f"{catalog_name}.{schema_file_name}.{cosmos_container_name}"
             )
 
-            # Write file to volume
-            with open(f"/Volumes/{catalog_name}/{schema_name}/{directory_name}/{file_or_directory.name}", 'wb') as file_handle:
-                data = file_client.download_file()
-                data.readinto(file_handle)
+            # Initialize Cosmos client and get DB reference
+            client = CosmosClient(cosmos_end_point, cosmos_account_key)
+            database = client.get_database_client(cosmos_db_name)
 
-            # Increment success counter
-            files_transferred += 1
+            # Check and create container only if it doesn't exist
+            try:
+                database.read_container(cosmos_container_name)
+                logger.info(f"Container {cosmos_container_name} already exists")
+            except exceptions.CosmosResourceNotFoundError:
+                database.create_container_if_not_exists(
+                    id=cosmos_container_name,
+                    partition_key=PartitionKey(path=f"/{cosmos_partition_column}")
+                )
+                logger.info(f"Container {cosmos_container_name} created successfully")
+
+            # Cosmos DB Spark config
+            config = {
+                "spark.cosmos.accountEndpoint": cosmos_end_point,
+                "spark.cosmos.accountKey": cosmos_account_key,
+                "spark.cosmos.database": cosmos_db_name,
+                "spark.cosmos.container": cosmos_container_name,
+                "spark.cosmos.write.bulk.enabled": "true"
+            }
+
+            # Write to Cosmos DB using bulk mode
+            delta_table_df.write \
+                .format("cosmos.oltp") \
+                .options(**config) \
+                .mode("append") \
+                .save()
+
+            logger.info(f"File '{file_name}' successfully written to Cosmos container: {cosmos_container_name}")
 
         except Exception as e:
-            logger.error(f"Error occurred loading file: {file_or_directory.name} - {e}")
-
-# Summary log
-logger.info(f"Total files successfully transferred from file share to volume: {files_transferred}")
+            logger.error(f"Error writing file '{file_name}' to Cosmos container '{cosmos_container_name}': {e}")
