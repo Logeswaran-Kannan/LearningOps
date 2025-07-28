@@ -1,1 +1,66 @@
-Hi [Boss's Name], just got notified that Renjini can’t join early due to health reasons. As an alternative, Jeevitha’s profile (shared last week by the parent org) is available from Aug 4. Would really appreciate if we could connect with her — can I set up a quick call with you today after 4 or tomorrow, at your convenience?
+from azure.cosmos import CosmosClient, PartitionKey, exceptions
+from pyspark.sql.utils import AnalysisException
+
+def write_all_files_to_cosmos(file_list_df):
+    for row in file_list_df.collect():
+        try:
+            # Extract values from the row
+            file_name = row["file_name"]
+            schema_file_name = row["schema_file_name"]
+            cosmos_container_name = row["cosmos_container_name"]
+            cosmos_db_name = row["cosmos_db_name"]
+            cosmos_partition_column = row["cosmos_partition_column"]
+
+            # Read the Delta table (with safe backtick quoting)
+            try:
+                delta_table_df = spark.read.format("delta").table(
+                    f"`{catalog_name}`.`{schema_file_name}`.`{cosmos_container_name}`"
+                )
+            except AnalysisException as ae:
+                logger.error(f"Delta table not found: {catalog_name}.{schema_file_name}.{cosmos_container_name} — {ae}")
+                continue
+
+            # Skip if DataFrame is empty
+            if delta_table_df is None or delta_table_df.rdd.isEmpty():
+                logger.warning(f"Skipping empty DataFrame for file: {file_name}")
+                continue
+
+            # Initialize Cosmos client
+            client = CosmosClient(cosmos_end_point, cosmos_account_key)
+            database = client.get_database_client(cosmos_db_name)
+
+            # Check if container exists
+            try:
+                container = database.get_container_client(cosmos_container_name)
+                container.read()
+                logger.info(f"Container '{cosmos_container_name}' already exists")
+            except exceptions.CosmosResourceNotFoundError:
+                database.create_container_if_not_exists(
+                    id=cosmos_container_name,
+                    partition_key=PartitionKey(path=f"/{cosmos_partition_column}")
+                )
+                logger.info(f"Container '{cosmos_container_name}' created successfully")
+
+            # Cosmos DB Spark config
+            config = {
+                "spark.cosmos.accountEndpoint": cosmos_end_point,
+                "spark.cosmos.accountKey": cosmos_account_key,
+                "spark.cosmos.database": cosmos_db_name,
+                "spark.cosmos.container": cosmos_container_name,
+                "spark.cosmos.write.bulk.enabled": "true"
+            }
+
+            # Write to Cosmos DB
+            try:
+                delta_table_df.write \
+                    .format("cosmos.oltp") \
+                    .options(**config) \
+                    .mode("append") \
+                    .save()
+
+                logger.info(f"✅ File '{file_name}' successfully written to Cosmos container: '{cosmos_container_name}'")
+            except Exception as write_error:
+                logger.error(f"❌ Write failed for file '{file_name}' to Cosmos container '{cosmos_container_name}': {write_error}")
+
+        except Exception as e:
+            logger.error(f"Unhandled error while processing file '{file_name}': {e}")
