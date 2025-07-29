@@ -1,9 +1,5 @@
-So just to confirm my understanding — when I interact with Athena, that triggers the Mule system, right? And Mule then feeds the MQS event hub. Meanwhile, Athena also sends data directly to the flow event hub.
+Got it, that’s helpful — thanks! I’ll dig in a bit more to see exactly where the data is landing.
 
-So basically, every time I create a policy in Athena:
+Quick question on the filter you mentioned: is that applied after the data lands in ehubstream, or does it happen while reading from the event hub itself?
 
-The flow interaction gets captured in flow.ehubstream, and
-
-The related Rating, PreCom, and ML payloads are sent to the MQS event hub
-
-Is that the right understanding?
+Just trying to figure out if the data actually reaches the event hub but then gets filtered out because it’s not in the expected RAML format.
