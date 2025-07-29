@@ -1,5 +1,4 @@
-Got it, that’s helpful — thanks! I’ll dig in a bit more to see exactly where the data is landing.
 
-Quick question on the filter you mentioned: is that applied after the data lands in ehubstream, or does it happen while reading from the event hub itself?
+Thanks for the confirmation, Graham. Absolutely — happy to support Jeevitha and help get her up to speed on Radar Live. We’ll work together to make sure she settles in well.
 
-Just trying to figure out if the data actually reaches the event hub but then gets filtered out because it’s not in the expected RAML format.
+Let me know if you’d like to catch up separately to align on next steps.
