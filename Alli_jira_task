@@ -1,9 +1,9 @@
-Hi Nate, good morning!
+So just to confirm my understanding — when I interact with Athena, that triggers the Mule system, right? And Mule then feeds the MQS event hub. Meanwhile, Athena also sends data directly to the flow event hub.
 
-I’m doing some testing on the Athena front — specifically with flow2-bld2-evh002 — to make sure events are landing in ehubstream. As part of that, I pushed some test data Sunday evening, and it looked like it hit the event hub within a few minutes. Just want to confirm things on the bronze side now.
+So basically, every time I create a policy in Athena:
 
-Do you know if our bronze ingestion reads from this event hub? And is that set up on both test and dev, or just dev?
+The flow interaction gets captured in flow.ehubstream, and
 
-Also, could you share the name of the workflow that handles this ingestion and when it last ran?
+The related Rating, PreCom, and ML payloads are sent to the MQS event hub
 
-Appreciate the help!
+Is that the right understanding?
