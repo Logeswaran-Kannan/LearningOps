@@ -1,3 +1,71 @@
-Thanks, Graham — appreciate you taking the time to review the profile and for the support on mentorship, that’s really helpful.
+from azure.cosmos import CosmosClient, PartitionKey, exceptions
+from pyspark.sql.utils import AnalysisException
 
-I’ll follow up with Nat to initiate the onboarding process from the Cognizant side and will also gather the necessary details for Jeevitha’s Allianz onboarding, so Hazel can raise the request accordingly.
+def process_partition(partition_iter):
+    from pyspark.sql import SparkSession
+    spark = SparkSession.builder.getOrCreate()
+
+    # Reinitialize Cosmos client inside executor
+    client = CosmosClient(cosmos_end_point, cosmos_account_key)
+
+    for row in partition_iter:
+        try:
+            file_name = row["file_name"]
+            schema_file_name = row["schema_file_name"]
+            cosmos_container_name = row["cosmos_container_name"]
+            cosmos_db_name = row["cosmos_db_name"]
+            cosmos_partition_column = row["cosmos_partition_column"]
+
+            # Initialize database and container
+            database = client.get_database_client(cosmos_db_name)
+
+            # Check or create container
+            try:
+                container = database.get_container_client(cosmos_container_name)
+                container.read()
+            except exceptions.CosmosResourceNotFoundError:
+                database.create_container_if_not_exists(
+                    id=cosmos_container_name,
+                    partition_key=PartitionKey(path=f"/{cosmos_partition_column}")
+                )
+
+            # Read delta table
+            try:
+                delta_table_df = spark.read.format("delta").table(
+                    f"`{catalog_name}`.`{schema_file_name}`.`{cosmos_container_name}`"
+                )
+            except AnalysisException as ae:
+                print(f"[SKIP] Delta table not found for file {file_name}: {ae}")
+                continue
+
+            if delta_table_df is None or delta_table_df.rdd.isEmpty():
+                print(f"[SKIP] Empty DataFrame for file: {file_name}")
+                continue
+
+            # Cosmos config
+            config = {
+                "spark.cosmos.accountEndpoint": cosmos_end_point,
+                "spark.cosmos.accountKey": cosmos_account_key,
+                "spark.cosmos.database": cosmos_db_name,
+                "spark.cosmos.container": cosmos_container_name,
+                "spark.cosmos.write.bulk.enabled": "true",
+                "spark.cosmos.write.maxConcurrency": "16",
+                "spark.cosmos.write.maxPendingOperations": "2000"
+            }
+
+            # Write to Cosmos DB
+            delta_table_df.write \
+                .format("cosmos.oltp") \
+                .options(**config) \
+                .mode("append") \
+                .save()
+
+            print(f"[SUCCESS] File '{file_name}' written to Cosmos container '{cosmos_container_name}'")
+
+        except Exception as e:
+            print(f"[ERROR] Failed processing file '{row['file_name']}': {e}")
+
+
+# ✅ Call this using foreachPartition (parallel execution)
+if retcode == 0:
+    file_list_df.rdd.foreachPartition(process_partition)
