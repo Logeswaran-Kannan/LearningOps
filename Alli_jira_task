@@ -1,3 +1,18 @@
-I think the data load issues related to the index are more or less sorted now. Do you want to do a clean run and give it another try to make sure everything’s in place for the Dress Rehearsal plan?
+Subject: Test Summary Update – Vehicle Area & Model Factor File Validation (Cycle 1 & 2)
 
-If that's the case, we shouldn’t have any dependencies around time-traveling the environment—unless there’s something that overlaps with what Graham’s working on for FAH.
+Dear Team,
+
+Please find below the latest update on the validation efforts for the Vehicle Area and Model Factor File ingestion:
+
+Cycle 1 Functional Validation has been completed for both files placed in the shared folder. The test coverage included record count verification, schema conformance, data reconciliation between the shared folder, Databricks Bronze layer, and Cosmos DB, along with validations for null values and field-level data accuracy. A total of 6 issues were identified during this cycle, mainly related to data type mismatches, column name discrepancies between the file and Confluence mapping (requiring updates from the Pricing team), data range violations, and nulls in non-nullable columns. All issues have been logged and are under follow-up.
+
+Cycle 1 Non-Functional Validation is currently in progress, focusing on ingestion pipeline behavior, error handling, alerting, schema drift, deduplication, and performance analysis. So far, 1 defect has been raised for a negative test case taking similar execution time as a successful scenario, indicating the need for fail-fast behavior. This has a direct impact on execution efficiency, and the development team is currently working on optimization.
+
+Cycle 2 Execution is partially blocked due to pending inputs from the Pricing team. While schema and DQC files have been received, the incremental data file required to proceed with validation is still awaited. Coordination is ongoing, and testing will resume upon delivery.
+
+We’ll continue to track progress closely and share the next status once Cycle 2 is initiated and non-functional validations are wrapped up.
+
+Best regards,
+[Your Name]
+Test Lead – Vehicle Rating Ingestion Validation
+
