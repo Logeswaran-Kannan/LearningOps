@@ -1,17 +1,13 @@
 Hi Simon,
 
-Thanks for looping me in – appreciate the check-in.
+Thanks again for checking in and sharing the feedback from Jamie — we truly appreciate the support he's been giving the team. His insights have been very helpful throughout this phase, and we’ll continue to coordinate with him closely where needed.
 
-s the BiCoE Test team, our primary role is to validate the ingestion pipeline and system behaviours developed by Rob M and the team — covering aspects like file ingestion, schema enforcement, logging, error handling, and overall system integrity.
+From the BiCoE testing perspective, our key focus is to validate the ingestion pipeline functionality built by Rob and team — ensuring that the system behaves as designed across file ingestion, error handling, schema enforcement, and integration with Cosmos DB.
 
-During this testing, we’ve proactively highlighted schema mismatches and data anomalies as part of our quality checks, to support the Pricing team in identifying gaps early. However, we fully agree with Jamie and Adrian that decisions on schema formats, data types, and DQC ownership rightly sit with the Pricing team. Our intention is not to own these decisions but to ensure that the system behaves as expected with the files it receives.
+While we’ve been highlighting data and schema-related issues during testing to help unblock Pricing’s delivery, we do acknowledge that ownership of the schema files and DQC rules should ultimately sit with the Pricing team. We’re aligned with Jamie and Adrian that decisions around data formats, expected types, and updates to schema logic shouldn’t rest with test — whether Pricing or BiCoE.
 
-Moving forward, we propose:
+That said, we’re happy to continue raising observations and working collaboratively to ensure the system is robust. Going forward, for any data-related queries or clarification, we’ll loop in Diane, Matt G, and Sachin, and support alignment on ownership responsibilities.
 
-Escalating unclear schema or data content issues to Diane and Matt G, as the right points of contact from Pricing.
+We also received the V3 Area Factor file (thanks to Shashi and Matt), though a few open observations remain, which we’ll flag back through the usual channels.
 
-Continuing to support end-to-end testing, but drawing a clear line between system testing (BiCoE scope) and data definition or business rule validation (Pricing scope).
-
-For any new files or changes, having someone from Pricing confirm DQC/schema before ingestion begins, so we avoid making assumptions or decisions as a Test team.
-
-We’re committed to collaborating closely, and will also coordinate with Sachin on managing handovers and keeping alignment between technical delivery and data readiness.
+Please let us know if you'd like to align further on this — always happy to support where we can.
