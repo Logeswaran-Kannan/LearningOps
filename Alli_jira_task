@@ -2,11 +2,16 @@ Hi Simon,
 
 Thanks for looping me in – appreciate the check-in.
 
-Just to echo, Jamie’s been a great support to the team so far, especially helping us navigate some of the grey areas around the schema and data files. From a BICOE perspective, our main aim is to validate the ingestion system developed by Rob and team, and while we’ve stepped in to raise a few data/file-level issues to help Pricing, the ownership of these files rightly sits on their side.
+s the BiCoE Test team, our primary role is to validate the ingestion pipeline and system behaviours developed by Rob M and the team — covering aspects like file ingestion, schema enforcement, logging, error handling, and overall system integrity.
 
-I agree it's not for us (or Jamie) to decide on formats or field types – we’ll need someone from the Pricing side (either Diane or Matt) to confirm those decisions going forward. We’ll coordinate more closely with Sachin on this and make sure any file-level queries loop in the right people.
+During this testing, we’ve proactively highlighted schema mismatches and data anomalies as part of our quality checks, to support the Pricing team in identifying gaps early. However, we fully agree with Jamie and Adrian that decisions on schema formats, data types, and DQC ownership rightly sit with the Pricing team. Our intention is not to own these decisions but to ensure that the system behaves as expected with the files it receives.
 
-Re: data file dependencies – Shashi confirmed receipt of V3 Area file after speaking with Matt, though we’ve still got a few open observations we’re reviewing.
+Moving forward, we propose:
 
-Cheers,
-Rajesh
+Escalating unclear schema or data content issues to Diane and Matt G, as the right points of contact from Pricing.
+
+Continuing to support end-to-end testing, but drawing a clear line between system testing (BiCoE scope) and data definition or business rule validation (Pricing scope).
+
+For any new files or changes, having someone from Pricing confirm DQC/schema before ingestion begins, so we avoid making assumptions or decisions as a Test team.
+
+We’re committed to collaborating closely, and will also coordinate with Sachin on managing handovers and keeping alignment between technical delivery and data readiness.
