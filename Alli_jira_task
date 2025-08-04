@@ -97,3 +97,83 @@ U/W team can extract rating outcome & quote error	Gold	UAT + MI	Complete visibil
 Pre vs Post Decline analysis supported in reporting	Gold	UAT	Decline reasons separated and traceable
 Rating Premium adjustments appear in analytics	Gold	MI QA	Accurate values for reporting dashboards
 
+------------------------------------------------------------------
+
+✅ SIT Test Scope – Rating Response (EDM)
+Focus: MI team's technical validation
+
+🧱 SILVER LAYER – Data Vault (Staging of Rating Response)
+🔧 Functional Validation
+Validate ingestion of Rating Response messages into structured Data Vault model.
+
+Confirm presence of all mandatory fields: Quote ID, PRN, Cache ID, Decline Flags, Rating Codes, Error Codes.
+
+Validate mapping of quote-level decisions (e.g., acceptance, decline, technical failure) into hub/satellite tables.
+
+Verify schema versioning (if applicable) is handled without loss of prior versions.
+
+Confirm referential links to Quote Request, Feature Set, and Core Risk entities.
+
+🚀 Non-Functional Validation
+Validate schema evolution support (e.g., new decline types or adjustment fields).
+
+Confirm Silver table updates are incremental and processed daily.
+
+Check row-level timestamp tracking for changes (created/updated_at).
+
+Validate row count accuracy compared to expected source counts.
+
+🔍 Business Scenario Alignment (Staging Layer Only)
+Quote Use Case	What Silver Layer Should Reflect
+NB Quote	Captures full rating response (accept/decline) from MQS
+Requote	Stores new response version with same Cache ID, updated values
+MTA	Shows updated response, references prior quote version
+MTA Requote	Maintains linked history for chain of events via Cache ID
+
+⭐ GOLD LAYER – EDM (Reporting & Analytics)
+🔧 Functional Validation
+Validate transformation of Silver Rating Response into Gold dimensional models.
+
+Confirm decline codes are correctly grouped using reference mappings (e.g., R001: High Risk Area).
+
+Ensure dimensions like Decline Reason, System Error, Adjustment Applied, Discounts, and Risk Score are populated.
+
+Verify that quotes with multiple attempts (re-quotes) are aggregated logically for reporting.
+
+Ensure quote journey linkages (via Cache ID) support full history views.
+
+🚀 Non-Functional Validation
+Confirm daily refresh and data cut-off logic (e.g., prior day data available by 9 AM).
+
+Validate performance of dashboard/reporting queries using Rating Response data.
+
+Ensure masking of any sensitive data fields (PRN, customer keys) as per MI access controls.
+
+Audit and traceability: Confirm logging of data loads and field-level lineage.
+
+🔍 Business Scenario Alignment (Analytics/Reporting Layer)
+Quote Use Case	Expected Output in EDM
+NB Quote	Quote rated, response stored, decline reason visible (if declined)
+Requote	Prior quote retained, new quote response shown, linked via Cache ID
+MTA	Updated response appears as new record, previous retained for historical analysis
+MTA Requote	Chain of quotes presented in timeline using Cache ID and PRN
+
+❌ Out-of-Scope (Rating Response EDM)
+No testing of Pricing Engine/ML scoring logic
+
+No UI rendering/portal-level validations
+
+No downstream operational systems beyond EDM
+
+Real-time event delivery (only batch refresh tested)
+
+Business-level validation of decision accuracy or rating logic (Pricing team’s scope)
+
+⚠️ Caveats
+Quote journey context (Cache ID → PRN mappings) must be tested jointly with Quote/Precomp datasets.
+
+MI validation does not ensure correctness of decline reason — only presence and grouping.
+
+Any errors not structurally exposed by MQS cannot be traced/tested from EDM.
+
+Technical error logging visibility is limited to what is captured in Rating Response payload.
