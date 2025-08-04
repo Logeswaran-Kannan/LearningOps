@@ -1,7 +1,1 @@
-So if we're aiming to validate the latest 2 days’ worth of data, then the correct approach would be:
-
-First load (pre-load): Clear and load data up to 2 days before the max UPDATE_TIME
-
-Second load (post-load): Load data covering the 2-day window ending at the max UPDATE_TIME
-
-This way, the delta check will reflect only the latest 2 days’ worth of additions/changes, which aligns with the intent of the comparison.
+ maybe we can ask Simon to clear the 2-day window ending at the current max UPDATE_TIME, take a count, and then re-run the post-load for just that 2-day window. Looks like he used the same timestamp range for both loads earlier, which might be why there’s no delta.
