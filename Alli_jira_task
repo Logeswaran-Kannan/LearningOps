@@ -1,2 +1,52 @@
-Only validation activities explicitly listed as in-scope above are to be considered part of the Radar Live Data Ingestion testing phase.
-Any feature, transformation, platform component, or behavior not mentioned is assumed out of scope, unless agreed and documented separately.
+9. Change Data Capture (CDC) Validation
+Scope: Validate how incremental changes (inserts, updates, deletes) from MQS are captured and processed through the pipeline.
+Test:
+
+Verify if each new/updated/deleted message is processed exactly once.
+
+Confirm downstream tables reflect only the latest state of the record (based on business keys or timestamps).
+
+Expected Outcome:
+
+Updates correctly overwrite prior versions (no duplication).
+
+Deletes are soft-deleted or filtered out per rules.
+
+Audit fields (e.g., updated_timestamp) reflect correct lineage.
+
+10. Delta Load Processing Validation
+Scope: Delta (incremental) data loading from EventHub to Delta Lake/Silver Layer.
+Test:
+
+Validate scheduled or trigger-based delta jobs only process new or modified records.
+
+Confirm historical data is untouched unless updated.
+
+Compare batch metadata (e.g., watermark, offset) across runs.
+
+Expected Outcome:
+
+Only net-new or changed records are written in Delta/Silver.
+
+Partition pruning and job metadata (batch ID, offsets) correctly applied.
+
+No full refreshes unless explicitly configured.
+
+11. GDPR Column Masking Validation
+Scope: Validate sensitive data fields (e.g., personal identifiers) are masked or encrypted in accordance with GDPR policies.
+Test:
+
+Confirm masking logic (e.g., SHA, truncation, nulling) applied on fields like name, address, phone, etc.
+
+Validate unmasked views are restricted (role-based access).
+
+Trace whether masked columns retain referential integrity (e.g., hashed IDs still join correctly).
+
+Expected Outcome:
+
+All sensitive fields are masked in raw and downstream tables.
+
+No plain PII exposed in Silver, COS, or EDW layers.
+
+Masking logic aligns with data classification and legal requirements.
+
