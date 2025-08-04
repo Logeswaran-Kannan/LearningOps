@@ -1,12 +1,39 @@
-| **#** | **Validation Area**                    | **Test Coverage Statement**                                                                                                                 | **Expected Outcome**                                                                                   |
-| ----- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| 1     | **Schema Structure Validation**        | Validate that each ingested message strictly adheres to the schema defined in the ingestion mapping document.                               | All fields match expected structure; no schema mismatch errors in pipeline logs.                       |
-| 2     | **Mandatory Field Validation**         | Ensure all mandatory fields in each message are present and populated as per the mapping rules.                                             | All required fields are present; ingestion does not proceed if mandatory fields are missing.           |
-| 3     | **Data Type & Format Validation**      | Validate that field data types and formats match the specifications in the ingestion mapping (e.g., date formats, number types).            | All field values conform to expected formats; no casting or parsing errors observed.                   |
-| 4     | **Field-Level Mapping Accuracy**       | Verify each source field is mapped correctly to its destination field as per the mapping document, including renamed or transformed fields. | Fields appear in target tables with correct names, values, and transformations applied.                |
-| 5     | **Null & Default Value Handling**      | Validate ingestion behavior when optional fields are missing or default values are used, as per business rules.                             | Ingestion completes with fallback/default values where applicable; invalid nulls flagged as errors.    |
-| 6     | **Boundary & Limit Validation**        | Test edge cases (max/min values, character limits, etc.) defined in the mapping and ensure ingestion handles them correctly.                | No truncation or overflow issues; extreme values are handled gracefully.                               |
-| 7     | **Duplicate Record Handling**          | Validate system behavior when duplicate messages are ingested (e.g., using unique keys like Cache ID or Quote ID).                          | Duplicate messages are identified and either rejected or flagged; no duplicate data appears in target. |
-| 8     | **Reference Data Lookup Validation**   | Ensure fields linked to reference tables (e.g., DVLA, Rating Model) are enriched or flagged appropriately during ingestion.                 | Enrichment is successful using latest reference data; missing references are logged clearly.           |
-| 9     | **Error Logging & Rejection Handling** | Validate that incorrectly structured or unmapped messages are rejected with detailed error logs.                                            | Rejected records are logged with meaningful error codes; system continues processing valid records.    |
-| 10    | **Successful Load Confirmation**       | Confirm that successfully ingested messages appear in the Bronze layer tables with correct lineage.                                         | 100% of valid messages appear in Bronze layer; record counts match expectations from test data inputs. |
+Schema Structure Validation
+Validate that each ingested message strictly adheres to the schema defined in the ingestion mapping document.
+Expected Outcome: All fields conform to the expected structure with no schema mismatch or ingestion failure.
+
+Mandatory Field Validation
+Ensure that all mandatory fields in the message are present and populated based on the ingestion mapping rules.
+Expected Outcome: Ingestion fails gracefully if mandatory fields are missing and logs are properly captured.
+
+Data Type & Format Validation
+Validate that each field matches the defined data type (e.g., string, integer, date) and adheres to the format expected by the mapping specification.
+Expected Outcome: Fields are successfully parsed; no data type or format-related ingestion errors occur.
+
+Field-Level Mapping Accuracy
+Verify that all source fields are correctly mapped to the target fields, including renamed or transformed fields.
+Expected Outcome: Target tables reflect the expected field mappings, values, and data transformations.
+
+Null & Default Value Handling
+Validate how the ingestion handles missing optional fields or null values, including application of default values where required.
+Expected Outcome: Ingestion completes with correct defaults where applicable, and invalid nulls are flagged or rejected.
+
+Boundary & Limit Validation
+Test ingestion behavior for edge cases such as maximum character lengths, numeric boundaries, and special characters.
+Expected Outcome: No truncation, overflows, or data corruption; messages with out-of-bound values are handled per rules.
+
+Duplicate Record Handling
+Validate the system’s ability to detect and handle duplicate messages based on unique identifiers like Cache ID or Quote ID.
+Expected Outcome: Duplicate messages are rejected or flagged, and no duplicate data is inserted into the target tables.
+
+Reference Data Lookup Validation
+Ensure that enrichment fields using reference data (e.g., DVLA, rating models) are correctly populated or handled if not found.
+Expected Outcome: Valid lookups enrich the data correctly; missing references are logged and do not break ingestion.
+
+Error Logging & Rejection Handling
+Validate that incorrect or malformed messages are rejected with detailed logging that identifies the failure reason.
+Expected Outcome: Failed messages are not processed and are logged with a clear reason and traceability.
+
+Successful Load Confirmation
+Confirm that valid messages are successfully ingested and appear in the Bronze layer with correct lineage and data completeness.
+Expected Outcome: 100% of valid messages are recorded in Bronze with correct record counts and structure.
