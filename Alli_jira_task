@@ -1,48 +1,5 @@
-🔧 Functional Scope – In Scope (One-line Statements)
-Validate regression of existing MI pricing views post-MQS data integration.
+Apologies for the delay. I've prepared the high-level test scope for Day 1 SIT based on our last discussion and have documented it in Confluence. Please feel free to review and share with the team.
 
-Ensure accurate joins between MQS Quote IDs and legacy Quote/PRN references.
+This is a high-level view, as some of the HLDs are still pending. The scope is based on the available mappings and what we've agreed so far.
 
-Verify format compatibility of MQS fields (e.g., date, numeric, string) with legacy view models.
-
-Validate interaction-level reporting views still group and filter as expected.
-
-Confirm continuity in decline metrics, quote journeys, and conversion KPIs.
-
-Check mapping of MQS fields (Rating Response, Feature Set, etc.) into combined reporting layers.
-
-Ensure MQS data does not break existing joins, filters, or aggregations in MI views.
-
-Validate new MQS transaction records align with legacy transaction types for trend reporting.
-
-🚀 Non-Functional Scope – In Scope (One-line Statements)
-Validate performance of combined views post-MQS ingestion (no query failures or slowdowns).
-
-Ensure row-level counts and summary KPIs reconcile pre/post MQS integration.
-
-Validate data refresh/availability timing is consistent with legacy SLA (e.g., available by 9 AM).
-
-Check audit trail/logging for MQS-enhanced views matches existing MI framework.
-
-Confirm formatting changes in reports/dashboards (if any) do not affect data usability.
-
-❌ Out-of-Scope
-Standalone validation of MQS data sources (already validated upstream).
-
-Business sign-off on decision-making accuracy (e.g., correct premium or risk score).
-
-UI rendering or dashboard design changes.
-
-Security, access control, or RBAC enforcement.
-
-Real-time or streaming dashboards not tied to the batch EDM data model.
-
-⚠️ Caveats / Assumptions
-Assumes all MQS data is modeled correctly before MI view consumption.
-
-Differences in volume/patterns are accepted if technically justifiable (e.g., new quoting logic).
-
-Downstream consumers (e.g., dashboards) will revalidate post-MI SIT; MI focuses only on raw view behavior.
-
-The test assumes EDM model is stable and properly versioned for MQS fields.
-
+Let me know if you have any questions or need clarifications.
