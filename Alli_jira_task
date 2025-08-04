@@ -1,67 +1,99 @@
-✅ SIT Scope – Vehicle Model / Area Factor Ingestion (MI Team Perspective)
-🔧 Functional Validation – In Scope (Single-Line Statements)
-Validate successful ingestion of CSV rating files into Cosmos DB.
+✅ SIT Scope – Rating Response (EDM) Validation – MI Perspective
+🪙 Silver Layer – Data Vault
+🔧 Functional Validation
+Validate successful ingestion of MQS Rating Response messages into the Silver Layer tables.
 
-Verify schema alignment between uploaded file and target DB definitions.
+Confirm presence and mapping of core fields:
 
-Ensure all required columns (Vehicle Model/Area factors) are present in the ingested file.
+Quote ID, PRN, Cache ID, Decline Codes, Rating Premium, Adjustments
 
-Confirm data type and value formatting for each ingested field (e.g., numeric, string).
+Validate schema structure aligns with Data Vault modeling standards (hub/link/sat).
 
-Validate error handling by injecting malformed or incomplete files.
+Ensure all versions of Rating Responses (if re-quotes or updates) are stored with versioning and timestamps.
 
-Ensure duplicate file prevention or appropriate overwrite behavior is handled.
+Validate referential integrity across Quote Domain, PreComp, and Core Risk data sets.
 
-Check logs for success/failure entries including timestamps, file names, and record counts.
+Confirm accurate decoding of raw error codes and decline codes for categorization.
 
-Confirm data landed in Databricks BLOB with appropriate naming and directory structure.
+Ensure data completeness across records — no nulls for critical fields (e.g., Quote ID, Premium).
 
-Validate re-processing mechanism for corrected file submissions after failure.
+Confirm Stop Quote and Failed Quote records are recorded with appropriate status.
 
-Ensure new or updated rating factors reflect properly in MI downstream views (if available).
+🚀 Non-functional Validation
+Confirm batch ingestion process completes within defined SLA (e.g., hourly or daily window).
 
-🚀 Non-Functional Validation – In Scope (Single-Line Statements)
-Validate ingestion performance against volume thresholds (small vs. large file).
+Validate error logs and audit trails for each batch job.
 
-Ensure Cosmos DB throughput and response times are within acceptable SLA.
+Test data masking rules for sensitive fields where applicable.
 
-Confirm ingestion is resilient to transient errors (network, source delays).
+Validate CDC or delta load works (i.e., no overwrite of historical data unless intended).
 
-Verify audit trail creation for traceability of file load attempts.
+Ensure Silver layer supports downstream propagation to Gold without breaking schema.
 
-Validate support for schema evolution (i.e., additional fields) without failure.
+🥇 Gold Layer – EDM (Enterprise Data Model)
+🔧 Functional Validation
+Validate transformation of Silver-layer Rating Response data into structured Gold-layer dimensional models.
 
-Confirm storage persistence of rating files in BLOB for recovery and auditability.
+Confirm mapping of:
+
+Rating Premium
+
+Decline Reasons (pre/post rating)
+
+Endorsements
+
+Payment Eligibility
+
+Risk Score Outputs
+
+Validate business aggregations (e.g., quote outcome summaries, decline trends).
+
+Confirm Rating Response metrics are available and aligned to user domains:
+
+Pricing, Underwriting, MI analysts
+
+Validate that grouped decline codes (e.g., R001 = High Risk Area) appear consistently in the Gold EDM outputs.
+
+Validate Stop Quote and Error Messages are correctly presented with context.
+
+Confirm user-level access (RBAC) is enabled for domain-specific usage (e.g., pricing vs. MI).
+
+🚀 Non-functional Validation
+Validate daily refresh of Gold Layer with latest Silver inputs (T-1 data by 9 AM).
+
+Confirm that dashboards using Gold data respond within acceptable time limits (query performance).
+
+Validate audit logging for changes to the Rating Response Gold tables.
+
+Confirm data is ready and validated for UAT/MI reporting workflows.
 
 ❌ Out-of-Scope Items
-Validation of actual rating factor values (e.g., whether the correct model has the right factor).
+Upstream Precomp scoring logic or pricing algorithm correctness.
 
-Integration with pricing engine or downstream quote outcome validation.
+UI rendering of quote response or stop quote messages.
 
-UI-based file upload portals (if any exist).
+Integration of Rating Response with claims or policy administration systems.
 
-Real-time streaming ingestion (only batch CSV ingestion covered here).
+Real-time data loads or Kafka/EventHub flows (only batch data scope is included).
 
-Machine learning or scoring engine validations that use the ingested data.
-
-Business approvals, pricing logic, or governance sign-off workflows.
+Downstream external report validation in Power BI/Looker unless explicitly linked to Gold Layer fields.
 
 ⚠️ Caveats
-File content is assumed to be owned and signed off by the Pricing team; MI team validates only structure and loading.
+Business meaning and justification of decline codes must be validated by UAT teams, not MI QA.
 
-Schema evolution (new columns) is only supported if backward compatibility is maintained; breaking changes may require dev intervention.
+The presence of Rating Response data does not confirm quote success — only its availability for reporting.
 
-Performance testing is scoped to ingestion response times—not full platform load tests unless stated otherwise.
+Versioning logic is expected to be handled within Silver; QA assumes this is implemented.
 
-Cosmos DB performance tuning (e.g., RU adjustments) may impact results and is managed by Infra/DevOps.
+CDC/Delta processing is assumed to preserve history unless flagged otherwise.
 
-MI team does not test how these values impact final quote outcomes.
+👥 Business Scenario View (UAT-Aligned)
+Scenario	Layer	Who Validates	What to Validate
+Stop Quotes are captured and traceable	Silver	MI QA + UAT	Failed quotes are logged and linked
+Rating Response aligns with Quote ID & Cache ID	Silver & Gold	MI QA	Referential joins are correct
+Daily refreshed Rating Response is available in reports	Gold	MI QA	T-1 quote responses are visible by 9 AM
+Decline codes are grouped into reporting categories	Gold	UAT	Declines appear under correct business logic
+U/W team can extract rating outcome & quote error	Gold	UAT + MI	Complete visibility for MI insights
+Pre vs Post Decline analysis supported in reporting	Gold	UAT	Decline reasons separated and traceable
+Rating Premium adjustments appear in analytics	Gold	MI QA	Accurate values for reporting dashboards
 
-👥 Business Scenario View (For UAT Alignment)
-Scenario	Purpose	Who Validates
-Valid file load and availability in Cosmos DB	Ensure data is usable by downstream MI dashboards	MI team (SIT)
-File with missing or renamed column	Validate system rejects or flags schema misalignment	MI team (SIT)
-File with correct schema but wrong business values (e.g., invalid region code)	Pricing/UAT team confirms business rule enforcement	UAT (Pricing)
-Updated model group with new factor	Confirm schema can handle additional fields	MI team + UAT (Pricing)
-Re-submission of corrected file after rejection	Validate reprocessing flow and audit trail	MI team
-End-to-end reporting of rating impact by model/area	Business confirms KPI alignment in reports	UAT (Business/MI users)
