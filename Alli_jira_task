@@ -6,7 +6,14 @@ spark = SparkSession.builder.getOrCreate()
 # Read the delta table
 df = spark.table("core_preprod.default.table_counts")
 
-# Get the two latest run_timestamps
+# Step 1: Filter only relevant table_name prefixes
+df = df.filter(
+    (F.col("table_name").startswith("vw_billingcenter_current_")) |
+    (F.col("table_name").startswith("vw_policycenter_current_")) |
+    (F.col("table_name").startswith("vw_claimcenter_current_"))
+)
+
+# Step 2: Get the two most recent run_timestamps
 latest_runs = (
     df.select("run_timestamp")
     .distinct()
@@ -15,9 +22,8 @@ latest_runs = (
     .collect()
 )
 
-# Ensure there are at least two runs
 if len(latest_runs) < 2:
-    raise Exception("❗ Not enough runs to compare.")
+    raise Exception("❗ Not enough runs to compare (need at least two).")
 
 latest_ts = latest_runs[0][0]
 previous_ts = latest_runs[1][0]
@@ -27,29 +33,30 @@ latest_label = f"current_count_{str(latest_ts)[:19].replace(':', '-')}"
 previous_label = f"previous_count_{str(previous_ts)[:19].replace(':', '-')}"
 print(f"🔍 Comparing: {previous_label} → {latest_label}")
 
-# Filter only those two runs
+# Step 3: Filter for those two runs
 df_filtered = df.filter(F.col("run_timestamp").isin([latest_ts, previous_ts]))
 
-# Pivot by run_timestamp
+# Step 4: Pivot table
 df_pivot = df_filtered.groupBy("table_name").pivot("run_timestamp").agg(F.first("record_count"))
 
-# Rename columns with timestamp labels
+# Step 5: Rename columns
 df_pivot = df_pivot.withColumnRenamed(str(previous_ts), previous_label) \
                    .withColumnRenamed(str(latest_ts), latest_label)
 
-# Compute difference
+# Step 6: Add count_diff column
 df_result = df_pivot.withColumn(
     "count_diff",
     F.col(latest_label) - F.col(previous_label)
 )
 
-# Add icon column
+# Step 7: Add icon column based on change
 df_result = df_result.withColumn(
     "change_icon",
-    F.when(F.col("count_diff") > 0, "🟢⬆️")  # Increase
-     .when(F.col("count_diff") < 0, "🔴⬇️")  # Decrease
-     .otherwise("🟡⏸️")                      # No change
+    F.when(F.col("count_diff") > 0, "🟢⬆️")       # Increase
+     .when(F.col("count_diff") < 0, "🔴⬇️")       # Decrease
+     .when(F.col("count_diff") == 0, "🟡⏸️")      # No change
+     .when(F.col("count_diff").isNull(), "🟧❓")   # Missing value
 )
 
-# Display the results
+# Step 8: Display results
 df_result.display()
