@@ -1,5 +1,7 @@
-Only the entries marked in green have received new records. All others have the same record count as the previous run.
+So if we're aiming to validate the latest 2 days’ worth of data, then the correct approach would be:
 
-We will validate these counts against the jump server shortly.
+First load (pre-load): Clear and load data up to 2 days before the max UPDATE_TIME
 
-Entries marked in orange indicate potential issues and require investigation.
+Second load (post-load): Load data covering the 2-day window ending at the max UPDATE_TIME
+
+This way, the delta check will reflect only the latest 2 days’ worth of additions/changes, which aligns with the intent of the comparison.
