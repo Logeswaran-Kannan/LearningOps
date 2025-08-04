@@ -1,40 +1,200 @@
-✅ Radar Live – Data Ingestion Validation Coverage
-Schema Structure Validation
-Validate that each ingested message strictly adheres to the schema defined in the ingestion mapping document.
-Expected Outcome: All fields conform to the expected structure with no schema mismatch or ingestion failure.
+🔄 Additional Data Ingestion Validation Areas
+11. Ingestion Orchestration Validation
+Validate the end-to-end pipeline execution from source (e.g., EventHub) through intermediate stages (Bronze) to Silverish layer.
 
-Mandatory Field Validation
-Ensure that all mandatory fields in the message are present and populated based on the ingestion mapping rules.
-Expected Outcome: Ingestion fails gracefully if mandatory fields are missing and logs are properly captured.
+Expected Outcome: All pipeline jobs are triggered in the right order with dependency awareness and status logged.
 
-Data Type & Format Validation
-Validate that each field matches the defined data type (e.g., string, integer, date) and adheres to the format expected by the mapping specification.
-Expected Outcome: Fields are successfully parsed; no data type or format-related ingestion errors occur.
+Why it's critical: Prevents race conditions and partial ingestion.
 
-Field-Level Mapping Accuracy
-Verify that all source fields are correctly mapped to the target fields, including renamed or transformed fields.
-Expected Outcome: Target tables reflect the expected field mappings, values, and data transformations.
+12. Event Trigger Validation (from EventHub)
+Ensure that each incoming event from EventHub correctly triggers the ingestion workflow.
 
-Null & Default Value Handling
-Validate how the ingestion handles missing optional fields or null values, including application of default values where required.
-Expected Outcome: Ingestion completes with correct defaults where applicable, and invalid nulls are flagged or rejected.
+Expected Outcome: Every event results in a triggered ingestion job; no drops or missed triggers.
 
-Boundary & Limit Validation
-Test ingestion behavior for edge cases such as maximum character lengths, numeric boundaries, and special characters.
-Expected Outcome: No truncation, overflows, or data corruption; messages with out-of-bound values are handled per rules.
+Why it’s critical: Real-time systems depend on reliable event capture.
 
-Duplicate Record Handling
-Validate the system’s ability to detect and handle duplicate messages based on unique identifiers like Cache ID or Quote ID.
-Expected Outcome: Duplicate messages are rejected or flagged, and no duplicate data is inserted into the target tables.
+13. Checkpointing & Replay Mechanism
+Validate that checkpointing works as expected and supports replay for failed/missed messages.
 
-Reference Data Lookup Validation
-Ensure that enrichment fields using reference data (e.g., DVLA, rating models) are correctly populated or handled if not found.
-Expected Outcome: Valid lookups enrich the data correctly; missing references are logged and do not break ingestion.
+Expected Outcome: Messages can be replayed from checkpoints without duplication or loss.
 
-Error Logging & Rejection Handling
-Validate that incorrect or malformed messages are rejected with detailed logging that identifies the failure reason.
-Expected Outcome: Failed messages are not processed and are logged with a clear reason and traceability.
+Why it’s critical: Ensures data resiliency and fault recovery.
 
-Successful Load Confirmation
-Confirm that valid messages are successfully ingested and appear in the Bronze layer with correct lineage and data completeness.
-Expected Outcome: 100% of valid messages are recorded in Bronze with correct record counts and structure.
+14. Pipeline Failure & Retry Logic
+Deliberately simulate failures in ingestion and validate whether retry logic or fallback paths function as designed.
+
+Expected Outcome: Failures are retried (where configured); alerts are raised and logged.
+
+Why it’s critical: Maintains reliability in production pipelines.
+
+15. Latency & SLA Tracking
+Measure time taken from event ingestion (EventHub) to data landing in Silverish layer; compare against defined SLA.
+
+Expected Outcome: Ingestion completes within agreed SLA windows.
+
+Why it’s critical: Supports real-time and near-real-time reporting use cases.
+
+16. Partitioning & Distribution Strategy Validation
+Validate that data is evenly and logically partitioned across distributed storage or processing nodes (e.g., by Quote ID, Date).
+
+Expected Outcome: No skewed partitions; consistent distribution across workers.
+
+Why it’s critical: Impacts performance and downstream joins.
+
+17. Schema Evolution Handling
+Test ingestion behavior when schema changes (e.g., new fields added or removed) and how backward compatibility is maintained.
+
+Expected Outcome: System handles schema drift or flags unsupported changes.
+
+Why it’s critical: Ensures pipeline robustness over time.
+
+18. Audit & Lineage Logging
+Ensure complete lineage logs are captured from EventHub through each layer (Bronze → Silverish) including timestamps and transformation details.
+
+Expected Outcome: Each record has traceable audit trail and transformation lineage.
+
+Why it’s critical: Supports compliance, debugging, and accountability.
+
+19. Environment-Specific Config Validation
+Validate that ingestion parameters, endpoints, and configs (e.g., connection strings, paths) are correct per environment (dev/test/prod).
+
+Expected Outcome: No misrouted messages or config-based ingestion failures.
+
+Why it’s critical: Prevents production data loss due to misconfiguration.
+
+💡 Suggestion:
+These validations are especially useful to define in:
+
+Your non-functional test cases
+
+Ingestion readiness checklists
+
+NFR scope under "Pipeline Resiliency"
+
+Would you like a full checklist version of this suitable for planning or QA sign-off?
+
+
+
+
+
+
+You said:
+out of scope
+
+
+ChatGPT said:
+Certainly! Here's a comprehensive "Out of Scope" section tailored to the Radar Live Data Ingestion testing phase, especially with your expanded pipeline context (EventHub → Bronze → Silverish → COS/EDW/EDM).
+
+❌ Out of Scope – Data Ingestion Testing Phase
+These areas are excluded from the current scope of data ingestion validation (Day 1), either because they are covered in downstream phases, handled by other teams, or fall under non-functional or operational testing categories.
+
+🔹 1. Downstream Business Logic & Gold Layer Transformations
+Detailed business rule validations (e.g., premium calculations, discount rules, etc.) applied in the Gold/COS/EDW layers are out of scope.
+
+Covered under business rules or curated layer validation.
+
+🔹 2. Front-End (UI/UX) Validation
+Any display/UI validations (e.g., via portals, dashboards, reporting interfaces) are not part of this ingestion validation phase.
+
+🔹 3. Data Visualization/Reporting Accuracy
+BI layer or analyst views (e.g., Power BI, Tableau, or curated dashboards) data checks are excluded.
+
+🔹 4. Load Testing & Performance Benchmarks
+Throughput, concurrent ingestion rates, and stress/load testing fall under the non-functional testing phase and are out of scope here.
+
+🔹 5. Data Archival & Retention Policy Testing
+Validations for long-term storage, archival workflows, or deletion policies are not included in this round.
+
+🔹 6. End-to-End Security Testing
+Role-based access control, encryption in transit/rest, and data masking are managed by the platform and security team.
+
+🔹 7. Manual Enrichment & External Vendor Testing
+Any manual data enrichment from third parties (e.g., Sapiens) not tied to ingestion logic is excluded from testing.
+
+🔹 8. Infrastructure or Failover Testing
+Infrastructure failures, network simulation, or disaster recovery scenarios are handled under infrastructure-level NFR testing.
+
+🔹 9. Change Data Capture (CDC) & Delta Loads
+CDC logic and delta load validations are not part of this phase unless explicitly triggered via ingestion.
+
+🔹 10. Data Governance & Compliance Audits
+Compliance checks (GDPR, audit readiness) and data governance enforcement are not included in functional ingestion testing.
+
+Would you like this "Out of Scope" section merged into your master test plan or as a slide/table for stakeholder review?
+
+
+
+
+
+
+You said:
+
+Consider these points as well
+
+ChatGPT said:
+Thanks! Based on the latest image you provided—which outlines the Radar Live system components, their impacts, and associated data flows—here’s how we can refine and expand your data ingestion validation scope with precise, testable additions.
+
+✅ Enhanced Radar Live – Data Ingestion Validation Scope (with Architecture Alignment)
+This list integrates validation logic not only for message structure and mapping but also for platform orchestration, streaming, and storage behavior based on Azure components: MQS, Event Hub, Databricks, Delta Lake, and Raw Landing.
+
+1. MQS Event Message Orchestration Validation
+Scope: From MQS to Azure Event Hub
+Test: Validate that MQS successfully publishes rating messages to the correct Azure Event Hub topic per product system.
+Expected Outcome: Messages are correctly partitioned, published, and visible in Azure Event Hub without loss or delay.
+
+2. Event Hub Message Delivery Validation
+Scope: From Azure Event Hub → Azure Data Platform (Databricks)
+Test: Validate that all messages published in Event Hub are consumed by Databricks as per expected frequency, batch/window logic.
+Expected Outcome: No messages are dropped or processed out of order; offset and checkpointing work as designed.
+
+3. Databricks Stream Consumption Validation
+Scope: Streaming job from AEH to Delta Lake (Raw Landing)
+Test: Validate that Databricks jobs successfully pick up messages from Event Hub and transform/store them into the Raw Landing tables.
+Expected Outcome: Message count in Raw Landing = message count published to Event Hub (minus known filtered cases).
+
+4. Raw Landing Table Validation in Delta Lake
+Scope: Delta Lake ingestion (Raw Zone)
+Test: Validate that Raw Landing zone contains all unmodified messages and adheres to table schema structure (Parquet format).
+Expected Outcome: Full-fidelity raw message storage; metadata and ACID compliance maintained.
+
+5. Delta Lake Table Transition Validation
+Scope: Transition from Raw → Refined or Silver Layer
+Test: Validate transformation logic and partitioning strategy used in Delta Lake layer is correctly applied for downstream consumption.
+Expected Outcome: Fields transformed per ingestion mapping; timestamp- and key-based partitioning maintained.
+
+6. Data Lineage & Traceability Validation
+Scope: Across MQS → AEH → Databricks → Delta Lake
+Test: Ensure that each record can be traced back to its original MQS source through metadata (e.g., message ID, timestamp).
+Expected Outcome: Data lineage is intact and accessible in audit/log tables or metadata stores.
+
+7. Failure Handling & Replay Readiness
+Scope: Any point of failure in the pipeline
+Test: Validate that system logs failures, checkpoints correctly, and can replay data from a certain offset.
+Expected Outcome: Reprocessing can occur without duplication; failed batches are logged with diagnostic messages.
+
+8. Multi-Tenant/Topic Isolation Validation
+Scope: Across product systems using shared Event Hubs
+Test: Validate that each MQS product system uses the correct topic/stream within the shared Event Hub.
+Expected Outcome: No cross-contamination of messages across product systems; logical separation maintained.
+
+❌ Still Out of Scope
+UI-level validation of pricing/quotes
+
+Reporting platform testing (Power BI, etc.)
+
+Business rule logic in Gold/COS/EDW
+
+Non-functional SLAs (performance, DR failover)
+
+Manual intervention/reprocessing
+
+Security model and RBAC enforcement
+
+✅ Suggested Enhancements to Your QA Planning:
+Add checkpoints after each D1 → D3 flow from the architecture table.
+
+Include a lineage trace matrix mapping message ID from MQS → Raw Table.
+
+Create mock EventHub inputs to simulate various test conditions (e.g., late arrivals, malformed messages).
+
+Would you like this turned into a formal QA strategy slide or embedded into your test plan documentation?
