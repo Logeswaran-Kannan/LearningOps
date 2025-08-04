@@ -1,31 +1,223 @@
-Radar Live – Enrichment Scope Clarification (ODS Layer)
-🔹 Component: Bronze Layer – ODS – Raw Enrichments
-Reference: S2
+inal Test Scope – Core Risk Data (Radar Live)
+🔹 A. Bronze Layer – MQS Quote Request
+Validate that Core Risk is embedded in MQS Quote Request payload as a nested structure.
 
-📌 Key Points Interpreted from the Design:
-Raw enrichment data is part of the MQS Quote Request message.
+Confirm that the full message (including Core Risk JSON) is landed into Bronze with correct schema.
 
-These enrichments are compressed and must be decompressed and stored in their original form in the ODS layer.
+Validate schema completeness and adherence to ingestion mapping.
 
-These enrichment values are not currently used by downstream layers like Data Vault or EDM.
+Ensure no loss of nested Core Risk metadata or structure.
 
-Note from design: "Should the DE data be validated? Assume not!" — which strongly implies exclusion from immediate QA validation.
+Confirm decompression and storage for embedded raw Core Risk.
 
-✅ Testing Scope (Minimal)
-In Scope:
-Storage Format Validation: Confirm that raw enrichment data is successfully decompressed and stored in the Bronze/ODS layer in its original form.
+🔹 B. Silver Layer – Data Vault – Core Risk
+Parse Core Risk into structured tables (Hub, Satellite, Link models).
 
-Field Presence Check: Ensure metadata and enrichment blocks are included in the MQS Quote Request payload and persisted as-is.
+Validate support for multiple insured objects per quote.
 
-Decompression Confirmation: Validate that enrichment compression logic is reversible and content is accessible post-landing.
+Validate quote-level referential integrity using MQS-provided Unique Quote ID.
 
-❌ Out of Scope:
-No content-level validation of enrichment data fields (e.g., business logic, correctness of individual enrichment attributes like DVLA, Core Risk, etc.).
+Verify correct linking of Interaction ID and related business keys.
 
-No functional validation of how enrichment data is consumed, since it is not used for any active decisioning or transformations at this stage.
+Ensure timestamp/versioning strategy supports CDC and auditability.
 
-No validations in Data Vault or EDM involving enrichment data.
+Confirm metadata lineage for each field (from source → Data Vault).
 
-⚠️ Caveat (To Add in Test Plan)
-Enrichment data within the ODS (Raw Bronze) layer is validated only to the extent of landing, decompression, and availability.
-Field-level or business rule validation of enrichment data is explicitly out of scope, as this data is not yet consumed downstream by any decisioning logic or reporting layer.
+Verify enrichment logic (e.g., from PreComp or DVLA flag values) is retained in this layer.
+
+🔹 C. Gold Layer – EDM – Core Risk
+Validate the dimensional model representation of Core Risk.
+
+Confirm that EDM Core Risk objects aggregate correctly per quote.
+
+Validate quote linking via Cache ID (used internally only).
+
+Verify flags for orphaned Core Risk records are set appropriately.
+
+Confirm quote declines are traceable (e.g., via null-premium transactions).
+
+Ensure PII masking is enforced in sensitive columns (e.g., customer details).
+
+Validate DVLA compliance by confirming only self-declared values exist.
+
+Ensure semantic correctness of calculated risk metrics, segmentations, or categorization.
+
+🔹 D. Additional Functional Coverage from Data Modeling Notes
+Quote Linking: Validate Cache ID logic enables chain-of-quotes navigation (e.g., original, re-quote, MTA).
+
+Orphaned Risk: Ensure unmatched quotes still populate risk records flagged with null premiums.
+
+Quote Declines: Test rule-based decline indicators (e.g., validation failure categories).
+
+Insured Object Granularity: Confirm support for multi-vehicle quotes per record.
+
+Referential Integrity: Check that all related risk entities resolve correctly in both Silver and Gold.
+
+PII Data: Confirm masking policy enforcement and RBAC (no exposure in lower-permission roles).
+
+DVLA Data: Confirm DVLA source only reflects permitted content and not external system dependencies.
+
+📊 General Data Warehouse Validation Coverage (Silver & Gold)
+Applicable to Data Vault (Silver) and EDM (Gold) layers:
+
+Structural validation: Column presence, data types, and constraints.
+
+Business key validation: Keys like Quote ID, Cache ID, Customer ID must be accurate and non-null.
+
+Referential integrity: FK relationships across fact/dimension tables.
+
+Audit fields: Created_Timestamp, Modified_By, and CDC indicators should be populated.
+
+Version control: Satellite tables should reflect latest versions and soft deletes where applicable.
+
+Masking/obfuscation checks for PII and sensitive columns.
+
+Timeliness: Data arrival time in Silver and Gold aligns with processing SLAs.
+
+❌ Out of Scope – Core Risk Validation
+Real-time streaming or SLA performance testing.
+
+UI or dashboard (Power BI, Looker) rendering/analytics of Core Risk.
+
+Business rule definition/ownership (e.g., how Underwriting rules are formed).
+
+Manual assessment of rating decline logic accuracy.
+
+Downstream system integrations consuming EDM data.
+
+Data export jobs, archiving, or retention policy validations.
+
+⚠️ Caveat
+All validations mentioned here apply only to the Radar Live Core Risk flow as defined across Bronze, Silver (Data Vault), and Gold (EDM).
+Any functionality or data handling not explicitly listed as “in scope” above is to be considered out of scope, including inferred analytics, downstream consumption, or cross-system reconciliation.
+Validation of real-time insights, performance, or security controls is managed under separate NFR and UAT tracks.
+
+Would you like this packaged as:
+
+A formal Test Plan section?
+
+Jira Epic/Story templates?
+
+An Excel QA Traceability Matrix?
+
+
+
+
+
+
+
+Ask ChatGPT
+You said:
+add from business UAT prespective as well, in terms of quote journey validation prespetive 
+
+
+
+2/2
+
+ChatGPT said:
+Absolutely — here’s the enhanced and complete final scope for Core Risk data validation, now also incorporating Business UAT coverage from a quote journey perspective. This includes validations for real-world business workflows where Core Risk influences or supports key decisions across quoting, rating, and post-decision analysis.
+
+✅ Final Core Risk Test Scope – Radar Live
+🧱 Layers: Bronze → Silver (Data Vault) → Gold (EDM)
+🧭 Scope Perspective: QA + Business UAT
+🔹 A. Bronze Layer – MQS Quote Request
+Ensure Core Risk object is fully received in MQS quote message.
+
+Validate JSON schema and field presence (including nested metadata).
+
+Confirm integrity of Cache ID and Unique Quote ID for quote traceability.
+
+Decompression and landing of Core Risk data in raw format (ODS zone).
+
+Initial referential linkage between Rating Request and Core Risk included.
+
+🔹 B. Silver Layer – Data Vault – Core Risk
+Core Risk structured into entities (hub/satellite/link tables).
+
+Business keys (e.g., Quote ID, Interaction ID) maintain uniqueness.
+
+Enrichments and flags (PreComp, DVLA) are preserved.
+
+Support for multi-vehicle quoting (granularity check).
+
+CDC markers and versioning applied to support lifecycle traceability.
+
+Integrity checks for linking with Quote Request and PreComp data.
+
+🔹 C. Gold Layer – EDM – Core Risk
+Core Risk dimensions support reporting at the quote level.
+
+Cache ID enables chained quote journeys (original → re-quote → MTA).
+
+Risk records appear in analytics even for orphaned quotes (no pricing outcome).
+
+Quote Decline indicators are present (Standard Validation Rules, null-premium).
+
+PII is masked per GDPR in reports.
+
+Referential alignment with Quote Domain ensures drill-through.
+
+👥 Business UAT – Quote Journey Coverage
+From an end-user/business validation perspective, key quote lifecycle flows include:
+
+✅ 1. Quote Journey Reconstruction (Cache ID Traceability)
+Confirm user can trace entire quote chain via Cache ID.
+
+Example: Original Quote → Re-Quote → MTA → Final Accept
+
+✅ 2. Quote Decline Analysis
+Validate visibility of declined quotes within EDM even if they failed rating.
+
+Confirm reasons tied to Core Risk (e.g., failed underwriting rules) are traceable.
+
+Underwriters can identify and segment declines by business rule violations.
+
+✅ 3. Orphaned Risk Record Handling
+Ensure quotes that were never rated (or were stopped early) still generate Core Risk records.
+
+“Null-premium” flag identifies these cleanly for reporting.
+
+✅ 4. Multi-Vehicle Quotes (Granularity Handling)
+Core Risk accommodates multiple insured items under the same Quote ID.
+
+Business users can report risk per object (vehicle, driver) in a multi-line quote.
+
+✅ 5. Reporting Alignment
+Core Risk dimensions correctly feed into EDM dashboards for:
+
+Decline metrics
+
+Underwriting risk segmentation
+
+Quote success rates by risk segment
+
+✅ 6. Audit & Traceability for UAT Logs
+Business UAT testers can track where risk data comes from (Cache ID → Interaction ID → Risk Record).
+
+Ability to tie decisions (e.g., decline, quote change) back to source risk values.
+
+❌ Out of Scope – Core Risk (QA + UAT)
+UI-level form validation (e.g., quoting portal display of risk)
+
+Real-time scoring engine behavior
+
+Business rule engine logic validation itself (UAT focuses on output, not rule engine internals)
+
+Rating/Pricing accuracy (assumed tested in pricing engine validation)
+
+Any analytics/reporting outputs outside of Core Risk EDM view
+
+Exporting/reporting tools (Power BI, Qlik) not part of this scope
+
+⚠️ Caveat
+Only the quote journey use cases and validations explicitly listed above are in-scope for Business UAT.
+Any unlisted journey combinations, UI-based behaviors, or decisioning rule accuracy must be validated under their respective streams (e.g., Rating, UI UAT, Decisioning).
+Only EDM data sourced via the Core Risk pipeline is covered. Use in other domains (e.g., Claims) is not part of this release.
+
+Would you like this entire scope delivered in a business-friendly UAT Test Charter, traceability matrix, or linked to a Jira UAT Epic for formal sign-off?
+
+
+
+
+
+
