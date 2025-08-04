@@ -1,3 +1,4 @@
+✅ Radar Live – Data Ingestion Validation Coverage
 Schema Structure Validation
 Validate that each ingested message strictly adheres to the schema defined in the ingestion mapping document.
 Expected Outcome: All fields conform to the expected structure with no schema mismatch or ingestion failure.
