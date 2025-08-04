@@ -1,13 +1,40 @@
-Hi Simon,
+from pyspark.sql import SparkSession, functions as F, Window
 
-Thanks again for checking in and sharing the feedback from Jamie — we truly appreciate the support he's been giving the team. His insights have been very helpful throughout this phase, and we’ll continue to coordinate with him closely where needed.
+# Initialize Spark
+spark = SparkSession.builder.getOrCreate()
 
-From the BiCoE testing perspective, our key focus is to validate the ingestion pipeline functionality built by Rob and team — ensuring that the system behaves as designed across file ingestion, error handling, schema enforcement, and integration with Cosmos DB.
+# Step 1: Read the Delta table
+df = spark.table("core_preprod.default.table_counts")
 
-While we’ve been highlighting data and schema-related issues during testing to help unblock Pricing’s delivery, we do acknowledge that ownership of the schema files and DQC rules should ultimately sit with the Pricing team. We’re aligned with Jamie and Adrian that decisions around data formats, expected types, and updates to schema logic shouldn’t rest with test — whether Pricing or BiCoE.
+# Step 2: Filter last 2 runs based on run_timestamp
+latest_runs = (
+    df.select("run_timestamp")
+    .distinct()
+    .orderBy(F.col("run_timestamp").desc())
+    .limit(2)
+    .collect()
+)
 
-That said, we’re happy to continue raising observations and working collaboratively to ensure the system is robust. Going forward, for any data-related queries or clarification, we’ll loop in Diane, Matt G, and Sachin, and support alignment on ownership responsibilities.
+# Ensure at least 2 runs exist
+if len(latest_runs) < 2:
+    raise Exception("Not enough runs to compare (need at least two run_timestamp values).")
 
-We also received the V3 Area Factor file (thanks to Shashi and Matt), though a few open observations remain, which we’ll flag back through the usual channels.
+latest_ts = latest_runs[0][0]
+previous_ts = latest_runs[1][0]
 
-Please let us know if you'd like to align further on this — always happy to support where we can.
+print(f"📊 Comparing run_timestamp: {previous_ts} ⟶ {latest_ts}")
+
+# Step 3: Filter and pivot
+df_filtered = df.filter(F.col("run_timestamp").isin([latest_ts, previous_ts]))
+
+df_pivot = df_filtered.groupBy("table_name").pivot("run_timestamp").agg(F.first("record_count"))
+
+# Step 4: Rename pivoted columns for clarity
+df_pivot = df_pivot.withColumnRenamed(str(previous_ts), "previous_count") \
+                   .withColumnRenamed(str(latest_ts), "current_count")
+
+# Step 5: Calculate difference
+df_result = df_pivot.withColumn("count_diff", F.col("current_count") - F.col("previous_count"))
+
+# Show and export
+import ace_tools as tools; tools.display_dataframe_to_user(name="Record Count Comparison", dataframe=df_result)
