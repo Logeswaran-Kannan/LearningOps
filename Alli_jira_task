@@ -3,10 +3,10 @@ from pyspark.sql import SparkSession, functions as F
 # Initialize Spark
 spark = SparkSession.builder.getOrCreate()
 
-# Step 1: Read the Delta table
+# Read the delta table
 df = spark.table("core_preprod.default.table_counts")
 
-# Step 2: Get the 2 latest run_timestamps
+# Get the two latest run_timestamps
 latest_runs = (
     df.select("run_timestamp")
     .distinct()
@@ -15,27 +15,41 @@ latest_runs = (
     .collect()
 )
 
-# Ensure we have enough runs to compare
+# Ensure there are at least two runs
 if len(latest_runs) < 2:
-    raise Exception("❗ Not enough run history to compare. You need at least two run_timestamp entries.")
+    raise Exception("❗ Not enough runs to compare.")
 
 latest_ts = latest_runs[0][0]
 previous_ts = latest_runs[1][0]
 
-print(f"🔍 Comparing runs: {previous_ts} → {latest_ts}")
+# Format timestamps for column headers
+latest_label = f"current_count_{str(latest_ts)[:19].replace(':', '-')}"
+previous_label = f"previous_count_{str(previous_ts)[:19].replace(':', '-')}"
+print(f"🔍 Comparing: {previous_label} → {latest_label}")
 
-# Step 3: Filter relevant data
+# Filter only those two runs
 df_filtered = df.filter(F.col("run_timestamp").isin([latest_ts, previous_ts]))
 
-# Step 4: Pivot table so each run_timestamp becomes a column
+# Pivot by run_timestamp
 df_pivot = df_filtered.groupBy("table_name").pivot("run_timestamp").agg(F.first("record_count"))
 
-# Step 5: Rename columns for clarity
-df_pivot = df_pivot.withColumnRenamed(str(previous_ts), "previous_count") \
-                   .withColumnRenamed(str(latest_ts), "current_count")
+# Rename columns with timestamp labels
+df_pivot = df_pivot.withColumnRenamed(str(previous_ts), previous_label) \
+                   .withColumnRenamed(str(latest_ts), latest_label)
 
-# Step 6: Add a column showing the difference
-df_result = df_pivot.withColumn("count_diff", F.col("current_count") - F.col("previous_count"))
+# Compute difference
+df_result = df_pivot.withColumn(
+    "count_diff",
+    F.col(latest_label) - F.col(previous_label)
+)
 
-# Step 7: Display results in notebook
-df_result.display()  # Or use df_result.show() if display() is not supported
+# Add icon column
+df_result = df_result.withColumn(
+    "change_icon",
+    F.when(F.col("count_diff") > 0, "🟢⬆️")  # Increase
+     .when(F.col("count_diff") < 0, "🔴⬇️")  # Decrease
+     .otherwise("🟡⏸️")                      # No change
+)
+
+# Display the results
+df_result.display()
