@@ -1,312 +1,67 @@
-✅ Final Test Scope – Radar Feature Set (Precomp Response)
-🔹 Bronze Layer – MQS Precomp Response Landing
-Validate that the full Precomp Response message, including the Radar Feature Set, is ingested via MQS and landed into the Bronze ODS layer.
+✅ SIT Scope – Vehicle Model / Area Factor Ingestion (MI Team Perspective)
+🔧 Functional Validation – In Scope (Single-Line Statements)
+Validate successful ingestion of CSV rating files into Cosmos DB.
 
-Confirm structure of feature set as JSON key-value pairs, categorized by feature prefix:
+Verify schema alignment between uploaded file and target DB definitions.
 
-A (Metadata), C (Existing Policy), Cvr (Cover), Drv (Driver), Pol (Policy), Prp (Proposer), Veh (Vehicle)
+Ensure all required columns (Vehicle Model/Area factors) are present in the ingested file.
 
-Validate schema, completeness, and correct parsing of embedded JSON blocks.
+Confirm data type and value formatting for each ingested field (e.g., numeric, string).
 
-Check for decompression (if applicable) and field count validation.
+Validate error handling by injecting malformed or incomplete files.
 
-Confirm correct ingestion order and linkage to Quote ID/Cache ID.
+Ensure duplicate file prevention or appropriate overwrite behavior is handled.
 
-🔹 Silver Layer – Data Vault – Radar Feature Set
-Validate the transformation from Bronze JSON into structured, dynamic tables within the Data Vault.
+Check logs for success/failure entries including timestamps, file names, and record counts.
 
-Confirm integrity of features grouped by category (e.g., Driver, Policy).
+Confirm data landed in Databricks BLOB with appropriate naming and directory structure.
 
-Validate schema flexibility to handle:
+Validate re-processing mechanism for corrected file submissions after failure.
 
-Addition of new feature sets
+Ensure new or updated rating factors reflect properly in MI downstream views (if available).
 
-Embedded arrays within feature records
+🚀 Non-Functional Validation – In Scope (Single-Line Statements)
+Validate ingestion performance against volume thresholds (small vs. large file).
 
-Test CDC/versioning readiness (including soft deprecation of features).
+Ensure Cosmos DB throughput and response times are within acceptable SLA.
 
-Confirm that no renaming or breaking changes occur in field names without new version.
+Confirm ingestion is resilient to transient errors (network, source delays).
 
-🔹 Gold Layer – EDM – Radar Feature Set
-Validate dimensional modeling of features for downstream reporting.
+Verify audit trail creation for traceability of file load attempts.
 
-Confirm structure supports dynamic, growing feature sets across time.
+Validate support for schema evolution (i.e., additional fields) without failure.
 
-Validate integration with business reporting for KPIs, especially for:
+Confirm storage persistence of rating files in BLOB for recovery and auditability.
 
-Quote segmentation
+❌ Out-of-Scope Items
+Validation of actual rating factor values (e.g., whether the correct model has the right factor).
 
-Decline metrics by feature breakdown
+Integration with pricing engine or downstream quote outcome validation.
 
-Feature effectiveness insights
+UI-based file upload portals (if any exist).
 
-Confirm join logic with quote-level metrics, rating results, and declines.
+Real-time streaming ingestion (only batch CSV ingestion covered here).
 
-👥 Business UAT Scope – Feature Set Usage
-From the perspective of quote journey and analytical needs:
+Machine learning or scoring engine validations that use the ingested data.
 
-✅ 1. Quote Journey Alignment
-Ensure that the same set of features used during Precomp is available for downstream UAT reporting.
-
-Validate that quote journeys maintain consistent feature sets across all re-quotes and MTAs.
-
-✅ 2. Feature-Based Decline Visibility
-Validate that quotes failing Precomp validation rules (e.g., underwriting scorecard) are returned with associated Radar Feature Set.
-
-Confirm these declined quotes are represented in UAT reports with “Stop Quote” flag and visible breakdown of features.
-
-✅ 3. Dynamic Feature Expansion (Pricing Additions)
-UAT should confirm that new features added by Pricing after go-live can be ingested and reported without redesigning schema.
-
-Validate flexibility of model to support new vehicle or driver attributes.
-
-✅ 4. PII Compliance
-Confirm that any PII fields in feature set are masked/obfuscated according to GDPR rules.
-
-✅ 5. Version Control Placeholder
-Validate version tracking placeholder is included in Precomp message (even if implementation pending).
-
-Confirm system does not overwrite existing features if same quote ID is reprocessed.
-
-❌ Out of Scope – Radar Feature Set Testing
-No validation of Precomp engine logic itself (e.g., scoring, ML feature weights)
-
-No UI validation of feature input forms
-
-No UAT of feature store management interface (internal to Pricing team)
-
-No transformations outside what is persisted in Silver/Gold
-
-Version control rules are not finalized – only presence of version field is tested
+Business approvals, pricing logic, or governance sign-off workflows.
 
 ⚠️ Caveats
-The Radar Feature Set is designed to be dynamic — test scope must assume new features can appear without schema redesign.
+File content is assumed to be owned and signed off by the Pricing team; MI team validates only structure and loading.
 
-The presence of Radar Feature Set in the Precomp response does not guarantee the quote was successfully scored or eligible — only that Precomp ran.
+Schema evolution (new columns) is only supported if backward compatibility is maintained; breaking changes may require dev intervention.
 
-Any analytics beyond Quote Domain (e.g., Claim prediction, marketing) are out of this scope.
+Performance testing is scoped to ingestion response times—not full platform load tests unless stated otherwise.
 
-Would you like this consolidated into:
+Cosmos DB performance tuning (e.g., RU adjustments) may impact results and is managed by Infra/DevOps.
 
-A QA+UAT Test Strategy doc,
+MI team does not test how these values impact final quote outcomes.
 
-A Jira Epic breakdown, or
-
-An Excel-based scope traceability tracker across Bronze → Silver → Gold?
-
-
-
-
-
-
-
-Ask ChatGPT
-You said:
-explain on the overview part from test prespective
-
-
-ChatGPT said:
-Here's a clear breakdown of the “Overview” section from your first image — reinterpreted from a testing perspective, focusing on what it implies for the Radar Feature Set validation scope and responsibilities across the data lifecycle.
-
-📄 Overview Breakdown – Radar Feature Set (Test Perspective)
-🔹 What the Feature Set Is
-The Radar Feature Set is a structured output generated by the Precomp module in the MQS quote journey.
-
-It includes attributes (features) used by both Machine Learning (ML) and Pricing/Underwriting models.
-
-These features will ultimately replace existing per-application quote data feeds, becoming the standard for downstream analytics and rating decisions.
-
-🔍 Test Implications
-End-to-End Quote Journey Consistency
-
-From a test angle, this means that QA/UAT must verify:
-
-The same feature set is passed consistently from Precomp → ML Gateway → downstream layers.
-
-Data sent from Precomp matches what’s used in scoring, and what lands in Bronze → Silver → Gold.
-
-Feature Categorization
-
-The Radar Feature Set is grouped by feature prefixes/categories:
-
-A (Metadata), C (Existing Policy), Cvr (Cover), Drv (Driver), Pol (Policy), Prp (Proposer), Veh (Vehicle)
-
-Test Implication: QA must validate that all categories land correctly, especially when new features or categories are introduced.
-
-Data Harmonization Between Online & Offline
-
-The same feature inputs are used across online quoting and offline modeling.
-
-Test Implication: Offline test runs should validate that values match the online Precomp/ML inputs for the same quotes (no divergence).
-
-Quote Linking & Versioning
-
-Each quote is versioned, and Cache ID helps identify linked quotes (original, re-quotes, MTAs).
-
-Test Implication: QA/UAT must ensure feature data is consistently linked across quote journeys via Cache ID and version markers.
-
-Dynamic Expansion & Governance
-
-Pricing teams can add new features independently (schema must support this).
-
-Test Implication: Regression tests must confirm that:
-
-New features land without breaking downstream pipelines.
-
-Schema flexibility is preserved (e.g., dynamic columns, JSON parsing).
-
-Machine Learning Compatibility
-
-Features must be stable and interpretable for ML use cases.
-
-Test Implication: Values should be type-safe, consistently formatted, and handle nulls as per ML input requirements.
-
-Final Scope Constraint
-
-Radar Feature Set scope applies only to Allianz Motor product and within the Azure Data Platform EDM.
-
-Test Implication: No need to validate its use outside this domain for now.
-
-✅ Summary from a QA/UAT View
-Aspect	Test Focus
-Feature Structure	Validate key-value pairs, prefixes, presence across categories
-Quote Flow	Ensure consistency of feature set between Precomp → Rating → ML
-Downstream Use	Confirm integration into Data Vault and EDM for analytics
-Quote Linking	Check version tracking and Cache ID joins across quote revisions
-Flexibility	Validate ability to handle new features dynamically
-ML Support	Confirm data quality, completeness, and formatting for model inputs
-
-Would you like this written up as a formal test scope appendix or embedded in your feature test plan?
-
-
-
-
-
-
-You said:
-I want , what test that needs to cover my QA team and what by UAT  and why QA need UAT testers to perform the validation on those part and limitations
-
-
-ChatGPT said:
-Perfect — here's a clear division of responsibility between QA (Test Team) and UAT (Business Testers) for the Radar Feature Set (Precomp Response) across Bronze → Silver → Gold layers.
-
-This also explains why QA needs UAT testers for specific parts and outlines the limitations of each role to avoid gaps or overlaps.
-
-✅ Test Scope Division – Radar Feature Set
-🧪 QA (Test Team) – Technical/Functional Validation
-Test Area	What QA Tests	Why QA Owns This
-Ingestion (Bronze)	Validate the Radar Feature Set JSON structure, completeness, category breakdown (e.g., Veh, Drv, Pol)	QA ensures the raw message lands and is schema-compliant
-ODS Persistence	Confirm JSON payload is decompressed and stored in the correct format	Technical check that feature values are not corrupted
-Transformation to Silver (Data Vault)	Validate parsing of features into structured tables, including dynamic schema handling (e.g., new features)	Ensures feature structure aligns with data modeling standards
-Schema Flexibility & Version Readiness	Ensure system supports new fields and version placeholders without breaking jobs	QA verifies pipeline resilience
-CDC & Audit Checks	Validate updates are versioned; ensure audit columns are correctly populated (created/updated timestamps)	Ensures traceability and rollback capability
-Referential Integrity (Quote ID/Cache ID)	Confirm features link to correct quotes and journeys	QA ensures data relationships are preserved
-
-👥 UAT (Business Testers) – Business Meaning & Reporting Validation
-Test Area	What UAT Tests	Why UAT Owns This
-Feature Meaning & Coverage	Validate that the correct features are available for each quote (e.g., expected driver, vehicle, proposer data)	Only business users can confirm if what's delivered aligns with pricing/underwriting expectations
-Quote Journey Integrity	Confirm feature consistency across re-quotes, MTAs, and linked quotes using Cache ID	Business knows how real quotes evolve; QA only validates mechanics
-Quote Decline Context	Confirm if declined quotes include full feature sets and can be reported for root cause	UAT users understand real-world decline scenarios and expected analytics
-Analytical Use in EDM	Validate reporting outputs reflect correct feature combinations (e.g., feature → quote → outcome mapping)	Business teams validate reporting/segmentation logic
-New Feature Validation	Confirm any new pricing feature added is usable in reports and correctly interpreted (e.g., “Driver_Loyalty_Index”)	QA ensures it lands, but only UAT confirms business intent is preserved
-
-🔁 Why QA Needs UAT Involvement
-Area	Reason QA Can’t Fully Validate Alone
-Feature Interpretability	QA can test structure but not whether the right business values were passed or computed
-Quote Journey Flow (Cache ID)	QA can confirm linking works; UAT confirms the journey reflects expected business behavior
-Declined Quote Evaluation	QA can test presence; UAT determines if the right business decisions are traceable
-KPI & Dashboard Relevance	QA tests EDM loading, but UAT verifies metrics and usability in tools like Power BI
-
-🚫 Limitations
-Team	Limitation
-QA	Cannot confirm business meaning of features, or whether Precomp outputs are strategically correct
-UAT	Cannot validate ingestion/transformation technical correctness (e.g., schema issues, CDC failures)
-Both	Cannot validate Precomp logic (ML models, scoring engine) — handled by a separate model validation or pricing stream
-
-✅ Summary (Who Owns What)
-Layer	QA	UAT
-Bronze	Message completeness, schema, JSON format	N/A
-Silver	Parsing, schema expansion, CDC, referential integrity	Presence of expected features
-Gold (EDM)	Load success, column mapping, audit fields	Feature interpretability, quote journey, reporting quality
-Quote Decline Handling	Presence of “Stop Quote” marker	Meaningful explanation & context for declines
-Cache ID Chain Validation	Structural join validation	Journey correctness (e.g., re-quote lineage)
-New Feature Addition	Schema tolerance, backward compatibility	Business readiness and use in reports
-
-Would you like this delivered as:
-
-A RACI matrix,
-
-A Test Plan appendix, or
-
-A working QA/UAT alignment checklist for sprint handovers?
-
-
-
-
-
-
-You said:
-what is feature meaning here?
-
-
-ChatGPT said:
-Great question.
-
-In the context of the Radar Feature Set, the term "feature" refers to:
-
-✅ Feature = A data attribute or factor used in pricing, underwriting, or machine learning (ML) to influence quote decisions.
-📌 Examples of Features:
-These are typically grouped by category (as seen in your document):
-
-Category Prefix	Feature Type	Example Feature	Business Meaning
-Drv	Driver-related	Drv_Age, Drv_Convictions	Driver age and history
-Veh	Vehicle details	Veh_EngineSize, Veh_Type	Vehicle specs affecting premium
-Pol	Policy-specific	Pol_CoverType, Pol_StartDate	Details of the policy being quoted
-Prp	Proposer information	Prp_MaritalStatus, Prp_Occupation	Customer demographics
-Cvr	Cover options	Cvr_BreakdownIncluded	Optional coverages selected
-A	Metadata	A_Source, A_TransactionTimestamp	Event/quote tracking
-C	Existing policy context	C_PolicyDuration, C_PriorClaims	Retained policyholder history
-
-🧪 In Testing Context:
-When we talk about validating features, we’re referring to:
-
-QA validating:
-
-That the feature field exists
-
-It’s technically correct (data type, format, completeness)
-
-It's mapped as per ingestion/transformation logic
-
-UAT validating:
-
-That the feature represents what the business expects
-
-That the value makes sense in the quoting context
-
-That it's consistent across quotes in a journey (e.g., a re-quote doesn't accidentally change Drv_Age)
-
-That it's available in reports used by pricing/underwriting
-
-🧠 Why Feature Meaning Matters:
-Even if a field like Drv_LoyaltyScore is technically correct in format, only a business user can tell if:
-
-It’s calculated correctly at the right stage (Precomp)
-
-It represents what pricing logic intended
-
-It's used consistently in rating or reporting
-
-📝 Summary:
-"Feature" means...	A unit of pricing/underwriting information (data point)
-Used in	Machine learning, risk scoring, reporting, decisioning
-Validated by QA	Structure, mapping, completeness
-Validated by UAT	Business accuracy, usefulness, contextual correctness
-
-Let me know if you’d like a catalog or dictionary template for tracking feature meaning across categories (very useful in UAT handoffs).
-
-
-
-
-
-
+👥 Business Scenario View (For UAT Alignment)
+Scenario	Purpose	Who Validates
+Valid file load and availability in Cosmos DB	Ensure data is usable by downstream MI dashboards	MI team (SIT)
+File with missing or renamed column	Validate system rejects or flags schema misalignment	MI team (SIT)
+File with correct schema but wrong business values (e.g., invalid region code)	Pricing/UAT team confirms business rule enforcement	UAT (Pricing)
+Updated model group with new factor	Confirm schema can handle additional fields	MI team + UAT (Pricing)
+Re-submission of corrected file after rejection	Validate reprocessing flow and audit trail	MI team
+End-to-end reporting of rating impact by model/area	Business confirms KPI alignment in reports	UAT (Business/MI users)
