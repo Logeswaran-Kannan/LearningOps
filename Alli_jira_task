@@ -1,52 +1,31 @@
-9. Change Data Capture (CDC) Validation
-Scope: Validate how incremental changes (inserts, updates, deletes) from MQS are captured and processed through the pipeline.
-Test:
+Radar Live – Enrichment Scope Clarification (ODS Layer)
+🔹 Component: Bronze Layer – ODS – Raw Enrichments
+Reference: S2
 
-Verify if each new/updated/deleted message is processed exactly once.
+📌 Key Points Interpreted from the Design:
+Raw enrichment data is part of the MQS Quote Request message.
 
-Confirm downstream tables reflect only the latest state of the record (based on business keys or timestamps).
+These enrichments are compressed and must be decompressed and stored in their original form in the ODS layer.
 
-Expected Outcome:
+These enrichment values are not currently used by downstream layers like Data Vault or EDM.
 
-Updates correctly overwrite prior versions (no duplication).
+Note from design: "Should the DE data be validated? Assume not!" — which strongly implies exclusion from immediate QA validation.
 
-Deletes are soft-deleted or filtered out per rules.
+✅ Testing Scope (Minimal)
+In Scope:
+Storage Format Validation: Confirm that raw enrichment data is successfully decompressed and stored in the Bronze/ODS layer in its original form.
 
-Audit fields (e.g., updated_timestamp) reflect correct lineage.
+Field Presence Check: Ensure metadata and enrichment blocks are included in the MQS Quote Request payload and persisted as-is.
 
-10. Delta Load Processing Validation
-Scope: Delta (incremental) data loading from EventHub to Delta Lake/Silver Layer.
-Test:
+Decompression Confirmation: Validate that enrichment compression logic is reversible and content is accessible post-landing.
 
-Validate scheduled or trigger-based delta jobs only process new or modified records.
+❌ Out of Scope:
+No content-level validation of enrichment data fields (e.g., business logic, correctness of individual enrichment attributes like DVLA, Core Risk, etc.).
 
-Confirm historical data is untouched unless updated.
+No functional validation of how enrichment data is consumed, since it is not used for any active decisioning or transformations at this stage.
 
-Compare batch metadata (e.g., watermark, offset) across runs.
+No validations in Data Vault or EDM involving enrichment data.
 
-Expected Outcome:
-
-Only net-new or changed records are written in Delta/Silver.
-
-Partition pruning and job metadata (batch ID, offsets) correctly applied.
-
-No full refreshes unless explicitly configured.
-
-11. GDPR Column Masking Validation
-Scope: Validate sensitive data fields (e.g., personal identifiers) are masked or encrypted in accordance with GDPR policies.
-Test:
-
-Confirm masking logic (e.g., SHA, truncation, nulling) applied on fields like name, address, phone, etc.
-
-Validate unmasked views are restricted (role-based access).
-
-Trace whether masked columns retain referential integrity (e.g., hashed IDs still join correctly).
-
-Expected Outcome:
-
-All sensitive fields are masked in raw and downstream tables.
-
-No plain PII exposed in Silver, COS, or EDW layers.
-
-Masking logic aligns with data classification and legal requirements.
-
+⚠️ Caveat (To Add in Test Plan)
+Enrichment data within the ODS (Raw Bronze) layer is validated only to the extent of landing, decompression, and availability.
+Field-level or business rule validation of enrichment data is explicitly out of scope, as this data is not yet consumed downstream by any decisioning logic or reporting layer.
