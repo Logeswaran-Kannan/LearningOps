@@ -1,18 +1,17 @@
-DO
+CREATE OR REPLACE FUNCTION get_counts_on_date(target_date DATE)
+RETURNS TABLE(table_name TEXT, row_count BIGINT)
+LANGUAGE plpgsql
+AS
 $$
 DECLARE
     tbl RECORD;
     sql TEXT;
-    row_count BIGINT;
-    start_ts TIMESTAMP := '2025-05-29 00:00:01';
-    end_ts TIMESTAMP := '2025-06-03 00:00:01';
 BEGIN
     FOR tbl IN
         SELECT tablename
         FROM pg_tables
         WHERE schemaname = 'public'
     LOOP
-        -- Check if 'updatetime' column exists
         IF EXISTS (
             SELECT 1
             FROM information_schema.columns
@@ -20,16 +19,16 @@ BEGIN
               AND table_name = tbl.tablename
               AND column_name = 'updatetime'
         ) THEN
-
-            -- Build and execute count query filtered by updatetime
+            -- Table has updatetime, filter by date
             sql := format(
-                'SELECT count(*) FROM public.%I WHERE updatetime >= %L AND updatetime < %L',
-                tbl.tablename, start_ts, end_ts
+                'SELECT %L::TEXT, count(*) FROM public.%I WHERE updatetime::date = %L',
+                tbl.tablename, tbl.tablename, target_date
             );
-            EXECUTE sql INTO row_count;
-
-            -- Output count per table (pivot-style, one line per table)
-            RAISE NOTICE 'Table: %, Count (filtered by updatetime): %', tbl.tablename, row_count;
+            RETURN QUERY EXECUTE sql;
+        ELSE
+            -- Table has no updatetime column, return 0
+            RETURN QUERY
+            SELECT tbl.tablename, 0;
         END IF;
     END LOOP;
 END;
