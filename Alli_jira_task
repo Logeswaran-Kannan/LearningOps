@@ -1,10 +1,10 @@
 SELECT
     CASE
         WHEN c.column_name IS NOT NULL THEN
-            'SELECT ''' || t.tablename || ''' AS table_name, count(*) AS row_count FROM public.' || t.tablename ||
+            'SELECT ''' || t.tablename || ''' AS table_name, count(*) AS row_count, ''Filtered by updatetime = 2025-05-29'' AS comment FROM public.' || t.tablename ||
             ' WHERE updatetime::date = ''2025-05-29'''
         ELSE
-            'SELECT ''' || t.tablename || ''' AS table_name, 0 AS row_count'
+            'SELECT ''' || t.tablename || ''' AS table_name, count(*) AS row_count, ''No updatetime column – full table count'' AS comment FROM public.' || t.tablename
     END AS union_sql
 FROM pg_tables t
 LEFT JOIN information_schema.columns c
