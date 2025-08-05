@@ -1,1 +1,36 @@
-Validation of all scenarios across Silver and Gold (EDM) layers will be based on end-to-end (E2E) test data scenarios. These E2E scenarios are currently being finalized in collaboration with the E2E team. Once finalized, the approved test data sets and associated scenarios will be referenced and linked here for traceability and execution.
+DO
+$$
+DECLARE
+    tbl RECORD;
+    sql TEXT;
+    row_count BIGINT;
+    start_ts TIMESTAMP := '2025-05-29 00:00:01';
+    end_ts TIMESTAMP := '2025-06-03 00:00:01';
+BEGIN
+    FOR tbl IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+    LOOP
+        -- Check if 'updatetime' column exists
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = tbl.tablename
+              AND column_name = 'updatetime'
+        ) THEN
+
+            -- Build and execute count query filtered by updatetime
+            sql := format(
+                'SELECT count(*) FROM public.%I WHERE updatetime >= %L AND updatetime < %L',
+                tbl.tablename, start_ts, end_ts
+            );
+            EXECUTE sql INTO row_count;
+
+            -- Output count per table (pivot-style, one line per table)
+            RAISE NOTICE 'Table: %, Count (filtered by updatetime): %', tbl.tablename, row_count;
+        END IF;
+    END LOOP;
+END;
+$$;
