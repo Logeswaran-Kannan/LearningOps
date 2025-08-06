@@ -1,14 +1,1 @@
-SELECT
-    CASE
-        WHEN c.column_name IS NOT NULL THEN
-            'SELECT ''' || t.tablename || ''' AS table_name, count(*) AS row_count, ''Filtered by updatetime = 2025-05-29'' AS comment FROM public.' || t.tablename ||
-            ' WHERE updatetime::date = ''2025-05-29'''
-        ELSE
-            'SELECT ''' || t.tablename || ''' AS table_name, count(*) AS row_count, ''No updatetime column – full table count'' AS comment FROM public.' || t.tablename
-    END AS union_sql
-FROM pg_tables t
-LEFT JOIN information_schema.columns c
-  ON c.table_schema = 'public'
- AND c.table_name = t.tablename
- AND c.column_name = 'updatetime'
-WHERE t.schemaname = 'public';
+I think I’m looking to understand this better through a real example. I have one we can use — can we discuss it during the defect triage call to get everyone aligned?
