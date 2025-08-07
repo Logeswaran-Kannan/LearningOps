@@ -1,1 +1,10 @@
-I think I’m looking to understand this better through a real example. I have one we can use — can we discuss it during the defect triage call to get everyone aligned?
+BICOE SIT Testing Scope – Boundary Statement
+BICOE QA is responsible for validating the integrity, completeness, transformation, and availability of Radar Live data (e.g., Feature Set, Rating Request, Core Risk, Rating Response) across the data platform – from ingestion in Bronze to structured models in Silver and reporting readiness in Gold (EDM).
+
+BICOE does not validate the correctness of pricing logic, rule outcomes, scoring models, or business meaning of feature values generated in Precomp or Rating Engine – these are owned by Pricing QA.
+
+✅ Example:
+✅ In Scope: Confirm that the Feature Set field Drv_Age from MQS lands correctly in Silver with the right format, data type, and value for the given Quote ID.
+
+❌ Out of Scope: Determine whether Drv_Age was correctly calculated in Precomp or whether it influenced the quote outcome properly — that sits with Pricing QA.
+
