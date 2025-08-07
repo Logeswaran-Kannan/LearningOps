@@ -1,10 +1,33 @@
-BICOE SIT Testing Scope – Boundary Statement
-BICOE QA is responsible for validating the integrity, completeness, transformation, and availability of Radar Live data (e.g., Feature Set, Rating Request, Core Risk, Rating Response) across the data platform – from ingestion in Bronze to structured models in Silver and reporting readiness in Gold (EDM).
+To be clear, BICOE validates that data is ingested and structured correctly once it hits our platform.
+We do not control or test how MQS or Precomp generated that data — we only ensure it's stored and made available correctly.
+If any issues are found upstream — with logic or calculations — we would support with data samples, but it’s not within our testing scope to validate the logic itself.
 
-BICOE does not validate the correctness of pricing logic, rule outcomes, scoring models, or business meaning of feature values generated in Precomp or Rating Engine – these are owned by Pricing QA.
 
-✅ Example:
-✅ In Scope: Confirm that the Feature Set field Drv_Age from MQS lands correctly in Silver with the right format, data type, and value for the given Quote ID.
+Our role for Raw Enrichment is to ensure that whatever enrichment blocks are sent in the MQS Quote Request are successfully decompressed and stored in our Raw/Bronze layer without loss or corruption.
+We do not validate the correctness of the enrichment data itself — that would sit with the Pricing or Precomp teams who generate or consume it.
+If any fields are missing or malformed structurally, that’s in our scope — but not whether the enrichment value is right from a business point of view.”
 
-❌ Out of Scope: Determine whether Drv_Age was correctly calculated in Precomp or whether it influenced the quote outcome properly — that sits with Pricing QA.
 
+BICOE’s responsibility for Core Risk is to ensure that the data sent from MQS is fully ingested, correctly structured, and traceable in the Azure Data Platform.
+We validate the presence, format, structure, and referential integrity of Core Risk data, but we do not validate the risk score logic itself, or whether the classification is accurate — that’s managed by Pricing and Underwriting.
+If a field is missing or breaks a join — we’ll catch it. But if the value is wrong because of a rule issue in Precomp, that’s not within our testing scope.
+
+BICOE’s role for Rating Response is to make sure the data is received from MQS, stored properly, and exposed correctly in our reporting layers.
+We validate structure, presence, joins, and availability — but we do not validate whether the decision in the response is right, or if a quote should have been declined — that’s fully owned by Pricing QA.
+If any fields are missing or break joins — that’s our scope. But if a decline code or adjustment is incorrect due to rule logic or engine configuration — that’s outside our testing boundary.”
+
+“We will perform regression testing on all existing MI views and reports that are now consuming MQS data, to ensure there’s no breakage in existing outputs.
+That includes:
+
+Format and data type checks.
+Similarity of transaction volumes.
+Timeliness and performance validation.
+Existing KPIs continue to function correctly.”
+
+On Cache ID:
+“BICOE validates the presence and storage of Cache ID and ensures it helps us link quote journeys correctly across domains.
+We don’t control how Cache IDs are generated or when they should be reused — that’s handled by MQS and Product Logic.”
+
+On Stop Quote:
+“We confirm the Stop Quote flag is received and stored in our platform and that it appears correctly in reports.
+We don’t validate the logic behind why a quote was stopped — that belongs to Pricing QA and the rule engine.”
