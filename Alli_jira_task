@@ -1,33 +1,79 @@
-To be clear, BICOE validates that data is ingested and structured correctly once it hits our platform.
-We do not control or test how MQS or Precomp generated that data — we only ensure it's stored and made available correctly.
-If any issues are found upstream — with logic or calculations — we would support with data samples, but it’s not within our testing scope to validate the logic itself.
+DO $$
+DECLARE
+    table_list TEXT[] := ARRAY['public.orders', 'public.users', 'events']; -- your tables
+    target_date DATE := DATE '2025-05-19';
+    t TEXT;
+    sch TEXT;
+    tbl TEXT;
+    rel_oid OID;
+    col_exists BOOLEAN;
+    col_type TEXT;
+    sql_text TEXT;
+    cnt BIGINT;
+BEGIN
+    FOREACH t IN ARRAY table_list LOOP
+        -- Parse schema/table
+        IF position('.' IN t) > 0 THEN
+            sch := split_part(t, '.', 1);
+            tbl := split_part(t, '.', 2);
+        ELSE
+            sch := 'public';
+            tbl := t;
+        END IF;
 
+        -- Check table exists
+        SELECT c.oid
+        INTO rel_oid
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = sch
+          AND c.relname = tbl
+          AND c.relkind = 'r';
 
-Our role for Raw Enrichment is to ensure that whatever enrichment blocks are sent in the MQS Quote Request are successfully decompressed and stored in our Raw/Bronze layer without loss or corruption.
-We do not validate the correctness of the enrichment data itself — that would sit with the Pricing or Precomp teams who generate or consume it.
-If any fields are missing or malformed structurally, that’s in our scope — but not whether the enrichment value is right from a business point of view.”
+        IF rel_oid IS NULL THEN
+            RAISE NOTICE 'Table: %.% -> NOT FOUND', sch, tbl;
+            CONTINUE;
+        END IF;
 
+        -- Check updatetime existence
+        SELECT TRUE,
+               format_type(a.atttypid, a.atttypmod)
+        INTO col_exists, col_type
+        FROM pg_catalog.pg_attribute a
+        WHERE a.attrelid = rel_oid
+          AND a.attname = 'updatetime'
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        LIMIT 1;
 
-BICOE’s responsibility for Core Risk is to ensure that the data sent from MQS is fully ingested, correctly structured, and traceable in the Azure Data Platform.
-We validate the presence, format, structure, and referential integrity of Core Risk data, but we do not validate the risk score logic itself, or whether the classification is accurate — that’s managed by Pricing and Underwriting.
-If a field is missing or breaks a join — we’ll catch it. But if the value is wrong because of a rule issue in Precomp, that’s not within our testing scope.
+        IF col_exists THEN
+            col_type := lower(col_type);
 
-BICOE’s role for Rating Response is to make sure the data is received from MQS, stored properly, and exposed correctly in our reporting layers.
-We validate structure, presence, joins, and availability — but we do not validate whether the decision in the response is right, or if a quote should have been declined — that’s fully owned by Pricing QA.
-If any fields are missing or break joins — that’s our scope. But if a decline code or adjustment is incorrect due to rule logic or engine configuration — that’s outside our testing boundary.”
+            IF col_type = 'date' THEN
+                sql_text := format(
+                    'SELECT COUNT(*) FROM %I.%I WHERE updatetime >= $1::date AND updatetime < ($1::date + 1)',
+                    sch, tbl
+                );
+            ELSIF col_type LIKE 'timestamp with time zone%' OR col_type = 'timestamptz' THEN
+                sql_text := format(
+                    'SELECT COUNT(*) FROM %I.%I WHERE updatetime >= $1::timestamptz AND updatetime < ($1::timestamptz + interval ''1 day'')',
+                    sch, tbl
+                );
+            ELSE
+                sql_text := format(
+                    'SELECT COUNT(*) FROM %I.%I WHERE updatetime >= $1::timestamp AND updatetime < ($1::timestamp + interval ''1 day'')',
+                    sch, tbl
+                );
+            END IF;
 
-“We will perform regression testing on all existing MI views and reports that are now consuming MQS data, to ensure there’s no breakage in existing outputs.
-That includes:
-
-Format and data type checks.
-Similarity of transaction volumes.
-Timeliness and performance validation.
-Existing KPIs continue to function correctly.”
-
-On Cache ID:
-“BICOE validates the presence and storage of Cache ID and ensures it helps us link quote journeys correctly across domains.
-We don’t control how Cache IDs are generated or when they should be reused — that’s handled by MQS and Product Logic.”
-
-On Stop Quote:
-“We confirm the Stop Quote flag is received and stored in our platform and that it appears correctly in reports.
-We don’t validate the logic behind why a quote was stopped — that belongs to Pricing QA and the rule engine.”
+            EXECUTE sql_text USING target_date INTO cnt;
+            RAISE NOTICE 'Table: %.% | updatetime present (%), Count for %: %',
+                sch, tbl, col_type, target_date, cnt;
+        ELSE
+            sql_text := format('SELECT COUNT(*) FROM %I.%I', sch, tbl);
+            EXECUTE sql_text INTO cnt;
+            RAISE NOTICE 'Table: %.% | updatetime NOT present, Total Count: %',
+                sch, tbl, cnt;
+        END IF;
+    END LOOP;
+END $$;
