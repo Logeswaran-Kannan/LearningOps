@@ -70,9 +70,8 @@ BEGIN
             RAISE NOTICE 'Table: %.% | updatetime present (%), Count for %: %',
                 sch, tbl, col_type, target_date, cnt;
         ELSE
-            sql_text := format('SELECT COUNT(*) FROM %I.%I', sch, tbl);
-            EXECUTE sql_text INTO cnt;
-            RAISE NOTICE 'Table: %.% | updatetime NOT present, Total Count: %',
+            cnt := 0;
+            RAISE NOTICE 'Table: %.% | updatetime NOT present, Count: %',
                 sch, tbl, cnt;
         END IF;
     END LOOP;
