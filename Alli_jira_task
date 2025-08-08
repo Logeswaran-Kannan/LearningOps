@@ -1,78 +1,45 @@
-DO $$
-DECLARE
-    table_list TEXT[] := ARRAY['public.orders', 'public.users', 'events']; -- your tables
-    target_date DATE := DATE '2025-05-19';
-    t TEXT;
-    sch TEXT;
-    tbl TEXT;
-    rel_oid OID;
-    col_exists BOOLEAN;
-    col_type TEXT;
-    sql_text TEXT;
-    cnt BIGINT;
-BEGIN
-    FOREACH t IN ARRAY table_list LOOP
-        -- Parse schema/table
-        IF position('.' IN t) > 0 THEN
-            sch := split_part(t, '.', 1);
-            tbl := split_part(t, '.', 2);
-        ELSE
-            sch := 'public';
-            tbl := t;
-        END IF;
+from datetime import datetime, timedelta
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit
 
-        -- Check table exists
-        SELECT c.oid
-        INTO rel_oid
-        FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = sch
-          AND c.relname = tbl
-          AND c.relkind = 'r';
+# Create Spark session
+spark = SparkSession.builder.getOrCreate()
 
-        IF rel_oid IS NULL THEN
-            RAISE NOTICE 'Table: %.% -> NOT FOUND', sch, tbl;
-            CONTINUE;
-        END IF;
+# Catalog & schema
+catalog_schema = "core_tst.ods_views"
 
-        -- Check updatetime existence
-        SELECT TRUE,
-               format_type(a.atttypid, a.atttypmod)
-        INTO col_exists, col_type
-        FROM pg_catalog.pg_attribute a
-        WHERE a.attrelid = rel_oid
-          AND a.attname = 'updatetime'
-          AND a.attnum > 0
-          AND NOT a.attisdropped
-        LIMIT 1;
+# List of table names (without schema prefix)
+table_list = ["orders", "users", "events"]  # replace with your tables
+target_date = datetime(2025, 5, 19)  # the date to check
 
-        IF col_exists THEN
-            col_type := lower(col_type);
+# Result collector
+results = []
 
-            IF col_type = 'date' THEN
-                sql_text := format(
-                    'SELECT COUNT(*) FROM %I.%I WHERE updatetime >= $1::date AND updatetime < ($1::date + 1)',
-                    sch, tbl
-                );
-            ELSIF col_type LIKE 'timestamp with time zone%' OR col_type = 'timestamptz' THEN
-                sql_text := format(
-                    'SELECT COUNT(*) FROM %I.%I WHERE updatetime >= $1::timestamptz AND updatetime < ($1::timestamptz + interval ''1 day'')',
-                    sch, tbl
-                );
-            ELSE
-                sql_text := format(
-                    'SELECT COUNT(*) FROM %I.%I WHERE updatetime >= $1::timestamp AND updatetime < ($1::timestamp + interval ''1 day'')',
-                    sch, tbl
-                );
-            END IF;
+for table_name in table_list:
+    full_table_name = f"{catalog_schema}.{table_name}"
+    
+    try:
+        # Get column names
+        cols = [c.name.lower() for c in spark.table(full_table_name).schema.fields]
+        
+        if "updatetime" in cols:
+            # Filter for date range: >= target_date and < target_date + 1 day
+            cnt = (
+                spark.table(full_table_name)
+                .filter((col("updatetime") >= lit(target_date)) & 
+                        (col("updatetime") < lit(target_date + timedelta(days=1))))
+                .count()
+            )
+            results.append((table_name, True, cnt, f"updatetime present"))
+        else:
+            results.append((table_name, False, 0, "updatetime not present"))
+    
+    except Exception as e:
+        # If table doesn't exist or can't be read
+        results.append((table_name, False, None, f"Error: {str(e)}"))
 
-            EXECUTE sql_text USING target_date INTO cnt;
-            RAISE NOTICE 'Table: %.% | updatetime present (%), Count for %: %',
-                sch, tbl, col_type, target_date, cnt;
-        ELSE
-            cnt := 0;
-            RAISE NOTICE 'Table: %.% | updatetime NOT present, Count: %',
-                sch, tbl, cnt;
-        END IF;
-    END LOOP;
-END $$;
+# Convert to DataFrame for nice output
+result_df = spark.createDataFrame(results, ["table_name", "has_updatetime", "row_count", "comment"])
+
+# Show results
+result_df.show(truncate=False)
