@@ -1,1 +1,11 @@
-we reviewed the test strategy and test plan with the team and captured it in the JIRA Test Plan. Test execution is underway. This task—covering strategy and scope review with the E2E and Pricing teams—is completed.
+Before closing any defect, make sure you:
+
+Attach validation evidence (test results, screenshots, logs) proving the fix.
+
+Update the root cause (RCA) clearly.
+
+Record time spent and the key steps taken on the resolution path.
+
+Set the status to Done/Resolved once all of the above are in place.
+
+Please double-check these are all filled in JIRA before marking a defect closed.
