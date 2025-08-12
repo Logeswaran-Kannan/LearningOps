@@ -1,11 +1,1 @@
-Before closing any defect, make sure you:
-
-Attach validation evidence (test results, screenshots, logs) proving the fix.
-
-Update the root cause (RCA) clearly.
-
-Record time spent and the key steps taken on the resolution path.
-
-Set the status to Done/Resolved once all of the above are in place.
-
-Please double-check these are all filled in JIRA before marking a defect closed.
+Hi Dan, I’m having trouble connecting to the referenced jump server. When you have a moment, could you investigate?
