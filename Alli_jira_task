@@ -1,17 +1,20 @@
-Subject: Jira Defect Workflow – Proposal for Change and Next Steps
+Subject: Walkthrough Plan – Next 4 Weeks Test Activities (Radar Live & Guidewire Upgrade – Automation)
 
-Hi All,
+Hi [Boss Names],
 
-Hope you're doing well!
+I’d like to schedule a quick walkthrough to align on the next 4 weeks’ test activity plan for the Radar Live and Guidewire Upgrade – Automation workstream.
 
-I wanted to start a conversation around a potential improvement to our Jira workflow, specifically for Defect issue types. Currently, we’re using the standard workflow across all issue types, but for defects, it would be really helpful to have a more customized workflow that reflects real-world defect handling more accurately.
+We’ll cover:
 
-For example, having statuses like Deferred, Transferred, Reopened, Rejected, Ready for Test, Retest, Retest Failed, etc., would allow us to track defects more precisely. This could help us build a consolidated defect metrics dashboard, and support a more consistent defect management process across teams. Graham has already outlined how this flow could work in the Defect Management Process doc, and it makes a lot of sense from a tracking and reporting perspective.
+Test scope and priorities for both projects
 
-That said, the challenge is that we all work in a shared Jira environment, and changing the workflow mid-year might affect other projects and their existing trackers. This is where I’m looking for the right starting point—how do we reach a collective agreement across the teams who use Jira, and who can help coordinate that? I’m not sure who gives the final go-ahead on this kind of change.
+4-week timeline & milestones
 
-Simon and Poge have kindly agreed to support us with the workflow change itself, but before we proceed, we need to make sure it’s something other teams are on board with, and that it doesn’t cause unnecessary disruption.
+Key dependencies and risks
 
-It’s not urgent, and we can continue as is for now—but if we can align and streamline this, it could be a valuable improvement without too much overhead.
+Expected deliverables & reporting approach
 
-Let me know your thoughts or if there’s someone I should reach out to for coordinating this discussion.
+Proposed time: [Insert Date/Time] – ~30 mins
+Location: [Meeting Room / MS Teams Link]
+
+Let me know if the proposed time works or if we should adjust.
