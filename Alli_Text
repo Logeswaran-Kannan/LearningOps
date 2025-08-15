@@ -1,37 +1,13 @@
-Subject: Action Tracker – Daily Progress Updates & Ownership Confirmation
+Subject: Tracker Update – Daily Progress & Ownership Items
 
 Hi Team,
 
-As discussed, I’ve walked through the upcoming 4-week plan with [Boss's Name], covering both Guidewire Upgrade and Radar Live activities.
+As discussed during the walkthrough with [Boss’s Name], please find attached/shared the tracker containing the activities and ownership items for the next four weeks.
 
-Please find attached the tracker outlining detailed tasks, ownership, dependencies, and timelines for each of you.
-I request all respective owners to:
+Request each respective owner to update your item’s progress in the tracker on a day-to-day basis so that we can maintain clear visibility.
 
-Review your assigned activities carefully
+If you have any queries or notice misalignment in the tasks assigned, we will review and address these in next week’s discussion to ensure alignment.
 
-Update the tracker daily with progress status on your ownership items
+I will be available next week to address any questions or clarifications you might have.
 
-Raise any dependencies or blockers promptly
-
-If you notice any misalignment in tasks or responsibilities, please feel free to reach out directly or flag them in the tracker. We will review and resolve these during our next weekly sync.
-
-Let’s ensure we maintain clear visibility on progress as we move forward through this critical phase.
-
-Thanks for your continued support and collaboration.
-
-
-
-
-Onboarding Checklist – Senior Tester
-
-Item	Description	Owner / Contact	Link / Location
-Project Overview	High-level summary of project objectives, scope, timelines, and stakeholders.	[Your Name]	[Insert Project Overview Link]
-BLD (Business Logic Document)	Document detailing the business rules and logic implemented in the system.	[Owner Name]	[Insert BLD Link]
-Mapping Document	Data mapping between source and target systems (includes transformation logic).	[Owner Name]	[Insert Mapping Doc Link]
-Test Strategy	Approach, scope, test levels, entry/exit criteria, and test types covered.	[Owner Name]	[Insert Test Strategy Link]
-Test Plan	Detailed plan for execution, timelines, resource allocation, risks, and dependencies.	[Owner Name]	[Insert Test Plan Link]
-Test Scripts Repository	Location of automated/manual test scripts and related assets.	[Owner Name]	[Insert Test Script Link]
-KT Session Recordings	Video recordings and slides from Knowledge Transfer sessions.	[Owner Name]	[Insert KT Session Link]
-Environment Access Guide	Steps and credentials for accessing test environments.	[Owner Name]	[Insert Access Guide Link]
-Defect Management Process	Guide for raising, triaging, and closing defects (JIRA/Xray workflow).	[Owner Name]	[Insert Defect Process Link]
-Key Contacts List	List of important stakeholders, SMEs, and support contacts.	[Your Name]	[Insert Contacts Doc Link]
+Thanks for your support and timely updates.
