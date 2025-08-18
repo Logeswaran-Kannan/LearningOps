@@ -1,13 +1,18 @@
-Subject: Tracker Update – Daily Progress & Ownership Items
+Subject: KT Plan for Radar Live Testing – Proposed Schedule
 
 Hi Team,
 
-As discussed during the walkthrough with [Boss’s Name], please find attached/shared the tracker containing the activities and ownership items for the next four weeks.
+As part of the Radar Live testing activities, I’ve prepared a short KT plan to walk through the key areas before my upcoming annual vacation. Please find the proposed schedule below:
 
-Request each respective owner to update your item’s progress in the tracker on a day-to-day basis so that we can maintain clear visibility.
+Day 1 – 18/08: Athena Front End – Agent and Aggregator demo website test data creation process & E2E test data scenario walkthrough.
 
-If you have any queries or notice misalignment in the tasks assigned, we will review and address these in next week’s discussion to ensure alignment.
+Day 2 – 19/08: Data flow process overview & high-level walkthrough. Demo data loaded in development environment in Databricks. Manual sample script walkthrough.
 
-I will be available next week to address any questions or clarifications you might have.
+Day 3 – 20/08: Functional and NFR Test Strategy walkthrough, followed by Q&A.
 
-Thanks for your support and timely updates.
+@Munish – If you have some time this week, please join these sessions. Otherwise, it’s optional for you, and you can coordinate with Graham once you’re back from vacation.
+
+Please let me know if these times work for everyone, or if any adjustments are needed.
+
+Thanks,
+[Your Name]
