@@ -1,18 +1,42 @@
-Subject: KT Plan for Radar Live Testing – Proposed Schedule
+Subject: Weekly Testing Update – Guidewire Upgrade & Radar Live
 
-Hi Team,
+Hi [Boss’s Name],
 
-As part of the Radar Live testing activities, I’ve prepared a short KT plan to walk through the key areas before my upcoming annual vacation. Please find the proposed schedule below:
+Here’s my testing update for this week:
 
-Day 1 – 18/08: Athena Front End – Agent and Aggregator demo website test data creation process & E2E test data scenario walkthrough.
+Guidewire Upgrade
 
-Day 2 – 19/08: Data flow process overview & high-level walkthrough. Demo data loaded in development environment in Databricks. Manual sample script walkthrough.
+Completed initial test strategy review with the development team – the high-level approach was shared and agreed. I will now document the automation approach and get it reviewed with the team this week.
 
-Day 3 – 20/08: Functional and NFR Test Strategy walkthrough, followed by Q&A.
+The approach has been finalized to have two frameworks: one for Monitoring (validating current behavior with the read replica) and another for Data Quality checks (as part of a permanent regression pack for CDA cloud against the views).
 
-@Munish – If you have some time this week, please join these sessions. Otherwise, it’s optional for you, and you can coordinate with Graham once you’re back from vacation.
+POC for the Monitor framework completed; code development is in progress (tracking to 50% completion this week).
 
-Please let me know if these times work for everyone, or if any adjustments are needed.
+Coordinated with the dev team on pre-implementation steps for the upcoming production release, and I will be supporting the release activity remotely from India on 25th August.
 
-Thanks,
-[Your Name]
+4-week test plan has been shared with the team.
+
+Also working with the IAM team to complete onboarding of Jeevitha’s access.
+
+Radar Live
+
+Supporting the initial ingestion test strategy for automation of MQS orchestration.
+
+Knowledge transfer sessions ongoing with Graham and Munish.
+
+Coordinating with the E2E team on BICOE test data scenario finalization.
+
+Working with Oliver and Paul on enabling interaction data loads into the Event Hub.
+
+Shared the UAT test strategy with the Pricing and E2E test teams.
+
+Drafting test strategy for Blue/Green deployment – in progress.
+
+Other Notes
+
+Some items are completed, while others remain in progress for this week.
+
+Upcoming leave planned from 25 Aug to 15 Sep.
+
+Thanks & Regards,
+Lucy
