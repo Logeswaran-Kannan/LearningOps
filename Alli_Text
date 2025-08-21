@@ -1,10 +1,15 @@
-Hi Vijay,
+Subject: CDA Automation Test Strategy – Review & Next Steps
 
-Thanks for sharing the Athena test data scenarios. I’ve added some additional ones from the BICOE perspective under a separate tab named “BICOE – Scenario – Review”. We’ll need to review the feasibility of these as part of the E2E test data creation and validation from our side.
+Hi Graham, hi Mani,
 
-I’ll be on vacation for the next three weeks, so in my absence please coordinate with Rahul and Graham on this. Could you also provide them demo environment access for Athena and Aggregator so they can visualize the data?
+Thanks for your time on today’s call. As discussed with the development team, I’m sharing the link to the Automation Test Strategy document along with the Framework-A reusable code reference for your review:
 
-As discussed earlier, we’ll need to review and consolidate all test data scenarios and place them in the shared path so they can be circulated to the wider audience for approval. I believe Veal will be supporting on that.
+Strategy Document: [insert link]
 
-Thanks,
-[Your Name]
+Framework-A Code: [insert link]
+
+Graham – could you kindly review the strategy and share your feedback? Your input will help us finalize the approach before we move further.
+
+Mani – in my absence, please take ownership to keep the document updated based on Graham’s comments and any follow-up discussions.
+
+Appreciate your support on this.
