@@ -1,1 +1,16 @@
-Hi Graham, good morning. Suraj is out sick today and Mani has taken a couple of hours off, so he’ll be logging in later. I’ll cancel today’s stand-up and instead schedule a session for the test strategy walkthrough on Automated CDA ingestion validation, so Mani can also join as part of the handover.
+Subject: Walkthrough – CDA Automation Test Strategy
+
+When: [Propose date & time]
+Duration: 45 mins
+
+Attendees: Data Eng, QA, Platform/DevOps, SMEs
+
+Agenda:
+
+Walkthrough of the Automation Test Strategy (Framework-A & Framework-B)
+
+Review validation scope, environments, and execution approach
+
+Discuss RAID register highlights and open dependencies
+
+Q&A and next steps towards cutover readiness
