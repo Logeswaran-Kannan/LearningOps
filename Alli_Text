@@ -1,1 +1,10 @@
-I’ll be on annual leave for the next 3 weeks, back on 15th September. In the meantime, Rahul and Graham are looped in for any updates from the BICOE side.”
+Hi Vijay,
+
+Thanks for sharing the Athena test data scenarios. I’ve added some additional ones from the BICOE perspective under a separate tab named “BICOE – Scenario – Review”. We’ll need to review the feasibility of these as part of the E2E test data creation and validation from our side.
+
+I’ll be on vacation for the next three weeks, so in my absence please coordinate with Rahul and Graham on this. Could you also provide them demo environment access for Athena and Aggregator so they can visualize the data?
+
+As discussed earlier, we’ll need to review and consolidate all test data scenarios and place them in the shared path so they can be circulated to the wider audience for approval. I believe Veal will be supporting on that.
+
+Thanks,
+[Your Name]
