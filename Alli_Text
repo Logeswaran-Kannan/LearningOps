@@ -1,15 +1,2 @@
-Subject: CDA Automation Test Strategy – Review & Next Steps
-
-Hi Graham, hi Mani,
-
-Thanks for your time on today’s call. As discussed with the development team, I’m sharing the link to the Automation Test Strategy document along with the Framework-A reusable code reference for your review:
-
-Strategy Document: [insert link]
-
-Framework-A Code: [insert link]
-
-Graham – could you kindly review the strategy and share your feedback? Your input will help us finalize the approach before we move further.
-
-Mani – in my absence, please take ownership to keep the document updated based on Graham’s comments and any follow-up discussions.
-
-Appreciate your support on this.
+Good morning team,
+I was going through today’s production load status before starting the pre-implementation activities, and I noticed some failures in the load processing. Could you please take a look?
