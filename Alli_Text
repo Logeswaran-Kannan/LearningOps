@@ -1,1 +1,2 @@
 Is that happening because the manual step doesn’t pick up where it left off, or is it more of a missing views issue?
+, I noticed a few columns are missing compared to the pre-benchmark. Looks like they’re no longer in the read replica. From an impact perspective, since these are external tables, I don’t think there’ll be much downstream impact
