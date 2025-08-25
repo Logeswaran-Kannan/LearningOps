@@ -1,2 +1,1 @@
-Good morning team,
-I was going through today’s production load status before starting the pre-implementation activities, and I noticed some failures in the load processing. Could you please take a look?
+Is that happening because the manual step doesn’t pick up where it left off, or is it more of a missing views issue?
