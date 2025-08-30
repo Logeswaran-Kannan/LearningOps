@@ -1,5 +1,2 @@
 
-I was on annual vacation and out of network coverage, but I’ve just reconnected and submitted all my timesheets. I’m on leave this week; however, on the 25th (UK bank holiday), I was requested to support the release. The client has confirmed that this can be charged, so I’ve included it in my timesheet.
-
-Please let me know if you need any further details from my side.
-
+Hi Hazel, no worries. The dependency here is on Paul/Simon to create the view tables on top of the SCD tables and to get the workflow pipeline/environment ready for parallel comparison. I’ve explained the details in the strategy document under entry criteria for your reference. Let me know if you need any more details on this.
