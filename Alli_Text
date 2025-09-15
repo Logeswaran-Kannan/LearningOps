@@ -1,2 +1,64 @@
+Guidewire Upgrade – Summary Update
+1. Framework A Review
 
-Hi Hazel, no worries. The dependency here is on Paul/Simon to create the view tables on top of the SCD tables and to get the workflow pipeline/environment ready for parallel comparison. I’ve explained the details in the strategy document under entry criteria for your reference. Let me know if you need any more details on this.
+Around 60% of the test scripts for Framework A are completed.
+
+Next step is for Mani to share one of the example scripts with me (Logesh) so I can review the logic and validate the script approach.
+
+2. Framework B Review
+
+Need to review Framework B scripts and check our test assumptions with the development team — especially to confirm the logic is aligned.
+
+A walkthrough with sample data from the dev environment needs to be planned so we can validate end-to-end flow with realistic inputs.
+
+Logesh and Mani to jointly plan this walkthrough.
+
+3. Production CDA Catch-Up
+
+Catch-up session for Production CDA is done.
+
+Logesh to sync with development team on two fronts:
+
+Data counts (to ensure alignment with SIT/Prod volumes).
+
+Process logic clarity (to ensure we test against the right flow).
+
+Since environment dependencies are still pending, focus will temporarily shift to Framework B until those blockers are cleared.
+
+
+
+
+Radar Live – Summary Update (While I Was Away)
+1. Vehicle Model / Area File Ingestion (RL19)
+
+Rahul and Shashi have already done SIT testing on the first version of the file — checked file share, schema, and basic data quality.
+
+There’s still an open defect on the first version’s data validation. The agreement we have now is that data validation itself is Pricing’s responsibility, while on the BICOE side we just cover things like error handling, DevOps release model (except Blue-Green), and retention/archival.
+
+I’ve already pushed the file replacement, so Shashi needs to retest and close the defect if it looks good.
+
+On Blue-Green deployment, Rob M confirmed the dependency is with IT. Once they finish, Rahul will do a quick SIT check and sync with Aderine Veal to confirm coverage.
+
+Data access control and monitoring is still open — I’ll check with Rob M and Nita to get more clarity on what’s expected.
+
+2. Datagestion (RL1)
+
+Test scripts are already prepared for Quote Request, Rating Response, Cache ID, Stop Quote, PreComp. Rating Request is still in progress.
+
+We did hit some schema drift in the demo environment, plus CR changes — this means some rework on mappings/scripts. Effort needs to be assessed once we understand the level of change. I’ll connect with Mike to go over those details.
+
+Test scenarios:
+
+On Friday’s BICOE call, we agreed to cut down to essential scenarios only (reuse upstream scenarios as much as possible).
+
+From the chat with Nikki, one more scenario was added → test before and after schema drift changes. This needs coordination with Pricing. Rahul to update scripts for this.
+
+For continuity of service, Shashi will work with Paul to sort out which views are in-scope for SIT.
+
+Dynamic pricing & Radar results (RL10.1) → Nikki is gathering more info. Once we know what’s needed, I’ll look at test data requirements.
+
+Other data dependencies will be covered in the BICOE dependency call.
+
+Test Plan: Needs a refresh based on MVP Day 1 scope. We’ll follow a risk-based testing approach. For that, we need component-level details on impacted tables/functions to be frozen, then we can re-estimate timelines. I’ll drive this with the team.
+
+Test Automation: Mani and Jeevitha are working on the automation strategy and will share for internal review along with what’s been done so far.
