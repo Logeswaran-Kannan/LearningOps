@@ -1,1 +1,4 @@
-Hey, just got confirmation from Paul — all the views in the dev environment are built on top of the SCD tables, so we can go ahead with the initial testing. The only thing is the data is static for now, but it's still good enough to verify insert, update, and delete flows between the SCD and the new ODS views. Also, looks like boolean conversions are handled properly in the views (not just the latest flag). So it’s all set for now until real data lands in the test environment.
+could you update the tracker with the % completion for the items you’ve worked on or are currently working on? Don’t worry about the planned dates for now — just use the actuals based on where things stand.
+
+If you’ve created any related Jira tasks, drop in the task numbers too.
+We’ll go through everything together in tomorrow’s stand-up. Thanks!
