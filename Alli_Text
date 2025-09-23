@@ -1,4 +1,5 @@
-could you update the tracker with the % completion for the items you’ve worked on or are currently working on? Don’t worry about the planned dates for now — just use the actuals based on where things stand.
+“We’ve finished scripting for all 6 messages up to DV (silverish layer) using the current mapping version — the scripts are now under review.”
 
-If you’ve created any related Jira tasks, drop in the task numbers too.
-We’ll go through everything together in tomorrow’s stand-up. Thanks!
+“For manual test data verification, I’ll check with Nate on the event hub name that’s linked to the Athena demo environment so we can create some sample quotes and validate them there.”
+
+“On the automation side, we’ve done the first-round integration review between landing (DLT) and DV (silverish). Based on the feedback, the team is now updating the automation scripts.”
