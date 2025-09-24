@@ -1,73 +1,78 @@
-🟢 Jira Task – RL21.1 Quote Cache Deletion Support Validation
+🟢 Jira Task – RL21.2 Store Cache ID File to Blob Storage Validation
 
 Description
-As part of SIT for Radar Live, BICOE QA will validate the Quote Cache Deletion process (RL21.1), ensuring Cache IDs are correctly deleted or persisted according to retention and deletion policies.
-Validation includes checking consistency between Athena, MQS, and Blob Storage, confirming lifecycle rules are applied correctly, and ensuring no unintended exposure of expired cache data.
+As part of SIT for Radar Live, BICOE QA will validate the storage of Quote Cache ID files in Blob Storage (RL21.2).
+The validation will ensure that Cache IDs are correctly extracted, persisted in Blob Storage according to retention and access policies, and auditable for downstream reporting or compliance requirements.
+Testing will cover file creation, storage, retention, access control, lineage, and reconciliation against MQS/Athena sources.
 
 Validation Scope
 
-Validate ingestion pipelines mark Cache IDs eligible for deletion as per policy.
+Validate that Cache ID files are generated and stored in Blob Storage correctly.
 
-Validate deletion process against:
+Confirm schema/format of Cache ID files in Blob matches design specification (e.g., JSON/Parquet).
 
-Athena (source cache table).
+Validate referential integrity → stored Cache IDs remain consistent with Quote ID, Interaction ID, and linked journeys.
 
-MQS Cache data (message-level).
+Perform reconciliation of Blob-stored Cache IDs with:
 
-Blob storage persistence.
+MQS messages.
 
-Confirm that expired/deleted Cache IDs are not visible in downstream reporting or EDM views.
+Athena source cache tables.
 
-Validate referential integrity → Cache deletion should not break linked Quote IDs or interaction chains.
+Validate retention and archival rules → Cache ID files stored for correct duration, deleted or archived as per policy.
 
-Validate time travel queries → ensure historical cache data can still be audited where required.
+Validate access controls (RBAC/PV groups) for Blob Storage → Pricing, UW, Engineering.
 
-Validate error handling when attempting to delete non-existent or invalid Cache IDs.
+Negative testing: attempt to access or modify restricted Cache ID files with unauthorized roles.
 
-Confirm compliance with data governance and retention requirements.
+Validate audit logs capture file creation, access, and deletion events.
+
+Validate Blob Storage resilience (large file, corrupted write, retry handling).
 
 Acceptance Criteria / Testing Requirements
 
-✅ Cache IDs marked for deletion validated against retention rules.
+✅ Cache ID files stored in Blob as per design (schema/format validated).
 
-✅ Deleted Cache IDs removed from Athena, MQS, and blob storage as per design.
+✅ Referential integrity maintained (Cache ID ↔ Quote ID ↔ Interaction ID).
 
-✅ Blob storage persistence validated for archived/deleted Cache IDs (where applicable).
+✅ Reconciliation with MQS/Athena successful.
 
-✅ Referential integrity validated (Quote chain not broken by deletion).
+✅ Retention and archival validated (expiry/deletion confirmed).
 
-✅ Time travel queries confirm auditability of historical Cache IDs.
+✅ Access controls enforced (positive & negative testing).
 
-✅ Negative scenarios validated (invalid or duplicate Cache IDs).
+✅ Audit logs confirm file creation, access, and deletion events.
 
-✅ Test evidence captured and attached in Jira.
+✅ Negative scenarios tested (unauthorized access, invalid file handling).
 
-✅ No high/critical issues remain before SIT sign-off.
+✅ SIT evidence captured and attached in Jira.
+
+✅ No high/critical issues open at SIT sign-off.
 
 Dependencies
 
-Retention/deletion design confirmation from Data Governance.
+Blob Storage setup by DevOps/IT.
 
-DevOps/IT setup for Cache deletion and blob persistence pipelines.
+Cache ID file schema/format confirmation from Data Engineering.
 
-Athena and MQS test data with multiple Cache ID lifecycles.
+Retention and access policies from Data Governance/Compliance.
 
-Coordination with E2E team for quote journey testing after deletion.
+MQS and Athena test datasets for reconciliation.
 
-Security/compliance sign-off for audit logging of deleted Cache IDs.
+PV group configuration for Pricing/UW/Engineering access.
 
 Definition of Done (DoD)
 
-Quote Cache Deletion validated across Athena, MQS, and blob storage.
+Cache ID files successfully stored and validated in Blob Storage.
 
-Auditability of deleted Cache IDs confirmed with time travel queries.
+Reconciliation with source systems completed.
 
-Referential integrity maintained for linked quotes.
+Access controls, retention, and audit logging confirmed.
 
-Negative scenarios executed and passed.
+Negative scenarios executed successfully.
 
 Compliance validated and signed off.
 
-No high-severity defects open.
+No high-severity issues open.
 
-SIT sign-off note shared with stakeholders.
+SIT sign-off note provided to stakeholders.
