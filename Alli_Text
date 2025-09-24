@@ -1,5 +1,94 @@
-“We’ve finished scripting for all 6 messages up to DV (silverish layer) using the current mapping version — the scripts are now under review.”
+🟢 Jira Task – RL19.x Vehicle Model / Area Factor Data Ingestion Validation (RL19.1 – RL19.7)
 
-“For manual test data verification, I’ll check with Nate on the event hub name that’s linked to the Athena demo environment so we can create some sample quotes and validate them there.”
+Description
+As part of SIT for Radar Live, BICOE QA will validate the full scope of Vehicle Model and Area Factor data ingestion (RL19.1–RL19.7).
+This includes ingestion pipeline setup, data quality validation, logging/error handling, release process pipelines, data access controls, retention/archive handling, and monitoring.
+Testing will confirm the ingestion solution is production-ready, resilient, and compliant with organisational NFRs.
 
-“On the automation side, we’ve done the first-round integration review between landing (DLT) and DV (silverish). Based on the feedback, the team is now updating the automation scripts.”
+Validation Scope
+
+RL19.1 File Share in all environments
+
+Validate connectivity, schema, and file share access across SIT/UAT/Pre-Prod.
+
+RL19.2 Data Quality Embedded
+
+Validate completeness, uniqueness, referential integrity, and consistency of ingested records.
+
+RL19.3 Error Handling / Log Reporting
+
+Validate ingestion failures generate error logs and alerts.
+
+Confirm error scenarios (corrupt file, missing fields, invalid schema) are handled gracefully.
+
+RL19.4 Azure DevOps Model Release Pipelines
+
+Validate CI/CD deployment pipelines for ingestion jobs.
+
+Confirm rollback/redeploy functions correctly.
+
+RL19.5 Data Access Controls
+
+Validate RBAC/PV groups for different roles (Pricing, Underwriting, Engineering).
+
+Negative testing → confirm restricted groups cannot access ingestion data.
+
+RL19.6 Data Retention / Archive
+
+Validate lifecycle policies (storage duration, archival, deletion).
+
+Confirm time travel queries for expired vs active data.
+
+RL19.7 Monitoring
+
+Validate monitoring dashboards capture ingestion job performance, error counts, and SLA breaches.
+
+Confirm alerts routed to appropriate support groups.
+
+Acceptance Criteria / Testing Requirements
+
+✅ File share validated in SIT/UAT/Pre-Prod with correct schema/permissions.
+
+✅ Data quality rules executed successfully (completeness, uniqueness, referential integrity).
+
+✅ Error handling validated with test scenarios (corrupt, missing, invalid files).
+
+✅ Azure DevOps release pipeline tested for deployment, rollback, and redeploy.
+
+✅ Data access controls validated for all PV groups (positive & negative testing).
+
+✅ Retention/archive rules validated with time travel queries and expiry enforcement.
+
+✅ Monitoring dashboards validated for ingestion metrics, alerts, and reporting.
+
+✅ SIT test evidence attached in Jira.
+
+✅ No high/critical issues remain open before SIT exit.
+
+Dependencies
+
+Vehicle Model / Area Factor source files provided by upstream (with test datasets).
+
+File share setup and permissions by DevOps/IT.
+
+Azure DevOps pipelines configured by Engineering.
+
+Data governance confirmation for retention/archive policies.
+
+Security team confirmation of PV groups and RBAC policies.
+
+Monitoring/alerting setup completed in SIT environment.
+
+Definition of Done (DoD)
+
+All RL19.1–RL19.7 ingestion requirements validated successfully.
+
+Data quality, error handling, access control, retention, and monitoring scenarios tested with evidence.
+
+File share and CI/CD pipelines validated in multiple environments.
+
+Monitoring dashboards and alerts confirmed.
+
+No high-severity issues open.
+
+SIT sign-off note provided to stakeholders.
