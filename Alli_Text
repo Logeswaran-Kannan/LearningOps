@@ -1,78 +1,79 @@
-🟢 Jira Task – RL21.2 Store Cache ID File to Blob Storage Validation
+🟢 Jira Task – RL23.1 Athena Interaction Data Ingestion Validation
 
 Description
-As part of SIT for Radar Live, BICOE QA will validate the storage of Quote Cache ID files in Blob Storage (RL21.2).
-The validation will ensure that Cache IDs are correctly extracted, persisted in Blob Storage according to retention and access policies, and auditable for downstream reporting or compliance requirements.
-Testing will cover file creation, storage, retention, access control, lineage, and reconciliation against MQS/Athena sources.
+As part of SIT for Radar Live, BICOE QA will validate the ingestion of Athena Interaction Data from Event Hub into DLT tables and its correlation with MQS data.
+The validation will ensure the Event Hub stream is processed correctly, Interaction records are persisted in the Data Lakehouse (DLT), and correlations with MQS Quote/Cache/Rating messages are accurate and complete.
 
 Validation Scope
 
-Validate that Cache ID files are generated and stored in Blob Storage correctly.
+Validate ingestion pipeline: Event Hub → DLT tables → Silver layer.
 
-Confirm schema/format of Cache ID files in Blob matches design specification (e.g., JSON/Parquet).
+Confirm schema mapping of Athena Interaction Data matches ingestion specification.
 
-Validate referential integrity → stored Cache IDs remain consistent with Quote ID, Interaction ID, and linked journeys.
+Validate linkage and correlation with MQS data:
 
-Perform reconciliation of Blob-stored Cache IDs with:
+Interaction ID ↔ Quote ID.
 
-MQS messages.
+Cache ID ↔ Interaction chain.
 
-Athena source cache tables.
+MQS message-level correlation (Quote Request, Rating Response, Core Risk).
 
-Validate retention and archival rules → Cache ID files stored for correct duration, deleted or archived as per policy.
+Validate handling of multiple interactions per quote (NB → Requote → MTA).
 
-Validate access controls (RBAC/PV groups) for Blob Storage → Pricing, UW, Engineering.
+Perform reconciliation between Athena source messages vs ingested DLT Interaction tables.
 
-Negative testing: attempt to access or modify restricted Cache ID files with unauthorized roles.
+Validate CDC/versioning for interaction data (time travel queries).
 
-Validate audit logs capture file creation, access, and deletion events.
+Validate error handling (corrupt/missing Interaction messages from Event Hub).
 
-Validate Blob Storage resilience (large file, corrupted write, retry handling).
+Validate retention and archival policies applied to Interaction Data.
 
 Acceptance Criteria / Testing Requirements
 
-✅ Cache ID files stored in Blob as per design (schema/format validated).
+✅ Event Hub → DLT ingestion pipeline validated.
 
-✅ Referential integrity maintained (Cache ID ↔ Quote ID ↔ Interaction ID).
+✅ Schema and field mappings confirmed against Confluence specs.
 
-✅ Reconciliation with MQS/Athena successful.
+✅ Correlation with MQS messages validated (Interaction ID, Quote ID, Cache ID).
 
-✅ Retention and archival validated (expiry/deletion confirmed).
+✅ Multiple interaction chains validated across NB, Requote, MTA.
 
-✅ Access controls enforced (positive & negative testing).
+✅ CDC/versioning confirmed with historical interaction data accessible.
 
-✅ Audit logs confirm file creation, access, and deletion events.
+✅ Reconciliation successful between Athena source and ingested DLT tables.
 
-✅ Negative scenarios tested (unauthorized access, invalid file handling).
+✅ Error handling scenarios executed and logged.
 
-✅ SIT evidence captured and attached in Jira.
+✅ Retention/archival validated per policy.
 
-✅ No high/critical issues open at SIT sign-off.
+✅ SIT test evidence attached in Jira.
+
+✅ No open high/critical issues before SIT exit.
 
 Dependencies
 
-Blob Storage setup by DevOps/IT.
+Athena source interaction data via Event Hub.
 
-Cache ID file schema/format confirmation from Data Engineering.
+MQS payloads for correlation validation.
 
-Retention and access policies from Data Governance/Compliance.
+DLT schema definition and mapping from Data Engineering.
 
-MQS and Athena test datasets for reconciliation.
+Retention/archival requirements from Data Governance.
 
-PV group configuration for Pricing/UW/Engineering access.
+DevOps/IT setup for Event Hub → DLT ingestion jobs.
 
 Definition of Done (DoD)
 
-Cache ID files successfully stored and validated in Blob Storage.
+Athena Interaction Data successfully ingested from Event Hub into DLT tables.
 
-Reconciliation with source systems completed.
+Correlation with MQS Quote/Rating/Cache records validated.
 
-Access controls, retention, and audit logging confirmed.
+Reconciliation completed with SIT evidence.
 
-Negative scenarios executed successfully.
+CDC/versioning tested and validated.
 
-Compliance validated and signed off.
+Error handling and retention policies validated.
 
-No high-severity issues open.
+No critical defects remain.
 
-SIT sign-off note provided to stakeholders.
+SIT sign-off note shared with stakeholders.
