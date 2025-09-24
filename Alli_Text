@@ -1,94 +1,73 @@
-🟢 Jira Task – RL19.x Vehicle Model / Area Factor Data Ingestion Validation (RL19.1 – RL19.7)
+🟢 Jira Task – RL21.1 Quote Cache Deletion Support Validation
 
 Description
-As part of SIT for Radar Live, BICOE QA will validate the full scope of Vehicle Model and Area Factor data ingestion (RL19.1–RL19.7).
-This includes ingestion pipeline setup, data quality validation, logging/error handling, release process pipelines, data access controls, retention/archive handling, and monitoring.
-Testing will confirm the ingestion solution is production-ready, resilient, and compliant with organisational NFRs.
+As part of SIT for Radar Live, BICOE QA will validate the Quote Cache Deletion process (RL21.1), ensuring Cache IDs are correctly deleted or persisted according to retention and deletion policies.
+Validation includes checking consistency between Athena, MQS, and Blob Storage, confirming lifecycle rules are applied correctly, and ensuring no unintended exposure of expired cache data.
 
 Validation Scope
 
-RL19.1 File Share in all environments
+Validate ingestion pipelines mark Cache IDs eligible for deletion as per policy.
 
-Validate connectivity, schema, and file share access across SIT/UAT/Pre-Prod.
+Validate deletion process against:
 
-RL19.2 Data Quality Embedded
+Athena (source cache table).
 
-Validate completeness, uniqueness, referential integrity, and consistency of ingested records.
+MQS Cache data (message-level).
 
-RL19.3 Error Handling / Log Reporting
+Blob storage persistence.
 
-Validate ingestion failures generate error logs and alerts.
+Confirm that expired/deleted Cache IDs are not visible in downstream reporting or EDM views.
 
-Confirm error scenarios (corrupt file, missing fields, invalid schema) are handled gracefully.
+Validate referential integrity → Cache deletion should not break linked Quote IDs or interaction chains.
 
-RL19.4 Azure DevOps Model Release Pipelines
+Validate time travel queries → ensure historical cache data can still be audited where required.
 
-Validate CI/CD deployment pipelines for ingestion jobs.
+Validate error handling when attempting to delete non-existent or invalid Cache IDs.
 
-Confirm rollback/redeploy functions correctly.
-
-RL19.5 Data Access Controls
-
-Validate RBAC/PV groups for different roles (Pricing, Underwriting, Engineering).
-
-Negative testing → confirm restricted groups cannot access ingestion data.
-
-RL19.6 Data Retention / Archive
-
-Validate lifecycle policies (storage duration, archival, deletion).
-
-Confirm time travel queries for expired vs active data.
-
-RL19.7 Monitoring
-
-Validate monitoring dashboards capture ingestion job performance, error counts, and SLA breaches.
-
-Confirm alerts routed to appropriate support groups.
+Confirm compliance with data governance and retention requirements.
 
 Acceptance Criteria / Testing Requirements
 
-✅ File share validated in SIT/UAT/Pre-Prod with correct schema/permissions.
+✅ Cache IDs marked for deletion validated against retention rules.
 
-✅ Data quality rules executed successfully (completeness, uniqueness, referential integrity).
+✅ Deleted Cache IDs removed from Athena, MQS, and blob storage as per design.
 
-✅ Error handling validated with test scenarios (corrupt, missing, invalid files).
+✅ Blob storage persistence validated for archived/deleted Cache IDs (where applicable).
 
-✅ Azure DevOps release pipeline tested for deployment, rollback, and redeploy.
+✅ Referential integrity validated (Quote chain not broken by deletion).
 
-✅ Data access controls validated for all PV groups (positive & negative testing).
+✅ Time travel queries confirm auditability of historical Cache IDs.
 
-✅ Retention/archive rules validated with time travel queries and expiry enforcement.
+✅ Negative scenarios validated (invalid or duplicate Cache IDs).
 
-✅ Monitoring dashboards validated for ingestion metrics, alerts, and reporting.
+✅ Test evidence captured and attached in Jira.
 
-✅ SIT test evidence attached in Jira.
-
-✅ No high/critical issues remain open before SIT exit.
+✅ No high/critical issues remain before SIT sign-off.
 
 Dependencies
 
-Vehicle Model / Area Factor source files provided by upstream (with test datasets).
+Retention/deletion design confirmation from Data Governance.
 
-File share setup and permissions by DevOps/IT.
+DevOps/IT setup for Cache deletion and blob persistence pipelines.
 
-Azure DevOps pipelines configured by Engineering.
+Athena and MQS test data with multiple Cache ID lifecycles.
 
-Data governance confirmation for retention/archive policies.
+Coordination with E2E team for quote journey testing after deletion.
 
-Security team confirmation of PV groups and RBAC policies.
-
-Monitoring/alerting setup completed in SIT environment.
+Security/compliance sign-off for audit logging of deleted Cache IDs.
 
 Definition of Done (DoD)
 
-All RL19.1–RL19.7 ingestion requirements validated successfully.
+Quote Cache Deletion validated across Athena, MQS, and blob storage.
 
-Data quality, error handling, access control, retention, and monitoring scenarios tested with evidence.
+Auditability of deleted Cache IDs confirmed with time travel queries.
 
-File share and CI/CD pipelines validated in multiple environments.
+Referential integrity maintained for linked quotes.
 
-Monitoring dashboards and alerts confirmed.
+Negative scenarios executed and passed.
 
-No high-severity issues open.
+Compliance validated and signed off.
 
-SIT sign-off note provided to stakeholders.
+No high-severity defects open.
+
+SIT sign-off note shared with stakeholders.
