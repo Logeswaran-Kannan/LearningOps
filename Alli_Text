@@ -1,5 +1,1 @@
-We need a frozen list of in-scope tables across all three domains for CDA testing, aligned with production. There might be cases where not all of them will have data in the test environment, so we need clarity on coverage from dev — Suraj to follow up with Simon and Joe.”
-
-“We need jump server access for std007 in Claim Center, so we can check how std001 policy and billing data link up with claim data in std001.”
-
-“Suraj to make sure all manual test coverage is captured as test cases, especially CDC logic. Also, confirm that required test data is available in the read replica for all manual scenarios in std001.
+Thanks, Nate. I can see the MQS Event Hub in the Azure portal, but I don’t see the Interaction Event Hub. Do you see it on your side? Just checking if I might be missing access.”
