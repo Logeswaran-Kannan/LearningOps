@@ -1,19 +1,29 @@
-Rating Request) from Landing → DV (Silver Layer), mainly via automation.
+🟢 RL2.1 – Decompress Files and Store within Raw Enrichment Area
 
-If DV isn’t ready, do manual validation in DLT with created test data.
+Validate decompression of source files into Raw Enrichment area.
 
-Schema mapping & field-level checks for scoped test data → datatypes, nulls, mandatory fields.
+Check schema/format matches design (field mapping, datatypes, nulls).
 
-Source-to-DV reconciliation to confirm no loss/corruption.
+Ensure each record has the correct Key Identifier for traceability.
 
-⚠️ Risk if reconciliation/reprocess mechanism is not in place.
+Validate data quality checks → completeness, no duplicates/truncation.
 
-Linkage validation across Quote ID, Cache ID, and Interaction ID.
+Reconcile decompressed data with original compressed file.
 
-CDC & orchestration checks → append logic, error logging, schema drift handling, incremental loads.
+Confirm data flows downstream into DV/EDM with correct linkage.
 
-Data Quality process (NFR) → scope for MVP still needs clarification.
+Edge cases → corrupted/missing files handled with proper error logging.
 
-Data Retention validation for DVLA & Raw Enrichment.
+🟢 RL2.2 – Create/Identify PV Groups for Access (Pricing, Engineering, Underwriting)
 
-Time travel environment / mock test data for BICOE validation still under discussion with E2E.
+Validate RBAC/PV group setup for Pricing, Engineering, and Underwriting teams.
+
+Check that each group can only access its intended datasets.
+
+Run negative tests → groups must not access restricted datasets.
+
+Confirm audit logs capture all access attempts (success/failure).
+
+Validate alignment with Data Governance and security rules.
+
+Confirm access scope doesn’t expose PII/sensitive fields incorrectly.
