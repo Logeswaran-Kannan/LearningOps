@@ -1,5 +1,19 @@
-Hi Hazel, thanks — I’ve got clarity now on the ownership. I understand that in transmittals he’s been managing the delivery process in his own way, and he probably isn’t comfortable changing that straight away for Radar Live. I’m fine with that.
+Rating Request) from Landing → DV (Silver Layer), mainly via automation.
 
-I’ll let him start by introducing a minimal process — like getting things into Jira — and then slowly bring COS into the testing flow so everyone benefits. I’ll definitely pitch in and support, especially around automation and regression, so he might start to see the value over time. It’s still early for him to fully see the benefit of formalising testing in the process.
+If DV isn’t ready, do manual validation in DLT with created test data.
 
-And I’m good with it — apologies if I overstepped anywhere.
+Schema mapping & field-level checks for scoped test data → datatypes, nulls, mandatory fields.
+
+Source-to-DV reconciliation to confirm no loss/corruption.
+
+⚠️ Risk if reconciliation/reprocess mechanism is not in place.
+
+Linkage validation across Quote ID, Cache ID, and Interaction ID.
+
+CDC & orchestration checks → append logic, error logging, schema drift handling, incremental loads.
+
+Data Quality process (NFR) → scope for MVP still needs clarification.
+
+Data Retention validation for DVLA & Raw Enrichment.
+
+Time travel environment / mock test data for BICOE validation still under discussion with E2E.
