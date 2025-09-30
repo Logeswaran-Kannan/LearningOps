@@ -1,29 +1,43 @@
-🟢 RL2.1 – Decompress Files and Store within Raw Enrichment Area
+From Motor Insurance Business / Quote Journey Perspective
 
-Validate decompression of source files into Raw Enrichment area.
+Validate Core Risk data flows correctly across end-to-end quote journeys:
 
-Check schema/format matches design (field mapping, datatypes, nulls).
+New Business (NB), Requotes, MTAs (add/remove driver, replace car, etc.), Renewals, and Declines.
 
-Ensure each record has the correct Key Identifier for traceability.
+Confirm Cache ID & Interaction ID link quotes into a journey chain (original → requote → MTA).
 
-Validate data quality checks → completeness, no duplicates/truncation.
+Validate multi-vehicle support (1 policy → multiple insured objects).
 
-Reconcile decompressed data with original compressed file.
+Ensure orphaned quotes and declines are captured with correct flags (e.g., null-premium).
 
-Confirm data flows downstream into DV/EDM with correct linkage.
+Confirm business KPIs can be supported → segmentation, risk factors, decline metrics.
 
-Edge cases → corrupted/missing files handled with proper error logging.
+🛠 From Technical Perspective
 
-🟢 RL2.2 – Create/Identify PV Groups for Access (Pricing, Engineering, Underwriting)
+RL3 – Core Risk in Silver (Data Vault)
 
-Validate RBAC/PV group setup for Pricing, Engineering, and Underwriting teams.
+Validate ingestion from MQS Quote Request → structured DV models (Hub, Satellite, Link).
 
-Check that each group can only access its intended datasets.
+Field-level mapping for policy, cover, driver, vehicle, renewal details.
 
-Run negative tests → groups must not access restricted datasets.
+Validate referential integrity across Quote ID, Cache ID, Interaction ID.
 
-Confirm audit logs capture all access attempts (success/failure).
+Support for CDC/versioning → historical tracking of changes.
 
-Validate alignment with Data Governance and security rules.
+Validate lineage (source → DV) and enrichment retention (DVLA, PreComp inputs).
 
-Confirm access scope doesn’t expose PII/sensitive fields incorrectly.
+RL4 – Core Risk in Gold (EDM)
+
+Validate dimensional Core Risk model for reporting.
+
+Confirm correct aggregations (per quote, per insured object, per journey).
+
+Validate linking of quotes via Cache ID & Interaction ID (journey continuity).
+
+Validate declines & orphaned quotes → surfaced correctly for MI/Reporting.
+
+Confirm data masking and DVLA compliance (only self-declared DVLA data exposed).
+
+Validate semantic correctness of calculated risk metrics and categorisations.
+
+Ensure EDM Core Risk data supports downstream MI dashboards and reporting KPIs.
