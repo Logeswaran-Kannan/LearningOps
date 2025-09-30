@@ -1,1 +1,64 @@
-Ensure semantic correctness of fields (data type, format, expected meaning, allowed ranges).
+🟢 BICOE Testing Scope – Raw Enrichment (RL2)
+🔹 From System / Components Perspective
+
+Bronze Layer – Landing (MQS Quote Request)
+
+Validate that MQS Quote Requests carrying enrichment payloads are ingested successfully into Bronze.
+
+Confirm message metadata (compression type, schema reference, provider) is persisted.
+
+Bronze Layer – ODS Raw Enrichments
+
+Validate decompression of enrichment data (e.g., Snappy → XML/JSON).
+
+Confirm schema mappings for enrichment metadata fields: Compression, Provider, Output Format, Output Schema, Driver PRN, Vehicle PRN, Dataset, Error Codes.
+
+Validate error messages/codes are correctly persisted for failed enrichments.
+
+Ensure lineage tracking from source → ODS is captured.
+
+Confirm enrichment data stays within ODS boundary (not propagated to DV/EDM).
+
+🔹 From Data Enrichment Perspective
+
+Validate ingestion of enrichment data for supported providers (Experian, LexisNexis, CAIS, CAPS, CIFAS, NOC).
+
+Confirm Driver PRN / Vehicle PRN mappings are unique and consistent across datasets.
+
+Validate referential integrity: MQS Quote ID ↔ Driver PRN ↔ Vehicle PRN.
+
+Negative testing → corrupted enrichments, invalid PRN, malformed schema.
+
+Validate audit trail → enrichment payloads with errors flagged but not dropped.
+
+Confirm alignment with contractual obligations (e.g., enrichment data restricted to ODS, no downstream processing).
+
+🔹 Access & Security (RL2.2)
+
+Validate PV group access:
+
+Data Hunting team has full access to raw enrichments.
+
+Pricing has restricted read-only access (no enrichment processing outside ODS).
+
+Validate RBAC enforcement → users cannot access data outside their role.
+
+Confirm audit logs capture all access attempts.
+
+🔹 Non-Functional / Technical Scope
+
+Validate performance of decompression & ingestion (large files, high volume).
+
+Validate error handling for compression failures or missing files.
+
+Confirm retention and archival policies applied to Raw Enrichment data.
+
+Validate monitoring and alerts are raised for failed enrichment ingestion.
+
+🛑 Out of Scope for BICOE
+
+Correctness of enrichment data provided by source systems (e.g., Experian values, LexisNexis mappings).
+
+Business usage or decisioning logic applied by Pricing/Underwriting.
+
+Downstream DV/EDM consumption of enrichment (not in current scope, limited to ODS).
