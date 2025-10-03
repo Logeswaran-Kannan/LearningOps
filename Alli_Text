@@ -1,1 +1,1 @@
-This issue also shows up in production where we’re getting special characters. But since it’s an existing problem, and given how these columns are used in BICOE, they’re treated as low-priority descriptive fields. We’ve marked it low priority, and as the source itself is sending the data this way, there’s no action needed from the BICOE side.
+That’s currently being sorted in development for the CDA data.
