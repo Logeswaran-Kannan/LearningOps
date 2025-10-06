@@ -1,66 +1,111 @@
-Title:
-
-Test Design and Scripting – MQS Quote Request & PreComp Response (Ingestion, Silverish, Silver Layer)
-
+🧩 Task 1: Test Execution – MQS Quote Request (Ingestion, Silverish, Silver Layer)
 Description:
 
-This task covers the test design and script development for validating the ingestion of the MQS Quote Request and PreComp Response messages through the data pipeline up to the Silverish and Silver layers within the Azure Data Platform.
+This task covers execution and validation of the MQS Quote Request ingestion pipeline within Silverish and Silver layers.
+The BICOE testing team will verify that the Quote Request message is successfully ingested from Landing → DLT → Data Vault (Silver) as per mapping and design, ensuring schema consistency, linkage, and orchestration behavior.
 
-The activity includes:
-
-Understanding functional and technical mapping documents for MQS Quote Request and PreComp Response.
-
-Designing test cases to validate the technical flow, schema mapping, and field-level data integrity from Landing → DV (Silverish/Silver).
-
-Creating automated or semi-automated scripts aligned with BICOE testing standards.
-
-Preparing and uploading all test cases into JIRA with detailed validation steps and expected results.
-
-Reviewing the scripts with BICOE and Data Engineering teams to ensure alignment with the latest data mappings and confluence specifications.
+The focus is on validating data flow, schema mapping, field-level accuracy, and data quality controls implemented within the ingestion process.
 
 Validation Scope:
 
-Ingestion validation: Ensure that both MQS Quote Request and PreComp Response messages are correctly ingested from the event hub into the Silverish layer.
+Ingestion Process Validation: Verify that MQS Quote Request messages are correctly landed and processed through all ingestion stages (Landing → DLT → Silver).
 
-Schema Mapping: Validate mapping of all critical fields and mandatory attributes as per data mapping specification.
+Schema Structure Check: Validate data structure aligns to mapping specs (column names, data types, lengths, nullability).
 
-Data Structure: Verify table structure creation (Hubs, Satellites, Links) for Silver layer alignment.
+Field-Level Validation: Check field population for Quote ID, Cache ID, and Interaction ID.
 
-Field-level Checks: Include validation for data types, null handling, default values, and truncation checks.
+Record Linkage: Validate referential integrity across related entities within Silverish/Silver.
 
-Linkage Validation: Verify Quote ID, Cache ID, and Interaction ID relationships.
+Error Handling: Confirm that ingestion rejects malformed/missing messages and logs errors correctly.
 
-CDC/Versioning Logic: Validate version handling and incremental load patterns where applicable.
+Data Quality Rules: Execute DQ scripts for nulls, duplicates, and mandatory fields.
 
-Error Logging and Orchestration: Check availability of error logs for failed ingestion.
+Incremental/CDC Load: Validate incremental load process and CDC logic.
 
-Reconciliation Readiness: Define validation approach for future data reconciliation between landing and Silver layers.
+EventHub–DLT–Silver Reconciliation: Perform record count and data match verification between stages.
 
 Acceptance Criteria / Testing Requirements:
 
-✅ Test cases created for all applicable mapping fields in MQS Quote Request and PreComp Response messages.
-✅ Scripts reviewed and validated against current mapping version and technical requirements.
-✅ Data validation scenarios include ingestion success/failure, schema validation, and linkage checks.
-✅ Test cases uploaded into JIRA with proper traceability to the requirement IDs (RL1.x / RL5.x).
-✅ Peer review completed with BICOE QA and Data Engineering teams.
-✅ No critical mapping gaps identified during dry-run validation.
+✅ MQS Quote Request ingested without loss or truncation.
+✅ Schema fully validated per ingestion mapping document.
+✅ Quote and Interaction IDs match between DLT and Silver layers.
+✅ CDC/incremental updates correctly applied.
+✅ Reconciliation counts consistent across ingestion layers.
+✅ Error messages logged correctly for failed payloads.
+✅ Evidence captured and attached to JIRA.
 
 Dependencies:
 
-Availability of the latest Data Mapping Specifications for MQS Quote Request and PreComp Response.
+Access to SIT environment and DLT pipeline.
 
-Access to Silverish Layer (DLT tables) and Silver Layer (DV tables) in the Azure environment.
+Event Hub stream connection for sample Quote Request messages.
 
-Upstream message availability in the event hub (Demo or SIT environment).
+Test data setup aligned with E2E test data scenarios.
 
-Confirmation of schema stability (no ongoing CR impacting mapping).
+Approved ingestion mapping for MQS Quote Request.
 
-Coordination with Data Engineering for table access and schema refresh.
+Coordination with Data Engineering for run triggers and monitoring.
 
 Definition of Done (DoD):
 
-✔️ All test cases and scripts are prepared, reviewed, and approved.
-✔️ All mapping attributes are covered as per the requirement document.
-✔️ Test cases are uploaded in JIRA with requirement traceability.
-✔️ Peer review comments are addressed and closed.
-✔️ Ready for execution handoff in SIT phase.
+✔️ All test cases executed for MQS Quote Request ingestion.
+✔️ Evidence attached (screenshots, query results, and logs).
+✔️ Reconciliation and data validation results documented.
+✔️ Defects raised and tracked to closure.
+✔️ SIT sign-off from BICOE QA lead.
+
+🧩 Task 2: Test Execution – PreComp Response (Ingestion, Silverish, Silver Layer)
+Description:
+
+This task covers execution and validation of the PreComp Response ingestion process, which carries Radar Feature Set and Standard Validation Rule (SVR) information.
+Testing ensures that the PreComp Response data is correctly processed through Landing → DLT → Silver, following ingestion mappings and technical specifications, ensuring all categories and structures (Metadata, Driver, Policy, Cover, Vehicle, etc.) are intact.
+
+The focus is to confirm the integrity, structure, and alignment of Radar Feature Set data for downstream use in the data warehouse.
+
+Validation Scope:
+
+Ingestion Execution: Validate successful ingestion of PreComp Response messages across all layers.
+
+Schema & Structural Validation: Verify JSON flattening and structured schema (category-wise mapping) aligns with specification.
+
+Feature Set Validation: Validate A/B/C/Drv/Pol/Prp/Veh feature categories correctly populated in Silver.
+
+Error Handling: Validate that SVR or technical error responses are logged correctly in DLT layer.
+
+Linkage Validation: Confirm referential linkage with MQS Quote Request via Quote ID, Cache ID, and Interaction ID.
+
+Incremental Load Handling: Validate multiple versions or re-quotes are handled with correct versioning logic.
+
+Data Quality Validation: Perform checks for mandatory, null, and invalid fields across layers.
+
+Reconciliation: Ensure record-level and field-level reconciliation between Landing, Silverish, and Silver layers.
+
+Acceptance Criteria / Testing Requirements:
+
+✅ PreComp Response ingested successfully and all feature categories mapped.
+✅ Radar Feature Set data correctly structured per mapping.
+✅ No data loss or transformation issues between layers.
+✅ Errors logged correctly for invalid/missing records.
+✅ CDC/versioning logic verified.
+✅ Data Quality rules met for test dataset.
+✅ Test evidence attached in JIRA.
+
+Dependencies:
+
+Upstream MQS Quote Request ingestion completion.
+
+Access to PreComp event stream and SIT environment.
+
+Data mapping for feature categories finalized.
+
+Coordination with Pricing/UAT for validation dataset.
+
+Data Engineering support for orchestration runs and logs.
+
+Definition of Done (DoD):
+
+✔️ All test cases executed for PreComp Response ingestion.
+✔️ Evidence (queries, screenshots, logs) attached in JIRA.
+✔️ Data validation and reconciliation results documented.
+✔️ Defects raised and tracked to closure.
+✔️ SIT sign-off from BICOE QA lead.
