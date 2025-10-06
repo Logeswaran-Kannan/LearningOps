@@ -1,112 +1,82 @@
-Automation Test Script Framework – Ingestion Validation (All 6 MQS Messages till Silverish Layer)
+Test Strategy – Data Reconciliation of Quote ID between Source, MQS, and Interaction
 
 Description:
 
-This task involves designing and developing an automation test framework to validate the ingestion process for all six MQS message types up to the Silverish (DLT) layer within the Azure Data Platform.
+This task covers defining and documenting the test strategy for data reconciliation of Quote IDs across Source systems, MQS messages, and Interaction data.
+The objective is to ensure consistent and traceable Quote identifiers across all data hops within the Radar Live architecture — from event ingestion to final persistence in the data platform.
 
-The automation will cover validation of data flow, schema mapping, data quality, and linkage integrity across all six messages:
+The strategy will outline the approach, scope, methodology, and validation techniques for reconciling data between upstream (Athena/Source), MQS payloads (Quote Request, Rating Response, PreComp, etc.), and downstream Interaction tables in the Data Lake (Silverish/Silver).
 
-MQS Quote Request
+Validation Scope:
 
-PreComp Response
+Reconciliation Scope Definition:
 
-Rating Request
+Identify all entities where Quote ID exists (Source, MQS messages, Interaction tables).
 
-Rating Response
+Define one-to-one and one-to-many relationships between these layers.
 
-Cache ID
+Data Lineage Validation:
 
-Stop Quote
+Map Quote ID flow from Source → MQS → Event Hub → DLT → Interaction layer.
 
-The framework will enable reusable, parameter-driven test execution, providing automated validation for ingestion, schema consistency, and field-level data verification across source → landing → DLT → Silverish stages.
+Validate transformations and data lineage consistency.
 
-Validation Scope / Automation Coverage:
+Reconciliation Approach:
 
-Ingestion Validation Automation:
+Define reconciliation logic using checksum or count validation.
 
-Validate all 6 MQS messages processed from landing to Silverish layer.
+Define SQL and automation logic for comparison between systems.
 
-Compare record counts and field-level data between DLT and Silverish.
+Identify tolerance levels (acceptable mismatches, nulls, duplicates).
 
-Schema and Mapping Validation:
+Exception Handling:
 
-Automated schema comparison between ingestion output and mapping specification.
+Define how reconciliation exceptions (missing, duplicate, invalid Quote IDs) will be logged and triaged.
 
-Validate column presence, data types, and mandatory/nullable fields.
+Establish ownership for resolution (BICOE vs Source vs MQS teams).
 
-Data Quality Checks:
+Reporting and Sign-off:
 
-Automated rules for null, duplicate, and invalid data validation.
+Define reconciliation summary reporting format (pass/fail counts, mismatch details).
 
-Configurable DQ rule engine integrated with parameterized SQL queries.
-
-Reconciliation Automation:
-
-Count-level and checksum-level validation between source JSON and Silverish layer.
-
-Identify data loss or truncation.
-
-Linkage & Referential Integrity:
-
-Automated linkage validation between Quote ID, Cache ID, and Interaction ID.
-
-Validate cross-message consistency (e.g., Quote Request → Rating Response → Stop Quote).
-
-CDC & Incremental Load Testing:
-
-Validate incremental data ingestion logic through automated snapshot comparison.
-
-Support for time travel-based re-run testing.
-
-Error Logging & Reporting:
-
-Capture ingestion error logs, schema drift, and validation failures automatically.
-
-Generate consolidated report for each message type.
-
-Scalability:
-
-Framework designed for reusability across future Radar Live ingestion messages.
-
-Ability to extend for Silver and Gold layer validations in subsequent sprints.
+Outline validation checkpoints for SIT and UAT sign-off.
 
 Acceptance Criteria / Testing Requirements:
 
-✅ Framework automates validation for all 6 MQS message types (Landing → Silverish).
-✅ Schema and mapping comparison automated for each ingestion stage.
-✅ Automated DQ and reconciliation checks implemented and parameterized.
-✅ Configurable test run for new message versions or schema changes.
-✅ Automated evidence generation (test logs, validation summary, and result export).
-✅ Integration with DataBricks and Azure Data Lakehouse tables verified.
-✅ Code reviewed and successfully executed in SIT environment.
+✅ End-to-end Quote ID reconciliation logic documented for Source ↔ MQS ↔ Interaction.
+✅ SQL/automation framework defined for data comparison and validation.
+✅ Data lineage mapping verified against design and Confluence documentation.
+✅ Exception-handling and defect triage flow established.
+✅ Sample reconciliation test executed successfully in SIT.
+✅ Reconciliation sign-off criteria approved by BICOE QA and Data Engineering.
 
 Dependencies:
 
-Access to SIT environment, Databricks workspace, and DLT tables.
+Source (Athena) data extract or simulated dataset.
 
-Finalized ingestion mapping documents for all six MQS messages.
+MQS payloads with valid Quote IDs (Quote Request, Rating Response, PreComp).
 
-Event Hub configuration for message ingestion simulation.
+Interaction tables in Silverish/Silver layer with corresponding Quote IDs.
 
-Collaboration with Data Engineering for pipeline triggers and schema drift logs.
+Confluence mapping documents for Quote ID lineage.
 
-Reusable test data scenarios aligned with E2E data.
+Access to required Databricks and Azure SQL environments.
 
 Definition of Done (DoD):
 
-✔️ Automation framework developed, peer reviewed, and approved.
-✔️ Test scripts executed for all 6 MQS messages in SIT.
-✔️ Validation evidence (logs, comparison outputs) stored in shared repo.
-✔️ Execution summary and defect logs attached to JIRA.
-✔️ Framework baseline published for reuse in next phase (Silver and Gold testing).
-✔️ Sign-off by BICOE QA Lead and Test Automation Lead.
+✔️ Reconciliation strategy document finalized and approved.
+✔️ Logical mapping of Quote ID across all layers validated.
+✔️ Sample test execution validated in SIT.
+✔️ Evidence of test strategy shared in Confluence / JIRA.
+✔️ No open blockers for subsequent reconciliation test execution tasks.
+✔️ Sign-off obtained from BICOE QA Lead and Data Engineering.
 
 Deliverables:
 
-Python/SQL-based Automation Framework (Databricks or PySpark notebook).
+Data Reconciliation Strategy Document (Source ↔ MQS ↔ Interaction).
 
-Automated ingestion validation reports (in CSV/Excel).
+SQL / Automation framework outline for Quote ID comparison.
 
-Centralized result logs and DQ summary per message type.
+Sample validation report from SIT execution.
 
-Documentation (user guide + configuration reference).
+Exception log / mismatch analysis template.
