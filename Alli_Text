@@ -1,1 +1,66 @@
-Wishing you a wonderful trip to Berlin and a relaxing vacation. Have a lovely weekend as well!"
+Title:
+
+Test Design and Scripting – MQS Quote Request & PreComp Response (Ingestion, Silverish, Silver Layer)
+
+Description:
+
+This task covers the test design and script development for validating the ingestion of the MQS Quote Request and PreComp Response messages through the data pipeline up to the Silverish and Silver layers within the Azure Data Platform.
+
+The activity includes:
+
+Understanding functional and technical mapping documents for MQS Quote Request and PreComp Response.
+
+Designing test cases to validate the technical flow, schema mapping, and field-level data integrity from Landing → DV (Silverish/Silver).
+
+Creating automated or semi-automated scripts aligned with BICOE testing standards.
+
+Preparing and uploading all test cases into JIRA with detailed validation steps and expected results.
+
+Reviewing the scripts with BICOE and Data Engineering teams to ensure alignment with the latest data mappings and confluence specifications.
+
+Validation Scope:
+
+Ingestion validation: Ensure that both MQS Quote Request and PreComp Response messages are correctly ingested from the event hub into the Silverish layer.
+
+Schema Mapping: Validate mapping of all critical fields and mandatory attributes as per data mapping specification.
+
+Data Structure: Verify table structure creation (Hubs, Satellites, Links) for Silver layer alignment.
+
+Field-level Checks: Include validation for data types, null handling, default values, and truncation checks.
+
+Linkage Validation: Verify Quote ID, Cache ID, and Interaction ID relationships.
+
+CDC/Versioning Logic: Validate version handling and incremental load patterns where applicable.
+
+Error Logging and Orchestration: Check availability of error logs for failed ingestion.
+
+Reconciliation Readiness: Define validation approach for future data reconciliation between landing and Silver layers.
+
+Acceptance Criteria / Testing Requirements:
+
+✅ Test cases created for all applicable mapping fields in MQS Quote Request and PreComp Response messages.
+✅ Scripts reviewed and validated against current mapping version and technical requirements.
+✅ Data validation scenarios include ingestion success/failure, schema validation, and linkage checks.
+✅ Test cases uploaded into JIRA with proper traceability to the requirement IDs (RL1.x / RL5.x).
+✅ Peer review completed with BICOE QA and Data Engineering teams.
+✅ No critical mapping gaps identified during dry-run validation.
+
+Dependencies:
+
+Availability of the latest Data Mapping Specifications for MQS Quote Request and PreComp Response.
+
+Access to Silverish Layer (DLT tables) and Silver Layer (DV tables) in the Azure environment.
+
+Upstream message availability in the event hub (Demo or SIT environment).
+
+Confirmation of schema stability (no ongoing CR impacting mapping).
+
+Coordination with Data Engineering for table access and schema refresh.
+
+Definition of Done (DoD):
+
+✔️ All test cases and scripts are prepared, reviewed, and approved.
+✔️ All mapping attributes are covered as per the requirement document.
+✔️ Test cases are uploaded in JIRA with requirement traceability.
+✔️ Peer review comments are addressed and closed.
+✔️ Ready for execution handoff in SIT phase.
