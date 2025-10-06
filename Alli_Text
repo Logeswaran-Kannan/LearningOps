@@ -217,3 +217,7 @@ Definition of Done (DoD):
 ✔️ Mismatch analysis documented and reviewed.
 ✔️ Defects resolved or accepted with sign-off.
 ✔️ SIT validation completed and approved.
+
+
+
+Based on our discussion with the E2E testing team, any data-related issues will now be handled by the Pricing team. If there are any open data-related issues raised by the BICOE team, they’ll be taken up by Sachin and Khare’s team. The initial handover is complete, but the user still hasn’t been added to Jira. Given that, we’re going ahead and closing this ticket.
