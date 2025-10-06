@@ -1,223 +1,73 @@
-RL19.4 – Azure DevOps Model Release Pipeline
-Task 1: Test Design & Scripting – RL19.4 Azure DevOps Model Release Pipeline
+🟩 Task 1 – Test Design & Scripting – Motor Dimension Tables (Gold Layer / EDM)
 
 Description:
-Design and prepare test scripts for validating the Azure DevOps model release pipeline process for ingestion jobs (RL19.4).
-Covers build deployment, rollback validation, and release approval workflow per the BICOE release standard.
+Design and prepare test cases and SQL/Python scripts to validate the structure and population of Motor-related Dimension Tables within the EDM (Gold Layer).
+Covers schema validation, mapping alignment, relationships, and business-key linkage as per the latest design document.
 
 Validation Scope:
 
-Review DevOps pipeline flow for ingestion deployment (build, release, rollback).
+Review EDM design and mapping for all Motor dimension tables.
 
-Define test steps to validate each stage’s success and log outputs.
+Define field-level validation – datatype, nullability, primary/foreign-key linkage.
 
-Cover failure scenarios (rollback, re-trigger).
+Create test scripts for data completeness and referential integrity across related facts (Quote / Core Risk / Rating Response).
 
-Map scripts to Confluence release design.
+Prepare negative tests – invalid keys, duplicate entries, or orphaned records.
 
-Upload all test cases to JIRA with requirement traceability.
-
-Acceptance Criteria:
-✅ Test cases prepared and aligned to mapping & design.
-✅ Scripts reviewed by QA and DevOps.
-✅ Upload complete in JIRA.
-
-Dependencies:
-
-Release process documentation from DevOps.
-
-Access to pipeline configuration.
-
-DoD:
-✔️ Test cases/scripts reviewed and approved.
-✔️ JIRA upload completed.
-✔️ Ready for SIT execution.
-
-Task 2: Test Execution – RL19.4 Azure DevOps Model Release Pipeline
-
-Description:
-Execute designed test cases to validate the Azure DevOps release pipeline.
-
-Validation Scope:
-
-Validate successful deployment and rollback of ingestion jobs.
-
-Check pipeline log messages and build validation.
-
-Confirm deployment notification triggers and approvals.
-
-Validate version tagging and audit trail.
-
-Acceptance Criteria:
-✅ All test cases executed.
-✅ Logs captured as SIT evidence.
-✅ Rollback tested successfully.
-✅ No failed jobs without retry mechanism.
-
-Dependencies:
-
-Access to Azure DevOps pipelines in SIT.
-
-Coordination with DevOps engineers.
-
-DoD:
-✔️ All tests executed with evidence attached.
-✔️ SIT sign-off from QA Lead.
-
-🟩 RL19.7 – Monitoring
-Task 3: Test Design & Scripting – RL19.7 Monitoring
-
-Description:
-Design and create test scripts to validate ingestion monitoring and alerting dashboards (RL19.7).
-Ensure test coverage for monitoring setup, alerting logic, and SLA thresholds.
-
-Validation Scope:
-
-Review monitoring dashboard setup in Azure Monitor / Log Analytics.
-
-Define test data and triggers for alert validation (success/failure, delayed loads).
-
-Document test cases for data quality and job status monitoring.
-
-Upload designed test cases and scripts to JIRA.
-
-Acceptance Criteria:
-✅ Test scripts aligned to monitoring design and mapping.
-✅ Test data scenarios captured (success, fail, delayed run).
-✅ JIRA upload complete and reviewed.
-
-Dependencies:
-
-Access to monitoring dashboards.
-
-SLA threshold definitions from DevOps.
-
-DoD:
-✔️ All test scripts reviewed and uploaded.
-✔️ Ready for execution phase.
-
-Task 4: Test Execution – RL19.7 Monitoring
-
-Description:
-Execute monitoring validation scripts to confirm job health tracking and alert accuracy.
-
-Validation Scope:
-
-Trigger ingestion job success/failure scenarios.
-
-Validate dashboard refresh, job count, and SLA breach alerts.
-
-Confirm email/slack notifications received as configured.
-
-Validate alert logs stored in monitoring DB.
-
-Acceptance Criteria:
-✅ Monitoring dashboards show correct job status.
-✅ Alerts generated for failures/delays.
-✅ Evidence (screenshots, alert logs) captured in JIRA.
-✅ No high/critical monitoring gaps.
-
-Dependencies:
-
-SIT access to Azure Monitor.
-
-DevOps setup of alerting channels.
-
-DoD:
-✔️ Monitoring validated across ingestion jobs.
-✔️ Test evidence uploaded.
-✔️ SIT sign-off completed.
-
-
-
-🟩 RL – Quote Reconciliation Between Source, MQS, and Interaction
-Task 1: Test Design & Scripting – Quote Reconciliation (Source ↔ MQS ↔ Interaction)
-
-Description:
-Design and prepare test scripts for validating Quote ID reconciliation across Source systems (Athena), MQS messages, and Interaction data within the Azure Data Platform.
-This activity includes defining reconciliation logic, data sampling strategy, SQL framework, and detailed test cases aligned with mapping and lineage documents.
-
-Validation Scope:
-
-Review and document data flow and lineage of Quote ID across Source → MQS → Interaction.
-
-Define reconciliation logic (count match, field-level checksum, exception reporting).
-
-Identify test datasets covering all Quote journey types: NB, MTA, Renewal, Requote, Decline.
-
-Create SQL/automation scripts for reconciliation validation.
-
-Define exception and error-handling criteria.
-
-Upload designed test cases with traceability to JIRA.
+Upload test cases and scripts in JIRA with traceability to requirement IDs.
 
 Acceptance Criteria / Testing Requirements:
-✅ Reconciliation logic documented and approved (count-level, field-level, and exception).
-✅ Test cases/scripts created for each journey type.
-✅ Traceability to requirement IDs in JIRA established.
-✅ Peer review completed with BICOE QA and Data Engineering.
-✅ All test cases uploaded to JIRA and ready for SIT execution.
+✅ All dimension fields covered in test cases.
+✅ Scripts align with EDM mapping document.
+✅ Peer review completed & approved.
+✅ All cases uploaded to JIRA and ready for execution.
 
 Dependencies:
 
-Access to Source (Athena), MQS payloads, and Interaction tables.
+EDM data model & mapping specs.
 
-Latest data mapping and lineage documentation.
+Access to Gold Layer EDM tables in SIT.
 
-Sample datasets prepared for Quote IDs across all journeys.
+Sample test data from BICOE / Pricing QA.
 
-Coordination with Data Engineering for connection and access setup.
-
-Definition of Done (DoD):
-✔️ Test design and reconciliation scripts reviewed and approved.
-✔️ Mapping alignment confirmed.
-✔️ Test cases uploaded to JIRA.
+DoD:
+✔️ Test design reviewed and approved.
+✔️ Test cases uploaded with traceability.
 ✔️ Ready for SIT execution.
 
-Task 2: Test Execution – Quote Reconciliation (Source ↔ MQS ↔ Interaction)
+🟩 Task 2 – Test Execution – Motor Dimension Tables (Gold Layer / EDM)
 
 Description:
-Execute the defined reconciliation test scripts to validate Quote ID consistency and data lineage between Source, MQS, and Interaction datasets.
-The testing will confirm data completeness, uniqueness, linkage, and correctness across all ingestion points within the SIT environment.
+Execute the prepared test cases and scripts to validate the Motor dimension tables in the EDM (Gold Layer).
+Focus on verifying data accuracy, referential integrity, and schema consistency across all Motor-related dimensions.
 
 Validation Scope:
 
-Execute reconciliation scripts for all Quote journey types (NB, MTA, Renewal, Requote, Decline).
+Execute validation scripts for Vehicle, Driver, Policy, Proposer, Cover, and Core Risk dimensions.
 
-Validate count-level match between Source, MQS, and Interaction tables.
+Verify field-level accuracy vs mapping (spec datatypes, length, nullability).
 
-Validate field-level match for Quote ID and related attributes (Cache ID, Interaction ID).
+Check referential integrity to fact tables (Quote, Rating Response).
 
-Identify and log mismatched or missing records.
+Validate record counts and key uniqueness across dimensions.
 
-Validate exception handling and mismatch reporting logic.
-
-Capture evidence (query outputs, logs) for all test runs.
+Capture evidence (query outputs / screenshots / logs).
 
 Acceptance Criteria / Testing Requirements:
-✅ Successful reconciliation with no missing or mismatched Quote IDs.
-✅ Count-level and field-level results match within tolerance range.
-✅ Exception logs generated for failed records.
-✅ All defects raised, tracked, and retested.
-✅ SIT evidence (queries, screenshots, logs) attached in JIRA.
-✅ Sign-off obtained from BICOE QA Lead.
+✅ All dimension tables validated without schema or linkage errors.
+✅ Counts and key relationships match design expectations.
+✅ Evidence captured and attached in JIRA.
+✅ No high/critical defects open at SIT closure.
 
 Dependencies:
 
-Completion of Test Design task and approval of reconciliation logic.
+Completion of Test Design task.
 
-SIT environment access to Source, MQS, and Interaction tables.
+SIT environment data load completed.
 
-Data Engineering support for lineage verification and query performance.
+EDM access granted for QA execution.
 
-Availability of test data for all Quote journey types.
-
-Definition of Done (DoD):
-✔️ All reconciliation test cases executed and evidence attached.
-✔️ Mismatch analysis documented and reviewed.
-✔️ Defects resolved or accepted with sign-off.
-✔️ SIT validation completed and approved.
-
-
-
-Based on our discussion with the E2E testing team, any data-related issues will now be handled by the Pricing team. If there are any open data-related issues raised by the BICOE team, they’ll be taken up by Sachin and Khare’s team. The initial handover is complete, but the user still hasn’t been added to Jira. Given that, we’re going ahead and closing this ticket.
+DoD:
+✔️ All planned tests executed with evidence.
+✔️ Defects logged and resolved/accepted.
+✔️ SIT sign-off obtained from BICOE QA Lead.
