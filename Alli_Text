@@ -1,111 +1,112 @@
-🧩 Task 1: Test Execution – MQS Quote Request (Ingestion, Silverish, Silver Layer)
+Automation Test Script Framework – Ingestion Validation (All 6 MQS Messages till Silverish Layer)
+
 Description:
 
-This task covers execution and validation of the MQS Quote Request ingestion pipeline within Silverish and Silver layers.
-The BICOE testing team will verify that the Quote Request message is successfully ingested from Landing → DLT → Data Vault (Silver) as per mapping and design, ensuring schema consistency, linkage, and orchestration behavior.
+This task involves designing and developing an automation test framework to validate the ingestion process for all six MQS message types up to the Silverish (DLT) layer within the Azure Data Platform.
 
-The focus is on validating data flow, schema mapping, field-level accuracy, and data quality controls implemented within the ingestion process.
+The automation will cover validation of data flow, schema mapping, data quality, and linkage integrity across all six messages:
 
-Validation Scope:
+MQS Quote Request
 
-Ingestion Process Validation: Verify that MQS Quote Request messages are correctly landed and processed through all ingestion stages (Landing → DLT → Silver).
+PreComp Response
 
-Schema Structure Check: Validate data structure aligns to mapping specs (column names, data types, lengths, nullability).
+Rating Request
 
-Field-Level Validation: Check field population for Quote ID, Cache ID, and Interaction ID.
+Rating Response
 
-Record Linkage: Validate referential integrity across related entities within Silverish/Silver.
+Cache ID
 
-Error Handling: Confirm that ingestion rejects malformed/missing messages and logs errors correctly.
+Stop Quote
 
-Data Quality Rules: Execute DQ scripts for nulls, duplicates, and mandatory fields.
+The framework will enable reusable, parameter-driven test execution, providing automated validation for ingestion, schema consistency, and field-level data verification across source → landing → DLT → Silverish stages.
 
-Incremental/CDC Load: Validate incremental load process and CDC logic.
+Validation Scope / Automation Coverage:
 
-EventHub–DLT–Silver Reconciliation: Perform record count and data match verification between stages.
+Ingestion Validation Automation:
+
+Validate all 6 MQS messages processed from landing to Silverish layer.
+
+Compare record counts and field-level data between DLT and Silverish.
+
+Schema and Mapping Validation:
+
+Automated schema comparison between ingestion output and mapping specification.
+
+Validate column presence, data types, and mandatory/nullable fields.
+
+Data Quality Checks:
+
+Automated rules for null, duplicate, and invalid data validation.
+
+Configurable DQ rule engine integrated with parameterized SQL queries.
+
+Reconciliation Automation:
+
+Count-level and checksum-level validation between source JSON and Silverish layer.
+
+Identify data loss or truncation.
+
+Linkage & Referential Integrity:
+
+Automated linkage validation between Quote ID, Cache ID, and Interaction ID.
+
+Validate cross-message consistency (e.g., Quote Request → Rating Response → Stop Quote).
+
+CDC & Incremental Load Testing:
+
+Validate incremental data ingestion logic through automated snapshot comparison.
+
+Support for time travel-based re-run testing.
+
+Error Logging & Reporting:
+
+Capture ingestion error logs, schema drift, and validation failures automatically.
+
+Generate consolidated report for each message type.
+
+Scalability:
+
+Framework designed for reusability across future Radar Live ingestion messages.
+
+Ability to extend for Silver and Gold layer validations in subsequent sprints.
 
 Acceptance Criteria / Testing Requirements:
 
-✅ MQS Quote Request ingested without loss or truncation.
-✅ Schema fully validated per ingestion mapping document.
-✅ Quote and Interaction IDs match between DLT and Silver layers.
-✅ CDC/incremental updates correctly applied.
-✅ Reconciliation counts consistent across ingestion layers.
-✅ Error messages logged correctly for failed payloads.
-✅ Evidence captured and attached to JIRA.
+✅ Framework automates validation for all 6 MQS message types (Landing → Silverish).
+✅ Schema and mapping comparison automated for each ingestion stage.
+✅ Automated DQ and reconciliation checks implemented and parameterized.
+✅ Configurable test run for new message versions or schema changes.
+✅ Automated evidence generation (test logs, validation summary, and result export).
+✅ Integration with DataBricks and Azure Data Lakehouse tables verified.
+✅ Code reviewed and successfully executed in SIT environment.
 
 Dependencies:
 
-Access to SIT environment and DLT pipeline.
+Access to SIT environment, Databricks workspace, and DLT tables.
 
-Event Hub stream connection for sample Quote Request messages.
+Finalized ingestion mapping documents for all six MQS messages.
 
-Test data setup aligned with E2E test data scenarios.
+Event Hub configuration for message ingestion simulation.
 
-Approved ingestion mapping for MQS Quote Request.
+Collaboration with Data Engineering for pipeline triggers and schema drift logs.
 
-Coordination with Data Engineering for run triggers and monitoring.
-
-Definition of Done (DoD):
-
-✔️ All test cases executed for MQS Quote Request ingestion.
-✔️ Evidence attached (screenshots, query results, and logs).
-✔️ Reconciliation and data validation results documented.
-✔️ Defects raised and tracked to closure.
-✔️ SIT sign-off from BICOE QA lead.
-
-🧩 Task 2: Test Execution – PreComp Response (Ingestion, Silverish, Silver Layer)
-Description:
-
-This task covers execution and validation of the PreComp Response ingestion process, which carries Radar Feature Set and Standard Validation Rule (SVR) information.
-Testing ensures that the PreComp Response data is correctly processed through Landing → DLT → Silver, following ingestion mappings and technical specifications, ensuring all categories and structures (Metadata, Driver, Policy, Cover, Vehicle, etc.) are intact.
-
-The focus is to confirm the integrity, structure, and alignment of Radar Feature Set data for downstream use in the data warehouse.
-
-Validation Scope:
-
-Ingestion Execution: Validate successful ingestion of PreComp Response messages across all layers.
-
-Schema & Structural Validation: Verify JSON flattening and structured schema (category-wise mapping) aligns with specification.
-
-Feature Set Validation: Validate A/B/C/Drv/Pol/Prp/Veh feature categories correctly populated in Silver.
-
-Error Handling: Validate that SVR or technical error responses are logged correctly in DLT layer.
-
-Linkage Validation: Confirm referential linkage with MQS Quote Request via Quote ID, Cache ID, and Interaction ID.
-
-Incremental Load Handling: Validate multiple versions or re-quotes are handled with correct versioning logic.
-
-Data Quality Validation: Perform checks for mandatory, null, and invalid fields across layers.
-
-Reconciliation: Ensure record-level and field-level reconciliation between Landing, Silverish, and Silver layers.
-
-Acceptance Criteria / Testing Requirements:
-
-✅ PreComp Response ingested successfully and all feature categories mapped.
-✅ Radar Feature Set data correctly structured per mapping.
-✅ No data loss or transformation issues between layers.
-✅ Errors logged correctly for invalid/missing records.
-✅ CDC/versioning logic verified.
-✅ Data Quality rules met for test dataset.
-✅ Test evidence attached in JIRA.
-
-Dependencies:
-
-Upstream MQS Quote Request ingestion completion.
-
-Access to PreComp event stream and SIT environment.
-
-Data mapping for feature categories finalized.
-
-Coordination with Pricing/UAT for validation dataset.
-
-Data Engineering support for orchestration runs and logs.
+Reusable test data scenarios aligned with E2E data.
 
 Definition of Done (DoD):
 
-✔️ All test cases executed for PreComp Response ingestion.
-✔️ Evidence (queries, screenshots, logs) attached in JIRA.
-✔️ Data validation and reconciliation results documented.
-✔️ Defects raised and tracked to closure.
-✔️ SIT sign-off from BICOE QA lead.
+✔️ Automation framework developed, peer reviewed, and approved.
+✔️ Test scripts executed for all 6 MQS messages in SIT.
+✔️ Validation evidence (logs, comparison outputs) stored in shared repo.
+✔️ Execution summary and defect logs attached to JIRA.
+✔️ Framework baseline published for reuse in next phase (Silver and Gold testing).
+✔️ Sign-off by BICOE QA Lead and Test Automation Lead.
+
+Deliverables:
+
+Python/SQL-based Automation Framework (Databricks or PySpark notebook).
+
+Automated ingestion validation reports (in CSV/Excel).
+
+Centralized result logs and DQ summary per message type.
+
+Documentation (user guide + configuration reference).
