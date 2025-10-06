@@ -1,10 +1,129 @@
-I’ve got a story that includes multiple tasks, and those tasks are being completed across different sprints.
-My understanding is that I should only close the story once all tasks under it are complete.
+RL19.4 – Azure DevOps Model Release Pipeline
+Task 1: Test Design & Scripting – RL19.4 Azure DevOps Model Release Pipeline
 
-But I wanted to confirm a few things:
+Description:
+Design and prepare test scripts for validating the Azure DevOps model release pipeline process for ingestion jobs (RL19.4).
+Covers build deployment, rollback validation, and release approval workflow per the BICOE release standard.
 
-Should the story points be added to the story itself or distributed across the individual tasks?
+Validation Scope:
 
-Since the tasks are finishing in different sprints, can I add the story to the sprint where all tasks are completed — and only close it then?
+Review DevOps pipeline flow for ingestion deployment (build, release, rollback).
 
-Just want to make sure I’m following the right
+Define test steps to validate each stage’s success and log outputs.
+
+Cover failure scenarios (rollback, re-trigger).
+
+Map scripts to Confluence release design.
+
+Upload all test cases to JIRA with requirement traceability.
+
+Acceptance Criteria:
+✅ Test cases prepared and aligned to mapping & design.
+✅ Scripts reviewed by QA and DevOps.
+✅ Upload complete in JIRA.
+
+Dependencies:
+
+Release process documentation from DevOps.
+
+Access to pipeline configuration.
+
+DoD:
+✔️ Test cases/scripts reviewed and approved.
+✔️ JIRA upload completed.
+✔️ Ready for SIT execution.
+
+Task 2: Test Execution – RL19.4 Azure DevOps Model Release Pipeline
+
+Description:
+Execute designed test cases to validate the Azure DevOps release pipeline.
+
+Validation Scope:
+
+Validate successful deployment and rollback of ingestion jobs.
+
+Check pipeline log messages and build validation.
+
+Confirm deployment notification triggers and approvals.
+
+Validate version tagging and audit trail.
+
+Acceptance Criteria:
+✅ All test cases executed.
+✅ Logs captured as SIT evidence.
+✅ Rollback tested successfully.
+✅ No failed jobs without retry mechanism.
+
+Dependencies:
+
+Access to Azure DevOps pipelines in SIT.
+
+Coordination with DevOps engineers.
+
+DoD:
+✔️ All tests executed with evidence attached.
+✔️ SIT sign-off from QA Lead.
+
+🟩 RL19.7 – Monitoring
+Task 3: Test Design & Scripting – RL19.7 Monitoring
+
+Description:
+Design and create test scripts to validate ingestion monitoring and alerting dashboards (RL19.7).
+Ensure test coverage for monitoring setup, alerting logic, and SLA thresholds.
+
+Validation Scope:
+
+Review monitoring dashboard setup in Azure Monitor / Log Analytics.
+
+Define test data and triggers for alert validation (success/failure, delayed loads).
+
+Document test cases for data quality and job status monitoring.
+
+Upload designed test cases and scripts to JIRA.
+
+Acceptance Criteria:
+✅ Test scripts aligned to monitoring design and mapping.
+✅ Test data scenarios captured (success, fail, delayed run).
+✅ JIRA upload complete and reviewed.
+
+Dependencies:
+
+Access to monitoring dashboards.
+
+SLA threshold definitions from DevOps.
+
+DoD:
+✔️ All test scripts reviewed and uploaded.
+✔️ Ready for execution phase.
+
+Task 4: Test Execution – RL19.7 Monitoring
+
+Description:
+Execute monitoring validation scripts to confirm job health tracking and alert accuracy.
+
+Validation Scope:
+
+Trigger ingestion job success/failure scenarios.
+
+Validate dashboard refresh, job count, and SLA breach alerts.
+
+Confirm email/slack notifications received as configured.
+
+Validate alert logs stored in monitoring DB.
+
+Acceptance Criteria:
+✅ Monitoring dashboards show correct job status.
+✅ Alerts generated for failures/delays.
+✅ Evidence (screenshots, alert logs) captured in JIRA.
+✅ No high/critical monitoring gaps.
+
+Dependencies:
+
+SIT access to Azure Monitor.
+
+DevOps setup of alerting channels.
+
+DoD:
+✔️ Monitoring validated across ingestion jobs.
+✔️ Test evidence uploaded.
+✔️ SIT sign-off completed.
