@@ -1,82 +1,10 @@
-Test Strategy – Data Reconciliation of Quote ID between Source, MQS, and Interaction
+I’ve got a story that includes multiple tasks, and those tasks are being completed across different sprints.
+My understanding is that I should only close the story once all tasks under it are complete.
 
-Description:
+But I wanted to confirm a few things:
 
-This task covers defining and documenting the test strategy for data reconciliation of Quote IDs across Source systems, MQS messages, and Interaction data.
-The objective is to ensure consistent and traceable Quote identifiers across all data hops within the Radar Live architecture — from event ingestion to final persistence in the data platform.
+Should the story points be added to the story itself or distributed across the individual tasks?
 
-The strategy will outline the approach, scope, methodology, and validation techniques for reconciling data between upstream (Athena/Source), MQS payloads (Quote Request, Rating Response, PreComp, etc.), and downstream Interaction tables in the Data Lake (Silverish/Silver).
+Since the tasks are finishing in different sprints, can I add the story to the sprint where all tasks are completed — and only close it then?
 
-Validation Scope:
-
-Reconciliation Scope Definition:
-
-Identify all entities where Quote ID exists (Source, MQS messages, Interaction tables).
-
-Define one-to-one and one-to-many relationships between these layers.
-
-Data Lineage Validation:
-
-Map Quote ID flow from Source → MQS → Event Hub → DLT → Interaction layer.
-
-Validate transformations and data lineage consistency.
-
-Reconciliation Approach:
-
-Define reconciliation logic using checksum or count validation.
-
-Define SQL and automation logic for comparison between systems.
-
-Identify tolerance levels (acceptable mismatches, nulls, duplicates).
-
-Exception Handling:
-
-Define how reconciliation exceptions (missing, duplicate, invalid Quote IDs) will be logged and triaged.
-
-Establish ownership for resolution (BICOE vs Source vs MQS teams).
-
-Reporting and Sign-off:
-
-Define reconciliation summary reporting format (pass/fail counts, mismatch details).
-
-Outline validation checkpoints for SIT and UAT sign-off.
-
-Acceptance Criteria / Testing Requirements:
-
-✅ End-to-end Quote ID reconciliation logic documented for Source ↔ MQS ↔ Interaction.
-✅ SQL/automation framework defined for data comparison and validation.
-✅ Data lineage mapping verified against design and Confluence documentation.
-✅ Exception-handling and defect triage flow established.
-✅ Sample reconciliation test executed successfully in SIT.
-✅ Reconciliation sign-off criteria approved by BICOE QA and Data Engineering.
-
-Dependencies:
-
-Source (Athena) data extract or simulated dataset.
-
-MQS payloads with valid Quote IDs (Quote Request, Rating Response, PreComp).
-
-Interaction tables in Silverish/Silver layer with corresponding Quote IDs.
-
-Confluence mapping documents for Quote ID lineage.
-
-Access to required Databricks and Azure SQL environments.
-
-Definition of Done (DoD):
-
-✔️ Reconciliation strategy document finalized and approved.
-✔️ Logical mapping of Quote ID across all layers validated.
-✔️ Sample test execution validated in SIT.
-✔️ Evidence of test strategy shared in Confluence / JIRA.
-✔️ No open blockers for subsequent reconciliation test execution tasks.
-✔️ Sign-off obtained from BICOE QA Lead and Data Engineering.
-
-Deliverables:
-
-Data Reconciliation Strategy Document (Source ↔ MQS ↔ Interaction).
-
-SQL / Automation framework outline for Quote ID comparison.
-
-Sample validation report from SIT execution.
-
-Exception log / mismatch analysis template.
+Just want to make sure I’m following the right
