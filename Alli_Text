@@ -1,73 +1,14 @@
-🟩 Task 1 – Test Design & Scripting – Motor Dimension Tables (Gold Layer / EDM)
+The sprint officially kicks off today! 🎯
+Please make sure you’re clear on what needs doing for the tasks assigned to you, including the Definition of Done (DoD). Remember — your tickets are your responsibility, so keep them in the right status at all times.
 
-Description:
-Design and prepare test cases and SQL/Python scripts to validate the structure and population of Motor-related Dimension Tables within the EDM (Gold Layer).
-Covers schema validation, mapping alignment, relationships, and business-key linkage as per the latest design document.
+Our sprint goal is to successfully complete the 4-message validation up to the silversish layer through automation. QuoteRequest and PreComp are top priority — Mike’s confirmed the mappings are all up to date, and both Nate and Mike are ring-fenced to support testing.
 
-Validation Scope:
+If you hit any issues, don’t hesitate to raise them in the team chat. If we need a quick call or defect triage, I’ll get one set up depending on what comes up.
 
-Review EDM design and mapping for all Motor dimension tables.
+Starting today, we’ll be sharing the Daily Status Report (DSR) — so please make sure you give your daily progress updates without fail. I’ll rotate who shares the summary with the wider audience each day.
 
-Define field-level validation – datatype, nullability, primary/foreign-key linkage.
+Also, if you’ve got any blockers, speak up in the daily stand-up straight away. Don’t stay quiet — it’s important to show your active contribution for project billing. There’s already a concern about the dev-to-test ratio (1:4), so let’s make sure our dependencies are managed properly.
 
-Create test scripts for data completeness and referential integrity across related facts (Quote / Core Risk / Rating Response).
+If you need any suggestions or help, just shout — we’ll figure it out together. 🤝
 
-Prepare negative tests – invalid keys, duplicate entries, or orphaned records.
-
-Upload test cases and scripts in JIRA with traceability to requirement IDs.
-
-Acceptance Criteria / Testing Requirements:
-✅ All dimension fields covered in test cases.
-✅ Scripts align with EDM mapping document.
-✅ Peer review completed & approved.
-✅ All cases uploaded to JIRA and ready for execution.
-
-Dependencies:
-
-EDM data model & mapping specs.
-
-Access to Gold Layer EDM tables in SIT.
-
-Sample test data from BICOE / Pricing QA.
-
-DoD:
-✔️ Test design reviewed and approved.
-✔️ Test cases uploaded with traceability.
-✔️ Ready for SIT execution.
-
-🟩 Task 2 – Test Execution – Motor Dimension Tables (Gold Layer / EDM)
-
-Description:
-Execute the prepared test cases and scripts to validate the Motor dimension tables in the EDM (Gold Layer).
-Focus on verifying data accuracy, referential integrity, and schema consistency across all Motor-related dimensions.
-
-Validation Scope:
-
-Execute validation scripts for Vehicle, Driver, Policy, Proposer, Cover, and Core Risk dimensions.
-
-Verify field-level accuracy vs mapping (spec datatypes, length, nullability).
-
-Check referential integrity to fact tables (Quote, Rating Response).
-
-Validate record counts and key uniqueness across dimensions.
-
-Capture evidence (query outputs / screenshots / logs).
-
-Acceptance Criteria / Testing Requirements:
-✅ All dimension tables validated without schema or linkage errors.
-✅ Counts and key relationships match design expectations.
-✅ Evidence captured and attached in JIRA.
-✅ No high/critical defects open at SIT closure.
-
-Dependencies:
-
-Completion of Test Design task.
-
-SIT environment data load completed.
-
-EDM access granted for QA execution.
-
-DoD:
-✔️ All planned tests executed with evidence.
-✔️ Defects logged and resolved/accepted.
-✔️ SIT sign-off obtained from BICOE QA Lead.
+For this sprint, Mani and I are at 50% capacity, and Jeevitha and Rahul at 70%, so the tasks have been allocated accordingly based on everyone’s leave plans. Please don’t keep tasks “in progress” till the last day — if you need any clarifications, ask early.
