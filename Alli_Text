@@ -1,14 +1,1 @@
-The sprint officially kicks off today! 🎯
-Please make sure you’re clear on what needs doing for the tasks assigned to you, including the Definition of Done (DoD). Remember — your tickets are your responsibility, so keep them in the right status at all times.
-
-Our sprint goal is to successfully complete the 4-message validation up to the silversish layer through automation. QuoteRequest and PreComp are top priority — Mike’s confirmed the mappings are all up to date, and both Nate and Mike are ring-fenced to support testing.
-
-If you hit any issues, don’t hesitate to raise them in the team chat. If we need a quick call or defect triage, I’ll get one set up depending on what comes up.
-
-Starting today, we’ll be sharing the Daily Status Report (DSR) — so please make sure you give your daily progress updates without fail. I’ll rotate who shares the summary with the wider audience each day.
-
-Also, if you’ve got any blockers, speak up in the daily stand-up straight away. Don’t stay quiet — it’s important to show your active contribution for project billing. There’s already a concern about the dev-to-test ratio (1:4), so let’s make sure our dependencies are managed properly.
-
-If you need any suggestions or help, just shout — we’ll figure it out together. 🤝
-
-For this sprint, Mani and I are at 50% capacity, and Jeevitha and Rahul at 70%, so the tasks have been allocated accordingly based on everyone’s leave plans. Please don’t keep tasks “in progress” till the last day — if you need any clarifications, ask early.
+BICOE SIT testing ensures that Vehicle Model and Area Factor ingestion pipelines work end-to-end with correct data mapping, DQ checks, access control, monitoring, and retention — without validating the business accuracy of source data.
