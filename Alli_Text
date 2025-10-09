@@ -1,1 +1,5 @@
-BICOE SIT testing ensures that Vehicle Model and Area Factor ingestion pipelines work end-to-end with correct data mapping, DQ checks, access control, monitoring, and retention — without validating the business accuracy of source data.
+Thanks, Nikki. I just spoke with Vijay — for the Athena interaction, we should be able to create a few samples tomorrow. I also have access, so if you’d like, I can create them myself as well.
+
+For the Polaris side, it looks like some configuration changes are needed to create those in the same demo environment. I’ll follow up on that tomorrow and share an update.
+
+In the meantime, Oliver and Shashi, I’ll set up a quick call tomorrow so we can go over the scenario details together.
