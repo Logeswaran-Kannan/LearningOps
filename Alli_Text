@@ -1,3 +1,3 @@
-Just to confirm my understanding — with the current Athena MQS setup, we can perform MTA/MTC for Polaris-originated quotes, and only NB quotes are possible for MQS standard ones, right?
-
-And once the switch-over happens, we’ll only be able to work with Polaris data (no MQS standard quotes), correct?
+Thanks for confirming, Vijay — that helps a lot.
+Before the switch-over, could you please create a few sample transactions for both MTA/MTC and standalone NB quotes from the current MQS setup?
+That would really help us validate a few dependencies on our side before we move fully to Polaris.
