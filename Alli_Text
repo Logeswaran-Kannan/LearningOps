@@ -1,7 +1,3 @@
-Thanks, Vijay — noted.
+Just to confirm my understanding — with the current Athena MQS setup, we can perform MTA/MTC for Polaris-originated quotes, and only NB quotes are possible for MQS standard ones, right?
 
-If possible, before switching off MQS completely, could you please perform a few MTA and NB quote transactions so that BICOE can receive some interaction events for validation?
-
-Also, once you speak with the developer, could you please confirm the expected timing of the switch-over to Polaris? It’ll help me update our development team, as they currently have dependencies on both data sources.
-
-I’m also collecting a few specific scenarios that the team needs for validation and will share those with you later today.
+And once the switch-over happens, we’ll only be able to work with Polaris data (no MQS standard quotes), correct?
