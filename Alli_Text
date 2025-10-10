@@ -1,5 +1,7 @@
-Hi Vijay / Bilal — just checking if any new data has been created today from the Athena demo environment.
+Thanks, Vijay — noted.
 
-Also, for BICOE development purposes, we’ll need some Polaris data in the demo environment’s event hub.
-Do you know if any Polaris data has been created and sent to the demo event hub recently?
-Or roughly how long it might take to make the configuration change to start feeding Polaris data into the demo event hub that BICOE is connected to?
+If possible, before switching off MQS completely, could you please perform a few MTA and NB quote transactions so that BICOE can receive some interaction events for validation?
+
+Also, once you speak with the developer, could you please confirm the expected timing of the switch-over to Polaris? It’ll help me update our development team, as they currently have dependencies on both data sources.
+
+I’m also collecting a few specific scenarios that the team needs for validation and will share those with you later today.
