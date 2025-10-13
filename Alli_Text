@@ -1,3 +1,4 @@
-Just to check — does this mean we’re now connected to the SIT event hub in the BLD catalogue, and only the data created last Friday is being loaded there? Is that right?
+That makes sense, thanks Nate.
+I believe the renewal quotes will come through later down the line, but I’ll double-check with the application team just to be sure. From a testing point of view, we’ll also keep an eye on how the renewal quote part behaves.
 
-Also, could you please share the new SIT event hub name? And just to confirm, is the data loading there now aligning with the mapping?
+Also noted on the ingestion pipeline and DLT process — good to know they’ll be running daily at 9am. 👍
