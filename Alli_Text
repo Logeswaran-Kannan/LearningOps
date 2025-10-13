@@ -1,4 +1,5 @@
-That makes sense, thanks Nate.
-I believe the renewal quotes will come through later down the line, but I’ll double-check with the application team just to be sure. From a testing point of view, we’ll also keep an eye on how the renewal quote part behaves.
+That makes sense — I believe the renewal quotes will come through later down the line, but I’ll double-check with the application team to confirm. From a testing perspective, we’ll keep an eye on how the renewal quote side behaves.
 
-Also noted on the ingestion pipeline and DLT process — good to know they’ll be running daily at 9am. 👍
+The team also noted a couple of column-mapping issues, so we’ll recheck those after this post-load.
+
+And noted on the ingestion pipeline and DLT process — good to know they’ll be running daily at 9am. 👍
