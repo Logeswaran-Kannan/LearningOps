@@ -1,3 +1,3 @@
-Thanks for confirming, Vijay — that helps a lot.
-Before the switch-over, could you please create a few sample transactions for both MTA/MTC and standalone NB quotes from the current MQS setup?
-That would really help us validate a few dependencies on our side before we move fully to Polaris.
+Just to check — does this mean we’re now connected to the SIT event hub in the BLD catalogue, and only the data created last Friday is being loaded there? Is that right?
+
+Also, could you please share the new SIT event hub name? And just to confirm, is the data loading there now aligning with the mapping?
