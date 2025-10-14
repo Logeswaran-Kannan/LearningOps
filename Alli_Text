@@ -1,8 +1,1 @@
-Subject: Meeting to Discuss CDA Data Load Status and Testing Timeline
-
-Hi [Name],
-
-Hope you’re doing well.
-Could we set up a short call with the development team to review the CDA data load status, confirm the system testing start date, and discuss any current blockers, next steps, or dependencies that might impact the testing timeline?
-
-Please let me know your availability so we can schedule a convenient time.
+Hi Simon, just checking — is this the job that handles the Databricks connector bit for downloading data from CDA? Or could you let me know which job actually does that part?"
