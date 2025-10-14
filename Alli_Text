@@ -1,7 +1,1 @@
-Hey, just to give a bit of background on the request — on the BICOE side, we’re doing some component-level unit testing for four message types (Precomp, Quote Request, Cache, and Stop).
-
-We believe some sample messages have already been created or fed into the SIT event hub — possibly using the SOAP UI method — which are then being sent over to BICOE.
-
-I think what Jamie’s saying is that it’s not a quick one to set up; it might take a bit of effort to get them in.
-
-Just checking if there’s a chance we could create the requested scenarios using that same method, and roughly what the timeline might look like. Otherwise, are there any other ways we could get these scenarios scheduled into our system until the full E2E integration platform is ready?
+Any update on the Polaris config changes in the demo env and when we might get the test data set up?
