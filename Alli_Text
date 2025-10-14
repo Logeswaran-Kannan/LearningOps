@@ -1,1 +1,3 @@
-Any update on the Polaris config changes in the demo env and when we might get the test data set up?
+At the moment, we’re not seeing any data coming through for this scenario — the three related tables are completely empty. We’ve marked this as a blocker for the current script, but if it’s not possible to create the data this week or next, we’ll plan to pick it up in the next script.
+
+For Scenario 3, we’re expecting some data to appear under the proposer section in the quote request for other insurance.
