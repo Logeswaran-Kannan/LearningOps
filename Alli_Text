@@ -1,1 +1,3 @@
-Hey Nate, we were just chatting about the catalog that the SIT demo’s connected to — is it core_bld or core_rl_test? Which one’s got the more meaningful data? At the moment, the testing team’s using core_bld.
+The current MQS precomp data isn’t real test data; it’s just what the E2E team built using the SOAP UI method for component testing.
+
+Since SIT isn’t ready, they’re using this workaround for now, but it’s pretty time-consuming. They’ll start creating Polaris data tomorrow, and once that’s done, I’ll ask them to generate proper test data.
