@@ -1,5 +1,5 @@
-For the multiple driver and vehicle scenario — yes, it’s included in the MQS test data setup. When they create the data, it will include multiple driver and vehicle combinations. Once the order of the drivers comes through, we’ll review and confirm back.
+Hey, just to add — we’ve already captured the scenarios for later test data creation. The current MQS precomp data isn’t real test data; it’s just what the E2E team built using the SOAP UI method for component testing.
 
-Regarding the driver PRN part, I think this needs a discussion with Nikki, Paul L, and Mike. From what I’ve read in the document, the PRN format is expected to differ between Radar GUID and Interaction Polaris, so they’re not meant to align.
+Since SIT isn’t ready, they’re using this workaround for now, but it’s pretty time-consuming. They’ll start creating Polaris data tomorrow, and once that’s done, I’ll ask them to generate proper test data.
 
-However, if the expectation is for them to match, then it’ll likely require some changes — something we’ll need to discuss further.
+The main challenge right now is the manual, slow data setup until SIT is up.
