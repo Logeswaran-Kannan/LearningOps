@@ -1,3 +1,3 @@
-At the moment, we’re not seeing any data coming through for this scenario — the three related tables are completely empty. We’ve marked this as a blocker for the current script, but if it’s not possible to create the data this week or next, we’ll plan to pick it up in the next script.
+the metastore-level quota
 
-For Scenario 3, we’re expecting some data to appear under the proposer section in the quote request for other insurance.
+just checking if there’s been any update from Databricks regarding the technical limitation on the resource limit in the test environment. We’re currently blocked from loading data — Simon and Joe are waiting to proceed once that’s lifted.
