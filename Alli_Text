@@ -1,9 +1,11 @@
-We had a discussion with the E2E team, including Richard, around the BICOE validation perspective at the system test level.
+We had a discussion with the E2E team — including Richard — to clarify the BICOE validation perspective at the system test level.
 
-1️⃣ Data Volume for Testing:
-As agreed, the Athena team will handle the data volume required for testing.
+1️⃣ It’s been agreed that Athena will cover the data volume for testing.
 
-2️⃣ Pricing Testing:
-For the offline and online comparison, it’s been agreed that Adrian Veal and Richard’s team will coordinate the reconciliation process. From the BICOE side, our role has been clarified — we’ll make sure the E2E test data is stored and available for Richard’s testing. Beyond that, our support will mainly be around data availability, as discussed with Nikki last week and aligned with our PI31 planning.
+2️⃣ For pricing testing (UAT), Richard confirmed he’ll handle validation from a UAT perspective. For online vs offline comparisons, it’s been agreed that Adrian Veal and Richard’s team will coordinate the reconciliation process.
 
-Everyone’s aware of this and it’s been captured in the email. It was also agreed that weekly progress will involve coordination with Richard, though he hasn’t started any testing yet.
+From the BICOE side, our role has been clarified — we’ll ensure the E2E test data is stored and available for Richard’s testing. Beyond that, we’ll only support with data availability and any technical issues related to the view tables.
+
+This aligns with the discussion I had with Nikki last week and is in line with our PI31 planning. Everyone’s aware, and it’s been captured in the follow-up email.
+
+It’s also been agreed that progress will be tracked in the weekly syncs with Richard, though he hasn’t started testing yet.
