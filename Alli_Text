@@ -1,1 +1,9 @@
-Thanks, Daniel — appreciate that. I’ve received two invites: one for the regular triage that happens every Tuesday, and another for the RL defect triage, which looks like it’s just for tomorrow.
+We had a discussion with the E2E team, including Richard, around the BICOE validation perspective at the system test level.
+
+1️⃣ Data Volume for Testing:
+As agreed, the Athena team will handle the data volume required for testing.
+
+2️⃣ Pricing Testing:
+For the offline and online comparison, it’s been agreed that Adrian Veal and Richard’s team will coordinate the reconciliation process. From the BICOE side, our role has been clarified — we’ll make sure the E2E test data is stored and available for Richard’s testing. Beyond that, our support will mainly be around data availability, as discussed with Nikki last week and aligned with our PI31 planning.
+
+Everyone’s aware of this and it’s been captured in the email. It was also agreed that weekly progress will involve coordination with Richard, though he hasn’t started any testing yet.
