@@ -1,2 +1,3 @@
-Looks like this one’s more of a source data issue — the element itself is missing in the payload we’re receiving. This will need to go to the Mule team.
-Mike, could you please check with the Mule team / Ashutosh on this?
+This looks more like a source data issue. I remember seeing something documented about the PRN format — MQS seems to expect it in GUID format, whereas in Polaris it’s set as indexes (0,1,2).
+
+It’s also a question on the COS side — Oliver’s looking for the same clarification on how to link the data when the PRN formats differ. So, it feels more like a design-related point rather than a defect.
