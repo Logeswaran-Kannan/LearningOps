@@ -1,13 +1,2 @@
-1️⃣ This one’s completed and unit tested in the dev environment. We’re planning to deploy it to test and production this week, starting with Billing Centre. During the smoke test, we noticed a few tables missing in the download, though the data does appear in the read replica. Simon’s already raised this with Guidewire to understand the behaviour — it looks like it could be environment-related.
-
-2️⃣ This has been completed and unit tested in development for the static data.
-
-3️⃣ Same here — completed and unit tested in development for static data. However, we found an issue related to memory limits when loading all tables (clones and SCD) under the same catalogue in Databricks. As a workaround, in dev we’ve split the load across different catalogues based on Paul’s suggestion, and in test, Databricks has now increased the resource limit.
-
-4️⃣ This piece has been done in the development environment — Mani will confirm.
-
-5️⃣ The non-functional testing for new table additions, deletions, and column changes will be taken up later with TCS once the test environment is ready.
-
-6️⃣ For this one, we’ll need a separate environment (similar to STD009) to check the retrofitting impact.
-
-7️⃣ The team decided to do the performance check directly in production, as it’s the most reliable place to measure download speed — so this task has been skipped for now.
+Looks like this one’s more of a source data issue — the element itself is missing in the payload we’re receiving. This will need to go to the Mule team.
+Mike, could you please check with the Mule team / Ashutosh on this?
