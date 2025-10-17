@@ -1,2 +1,28 @@
-Hey Oliver / Nate, could you please check if any data was received yesterday on the interaction eventhub?
-It looks like the team created the data as per the logs they shared, but if you still don’t see anything coming through from the eventhub, we’ll loop in Rafe to check on it.
+from pyspark.sql.functions import col, from_utc_timestamp, current_timestamp, expr
+from pyspark.sql.types import StringType
+
+# Replace with your actual Event Hub connection string
+connection_string = "Endpoint=sb://<your-namespace>.servicebus.windows.net/;SharedAccessKeyName=<your-policy>;SharedAccessKey=<your-key>;EntityPath=<your-eventhub-name>"
+
+ehConf = {
+  'eventhubs.connectionString' : connection_string,
+  'eventhubs.consumerGroup' : '$Default',
+  'eventhubs.startingPosition' : "@earliest"  # read from beginning to include all
+}
+
+# Read from Event Hub
+df = spark.read.format("eventhubs").options(**ehConf).load()
+
+# Convert binary body to string
+messages = df.withColumn("body", col("body").cast(StringType()))
+
+# Convert Event Hub's enqueuedTime (UTC) to readable timestamp
+messages = messages.withColumn("eventTime", from_utc_timestamp(col("enqueuedTime"), "UTC"))
+
+# Filter messages from the last 2 days
+filtered_df = messages.filter(col("eventTime") >= expr("current_timestamp() - INTERVAL 2 DAYS"))
+
+# Count messages
+message_count = filtered_df.count()
+
+print(f"📦 Messages received in the last 2 days: {message_count}")
