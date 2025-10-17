@@ -1,3 +1,8 @@
 Hey, just a heads-up — I’m updating a few Jira backlog tasks to adjust sprint details and some other fields so they align with the corresponding development user stories for each sprint.
 
 You might get a few Jira email alerts during this, so please ignore them for now. Once I’m done, I’ll catch up with you to go over the updates.
+
+
+Hey, any update on when the MQS real service validation will be wrapped up and data starts coming through the demo?
+
+Also, just checking if there are any plans to create some test data in the Event Hub (either standalone Polaris or MQS). Right now, we’re not sure if the issue’s with the Event Hub not getting the messages or something dropping in our ingestion flow.
