@@ -1,1 +1,1 @@
-This is about the interaction data not being received on the BICOE side. The Athena team (Vijay and Tomar) confirmed that the demo service sending interaction data to the mentioned Event Hub is running into a password expiry issue. Kaye and Sean from the Sapiens side have also confirmed this and shared a screenshot.
+Looping in Vijay and Tomar for more details on the Event Hub side.
