@@ -1,2 +1,1 @@
-I was told that the Athena demo tried sending a message to this Event Hub but hit a password expired error. Do you know if this Event Hub is owned by our team?
-Anyway, Kaye and Sean from the Sapiens side are following up on the password expiry issue. This happened on 10/10 — around the same time we noticed that no messages were coming through on the Event Hub.
+This is about the interaction data not being received on the BICOE side. The Athena team (Vijay and Tomar) confirmed that the demo service sending interaction data to the mentioned Event Hub is running into a password expiry issue. Kaye and Sean from the Sapiens side have also confirmed this and shared a screenshot.
