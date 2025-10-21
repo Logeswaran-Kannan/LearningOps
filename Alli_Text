@@ -1,1 +1,126 @@
-Sure, Hazel — yeah, I’m getting the same feeling too. I’ll put together another spread-out plan as well. We’ll also need to discuss the dev team’s availability during this period to support the dimension validation. Let’s go over it in detail on Wednesday’s call.
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit, when, concat_ws
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, LongType
+from datetime import datetime, timedelta
+import uuid
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("CountCheckValidation").getOrCreate()
+
+# Constants
+CATALOG_NAME = "core_tst_std001"
+SECOND_CATALOG = "core_tst"
+EXCLUSION_LIST_PATH = "/mnt/data/exclusion_list_std001_test.csv"
+OUTPUT_TABLE = "core_tst_std001.audit_table_count_check"
+
+# Load exclusion list CSV
+exclusion_df = spark.read.option("header", True).csv(EXCLUSION_LIST_PATH)
+filtered_tables_df = exclusion_df.filter(col("excludeindicator") == 'Y')
+
+table_list = [row["tablename"] for row in filtered_tables_df.collect()]
+
+# Databases to compare
+dbs = ["ods_stg_copy", "ods", "ods_views"]
+prefix_mapping = {
+    "policycenter_std001_": "vw_policycenter_std001_current_",
+    "billingcenter_std001_": "vw_billingcenter_std001_current_",
+    "claimcenter_std001_": "vw_claimcenter_std001_current_"
+}
+
+# Second catalog prefix mapping for core_tst.ods_views
+target_prefix_mapping = {
+    "policycenter_std001_": "vw_policycenter_current_",
+    "billingcenter_std001_": "vw_billingcenter_current_",
+    "claimcenter_std001_": "vw_claimcenter_current_"
+}
+
+# Generate unique run_id for this batch
+now = datetime.now()
+run_id_value = uuid.uuid4().int >> 96
+
+# Helper function to apply prefix mapping for ods_views tables
+def get_view_table_name(base_name):
+    for prefix, view_prefix in prefix_mapping.items():
+        if base_name.startswith(prefix):
+            return base_name.replace(prefix, view_prefix)
+    return base_name
+
+# Helper function to apply prefix mapping for second catalog view tables
+def get_target_view_table_name(base_name):
+    for prefix, view_prefix in target_prefix_mapping.items():
+        if base_name.startswith(prefix):
+            suffix = base_name.replace(prefix, "")
+            return f"{view_prefix}{suffix}_cda"
+    return base_name
+
+# Collect total counts (no date filtering)
+results = []
+for table in table_list:
+    table_counts = {}
+    for db in dbs:
+        tbl_name = get_view_table_name(table) if db == "ods_views" else table
+        full_table_name = f"{CATALOG_NAME}.{db}.{tbl_name}"
+        try:
+            df = spark.read.table(full_table_name)
+            count = df.count()
+            table_counts[db] = count
+        except Exception:
+            table_counts[db] = None
+
+    # Get count from second catalog (core_tst.ods_views)
+    target_table_name = get_target_view_table_name(table)
+    full_target_table_name = f"{SECOND_CATALOG}.ods_views.{target_table_name}"
+    try:
+        df_target = spark.read.table(full_target_table_name)
+        target_count = df_target.count()
+    except Exception:
+        target_count = None
+
+    results.append((run_id_value, table, table_counts.get("ods_stg_copy"),
+                    table_counts.get("ods"), table_counts.get("ods_views"), target_count, now))
+
+# Define schema explicitly
+schema = StructType([
+    StructField("run_id", LongType(), False),
+    StructField("table_name", StringType(), False),
+    StructField("ods_stg_copy_count", IntegerType(), True),
+    StructField("ods_count", IntegerType(), True),
+    StructField("ods_views_count", IntegerType(), True),
+    StructField("core_tst_ods_views_count", IntegerType(), True),
+    StructField("timestamp", TimestampType(), False)
+])
+
+# Create final result DataFrame
+df = spark.createDataFrame(results, schema=schema)
+
+# Add comment column based on rules
+df = df.withColumn("comment", concat_ws(" | ",
+    when((col("ods_stg_copy_count") == 0) & (col("ods_count") == 0) & (col("ods_views_count") == 0) & (col("core_tst_ods_views_count") == 0), "no data loaded").otherwise(None),
+    when(col("ods_stg_copy_count").isNull() & col("ods_count").isNull() & col("ods_views_count").isNull() & col("core_tst_ods_views_count").isNull(), "table not created").otherwise(None),
+    when((col("ods_stg_copy_count") > 0) & ((col("ods_count") == 0) | (col("ods_views_count") == 0) | (col("core_tst_ods_views_count") == 0)), "data load issue").otherwise(None),
+    when(((col("ods_count") > 0) | (col("ods_views_count") > 0) | (col("core_tst_ods_views_count") > 0)) & (col("ods_stg_copy_count").isNull() | (col("ods_stg_copy_count") == 0)), "stage copy load issue").otherwise(None),
+    when((col("ods_stg_copy_count") > 0) & (col("ods_count") > 0) & (col("ods_views_count") > 0) & (col("core_tst_ods_views_count") > 0), "data loaded").otherwise(None),
+    when(col("ods_stg_copy_count").isNull() & (col("ods_count") == 0) & (col("ods_views_count") == 0) & (col("core_tst_ods_views_count") == 0), "data not loaded").otherwise(None)
+))
+
+# Create output table if it does not exist
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (
+        run_id BIGINT,
+        table_name STRING,
+        ods_stg_copy_count INT,
+        ods_count INT,
+        ods_views_count INT,
+        core_tst_ods_views_count INT,
+        timestamp TIMESTAMP,
+        comment STRING
+    )
+    USING DELTA
+""")
+
+# Cleanup records older than 7 days from output table
+seven_days_ago = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+spark.sql(f"DELETE FROM {OUTPUT_TABLE} WHERE timestamp < DATE('{seven_days_ago}')")
+
+# Write new results to output table
+df.write.mode("append").saveAsTable(OUTPUT_TABLE)
