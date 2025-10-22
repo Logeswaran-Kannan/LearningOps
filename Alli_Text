@@ -1,3 +1,3 @@
-I’ve raised a defect to help control this in the SIT environment — it hasn’t been prioritised yet. I also found out that the Athena offshore team is running some tests in SIT, so I’ll follow up with them to get this under control.
+I’ve forwarded you the E2E defect triage invite. Dan and Adrian Veal are keen to establish a centralized defect triage process to get better visibility of the overall impact across each E2E test team and help with prioritization.
 
-I’ve looped you, Smark, and Mike into the defect triage meeting, and I’ll tag any BICOE-impacted defects during the triage call.
+For BICOE, we’ll be grouping the upstream defects that impact different areas like COS, MQS, and LRT, and sharing a daily defect list with them for prioritization. I’ll include these two as part of that list as well.
