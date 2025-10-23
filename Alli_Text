@@ -1,3 +1,1 @@
-I’ve forwarded you the E2E defect triage invite. Dan and Adrian Veal are keen to establish a centralized defect triage process to get better visibility of the overall impact across each E2E test team and help with prioritization.
-
-For BICOE, we’ll be grouping the upstream defects that impact different areas like COS, MQS, and LRT, and sharing a daily defect list with them for prioritization. I’ll include these two as part of that list as well.
+Collaboration between development (Nate, Mike, Oliver, Rob), design (Glen), and the testing team has really improved this cycle. We’ve formalized our test execution and defect creation process, and built a much stronger feedback loop for fixes. The increased collaboration and better understanding between dev and test have definitely helped us move faster, resolve issues more efficiently, and keep overall progress on track.
