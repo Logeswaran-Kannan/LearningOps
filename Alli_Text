@@ -1,3 +1,1 @@
-Hi Dan, I’m good, thanks — hope you’re doing well too.
-
-From the BICOE side, we’re handling component-level testing for PRECOM and Quote Request ingestion. A few defects have been flagged with the integration team. We’re currently waiting on integrated test data to start formal test execution — at the moment, we’re only getting NB flow data, which doesn’t fully meet our entry criteria.
+Targeting completion in December — RAG stays Red for now due to dependencies on integrated test data and potential issues there.
