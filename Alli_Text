@@ -2,3 +2,9 @@ Collaboration between development (Nate, Mike, Oliver, Rob), design (Glen), and 
 
 
 The architecture-level discussion with Nikki and Nitta really helped clarify the MVP scope and gave us a better understanding of the level of testing needed for each area. Nikki’s input during the test strategy review was especially helpful — it gave good visibility on how our testing aligns with the overall project delivery goals.
+
+
+Hazel and Simon have been really supportive in addressing blockers and escalating issues quickly to the right teams, which helped us get faster resolutions. The work for each sprint is becoming more structured and formalized, giving better visibility on deliverables. It’s also made it easier to link and understand dependencies between tasks — overall, it’s been really helpful for team collaboration.
+
+
+The upstream issue reporting process needs to be streamlined with the E2E team, and test data dependencies are affecting some of our test coverage. I think these dependencies are impacting everyone in the team, so I’m working with the E2E team to set up a testing workshop to get a proper process in place.
