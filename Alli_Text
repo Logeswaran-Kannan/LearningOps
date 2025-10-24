@@ -1,35 +1,46 @@
-Subject: BICOE – Defects Identified in SIT Environment Data
+🟠 Data Received but Not in Expected Format (Detailed Summary)
 
-Hi [Name/Team],
+Quote Request – Cover Expiry Date Missing
+During validation, we observed that the Cover Expiry Date field is not being populated in the sample quote request messages.
 
-Please find below the list of defects raised from the BICOE side regarding the data received from the SIT environment for the following message types: Quote Request, PRECOM Response, Cache ID, Stop, and Rating Request.
+Expected Behavior: The field should be populated based on the quote effective date and policy duration.
 
-Currently, the smoke test is in progress. Based on the initial results, we’ve identified that several key datasets are missing, which is preventing us from continuing with the build and unit testing.
+Current Behavior: The field is blank in all received samples from SIT.
 
-At the moment, we are only receiving NB and MTAQ transactions.
+Remarks: As per the MuleSoft team, this requires a fix from the Athena team, since the data transformation logic resides there.
 
-🔴 Data Not Received
+NBQ Message – Unexpected Cache ID Population
+For New Business Quote (NBQ) transactions, a Cache ID is appearing in the payload even though it should not be generated for NBQ messages.
 
-Quote Request – Missing data in the tables capturing Other Insurance details for Proposer/Policy Holder and Vehicle Modifications.
+Expected Behavior: Cache ID should only be generated for subsequent transactions (e.g., MTAQ, REQ) and not for NBQ.
 
-PRECOM – Error details are not appearing in the respective payloads in SIT.
+Current Behavior: SIT payloads show Cache ID populated inconsistently across NBQ samples.
 
-Rating Request – MyLicence data is missing in the payload in SIT.
+Impact: Causes confusion in data mapping and misalignment during validation of caching logic.
 
-🟠 Data Received but Not in Expected Format
+Correlation ID – Incorrect Test Data Used
+The Correlation ID in the SIT payloads is being populated with dummy test data values rather than a meaningful, traceable identifier.
 
-Quote Request – Cover Expiry Date not populated in sample messages. Mule team confirmed this needs to be fixed by Athena.
+Expected Behavior: Correlation ID should uniquely identify each end-to-end message flow and remain consistent across all related systems.
 
-NBQ Cache ID – Cache ID is appearing in NBQ samples, though it’s not expected for this transaction type.
+Current Behavior: Placeholder test data values are being used, breaking traceability across systems.
 
-Correlation ID – Populated with test data instead of a valid correlation value, impacting our data loads.
+Impact: Impacts downstream data loads and traceability during integration validation.
 
-Rating Response Type – Field incorrectly placed (lowercase/single entry issue under investigation).
+Rating Response – Response Type Field Incorrectly Placed
+The Response Type field is not mapped correctly in the Rating Response payload.
 
-Rating Response – ‘Radar’ Fields – Additional fields missing as per mapping documentation; White, Paul is looking into this.
+Expected Behavior: The field should appear at the defined hierarchy level and follow the correct casing and structure as per the integration specification.
 
-Please review and let us know if any further details are needed to assist with analysis and resolution.
+Current Behavior: The field is observed in lowercase and/or at an incorrect level in the payload hierarchy.
 
-Thanks & Regards,
-[Your Name]
-BICOE Testing Team
+Status: Under investigation by the development and integration teams to verify the mapping logic and casing issue.
+
+Rating Response – Missing Radar Fields
+The Rating Response message is missing several Radar fields that are defined in the updated mapping documentation.
+
+Expected Behavior: All specified Radar fields should be included in the response payload for completeness of validation.
+
+Current Behavior: The current SIT payloads do not contain these fields.
+
+Status: White and Paul are reviewing the mapping document and working to align the payload with the latest specification.
