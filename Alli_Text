@@ -1,3 +1,35 @@
-As part of BICOE component-level testing, we observed that for the Quote Request message, the cover expiry date is coming through as null for most of the records. This has been logged and is being investigated under the defect link provided below.
+Subject: BICOE – Defects Identified in SIT Environment Data
 
-As part of the centralized defect triage process, we’ve also created an RL defect to track this issue, which has been assigned to the Athena team.
+Hi [Name/Team],
+
+Please find below the list of defects raised from the BICOE side regarding the data received from the SIT environment for the following message types: Quote Request, PRECOM Response, Cache ID, Stop, and Rating Request.
+
+Currently, the smoke test is in progress. Based on the initial results, we’ve identified that several key datasets are missing, which is preventing us from continuing with the build and unit testing.
+
+At the moment, we are only receiving NB and MTAQ transactions.
+
+🔴 Data Not Received
+
+Quote Request – Missing data in the tables capturing Other Insurance details for Proposer/Policy Holder and Vehicle Modifications.
+
+PRECOM – Error details are not appearing in the respective payloads in SIT.
+
+Rating Request – MyLicence data is missing in the payload in SIT.
+
+🟠 Data Received but Not in Expected Format
+
+Quote Request – Cover Expiry Date not populated in sample messages. Mule team confirmed this needs to be fixed by Athena.
+
+NBQ Cache ID – Cache ID is appearing in NBQ samples, though it’s not expected for this transaction type.
+
+Correlation ID – Populated with test data instead of a valid correlation value, impacting our data loads.
+
+Rating Response Type – Field incorrectly placed (lowercase/single entry issue under investigation).
+
+Rating Response – ‘Radar’ Fields – Additional fields missing as per mapping documentation; White, Paul is looking into this.
+
+Please review and let us know if any further details are needed to assist with analysis and resolution.
+
+Thanks & Regards,
+[Your Name]
+BICOE Testing Team
