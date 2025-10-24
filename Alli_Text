@@ -1,1 +1,3 @@
-In the load definition, the databases are listed with the “-a” suffix, which likely indicates they are in a passive state before the load begins. The Azure pipeline appears to update this file during execution, and the updated version is then used by the Databricks pipeline to load data into the respective containers.
+As part of BICOE component-level testing, we observed that for the Quote Request message, the cover expiry date is coming through as null for most of the records. This has been logged and is being investigated under the defect link provided below.
+
+As part of the centralized defect triage process, we’ve also created an RL defect to track this issue, which has been assigned to the Athena team.
