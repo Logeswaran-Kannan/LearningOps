@@ -1,1 +1,5 @@
-This one’s for adding Rahul to the Data Engineering Group, and another request to add myself to the LRTF Tester PV group, where the Pricing test team is already a member. Both requests are with Phili to move forward — I’ll ask Phili to provide the approval.
+There’s a planned downtime for the MQS service/adaptor on the storage account and the underlying quote cache container from this afternoon until the end of Monday.
+
+During this period, we shouldn’t expect any data flowing into our Event Hub through the MQS adaptor. Jamie is checking with the Radar team to see if we can still connect to the Radar model directly (bypassing MQS/adaptor), but I believe that may not be possible either.
+
+For now, this is considered a low-risk impact for testing — we won’t get any new incremental data, but we can continue validation using the existing data in the system. If the downtime extends beyond Monday, the risk level will move from low to medium. I’ll follow up and share an update accordingly.
