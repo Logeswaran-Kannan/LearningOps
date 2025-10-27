@@ -1,3 +1,5 @@
-This defect relates to a mismatch observed between the requirements documented on the Confluence page and the actual data received in the vehicle model/factor files used for testing.
+This defect relates to an observation of a mismatch between the requirements documented on the Confluence page and the actual data received in the vehicle model/factor files used for testing.
 
-From the BICOE perspective, this is an additional observation identified during system integration testing. However, the fix and data ownership sit with the Pricing team. As discussed with Adrian Veal, this will be managed by Sachin Khare’s team going forward.
+From the BICOE perspective, this was an additional observation made during system integration testing. However, the fix and data ownership rest with the Pricing team. As discussed with Adrian Veal, this will be handled by Sachin Khare’s team going forward.
+
+We’ve made them aware of the issue, and based on that, we’ll close this item from the BICOE side. If further tracking is required, a separate defect will be raised on the RL board.
