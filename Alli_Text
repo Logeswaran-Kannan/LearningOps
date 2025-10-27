@@ -1,3 +1,3 @@
-The downtime has now been completed. Jamie has tested data creation and confirmed that he’s able to see the data. I can also see that the MQS messages are being received in the Event Hub through the Azure portal.
+This defect relates to a mismatch observed between the requirements documented on the Confluence page and the actual data received in the vehicle model/factor files used for testing.
 
-I don’t have visibility of the Interaction Event Hub in the portal, so I’m hoping messages are coming through on that side as well. If not, please let me know and I’ll check with the team.
+From the BICOE perspective, this is an additional observation identified during system integration testing. However, the fix and data ownership sit with the Pricing team. As discussed with Adrian Veal, this will be managed by Sachin Khare’s team going forward.
