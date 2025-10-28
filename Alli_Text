@@ -1,5 +1,11 @@
-This issue seems to be happening during the streaming ingestion process on the MQS side — specifically in the landing table (ehubstream).
+Yeah, it’s not directly used — but the two DV tables, PreComp Response and Vehicle PreComp Response, are populated from this table.
+So, when messages are filtered out in the ehubstream table, the relevant vehicle information doesn’t get populated in those downstream tables either.
 
-Below is an example of what the valid data should look like. However, what we’re currently receiving appears to be sample or dummy data, which seems to come from manual data feeding through the SOAP UI method.
+From what I understand, for the CoS view, we take basic policy data from the Interaction table and the related vehicle/proposal data from the MQS PreComp table.
+In cases where policies are created via SOAP UI, there’s a high chance that while the Interaction message may have the basic policy info, the corresponding vehicle and proposal data in the MQS PreComp table might be missing if the correlation ID isn’t in the expected format.
 
-Because of that, we’re losing message correlation, which is impacting both the Quote Request and PreComp messages — and we believe this could also have an effect on the Continuity of Service (CoS) side.
+Right now, for the SOAP UI-created samples, I’m seeing that the correlation ID isn’t coming through correctly, and the Interaction message isn’t getting populated either.
+That’s why, in the current dataset, everything lines up fine — because it’s all application-driven data, so both Interaction and MQS messages are properly linked.
+
+However, the front-end team mentioned that SOAP UI creation is also part of the production flow, so we’ll need to identify a way to detect and flag SOAP UI-generated samples on both the Interaction and MQS sides.
+That’s my understanding of the situation.
