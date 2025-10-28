@@ -1,1 +1,5 @@
-As agreed during the testing workshop, all source-level data issues will now be raised in the RL board as part of the centralized defect triage process. This particular defect is being tracked under RL-1192.
+This issue seems to be happening during the streaming ingestion process on the MQS side — specifically in the landing table (ehubstream).
+
+Below is an example of what the valid data should look like. However, what we’re currently receiving appears to be sample or dummy data, which seems to come from manual data feeding through the SOAP UI method.
+
+Because of that, we’re losing message correlation, which is impacting both the Quote Request and PreComp messages — and we believe this could also have an effect on the Continuity of Service (CoS) side.
