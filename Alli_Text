@@ -1,4 +1,25 @@
-PRECOM Response – Missing Error Details
-It’s been agreed that Adrian and Jamie will share the SVC error detail messages needed for BICOE testing.
+Subject: Help Needed: Missing Data in SIT (Other Insurance & Vehicle Modification) – BICOE
 
-We currently have dependencies related to the Correlation ID changes. Adrian’s team has agreed to provide the filter format so that BICOE can identify SOAP UI–created messages on our side. However, for this specific Error SVC validation, we’ll need to avoid applying the test format for the External ID to ensure accurate component-level validation.
+Hi Alison & Team,
+
+We’re seeing missing data in SIT for the following areas and wanted your help to understand what’s happening:
+
+Other Insurance details (Proposer/Policy Holder)
+
+Vehicle Modification details
+
+We’ve already shared the element-level details with the relevant teams for analysis, as requested. From the BICOE side, these fields aren’t populating in the payload/tables we validate against, which is blocking some of our checks.
+
+Could you please:
+
+Confirm the source mapping and expected population logic for these elements.
+
+Let us know if there are any environment configs/filters (e.g., data rules, feature flags, or conditional mappings) that could be suppressing these fields in SIT.
+
+Share a sample payload (or table extracts) where these fields are expected to appear.
+
+Provide an owner and ETA for a fix/workaround, or let us know if you need anything else from BICOE.
+
+Happy to jump on a quick call if that’s easier—just suggest a time.
+
+Thanks a lot for the support!
