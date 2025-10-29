@@ -1,19 +1,4 @@
-Subject: Test Data Request – Continuous Service Testing (Polaris & MQS Scenarios)
+PRECOM Response – Missing Error Details
+It’s been agreed that Adrian and Jamie will share the SVC error detail messages needed for BICOE testing.
 
-Hi Team,
-
-As discussed earlier, we’ll need some test data created for the Continuous Service testing to support BICOE activities, specifically around the Polaris and MQS combinations.
-
-Can you please help set up data for the following flows:
-
-Polaris standalone
-
-MQS standalone
-
-Polaris + MQS combination
-
-It would be great if the samples could include multi-driver and multi-vehicle combinations from different aggregators, just to give us a good variety for testing.
-
-@Shashi – could you please review the scenarios shared earlier (as per Oliver’s request) and confirm if we need to add or tweak anything before the Athena team proceeds? If there are any updates, please highlight them here for the Athena team.
-
-Thanks everyone for helping to move this forward — this will really help us continue our validation from the BICOE side.
+We currently have dependencies related to the Correlation ID changes. Adrian’s team has agreed to provide the filter format so that BICOE can identify SOAP UI–created messages on our side. However, for this specific Error SVC validation, we’ll need to avoid applying the test format for the External ID to ensure accurate component-level validation.
