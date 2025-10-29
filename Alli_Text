@@ -1,11 +1,19 @@
-Yeah, it’s not directly used — but the two DV tables, PreComp Response and Vehicle PreComp Response, are populated from this table.
-So, when messages are filtered out in the ehubstream table, the relevant vehicle information doesn’t get populated in those downstream tables either.
+Subject: Test Data Request – Continuous Service Testing (Polaris & MQS Scenarios)
 
-From what I understand, for the CoS view, we take basic policy data from the Interaction table and the related vehicle/proposal data from the MQS PreComp table.
-In cases where policies are created via SOAP UI, there’s a high chance that while the Interaction message may have the basic policy info, the corresponding vehicle and proposal data in the MQS PreComp table might be missing if the correlation ID isn’t in the expected format.
+Hi Team,
 
-Right now, for the SOAP UI-created samples, I’m seeing that the correlation ID isn’t coming through correctly, and the Interaction message isn’t getting populated either.
-That’s why, in the current dataset, everything lines up fine — because it’s all application-driven data, so both Interaction and MQS messages are properly linked.
+As discussed earlier, we’ll need some test data created for the Continuous Service testing to support BICOE activities, specifically around the Polaris and MQS combinations.
 
-However, the front-end team mentioned that SOAP UI creation is also part of the production flow, so we’ll need to identify a way to detect and flag SOAP UI-generated samples on both the Interaction and MQS sides.
-That’s my understanding of the situation.
+Can you please help set up data for the following flows:
+
+Polaris standalone
+
+MQS standalone
+
+Polaris + MQS combination
+
+It would be great if the samples could include multi-driver and multi-vehicle combinations from different aggregators, just to give us a good variety for testing.
+
+@Shashi – could you please review the scenarios shared earlier (as per Oliver’s request) and confirm if we need to add or tweak anything before the Athena team proceeds? If there are any updates, please highlight them here for the Athena team.
+
+Thanks everyone for helping to move this forward — this will really help us continue our validation from the BICOE side.
