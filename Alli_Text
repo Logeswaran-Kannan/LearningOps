@@ -54,3 +54,8 @@ This information will help us confirm whether the issue lies in the front-end ca
 Please let us know if you’d like a short sync-up to walk through the examples we’re seeing on the BICOE side.
 
 Thanks for your help and support!
+
+-----------------------------
+
+At the moment, these fields are coming through as blank or missing entirely in the SIT payloads.
+We’re not fully sure under which front-end scenario category these elements are expected to populate — if your team could provide some insight on that, it would be really helpful for us to validate the correct data flow.
