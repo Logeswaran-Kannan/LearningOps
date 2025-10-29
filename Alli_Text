@@ -23,3 +23,34 @@ Provide an owner and ETA for a fix/workaround, or let us know if you need anythi
 Happy to jump on a quick call if that’s easier—just suggest a time.
 
 Thanks a lot for the support!
+
+--------------------------------------------------------------------------
+
+
+Subject: Clarification Needed – Missing “Other Insurance” & “Vehicle Modification” Data in SIT (BICOE Testing)
+
+Hi Alison & Team,
+
+Hope you’re doing well.
+
+We’ve noticed that in the SIT environment, data related to “Other Insurance” and “Vehicle Modification” is missing from the messages received on the BICOE side.
+
+From a business scenario point of view, these details are important because:
+
+Other Insurance details capture whether the proposer or policyholder has existing or prior insurance policies — this impacts risk evaluation and quote accuracy.
+
+Vehicle Modification details are used to assess non-standard vehicle conditions, which can affect pricing, eligibility, and premium calculation.
+
+At the moment, these fields are coming through as blank or missing entirely in the SIT payloads. We’ve already shared the element-level details for reference, but it would help if your team could:
+
+Review whether these fields are being captured at the front-end UI level during data entry.
+
+Confirm if any UI logic, conditional fields, or validation rules could be preventing this data from being passed downstream.
+
+Provide an example or confirmation of the expected data flow for these fields when the inputs are provided on the UI.
+
+This information will help us confirm whether the issue lies in the front-end capture, integration, or downstream mapping.
+
+Please let us know if you’d like a short sync-up to walk through the examples we’re seeing on the BICOE side.
+
+Thanks for your help and support!
