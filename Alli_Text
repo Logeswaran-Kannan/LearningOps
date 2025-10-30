@@ -1,75 +1,46 @@
-# Databricks / PySpark: Flatten a JSON/"variant" column into individual columns
-# and filter rows by load_date between 2025-10-25 and 2025-10-30 (inclusive).
-# ---------------------------------------------------------------------------
-# How to use
-# 1) Set the widget values (or edit the defaults below) for:
-#    - source_table: the table that contains your data
-#    - json_col: the column that stores JSON (often STRING or VARIANT-like)
-#    - start_date, end_date: the date range for load_date filtering
-#    - target_table (optional): where to write the flattened result (Delta)
-# 2) Run all cells.
-# 3) The final flattened DataFrame will be available as a temp view: `flattened_json_out`.
-#    If `target_table` is provided, it will also be written to Delta.
+# Databricks / PySpark: Flatten JSON column (CVR) into individual columns
+# and filter rows by LOAD_DT between 2025-10-25 and 2025-10-30 (inclusive)
 
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-# ---------- Widgets (safe defaults; override in the UI as needed) ----------
-try:
-    dbutils.widgets.text("source_table", "your_catalog.your_schema.your_table")
-    dbutils.widgets.text("json_col", "variant")
-    dbutils.widgets.text("start_date", "2025-10-25")
-    # Inclusive end-of-day: 2025-10-30 23:59:59
-    dbutils.widgets.text("end_date", "2025-10-30 23:59:59")
-    dbutils.widgets.text("target_table", "")  # leave blank to skip writing
-except NameError:
-    # In case this script is run outside Databricks
-    pass
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+source_table = "your_catalog.your_schema.your_table"  # Replace with your actual table name
+json_col = "CVR"
+start_date = "2025-10-25"
+end_date = "2025-10-30 23:59:59"
 
-# ---------- Read widget values ----------
-source_table = dbutils.widgets.get("source_table") if 'dbutils' in globals() else "your_catalog.your_schema.your_table"
-json_col     = dbutils.widgets.get("json_col")     if 'dbutils' in globals() else "variant"
-start_date   = dbutils.widgets.get("start_date")   if 'dbutils' in globals() else "2025-10-25"
-end_date     = dbutils.widgets.get("end_date")     if 'dbutils' in globals() else "2025-10-30 23:59:59"
-target_table = dbutils.widgets.get("target_table") if 'dbutils' in globals() else ""
-
-# ---------- Load source table and filter by load_date ----------
-# Assumes `load_date` exists and is a TIMESTAMP or STRING castable to TIMESTAMP.
-
+# ---------------------------------------------------------------------------
+# Load source table and filter by LOAD_DT
+# ---------------------------------------------------------------------------
 df = spark.table(source_table)
 
-# Normalize to timestamp and filter between bounds (inclusive)
-df = df.withColumn("load_date_ts", F.to_timestamp(F.col("load_date")))
-
-# If your load_date is DATE type, you can swap to_date and adapt the filter accordingly.
+# Ensure LOAD_DT is a timestamp and filter between date range
+df = df.withColumn("LOAD_DT_TS", F.to_timestamp(F.col("LOAD_DT")))
 df_filtered = df.where(
-    (F.col("load_date_ts") >= F.to_timestamp(F.lit(start_date))) &
-    (F.col("load_date_ts") <= F.to_timestamp(F.lit(end_date)))
+    (F.col("LOAD_DT_TS") >= F.to_timestamp(F.lit(start_date))) &
+    (F.col("LOAD_DT_TS") <= F.to_timestamp(F.lit(end_date)))
 )
 
-# ---------- Prepare/parse the JSON column into a Struct for flattening ----------
-# We support three cases for `json_col`:
-#   1) STRING JSON -> infer schema from a sample and parse via from_json
-#   2) Already a STRUCT -> use directly
-#   3) MAP / ARRAY -> convert to JSON then parse into a STRUCT (best-effort)
-
-src_field = next((f for f in df_filtered.schema.fields if f.name == json_col), None)
-if src_field is None:
-    raise ValueError(f"Column '{json_col}' not found in {source_table}.")
-
-# Helper to infer a schema from a sample of JSON strings
-
+# ---------------------------------------------------------------------------
+# Parse JSON column CVR and flatten into individual columns
+# ---------------------------------------------------------------------------
 def infer_schema_from_sample(sample_df, json_col_name, limit_rows=10000):
     sample = (sample_df
               .select(F.col(json_col_name).cast("string").alias("_json"))
               .where(F.col("_json").isNotNull())
               .limit(limit_rows))
     if sample.rdd.isEmpty():
-        # No JSON to infer from; return an empty struct
         return T.StructType([])
     return spark.read.json(sample.rdd.map(lambda r: r[0])).schema
 
 parsed_col_name = "__parsed_json__"
+
+src_field = next((f for f in df_filtered.schema.fields if f.name == json_col), None)
+if src_field is None:
+    raise ValueError(f"Column '{json_col}' not found in {source_table}.")
 
 if isinstance(src_field.dataType, T.StringType):
     inferred_schema = infer_schema_from_sample(df_filtered, json_col)
@@ -77,27 +48,21 @@ if isinstance(src_field.dataType, T.StringType):
 elif isinstance(src_field.dataType, T.StructType):
     parsed_df = df_filtered.withColumn(parsed_col_name, F.col(json_col))
 elif isinstance(src_field.dataType, (T.MapType, T.ArrayType)):
-    # Convert complex type to JSON string then parse as a Struct (keys become fields when possible)
     json_str_df = df_filtered.withColumn("__json_str__", F.to_json(F.col(json_col)))
     inferred_schema = infer_schema_from_sample(json_str_df, "__json_str__")
     parsed_df = json_str_df.drop("__json_str__").withColumn(parsed_col_name, F.from_json(F.to_json(F.col(json_col)), inferred_schema))
 else:
-    # Fallback: stringify then parse
     json_str_df = df_filtered.withColumn("__json_str__", F.to_json(F.col(json_col)))
     inferred_schema = infer_schema_from_sample(json_str_df, "__json_str__")
     parsed_df = json_str_df.drop("__json_str__").withColumn(parsed_col_name, F.from_json(F.to_json(F.col(json_col)), inferred_schema))
 
-# ---------- Flatten the parsed Struct into top-level columns ----------
-
+# ---------------------------------------------------------------------------
+# Flatten struct fields
+# ---------------------------------------------------------------------------
 def flatten_struct_columns(df_in, root_col):
-    """
-    Recursively flattens a Struct column into top-level columns.
-    Arrays/Maps are preserved as JSON strings to keep row counts stable.
-    Returns a DataFrame with flattened columns added (does not drop originals).
-    """
     struct_field = next((f for f in df_in.schema.fields if f.name == root_col), None)
     if not struct_field or not isinstance(struct_field.dataType, T.StructType):
-        return df_in  # nothing to flatten
+        return df_in
 
     def _expand(schema: T.StructType, prefix: str):
         out_cols = []
@@ -108,8 +73,6 @@ def flatten_struct_columns(df_in, root_col):
             c = F.col(full_path)
             if isinstance(dt, T.StructType):
                 out_cols.extend(_expand(dt, full_path + "."))
-            elif isinstance(dt, T.ArrayType) and isinstance(dt.elementType, T.StructType):
-                out_cols.append(F.to_json(c).alias(alias))  # keep array-of-structs intact as JSON
             elif isinstance(dt, (T.ArrayType, T.MapType)):
                 out_cols.append(F.to_json(c).alias(alias))
             else:
@@ -117,34 +80,21 @@ def flatten_struct_columns(df_in, root_col):
         return out_cols
 
     expanded_cols = _expand(struct_field.dataType, root_col + ".")
-
-    # Keep all original (non-parsed) columns, plus the expanded flattened columns
     base_cols = [F.col(c) for c in df_in.columns if c != root_col]
     return df_in.select(*base_cols, *expanded_cols)
 
 flattened_df = flatten_struct_columns(parsed_df, parsed_col_name)
-
-# Optionally drop the helper struct column after flattening
 flattened_df = flattened_df.drop(parsed_col_name)
 
-# ---------- Materialize results ----------
-# Make a temp view for downstream SQL or inspection
+# ---------------------------------------------------------------------------
+# Create a temp view for inspection
+# ---------------------------------------------------------------------------
 flattened_df.createOrReplaceTempView("flattened_json_out")
 
-# If a target table is provided, write the result as Delta (overwrite or append as you prefer)
-if target_table:
-    (flattened_df.write
-     .format("delta")
-     .mode("overwrite")  # change to "append" if desired
-     .option("overwriteSchema", "true")
-     .saveAsTable(target_table))
-    print(f"Flattened data written to {target_table}")
-else:
-    print("Temp view `flattened_json_out` created. No table write because `target_table` was empty.")
+print("Temp view 'flattened_json_out' created with flattened CVR JSON column.")
 
-# ---------- Quick peek ----------
-# Display a few rows so you can validate the output
+# Optional: Display a few rows
 try:
     display(flattened_df.limit(20))
 except NameError:
-    pass  # display() is a Databricks function
+    pass
