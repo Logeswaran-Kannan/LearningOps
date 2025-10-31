@@ -1,141 +1,156 @@
-# Databricks / PySpark — Deep JSON Flattener (Fixed v2)
-# - Column with JSON: CVR (can be STRING/STRUCT/ARRAY/MAP)
-# - Date filter: LOAD_DT between 2025-10-25 and 2025-10-30 23:59:59 (inclusive)
-# - Recursively:
-#     * Explodes arrays of structs (1 row per element)
-#     * Expands structs to top-level columns with underscores
-#     * Serializes maps/arrays of primitives to JSON strings (configurable)
-# - Output temp view: flattened_json_out
+# Databricks / PySpark — Deep JSON Flattener v3 (Full parent+child)
+#
+# What this does
+# 1) Filters rows by LOAD_DT between 2025-10-25 and 2025-10-30 23:59:59 (inclusive)
+# 2) Parses JSON from column `CVR` (STRING/STRUCT/ARRAY/MAP supported)
+# 3) Recursively flattens **all nested structs at any depth** into top-level columns
+# 4) Recursively **explodes arrays-of-structs** so their children can be flattened
+# 5) Keeps arrays/maps of primitives as JSON strings (set EXPLODE_PRIMITIVE_ARRAYS=True to explode them)
+# 6) Produces a temp view: `flattened_json_out`
+#
+# Notes
+# - We keep exploding until there are no struct or array<struct> columns left anywhere in the DataFrame.
+# - Column names are sanitized to underscores and reflect the full parent→child path.
 
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql import DataFrame
 
 # ======================= CONFIG =======================
-source_table = "your_catalog.your_schema.your_table"  # <-- change this
-json_col = "CVR"
-start_date = "2025-10-25"
-end_date = "2025-10-30 23:59:59"
-EXPLODE_PRIMITIVE_ARRAYS = False  # set True to explode arrays of primitives
+SOURCE_TABLE = "your_catalog.your_schema.your_table"  # <-- change to your table
+JSON_COL = "CVR"
+START_DATE = "2025-10-25"
+END_DATE = "2025-10-30 23:59:59"
+EXPLODE_PRIMITIVE_ARRAYS = False  # set True only if you want arrays of primitives exploded to rows
 
 # ======================= LOAD + FILTER =======================
-df = spark.table(source_table)
+df = spark.table(SOURCE_TABLE)
 df = df.withColumn("LOAD_DT_TS", F.to_timestamp(F.col("LOAD_DT")))
-df = df.where((F.col("LOAD_DT_TS") >= F.to_timestamp(F.lit(start_date))) &
-              (F.col("LOAD_DT_TS") <= F.to_timestamp(F.lit(end_date))))
+df = df.where((F.col("LOAD_DT_TS") >= F.to_timestamp(F.lit(START_DATE))) &
+              (F.col("LOAD_DT_TS") <= F.to_timestamp(F.lit(END_DATE))))
 
 # ======================= PARSE JSON =======================
 
-def infer_schema_from_sample(sample_df: DataFrame, col_name: str, limit_rows: int = 20000) -> T.StructType:
-    sample = (sample_df
-              .select(F.col(col_name).cast("string").alias("_json"))
-              .where(F.col("_json").isNotNull())
-              .limit(limit_rows))
+def _infer_schema(sample_df: DataFrame, col: str, n: int = 50000) -> T.StructType:
+    sample = (sample_df.select(F.col(col).cast("string").alias("_json"))
+                        .where(F.col("_json").isNotNull())
+                        .limit(n))
     if sample.rdd.isEmpty():
         return T.StructType([])
     return spark.read.json(sample.rdd.map(lambda r: r[0])).schema
 
-src_field = next((f for f in df.schema.fields if f.name == json_col), None)
+src_field = next((f for f in df.schema.fields if f.name == JSON_COL), None)
 if src_field is None:
-    raise ValueError(f"Column '{json_col}' not found in {source_table}.")
+    raise ValueError(f"Column '{JSON_COL}' not found in {SOURCE_TABLE}.")
 
-parsed_col = "__CVR__"  # helper column to host parsed struct
+ROOT = "__CVR__"  # helper parsed root
 
 if isinstance(src_field.dataType, T.StringType):
-    inferred_schema = infer_schema_from_sample(df, json_col)
-    work = df.withColumn(parsed_col, F.from_json(F.col(json_col), inferred_schema))
+    schema = _infer_schema(df, JSON_COL)
+    work = df.withColumn(ROOT, F.from_json(F.col(JSON_COL), schema))
 elif isinstance(src_field.dataType, T.StructType):
-    work = df.withColumn(parsed_col, F.col(json_col))
-elif isinstance(src_field.dataType, (T.ArrayType, T.MapType)):
-    json_str_df = df.withColumn("__json_str__", F.to_json(F.col(json_col)))
-    inferred_schema = infer_schema_from_sample(json_str_df, "__json_str__")
-    work = json_str_df.drop("__json_str__").withColumn(parsed_col, F.from_json(F.to_json(F.col(json_col)), inferred_schema))
+    work = df.withColumn(ROOT, F.col(JSON_COL))
+elif isinstance(src_field.dataType, (T.MapType, T.ArrayType)):
+    j = df.withColumn("__json_str__", F.to_json(F.col(JSON_COL)))
+    schema = _infer_schema(j, "__json_str__")
+    work = j.drop("__json_str__").withColumn(ROOT, F.from_json(F.to_json(F.col(JSON_COL)), schema))
 else:
-    json_str_df = df.withColumn("__json_str__", F.to_json(F.col(json_col)))
-    inferred_schema = infer_schema_from_sample(json_str_df, "__json_str__")
-    work = json_str_df.drop("__json_str__").withColumn(parsed_col, F.from_json(F.to_json(F.col(json_col)), inferred_schema))
+    j = df.withColumn("__json_str__", F.to_json(F.col(JSON_COL)))
+    schema = _infer_schema(j, "__json_str__")
+    work = j.drop("__json_str__").withColumn(ROOT, F.from_json(F.to_json(F.col(JSON_COL)), schema))
 
 # ======================= HELPERS =======================
 
 def sanitize(name: str) -> str:
-    # underscores only; no dots or spaces
-    return name.replace(".", "_").replace(" ", "_")
+    return (name
+            .replace(" ", "_")
+            .replace(".", "_")
+            .replace("[", "_")
+            .replace("]", "_")
+            .replace("__", "_")
+           )
 
 
-def find_next_target(df_in: DataFrame) -> str:
-    """Return the next column to process. Prefer array<struct>, then struct, then (optional) array<primitive>."""
-    for f in df_in.schema.fields:
-        if isinstance(f.dataType, T.ArrayType) and isinstance(f.dataType.elementType, T.StructType):
-            return f.name
+def struct_children(df_in: DataFrame):
+    """Yield (col_name, StructType) for every top-level struct column."""
     for f in df_in.schema.fields:
         if isinstance(f.dataType, T.StructType):
-            return f.name
-    if EXPLODE_PRIMITIVE_ARRAYS:
-        for f in df_in.schema.fields:
-            if isinstance(f.dataType, T.ArrayType) and not isinstance(f.dataType.elementType, T.StructType):
-                return f.name
-    return ""
+            yield f.name, f.dataType
 
 
-def flatten_once(df_in: DataFrame, col_name: str) -> DataFrame:
-    """One pass. If col is array<struct>: explode. If struct: expand children. If array primitive and configured: explode."""
-    field = next((x for x in df_in.schema.fields if x.name == col_name), None)
-    if field is None:
+def array_struct_cols(df_in: DataFrame):
+    """Yield names of columns that are array<struct>"""
+    for f in df_in.schema.fields:
+        if isinstance(f.dataType, T.ArrayType) and isinstance(f.dataType.elementType, T.StructType):
+            yield f.name
+
+
+def array_primitive_cols(df_in: DataFrame):
+    for f in df_in.schema.fields:
+        if isinstance(f.dataType, T.ArrayType) and not isinstance(f.dataType.elementType, T.StructType):
+            yield f.name
+
+
+def expand_struct(df_in: DataFrame, col: str) -> DataFrame:
+    """Expand one level of a struct column `col` into top-level columns with parent prefix."""
+    st = next((t for c, t in struct_children(df_in) if c == col), None)
+    if st is None:
         return df_in
+    base = [c for c in df_in.columns if c != col]
+    expanded = [F.col(f"{col}.{f.name}").alias(sanitize(f"{col}_{f.name}")) for f in st.fields]
+    return df_in.select(*[F.col(c) for c in base], *expanded)
 
-    dt = field.dataType
-    out = df_in
 
-    # Explode array<struct>
-    if isinstance(dt, T.ArrayType) and isinstance(dt.elementType, T.StructType):
-        out = out.withColumn(col_name, F.explode_outer(F.col(col_name)))
-        dt = T.StructType(dt.elementType.fields)
-
-    # (Optional) explode arrays of primitives
-    if isinstance(dt, T.ArrayType) and not isinstance(dt.elementType, T.StructType) and EXPLODE_PRIMITIVE_ARRAYS:
-        out = out.withColumn(col_name, F.explode_outer(F.col(col_name)))
-        dt = dt.elementType
-
-    # If struct: expand to top-level columns and drop original struct
-    if isinstance(dt, T.StructType):
-        base_cols = [c for c in out.columns if c != col_name]
-        expanded = [F.col(f"{col_name}.{f.name}").alias(sanitize(f"{col_name}_{f.name}")) for f in dt.fields]
-        out = out.select(*[F.col(c) for c in base_cols], *expanded)
-        return out
-
-    # For remaining arrays/maps, serialize to JSON (keeps 1 row per parent)
-    if isinstance(dt, (T.ArrayType, T.MapType)):
-        return out.withColumn(col_name, F.to_json(F.col(col_name)))
-
-    return out
-
-# ======================= MAIN LOOP =======================
+# ======================= FLATTEN LOOP =======================
 flat = work
 
-# Keep working until no complex columns remain
-while True:
-    target = find_next_target(flat)
-    if not target:
-        break
-    flat = flatten_once(flat, target)
+# 1) Always start by expanding the ROOT struct so that children become top-level columns
+if any(name == ROOT for name, _ in struct_children(flat)):
+    flat = expand_struct(flat, ROOT)
 
-# Serialize any leftover arrays/maps to JSON strings
-final_cols = []
+# 2) Keep exploding arrays-of-structs and expanding new structs until none remain
+while True:
+    did_something = False
+
+    # a) explode one array<struct> at a time (ensures children are accessible)
+    arr_cols = list(array_struct_cols(flat))
+    if arr_cols:
+        c = arr_cols[0]
+        flat = flat.withColumn(c, F.explode_outer(F.col(c)))
+        did_something = True
+        # after explode, if it's a struct, expand immediately in the next iterations
+
+    # b) expand any struct columns at top level
+    struct_cols = [name for name, _ in struct_children(flat)]
+    if struct_cols:
+        for c in struct_cols:
+            flat = expand_struct(flat, c)
+        did_something = True
+
+    # c) optional: explode arrays of primitives
+    if EXPLODE_PRIMITIVE_ARRAYS:
+        prim_arrays = list(array_primitive_cols(flat))
+        if prim_arrays:
+            c = prim_arrays[0]
+            flat = flat.withColumn(c, F.explode_outer(F.col(c)))
+            did_something = True
+
+    if not did_something:
+        break
+
+# 3) Serialize leftover arrays/maps to JSON strings so the table is rectangular
+select_cols = []
 for f in flat.schema.fields:
     if isinstance(f.dataType, (T.ArrayType, T.MapType)):
-        final_cols.append(F.to_json(F.col(f.name)).alias(sanitize(f.name)))
+        select_cols.append(F.to_json(F.col(f.name)).alias(sanitize(f.name)))
     else:
-        final_cols.append(F.col(f.name).alias(sanitize(f.name)))
+        select_cols.append(F.col(f.name).alias(sanitize(f.name)))
 
-flat = flat.select(*final_cols)
+flat = flat.select(*select_cols)
 
-# Drop helper if still present
-if parsed_col in flat.columns:
-    flat = flat.drop(parsed_col)
-
-# ======================= OUTPUT =======================
+# 4) Create the temp view
 flat.createOrReplaceTempView("flattened_json_out")
-print("Temp view 'flattened_json_out' created (deeply flattened CVR). Example: SELECT * FROM flattened_json_out LIMIT 50;")
+print("Temp view 'flattened_json_out' created. All parent/child nested structs flattened.")
 
 try:
     display(flat.limit(50))
