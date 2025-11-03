@@ -1,158 +1,20 @@
-# Databricks / PySpark — Deep JSON Flattener v3 (Full parent+child)
-#
-# What this does
-# 1) Filters rows by LOAD_DT between 2025-10-25 and 2025-10-30 23:59:59 (inclusive)
-# 2) Parses JSON from column `CVR` (STRING/STRUCT/ARRAY/MAP supported)
-# 3) Recursively flattens **all nested structs at any depth** into top-level columns
-# 4) Recursively **explodes arrays-of-structs** so their children can be flattened
-# 5) Keeps arrays/maps of primitives as JSON strings (set EXPLODE_PRIMITIVE_ARRAYS=True to explode them)
-# 6) Produces a temp view: `flattened_json_out`
-#
-# Notes
-# - We keep exploding until there are no struct or array<struct> columns left anywhere in the DataFrame.
-# - Column names are sanitized to underscores and reflect the full parent→child path.
+Subject: Clarifications on Quote Request Message – Requote Scenarios
 
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-from pyspark.sql import DataFrame
+Hi [Team],
 
-# ======================= CONFIG =======================
-SOURCE_TABLE = "your_catalog.your_schema.your_table"  # <-- change to your table
-JSON_COL = "CVR"
-START_DATE = "2025-10-25"
-END_DATE = "2025-10-30 23:59:59"
-EXPLODE_PRIMITIVE_ARRAYS = False  # set True only if you want arrays of primitives exploded to rows
+Based on our recent revalidation, we have a couple of clarifications to confirm:
 
-# ======================= LOAD + FILTER =======================
-df = spark.table(SOURCE_TABLE)
-df = df.withColumn("LOAD_DT_TS", F.to_timestamp(F.col("LOAD_DT")))
-df = df.where((F.col("LOAD_DT_TS") >= F.to_timestamp(F.lit(START_DATE))) &
-              (F.col("LOAD_DT_TS") <= F.to_timestamp(F.lit(END_DATE))))
+1️⃣ Our understanding is that for Requote scenarios, the control.transactionType in the Quote Request message should be 30, which we believe represents NB Requotes or MTA. Could you please confirm if that’s correct?
 
-# ======================= PARSE JSON =======================
+For NB Quotes, the control.transactionType should be 02, and the cache-data label should be ‘original’ rather than ‘current’.
 
-def _infer_schema(sample_df: DataFrame, col: str, n: int = 50000) -> T.StructType:
-    sample = (sample_df.select(F.col(col).cast("string").alias("_json"))
-                        .where(F.col("_json").isNotNull())
-                        .limit(n))
-    if sample.rdd.isEmpty():
-        return T.StructType([])
-    return spark.read.json(sample.rdd.map(lambda r: r[0])).schema
+However, we’re currently observing both NB Quote and NB Requote messages using control.transactionType = 02.
 
-src_field = next((f for f in df.schema.fields if f.name == JSON_COL), None)
-if src_field is None:
-    raise ValueError(f"Column '{JSON_COL}' not found in {SOURCE_TABLE}.")
+2️⃣ Similarly, we’ve noticed instances where a single cacheID is tagged with multiple MQSQUOTEIDs, all having control.transactionType = 02.
 
-ROOT = "__CVR__"  # helper parsed root
+While we understand this can happen for Requote scenarios, we’re seeing quite a few cases where multiple MQSQUOTEIDs are linked to the same cacheID.
 
-if isinstance(src_field.dataType, T.StringType):
-    schema = _infer_schema(df, JSON_COL)
-    work = df.withColumn(ROOT, F.from_json(F.col(JSON_COL), schema))
-elif isinstance(src_field.dataType, T.StructType):
-    work = df.withColumn(ROOT, F.col(JSON_COL))
-elif isinstance(src_field.dataType, (T.MapType, T.ArrayType)):
-    j = df.withColumn("__json_str__", F.to_json(F.col(JSON_COL)))
-    schema = _infer_schema(j, "__json_str__")
-    work = j.drop("__json_str__").withColumn(ROOT, F.from_json(F.to_json(F.col(JSON_COL)), schema))
-else:
-    j = df.withColumn("__json_str__", F.to_json(F.col(JSON_COL)))
-    schema = _infer_schema(j, "__json_str__")
-    work = j.drop("__json_str__").withColumn(ROOT, F.from_json(F.to_json(F.col(JSON_COL)), schema))
+Could you please confirm if this behaviour is expected, or if any changes are planned on your end?
 
-# ======================= HELPERS =======================
-
-def sanitize(name: str) -> str:
-    return (name
-            .replace(" ", "_")
-            .replace(".", "_")
-            .replace("[", "_")
-            .replace("]", "_")
-            .replace("__", "_")
-           )
-
-
-def struct_children(df_in: DataFrame):
-    """Yield (col_name, StructType) for every top-level struct column."""
-    for f in df_in.schema.fields:
-        if isinstance(f.dataType, T.StructType):
-            yield f.name, f.dataType
-
-
-def array_struct_cols(df_in: DataFrame):
-    """Yield names of columns that are array<struct>"""
-    for f in df_in.schema.fields:
-        if isinstance(f.dataType, T.ArrayType) and isinstance(f.dataType.elementType, T.StructType):
-            yield f.name
-
-
-def array_primitive_cols(df_in: DataFrame):
-    for f in df_in.schema.fields:
-        if isinstance(f.dataType, T.ArrayType) and not isinstance(f.dataType.elementType, T.StructType):
-            yield f.name
-
-
-def expand_struct(df_in: DataFrame, col: str) -> DataFrame:
-    """Expand one level of a struct column `col` into top-level columns with parent prefix."""
-    st = next((t for c, t in struct_children(df_in) if c == col), None)
-    if st is None:
-        return df_in
-    base = [c for c in df_in.columns if c != col]
-    expanded = [F.col(f"{col}.{f.name}").alias(sanitize(f"{col}_{f.name}")) for f in st.fields]
-    return df_in.select(*[F.col(c) for c in base], *expanded)
-
-
-# ======================= FLATTEN LOOP =======================
-flat = work
-
-# 1) Always start by expanding the ROOT struct so that children become top-level columns
-if any(name == ROOT for name, _ in struct_children(flat)):
-    flat = expand_struct(flat, ROOT)
-
-# 2) Keep exploding arrays-of-structs and expanding new structs until none remain
-while True:
-    did_something = False
-
-    # a) explode one array<struct> at a time (ensures children are accessible)
-    arr_cols = list(array_struct_cols(flat))
-    if arr_cols:
-        c = arr_cols[0]
-        flat = flat.withColumn(c, F.explode_outer(F.col(c)))
-        did_something = True
-        # after explode, if it's a struct, expand immediately in the next iterations
-
-    # b) expand any struct columns at top level
-    struct_cols = [name for name, _ in struct_children(flat)]
-    if struct_cols:
-        for c in struct_cols:
-            flat = expand_struct(flat, c)
-        did_something = True
-
-    # c) optional: explode arrays of primitives
-    if EXPLODE_PRIMITIVE_ARRAYS:
-        prim_arrays = list(array_primitive_cols(flat))
-        if prim_arrays:
-            c = prim_arrays[0]
-            flat = flat.withColumn(c, F.explode_outer(F.col(c)))
-            did_something = True
-
-    if not did_something:
-        break
-
-# 3) Serialize leftover arrays/maps to JSON strings so the table is rectangular
-select_cols = []
-for f in flat.schema.fields:
-    if isinstance(f.dataType, (T.ArrayType, T.MapType)):
-        select_cols.append(F.to_json(F.col(f.name)).alias(sanitize(f.name)))
-    else:
-        select_cols.append(F.col(f.name).alias(sanitize(f.name)))
-
-flat = flat.select(*select_cols)
-
-# 4) Create the temp view
-flat.createOrReplaceTempView("flattened_json_out")
-print("Temp view 'flattened_json_out' created. All parent/child nested structs flattened.")
-
-try:
-    display(flat.limit(50))
-except NameError:
-    pass
+Thanks and regards,
+[Your Name]
