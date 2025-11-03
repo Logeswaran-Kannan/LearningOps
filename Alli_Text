@@ -1,20 +1,11 @@
-Subject: Clarifications on Quote Request Message – Requote Scenarios
+Hi Mike,
 
-Hi [Team],
+Based on the revalidation, I’ve got a couple of clarifications:
 
-Based on our recent revalidation, we have a couple of clarifications to confirm:
+1️⃣ We’re trying to understand how to differentiate between an NB quote and a Requote. Our understanding is that for a Requote scenario, the control.transactionType in the quote request message should be 30. I came across a reference in the Mule document mentioning that 30 denotes NB Requotes or MTA. Can you confirm if that’s correct?
 
-1️⃣ Our understanding is that for Requote scenarios, the control.transactionType in the Quote Request message should be 30, which we believe represents NB Requotes or MTA. Could you please confirm if that’s correct?
+From what we see, both NB requotes / MTA should ideally have control.transactionType = 03 and the cache-data label as ‘original’ rather than ‘current’. However, in our data, both NB quote and NB requote are showing as control.transactionType = 02.
 
-For NB Quotes, the control.transactionType should be 02, and the cache-data label should be ‘original’ rather than ‘current’.
+2️⃣ Similarly, we’ve noticed that a single cacheID is tagged with multiple MQSQUOTEIDs, all having control.transactionType = 02. That might be expected for a requote scenario, but we’re seeing quite a few cacheIDs linked with multiple MQSQUOTEIDs — which seems like it could be a source data issue.
 
-However, we’re currently observing both NB Quote and NB Requote messages using control.transactionType = 02.
-
-2️⃣ Similarly, we’ve noticed instances where a single cacheID is tagged with multiple MQSQUOTEIDs, all having control.transactionType = 02.
-
-While we understand this can happen for Requote scenarios, we’re seeing quite a few cases where multiple MQSQUOTEIDs are linked to the same cacheID.
-
-Could you please confirm if this behaviour is expected, or if any changes are planned on your end?
-
-Thanks and regards,
-[Your Name]
+Just wanted to confirm our understanding here — does that align with what you’ve seen?
