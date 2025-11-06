@@ -1,11 +1,43 @@
-Hi Mike,
+1. Introduction and Context
 
-Based on the revalidation, I’ve got a couple of clarifications:
+This document defines the BICoE MI (Management Information) System Integration Test (SIT) scope within the overall E2E Testing Programme.
+It covers testing activities planned for the December Risk-Based Release and the January MVP Release, which together form the first full validation cycle of the data-platform delivery.
 
-1️⃣ We’re trying to understand how to differentiate between an NB quote and a Requote. Our understanding is that for a Requote scenario, the control.transactionType in the quote request message should be 30. I came across a reference in the Mule document mentioning that 30 denotes NB Requotes or MTA. Can you confirm if that’s correct?
+The MI team’s primary role in E2E is to ensure that all data ingestion, transformation, orchestration, and storage layers across the Azure data platform are functioning as designed and that data required by Pricing, Underwriting, and UAT users is accurate, traceable, and available in the correct location and format.
+The focus is strictly on system integration and data validation, rather than on the business or rating logic that sits with Pricing and Underwriting.
 
-From what we see, both NB requotes / MTA should ideally have control.transactionType = 03 and the cache-data label as ‘original’ rather than ‘current’. However, in our data, both NB quote and NB requote are showing as control.transactionType = 02.
+In-Scope Data-Platform Components
 
-2️⃣ Similarly, we’ve noticed that a single cacheID is tagged with multiple MQSQUOTEIDs, all having control.transactionType = 02. That might be expected for a requote scenario, but we’re seeing quite a few cacheIDs linked with multiple MQSQUOTEIDs — which seems like it could be a source data issue.
+Ingestion Layer (Databricks Streaming Pipelines): Validation of MQS messages, enrichment payloads, and event-hub data landing into ADLS Ingestion Zone.
 
-Just wanted to confirm our understanding here — does that align with what you’ve seen?
+Large Rating Vehicle and Model File Ingestion into Cosmos DB: Verification of the end-to-end load of large rating model files into Cosmos DB through a standalone Active and Passive database deployment pipeline, ensuring controlled switchover, integrity, and consistency of data between active and standby instances.
+
+Quote Cache Deletion (ADF Workflow): System testing of the automated Azure Data Factory process that receives the Quote Cache file from Athena, processes it, and transfers validated output into Azure Blob Storage for archival and downstream consumption.
+
+EDM Core Risk and Radar Feature Sets: Validation of data transformation, referential integrity, and quote linkage within the EDM Gold Layer.
+
+Quote Reconciliation Process: Verification that quotes sent from Athena are successfully reconciled against MQS and Interaction messages to confirm data completeness and alignment, supporting business confidence and the ongoing Data Excellence activity for quote accuracy.
+
+Continuity of Service – Pricing View UAT Validation: End-to-end validation ensuring that data exposed to Pricing and Underwriting UAT remains available and consistent during service continuity events (e.g., environment switchover, active/passive operations).
+
+Purpose and Testing Focus
+
+The MI team will perform System Integration Testing (SIT) to:
+
+Validate the stability and reliability of all data ingestion and orchestration pipelines.
+
+Confirm that ingestion jobs process, transform, and store data accurately with correct schema, lineage, and metadata tagging.
+
+Provide verified data availability in the Ingestion, EDM, and Cosmos layers for Pricing and Underwriting UAT use.
+
+Identify integration issues, mapping discrepancies, or missing data early, so that upstream teams (Athena, MQS, Pricing Ops) can remediate them before UAT.
+
+⚠️ Caveats & Dependencies:
+
+MI’s responsibility ends at validating system integration, data lineage, and dataset readiness.
+
+Pricing and Underwriting own the business-logic and rating validation within UAT.
+
+Successful MI testing depends on timely upstream data delivery from Athena and MQS, defect turnaround, and UAT coordination.
+
+Data quality or delay issues arising from upstream defects will be logged as dependency risks or “No Run” scenarios, not MI accountability.
