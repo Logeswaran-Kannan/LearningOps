@@ -1,43 +1,15 @@
-1. Introduction and Context
+Subject: Request for Short Performance Feedback – Test Team
 
-This document defines the BICoE MI (Management Information) System Integration Test (SIT) scope within the overall E2E Testing Programme.
-It covers testing activities planned for the December Risk-Based Release and the January MVP Release, which together form the first full validation cycle of the data-platform delivery.
+Hi [Client’s Name],
 
-The MI team’s primary role in E2E is to ensure that all data ingestion, transformation, orchestration, and storage layers across the Azure data platform are functioning as designed and that data required by Pricing, Underwriting, and UAT users is accurate, traceable, and available in the correct location and format.
-The focus is strictly on system integration and data validation, rather than on the business or rating logic that sits with Pricing and Underwriting.
+As part of our year-end review process, we’re gathering short performance feedback for each of our test team members, including myself. Your inputs will help us shape our development and improvement plans for next year.
 
-In-Scope Data-Platform Components
+Could you please share your brief feedback by 13th [Month/Date] this week?
+A few lines on each team member’s performance, collaboration, and areas to improve would be greatly appreciated.
 
-Ingestion Layer (Databricks Streaming Pipelines): Validation of MQS messages, enrichment payloads, and event-hub data landing into ADLS Ingestion Zone.
+Thank you for your time and continued support.
 
-Large Rating Vehicle and Model File Ingestion into Cosmos DB: Verification of the end-to-end load of large rating model files into Cosmos DB through a standalone Active and Passive database deployment pipeline, ensuring controlled switchover, integrity, and consistency of data between active and standby instances.
-
-Quote Cache Deletion (ADF Workflow): System testing of the automated Azure Data Factory process that receives the Quote Cache file from Athena, processes it, and transfers validated output into Azure Blob Storage for archival and downstream consumption.
-
-EDM Core Risk and Radar Feature Sets: Validation of data transformation, referential integrity, and quote linkage within the EDM Gold Layer.
-
-Quote Reconciliation Process: Verification that quotes sent from Athena are successfully reconciled against MQS and Interaction messages to confirm data completeness and alignment, supporting business confidence and the ongoing Data Excellence activity for quote accuracy.
-
-Continuity of Service – Pricing View UAT Validation: End-to-end validation ensuring that data exposed to Pricing and Underwriting UAT remains available and consistent during service continuity events (e.g., environment switchover, active/passive operations).
-
-Purpose and Testing Focus
-
-The MI team will perform System Integration Testing (SIT) to:
-
-Validate the stability and reliability of all data ingestion and orchestration pipelines.
-
-Confirm that ingestion jobs process, transform, and store data accurately with correct schema, lineage, and metadata tagging.
-
-Provide verified data availability in the Ingestion, EDM, and Cosmos layers for Pricing and Underwriting UAT use.
-
-Identify integration issues, mapping discrepancies, or missing data early, so that upstream teams (Athena, MQS, Pricing Ops) can remediate them before UAT.
-
-⚠️ Caveats & Dependencies:
-
-MI’s responsibility ends at validating system integration, data lineage, and dataset readiness.
-
-Pricing and Underwriting own the business-logic and rating validation within UAT.
-
-Successful MI testing depends on timely upstream data delivery from Athena and MQS, defect turnaround, and UAT coordination.
-
-Data quality or delay issues arising from upstream defects will be logged as dependency risks or “No Run” scenarios, not MI accountability.
+Best regards,
+[Your Full Name]
+Test Manager – [Project/Team Name]
+[Your Company]
