@@ -1,15 +1,1 @@
-Subject: Request for Short Performance Feedback – Test Team
-
-Hi [Client’s Name],
-
-As part of our year-end review process, we’re gathering short performance feedback for each of our test team members, including myself. Your inputs will help us shape our development and improvement plans for next year.
-
-Could you please share your brief feedback by 13th [Month/Date] this week?
-A few lines on each team member’s performance, collaboration, and areas to improve would be greatly appreciated.
-
-Thank you for your time and continued support.
-
-Best regards,
-[Your Full Name]
-Test Manager – [Project/Team Name]
-[Your Company]
+looks like the data is flowing fine now without the special characters. So we’re just waiting for Ashutosh to confirm the fix from the Mule side, correct?
