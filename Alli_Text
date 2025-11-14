@@ -1,53 +1,52 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, schema_of_json, explode_outer
-from pyspark.sql.types import StructType
+from pyspark.sql.types import StructType, ArrayType, StructField
 
 # Start Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Load table
+# Load your data
 df = spark.table("core_tst_mqs_athn_mtr_ehubstream")
 
-# Step 1: Filter by messageType = 'precomp-response' (case-insensitive)
+# Step 1: Filter for messageType = 'precomp-response'
 df_filtered = df.filter(col("headers")["messageType"].rlike("(?i)^precomp-response$"))
 
-# Step 2: Get dynamic schema of Payload using a sample
+# Step 2: Get dynamic schema of Payload from sample row
 sample_payload = df_filtered.select("Payload").filter(col("Payload").isNotNull()).limit(1).collect()[0]["Payload"]
-payload_schema = schema_of_json(sample_payload)
+inferred_schema = schema_of_json(sample_payload)
 
-# Step 3: Parse Payload JSON into struct
-df_parsed = df_filtered.withColumn("payload_json", from_json(col("Payload"), payload_schema))
+# Step 3: Parse Payload JSON using inferred schema
+df_with_json = df_filtered.withColumn("payload_json", from_json(col("Payload"), inferred_schema))
 
-# Step 4: Recursive flattening function
-def flatten_df(nested_df, prefix=""):
-    flat_cols = []
-    nested_cols = []
-    
-    for field in nested_df.schema.fields:
-        field_name = field.name
-        field_type = field.dataType
-        full_name = f"{prefix}.{field_name}" if prefix else field_name
+# Step 4: Recursive function to flatten struct and arrays
+def flatten(df):
+    while True:
+        complex_fields = [(field.name, field.dataType)
+                          for field in df.schema.fields
+                          if isinstance(field.dataType, (StructType, ArrayType))]
 
-        if isinstance(field_type, StructType):
-            nested_cols.append((full_name, field_type))
-        elif "Array" in str(field_type):  # Handle arrays with explode_outer
-            nested_df = nested_df.withColumn(full_name.replace(".", "_"), explode_outer(col(full_name)))
-            flat_cols.append(full_name.replace(".", "_"))
-        else:
-            flat_cols.append(full_name)
+        if not complex_fields:
+            break
 
-    flat_df = nested_df.select([col(c).alias(c.replace(".", "_")) for c in flat_cols])
-    
-    for path, typ in nested_cols:
-        flat_df = flatten_df(flat_df.withColumn(path.replace(".", "_"), col(path)), prefix="")
+        col_name, col_type = complex_fields[0]
 
-    return flat_df
+        if isinstance(col_type, StructType):
+            expanded = [col(f"{col_name}.{k}").alias(f"{col_name}_{k}")
+                        for k in col_type.names]
+            df = df.select("*", *expanded).drop(col_name)
 
-# Step 5: Flatten the payload_json column
-df_with_payload = df_parsed.select("headers", "TimeEnqueued", "payload_json")
-flattened_payload_df = flatten_df(df_with_payload.select("payload_json"))
-final_df = df_with_payload.select("headers", "TimeEnqueued").join(flattened_payload_df)
+        elif isinstance(col_type, ArrayType):
+            df = df.withColumn(col_name, explode_outer(col(col_name)))
 
-# Step 6: Display or write output
-final_df.show(truncate=False)
-# final_df.write.mode("overwrite").saveAsTable("flattened_precomp_response_payload")
+    return df
+
+# Step 5: Flatten the payload_json field
+df_to_flatten = df_with_json.select("TimeEnqueued", "headers", "payload_json")
+df_flattened_payload = flatten(df_to_flatten.select("TimeEnqueued", "headers", "payload_json.*"))
+
+# Optional: Flatten headers too
+df_final = flatten(df_flattened_payload)
+
+# Step 6: Show or write
+df_final.show(truncate=False)
+# df_final.write.mode("overwrite").saveAsTable("flattened_payload_dynamic")
