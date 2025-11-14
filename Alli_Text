@@ -1,1 +1,54 @@
-we’re about 39% through the MVP scope, and we’ve validated ingestion for six messages so far. RAG status is still red because we’ve got some open S1 and S2 defects on the upstream side.
+Below is a Databricks PySpark example to filter rows by headers.messageType = "precomp-response" and flatten the payload column.
+
+```python
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+
+# Assuming df is your table dataframe
+# Example: df = spark.table("core_tst_mqs_athn_mtr_ehubstream")
+
+# 1. Filter by messageType
+df_filtered = df.filter(F.col("headers.messageType") == "precomp-response")
+
+# 2. Flatten payload (variant/JSON)
+# Convert payload string/variant to a struct if needed
+# If `payload` is not STRING, remove the from_json step
+
+# Infer schema automatically
+payload_schema = spark.read.json(df_filtered.rdd.map(lambda r: r.payload)).schema
+
+df_json = df_filtered.withColumn("payload_json", F.from_json("payload", payload_schema))
+
+# 3. Flatten the nested struct
+# Recursively flatten columns
+def flatten_struct(df):
+    flat_cols = []
+    complex_cols = []
+
+    for field in df.schema.fields:
+        if isinstance(field.dataType, T.StructType):
+            complex_cols.append(field.name)
+        else:
+            flat_cols.append(field.name)
+
+    while complex_cols:
+        col_name = complex_cols.pop(0)
+        child_fields = df.select(F.col(col_name + ".*")).columns
+        df = df.select("*", *(F.col(col_name + "." + c).alias(col_name + "_" + c) for c in child_fields))
+        df = df.drop(col_name)
+
+        # Re-check schema for new struct columns
+        new_complex = [f.name for f in df.schema.fields if isinstance(f.dataType, T.StructType)]
+        complex_cols = new_complex
+
+    return df
+
+
+flattened_df = flatten_struct(df_json)
+
+# 4. Drop the raw payload_json if needed
+result_df = flattened_df.drop("payload", "payload_json")
+
+# Display result
+display(result_df)
+```
