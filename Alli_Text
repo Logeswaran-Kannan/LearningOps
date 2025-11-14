@@ -1,54 +1,54 @@
-Below is a Databricks PySpark example to filter rows by headers.messageType = "precomp-response" and flatten the payload column.
-
-```python
 from pyspark.sql import functions as F
-from pyspark.sql import types as T
+from pyspark.sql.types import StructType, ArrayType
 
-# Assuming df is your table dataframe
-# Example: df = spark.table("core_tst_mqs_athn_mtr_ehubstream")
+# 1. Load the base table
+df = spark.table("core_tst_mqs_athn_mtr_ehubstream")
 
-# 1. Filter by messageType
-df_filtered = df.filter(F.col("headers.messageType") == "precomp-response")
+# 2. Filter on headers.messageType == 'precomp-response'
+filtered_df = df.filter(F.lower(F.col("headers")["messageType"]) == "precomp-response")
 
-# 2. Flatten payload (variant/JSON)
-# Convert payload string/variant to a struct if needed
-# If `payload` is not STRING, remove the from_json step
+# 3. Infer schema from sample record
+sample_payload = filtered_df.select("Payload").filter(F.col("Payload").isNotNull()).limit(1).collect()[0]["Payload"]
+inferred_schema = spark.read.json(spark.createDataset([sample_payload])).schema
 
-# Infer schema automatically
-payload_schema = spark.read.json(df_filtered.rdd.map(lambda r: r.payload)).schema
+# 4. Parse the Payload JSON
+parsed_df = filtered_df.withColumn("parsed_payload", F.from_json("Payload", inferred_schema))
 
-df_json = df_filtered.withColumn("payload_json", F.from_json("payload", payload_schema))
-
-# 3. Flatten the nested struct
-# Recursively flatten columns
-def flatten_struct(df):
+# -------------------------------
+# 5. Recursive flattening function
+# -------------------------------
+def flatten_df(nested_df, parent_name=""):
     flat_cols = []
-    complex_cols = []
+    for field in nested_df.schema.fields:
+        field_name = field.name
+        col_name = f"{parent_name}_{field_name}" if parent_name else field_name
+        dtype = field.dataType
 
-    for field in df.schema.fields:
-        if isinstance(field.dataType, T.StructType):
-            complex_cols.append(field.name)
+        if isinstance(dtype, StructType):
+            # Recurse into Struct
+            flat_df = nested_df.withColumn(field_name, F.col(field_name))
+            nested = flatten_df(flat_df.select(F.col(field_name + ".*")), col_name)
+            flat_cols.extend(nested.schema.fields)
+            nested_df = nested_df.select("*", *[nested[col.name] for col in nested.schema.fields]).drop(field_name)
+
+        elif isinstance(dtype, ArrayType) and isinstance(dtype.elementType, StructType):
+            # Explode and flatten Array of Struct
+            exploded = nested_df.withColumn(field_name, F.explode_outer(field_name))
+            nested = flatten_df(exploded.select(F.col(field_name + ".*")), col_name)
+            flat_cols.extend(nested.schema.fields)
+            nested_df = exploded.select("*", *[nested[col.name] for col in nested.schema.fields]).drop(field_name)
+
         else:
-            flat_cols.append(field.name)
+            nested_df = nested_df.withColumnRenamed(field_name, col_name)
+    return nested_df
 
-    while complex_cols:
-        col_name = complex_cols.pop(0)
-        child_fields = df.select(F.col(col_name + ".*")).columns
-        df = df.select("*", *(F.col(col_name + "." + c).alias(col_name + "_" + c) for c in child_fields))
-        df = df.drop(col_name)
+# 6. Flatten the parsed payload
+flattened_payload_df = flatten_df(parsed_df.select("parsed_payload"))
 
-        # Re-check schema for new struct columns
-        new_complex = [f.name for f in df.schema.fields if isinstance(f.dataType, T.StructType)]
-        complex_cols = new_complex
+# 7. Combine with original metadata (TimeEnqueued, headers if needed)
+final_df = parsed_df.select("TimeEnqueued", "headers").join(flattened_payload_df)
 
-    return df
-
-
-flattened_df = flatten_struct(df_json)
-
-# 4. Drop the raw payload_json if needed
-result_df = flattened_df.drop("payload", "payload_json")
-
-# Display result
-display(result_df)
-```
+# 8. Show result
+final_df.show(truncate=False)
+# Optionally save:
+# final_df.write.mode("overwrite").saveAsTable("flattened_payload_dynamic")
