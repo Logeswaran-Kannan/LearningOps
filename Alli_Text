@@ -1,19 +1,19 @@
 from pyspark.sql import SparkSession
 
+# --------------------------------------------------------
+# INPUT: List of table names to evaluate
+# --------------------------------------------------------
 catalog = "core_tst"
-schema = "mqs"
+schema  = "mqs"
+table_list = ["athn_mtr"]   # ← Update this list as needed
 schema_full = f"{catalog}.{schema}"
 
 spark.sql(f"USE CATALOG {catalog}")
 spark.sql(f"USE SCHEMA {schema}")
 
-# Get all tables in the schema
-tables_df = spark.sql(f"SHOW TABLES IN {schema_full}")
-tables = [row.tableName for row in tables_df.collect()]
-
 results = []
 
-for table in tables:
+for table in table_list:
     full_table_name = f"{schema_full}.{table}"
     print(f"Processing table: {full_table_name}")
 
@@ -21,15 +21,40 @@ for table in tables:
     row_count = df.count()
 
     for col in df.columns:
-        populated_count = df.filter(df[col].isNotNull()).count()
-        is_populated = populated_count > 0
+        # Count non-null values
+        non_null_count = df.filter(df[col].isNotNull()).count()
+        is_populated = non_null_count > 0
         
-        results.append((table, col, row_count, populated_count, is_populated))
+        # Count distinct
+        distinct_count = df.select(col).distinct().count()
 
-# Convert results to DataFrame
+        # Fetch distinct values only if < 50
+        if distinct_count < 50:
+            distinct_values = (
+                df.select(col)
+                  .distinct()
+                  .limit(50)
+                  .rdd.map(lambda r: r[0])
+                  .collect()
+            )
+        else:
+            distinct_values = "Distinct >= 50 (not fetched)"
+
+        results.append((
+            table,
+            col,
+            row_count,
+            non_null_count,
+            is_populated,
+            distinct_count,
+            distinct_values
+        ))
+
+# Create results DataFrame
 result_df = spark.createDataFrame(
     results,
-    ["table_name", "column_name", "row_count", "non_null_count", "is_column_populated"]
+    ["table_name", "column_name", "row_count", "non_null_count", "is_populated",
+     "distinct_count", "distinct_values"]
 )
 
 display(result_df)
