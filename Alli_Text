@@ -1,1 +1,31 @@
-looks like the data is flowing fine now without the special characters. So we’re just waiting for Ashutosh to confirm the fix from the Mule side, correct?
+# Databricks PySpark example to automatically flatten nested JSON in a dataframe
+
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+
+# Function to recursively flatten a schema
+def flatten_schema(schema, prefix=None):
+    fields = []
+    for field in schema.fields:
+        name = f"{prefix}.{field.name}" if prefix else field.name
+        dtype = field.dataType
+        if isinstance(dtype, T.StructType):
+            fields += flatten_schema(dtype, prefix=name)
+        elif isinstance(dtype, T.ArrayType) and isinstance(dtype.elementType, T.StructType):
+            # Explode array of structs and flatten
+            fields.append(F.explode_outer(F.col(name)).alias(name))
+            fields += flatten_schema(dtype.elementType, prefix=name)
+        else:
+            fields.append(F.col(name).alias(name.replace('.', '_')))
+    return fields
+
+# Load table
+df = spark.table("ehubstream")
+
+# Filter by properties.messageType
+filtered = df.filter(F.col("properties.messageType") == "PRECOMP_RESPONSE")
+
+# Flatten payload JSON
+df_flat = filtered.select(*flatten_schema(filtered.schema["payload"].dataType, prefix="payload"))
+
+df_flat.show(5)
