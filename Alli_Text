@@ -1,60 +1,35 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json, schema_of_json, explode_outer, to_date
-from pyspark.sql.types import StructType, ArrayType
 
-# CONFIG
-SOURCE_TABLE = "core_tst_mqs_athn_mtr_ehubstream"
-JSON_COLUMN = "Payload"
-DATE_COLUMN = "TimeEnqueued"
-FILTER_MSG_TYPE = "precomp-response"
-START_DATE = "2025-11-12"
-END_DATE = "2025-11-14"
+catalog = "core_tst"
+schema = "mqs"
+schema_full = f"{catalog}.{schema}"
 
-# Load Spark session
-spark = SparkSession.builder.getOrCreate()
+spark.sql(f"USE CATALOG {catalog}")
+spark.sql(f"USE SCHEMA {schema}")
 
-# Step 1: Load and filter input data
-df = spark.table(SOURCE_TABLE).filter(
-    (to_date(col(DATE_COLUMN)).between(START_DATE, END_DATE)) &
-    (col("headers")["messageType"].rlike(f"(?i)^{FILTER_MSG_TYPE}$")) &
-    (col(JSON_COLUMN).isNotNull())
+# Get all tables in the schema
+tables_df = spark.sql(f"SHOW TABLES IN {schema_full}")
+tables = [row.tableName for row in tables_df.collect()]
+
+results = []
+
+for table in tables:
+    full_table_name = f"{schema_full}.{table}"
+    print(f"Processing table: {full_table_name}")
+
+    df = spark.table(full_table_name)
+    row_count = df.count()
+
+    for col in df.columns:
+        populated_count = df.filter(df[col].isNotNull()).count()
+        is_populated = populated_count > 0
+        
+        results.append((table, col, row_count, populated_count, is_populated))
+
+# Convert results to DataFrame
+result_df = spark.createDataFrame(
+    results,
+    ["table_name", "column_name", "row_count", "non_null_count", "is_column_populated"]
 )
 
-# Step 2: Infer dynamic schema from a sample Payload
-sample_row = df.select(JSON_COLUMN).limit(1).collect()
-
-if not sample_row:
-    raise Exception("No matching rows found after filter.")
-
-sample_payload = sample_row[0][JSON_COLUMN]
-inferred_schema = schema_of_json(sample_payload)
-
-# Step 3: Parse the Payload into a struct column
-df_parsed = df.withColumn("json_struct", from_json(col(JSON_COLUMN), inferred_schema)).drop(JSON_COLUMN)
-
-# Step 4: Recursive flattener
-def flatten_df(df):
-    while True:
-        complex_cols = [(name, dtype) for name, dtype in df.dtypes
-                        if dtype.startswith("struct") or dtype.startswith("array")]
-        if not complex_cols:
-            break
-
-        name, dtype = complex_cols[0]
-        if dtype.startswith("struct"):
-            expanded = [col(f"{name}.{field.name}").alias(f"{name}_{field.name}")
-                        for field in df.schema[name].dataType.fields]
-            df = df.select("*", *expanded).drop(name)
-        elif dtype.startswith("array"):
-            df = df.withColumn(name, explode_outer(col(name)))
-
-    return df
-
-# Step 5: Flatten the json_struct field
-df_flattened = flatten_df(df_parsed)
-
-# Step 6: Register or show result
-df_flattened.createOrReplaceTempView("flattened_json_out")
-df_flattened.show(20, truncate=False)
-df_flattened.write.mode("overwrite").saveAsTable("flattened_precomp_response_json")
-df_flattened.write.mode("overwrite").option("header", "true").csv("/mnt/your/path")
+display(result_df)
