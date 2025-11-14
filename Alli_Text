@@ -1,52 +1,56 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json, schema_of_json, explode_outer
-from pyspark.sql.types import StructType, ArrayType, StructField
+from pyspark.sql.functions import col, from_json, schema_of_json, explode_outer, to_date
+from pyspark.sql.types import StructType, ArrayType
 
 # Start Spark session
 spark = SparkSession.builder.getOrCreate()
 
-# Load your data
+# Step 1: Load table
 df = spark.table("core_tst_mqs_athn_mtr_ehubstream")
 
-# Step 1: Filter for messageType = 'precomp-response'
-df_filtered = df.filter(col("headers")["messageType"].rlike("(?i)^precomp-response$"))
+# Step 2: Filter by headers['messageType'] = 'precomp-response' and date range
+df_filtered = df.filter(
+    (col("headers")["messageType"].rlike("(?i)^precomp-response$")) &
+    (to_date("TimeEnqueued") >= "2025-11-12") &
+    (to_date("TimeEnqueued") <= "2025-11-14")
+)
 
-# Step 2: Get dynamic schema of Payload from sample row
-sample_payload = df_filtered.select("Payload").filter(col("Payload").isNotNull()).limit(1).collect()[0]["Payload"]
-inferred_schema = schema_of_json(sample_payload)
+# Step 3: Infer dynamic JSON schema from a sample Payload
+sample_payload_row = df_filtered.select("Payload").filter(col("Payload").isNotNull()).limit(1).collect()
 
-# Step 3: Parse Payload JSON using inferred schema
-df_with_json = df_filtered.withColumn("payload_json", from_json(col("Payload"), inferred_schema))
+if not sample_payload_row:
+    print("⚠️ No matching rows found. Check your filters or data.")
+else:
+    sample_payload = sample_payload_row[0]["Payload"]
+    inferred_schema = schema_of_json(sample_payload)
 
-# Step 4: Recursive function to flatten struct and arrays
-def flatten(df):
-    while True:
-        complex_fields = [(field.name, field.dataType)
-                          for field in df.schema.fields
-                          if isinstance(field.dataType, (StructType, ArrayType))]
+    # Step 4: Parse Payload JSON
+    df_with_json = df_filtered.withColumn("payload_json", from_json(col("Payload"), inferred_schema))
 
-        if not complex_fields:
-            break
+    # Step 5: Flatten function for nested structs/arrays
+    def flatten(df):
+        while True:
+            complex_fields = [(field.name, field.dataType)
+                              for field in df.schema.fields
+                              if isinstance(field.dataType, (StructType, ArrayType))]
 
-        col_name, col_type = complex_fields[0]
+            if not complex_fields:
+                break
 
-        if isinstance(col_type, StructType):
-            expanded = [col(f"{col_name}.{k}").alias(f"{col_name}_{k}")
-                        for k in col_type.names]
-            df = df.select("*", *expanded).drop(col_name)
+            col_name, col_type = complex_fields[0]
 
-        elif isinstance(col_type, ArrayType):
-            df = df.withColumn(col_name, explode_outer(col(col_name)))
+            if isinstance(col_type, StructType):
+                expanded = [col(f"{col_name}.{k}").alias(f"{col_name}_{k}")
+                            for k in col_type.names]
+                df = df.select("*", *expanded).drop(col_name)
 
-    return df
+            elif isinstance(col_type, ArrayType):
+                df = df.withColumn(col_name, explode_outer(col(col_name)))
 
-# Step 5: Flatten the payload_json field
-df_to_flatten = df_with_json.select("TimeEnqueued", "headers", "payload_json")
-df_flattened_payload = flatten(df_to_flatten.select("TimeEnqueued", "headers", "payload_json.*"))
+        return df
 
-# Optional: Flatten headers too
-df_final = flatten(df_flattened_payload)
+    # Step 6: Flatten the parsed payload JSON
+    df_flattened = flatten(df_with_json.drop("Payload"))
 
-# Step 6: Show or write
-df_final.show(truncate=False)
-# df_final.write.mode("overwrite").saveAsTable("flattened_payload_dynamic")
+    # Step 7: Show final flattened result
+    df_flattened.select("TimeEnqueued", "headers", *[col for col in df_flattened.columns if col.startswith("payload_json")]).show(truncate=False)
