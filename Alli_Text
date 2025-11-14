@@ -1,48 +1,31 @@
-# Databricks – Full Auto JSON Flattening (Supports Structs + Arrays)
-# ---------------------------------------------------------------
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-# --- Function: Flatten JSON recursively (structs + arrays) ---
-def flatten(df, prefix=""):
+# function to flatten json columns automatically
+def flatten_df(nested_df):
     flat_cols = []
     nested_cols = []
 
-    for field in df.schema.fields:
-        field_name = field.name
-        field_type = field.dataType
-        new_name = f"{prefix}{field_name}" if prefix == "" else f"{prefix}_{field_name}"
-
-        # If Struct → flatten further
-        if isinstance(field_type, T.StructType):
-            nested_cols.append((field_name, new_name))
-
-        # If Array of Struct → explode safely
-        elif isinstance(field_type, T.ArrayType) and isinstance(field_type.elementType, T.StructType):
-            df = df.withColumn(field_name, F.explode_outer(F.col(field_name)))
-            nested_cols.append((field_name, new_name))
-
+    for column_name, dtype in nested_df.dtypes:
+        if dtype.startswith("struct"):
+            nested_cols.append(column_name)
         else:
-            flat_cols.append(F.col(field_name).alias(new_name))
+            flat_cols.append(column_name)
 
-    flat_df = df.select(flat_cols +
-                        [F.col(f"{name}.*") for name, alias_name in nested_cols])
+    flat_df = nested_df.select(flat_cols +
+        [F.col(n + '.' + c).alias(n + '_' + c)
+         for n in nested_cols
+         for c in nested_df.select(n + '.*').columns])
 
-    if len(nested_cols) == 0:
+    if len(nested_cols) > 0:
+        return flatten_df(flat_df)
+    else:
         return flat_df
 
-    return flatten(flat_df)
+# filter by messageType in headers JSON
+filtered = df.filter(F.col("headers.messageType") == "PRECOMP_RESPONSE")
 
-# --- FILTER EHUBSTREAM FOR messageType = PRECOMP_RESPONSE ---
-filtered = (
-    spark.table("core_tst_mqs_athn_mtr.ehubstream")
-         .filter(F.col("headers.messageType") == "PRECOMP_RESPONSE")
-)
+# flatten payload automatically
+flattened_payload = flatten_df(filtered.select("payload.*"))
 
-# --- Flatten payload completely ---
-flattened = flatten(filtered.select("payload"))
-
-flattened.show(5)
-
-# Optionally write result to Delta
-# flattened.write.format("delta").mode("overwrite").saveAsTable("flattened_precomp_response")
+flattened_payload.show()
