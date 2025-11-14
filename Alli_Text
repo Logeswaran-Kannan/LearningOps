@@ -1,11 +1,17 @@
 from pyspark.sql import SparkSession
 
 # --------------------------------------------------------
-# INPUT: List of table names to evaluate
+# INPUTS
 # --------------------------------------------------------
 catalog = "core_tst"
 schema  = "mqs"
-table_list = ["athn_mtr"]   # ← Update this list as needed
+
+# List of tables to process
+table_list = ["athn_mtr"]   # ← update as needed
+
+# Columns to exclude from analysis
+exclude_columns = ["insert_ts", "update_user", "raw_payload"]  # ← update as needed
+
 schema_full = f"{catalog}.{schema}"
 
 spark.sql(f"USE CATALOG {catalog}")
@@ -21,14 +27,22 @@ for table in table_list:
     row_count = df.count()
 
     for col in df.columns:
-        # Count non-null values
+
+        # -------------------------------
+        # Skip excluded columns
+        # -------------------------------
+        if col in exclude_columns:
+            print(f"Skipping excluded column: {col}")
+            continue
+
+        # Count non-null
         non_null_count = df.filter(df[col].isNotNull()).count()
         is_populated = non_null_count > 0
         
-        # Count distinct
+        # Count distinct values
         distinct_count = df.select(col).distinct().count()
 
-        # Fetch distinct values only if < 50
+        # Get distinct values (<50 only)
         if distinct_count < 50:
             distinct_values = (
                 df.select(col)
@@ -50,7 +64,7 @@ for table in table_list:
             distinct_values
         ))
 
-# Create results DataFrame
+# Create DataFrame
 result_df = spark.createDataFrame(
     results,
     ["table_name", "column_name", "row_count", "non_null_count", "is_populated",
