@@ -1,31 +1,48 @@
-# Databricks PySpark example to automatically flatten nested JSON in a dataframe
-
+# Databricks – Full Auto JSON Flattening (Supports Structs + Arrays)
+# ---------------------------------------------------------------
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-# Function to recursively flatten a schema
-def flatten_schema(schema, prefix=None):
-    fields = []
-    for field in schema.fields:
-        name = f"{prefix}.{field.name}" if prefix else field.name
-        dtype = field.dataType
-        if isinstance(dtype, T.StructType):
-            fields += flatten_schema(dtype, prefix=name)
-        elif isinstance(dtype, T.ArrayType) and isinstance(dtype.elementType, T.StructType):
-            # Explode array of structs and flatten
-            fields.append(F.explode_outer(F.col(name)).alias(name))
-            fields += flatten_schema(dtype.elementType, prefix=name)
+# --- Function: Flatten JSON recursively (structs + arrays) ---
+def flatten(df, prefix=""):
+    flat_cols = []
+    nested_cols = []
+
+    for field in df.schema.fields:
+        field_name = field.name
+        field_type = field.dataType
+        new_name = f"{prefix}{field_name}" if prefix == "" else f"{prefix}_{field_name}"
+
+        # If Struct → flatten further
+        if isinstance(field_type, T.StructType):
+            nested_cols.append((field_name, new_name))
+
+        # If Array of Struct → explode safely
+        elif isinstance(field_type, T.ArrayType) and isinstance(field_type.elementType, T.StructType):
+            df = df.withColumn(field_name, F.explode_outer(F.col(field_name)))
+            nested_cols.append((field_name, new_name))
+
         else:
-            fields.append(F.col(name).alias(name.replace('.', '_')))
-    return fields
+            flat_cols.append(F.col(field_name).alias(new_name))
 
-# Load table
-df = spark.table("ehubstream")
+    flat_df = df.select(flat_cols +
+                        [F.col(f"{name}.*") for name, alias_name in nested_cols])
 
-# Filter by properties.messageType
-filtered = df.filter(F.col("properties.messageType") == "PRECOMP_RESPONSE")
+    if len(nested_cols) == 0:
+        return flat_df
 
-# Flatten payload JSON
-df_flat = filtered.select(*flatten_schema(filtered.schema["payload"].dataType, prefix="payload"))
+    return flatten(flat_df)
 
-df_flat.show(5)
+# --- FILTER EHUBSTREAM FOR messageType = PRECOMP_RESPONSE ---
+filtered = (
+    spark.table("core_tst_mqs_athn_mtr.ehubstream")
+         .filter(F.col("headers.messageType") == "PRECOMP_RESPONSE")
+)
+
+# --- Flatten payload completely ---
+flattened = flatten(filtered.select("payload"))
+
+flattened.show(5)
+
+# Optionally write result to Delta
+# flattened.write.format("delta").mode("overwrite").saveAsTable("flattened_precomp_response")
