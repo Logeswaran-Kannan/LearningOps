@@ -1,1 +1,62 @@
-We still don’t have any PRECOM error data in SIT. We need to look into whether the data we created doesn’t actually trigger the error, or if we just need to generate proper test data for it.
+Subject: Update on Data Dependencies & Issues Impacting BICOE Testing (Post-CR041)
+
+Hi Team,
+
+Following the post-CR041 changes, we can now see the data flowing through with the modified headers. However, there are still several data gaps impacting BICOE testing. Please find the summary below:
+
+1. Cache ID
+
+Cache ID is not populating in most of the messages.
+RL-1301 has been raised.
+
+2. Quote Request
+
+2.1 Vehicle Premium: Pre-IPT and Add-ons values are missing.
+
+2.2 Cover details: Personal Accident 5K and Courtesy Car Total Repair not coming through.
+
+2.3 Modifications: Missing (expected only via Aggregator flow).
+
+2.4 Driver details missing:
+
+Licence Validated Ind
+
+Driver Medical Condition
+
+DVLA Advised Ind
+
+Driver Reg Disable Ind
+
+2.5 Conviction: Disqualified End Date missing.
+
+2.6 Policy holder details missing – please refer to the attached sheet.
+
+3. PRECOMP Error Data
+
+3.1 No PRECOMP error records seen in SIT. Need to investigate whether current data has no errors or if new test data is required.
+
+3.2 Data profiling for Driver, Vehicle, Policy Holder, and Policy details is ongoing.
+
+Nearly 400 columns need profiling, so this is taking some time.
+
+We will share the outcomes once completed.
+
+4. Rating Request
+
+MyLicence data is missing, likely tied to an open issue.
+
+RL-1300 raised regarding uppercase field name.
+
+5. Rating Response
+
+5.1 Missing header info related to RL-1298 & RL-1030.
+
+5.2 Decline Result test missing – RL-1125.
+
+5.3 Endorsement details missing: RL-1209, RL-1210, RL-1211, RL-1212, RL-1213.
+
+5.4 Error details missing for status = error – RL-1299.
+
+5.5 Underwriting & Pricing results mostly coming as 0 – possibly linked to an existing CR.
+
+Additional missing data items – please refer to the attached list.
