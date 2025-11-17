@@ -1,62 +1,9 @@
-Subject: Update on Data Dependencies & Issues Impacting BICOE Testing (Post-CR041)
+Subject: PV Group Setup for Underwriting & Pricing UAT Engagement
 
-Hi Team,
+Hi Paul Reid / Adrian,
 
-Following the post-CR041 changes, we can now see the data flowing through with the modified headers. However, there are still several data gaps impacting BICOE testing. Please find the summary below:
+As part of the Underwriting and Pricing UAT engagement, we’re planning to create a PV group in the test environment to provide access to the Radar Live Bronze tables in Databricks, where the offline RAW data is ingested and stored. This will allow the teams to reconcile the online data with the offline data during UAT, as previously discussed.
 
-1. Cache ID
+Could you please help coordinate and share the list of team members from both the Pricing and Underwriting teams who should be included in this group?
 
-Cache ID is not populating in most of the messages.
-RL-1301 has been raised.
-
-2. Quote Request
-
-2.1 Vehicle Premium: Pre-IPT and Add-ons values are missing.
-
-2.2 Cover details: Personal Accident 5K and Courtesy Car Total Repair not coming through.
-
-2.3 Modifications: Missing (expected only via Aggregator flow).
-
-2.4 Driver details missing:
-
-Licence Validated Ind
-
-Driver Medical Condition
-
-DVLA Advised Ind
-
-Driver Reg Disable Ind
-
-2.5 Conviction: Disqualified End Date missing.
-
-2.6 Policy holder details missing – please refer to the attached sheet.
-
-3. PRECOMP Error Data
-
-3.1 No PRECOMP error records seen in SIT. Need to investigate whether current data has no errors or if new test data is required.
-
-3.2 Data profiling for Driver, Vehicle, Policy Holder, and Policy details is ongoing.
-
-Nearly 400 columns need profiling, so this is taking some time.
-
-We will share the outcomes once completed.
-
-4. Rating Request
-
-MyLicence data is missing, likely tied to an open issue.
-
-RL-1300 raised regarding uppercase field name.
-
-5. Rating Response
-
-5.1 Missing header info related to RL-1298 & RL-1030.
-
-5.2 Decline Result test missing – RL-1125.
-
-5.3 Endorsement details missing: RL-1209, RL-1210, RL-1211, RL-1212, RL-1213.
-
-5.4 Error details missing for status = error – RL-1299.
-
-5.5 Underwriting & Pricing results mostly coming as 0 – possibly linked to an existing CR.
-
-Additional missing data items – please refer to the attached list.
+Thanks!
