@@ -1,74 +1,8 @@
-from pyspark.sql import SparkSession
+Subject: Not Feeling Well – Will Join in Second Half
 
-# --------------------------------------------------------
-# INPUTS
-# --------------------------------------------------------
-catalog = "core_tst"
-schema  = "mqs"
+Hi [Boss Name],
+I’m not feeling well this morning, so I won’t be able to attend in the first half. I will rest and join from the second half.
 
-# List of tables to process
-table_list = ["athn_mtr"]   # ← update as needed
-
-# Columns to exclude from analysis
-exclude_columns = ["insert_ts", "update_user", "raw_payload"]  # ← update as needed
-
-schema_full = f"{catalog}.{schema}"
-
-spark.sql(f"USE CATALOG {catalog}")
-spark.sql(f"USE SCHEMA {schema}")
-
-results = []
-
-for table in table_list:
-    full_table_name = f"{schema_full}.{table}"
-    print(f"Processing table: {full_table_name}")
-
-    df = spark.table(full_table_name)
-    row_count = df.count()
-
-    for col in df.columns:
-
-        # -------------------------------
-        # Skip excluded columns
-        # -------------------------------
-        if col in exclude_columns:
-            print(f"Skipping excluded column: {col}")
-            continue
-
-        # Count non-null
-        non_null_count = df.filter(df[col].isNotNull()).count()
-        is_populated = non_null_count > 0
-        
-        # Count distinct values
-        distinct_count = df.select(col).distinct().count()
-
-        # Get distinct values (<50 only)
-        if distinct_count < 50:
-            distinct_values = (
-                df.select(col)
-                  .distinct()
-                  .limit(50)
-                  .rdd.map(lambda r: r[0])
-                  .collect()
-            )
-        else:
-            distinct_values = "Distinct >= 50 (not fetched)"
-
-        results.append((
-            table,
-            col,
-            row_count,
-            non_null_count,
-            is_populated,
-            distinct_count,
-            distinct_values
-        ))
-
-# Create DataFrame
-result_df = spark.createDataFrame(
-    results,
-    ["table_name", "column_name", "row_count", "non_null_count", "is_populated",
-     "distinct_count", "distinct_values"]
-)
-
-display(result_df)
+Thanks for understanding.
+Regards,
+[Your Name]
