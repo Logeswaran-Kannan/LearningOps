@@ -1,8 +1,10 @@
-I’m progressing the setup needed for the Pricing UAT users to access the required MQS data in the Databricks TEST environment. I now have all the ADM IDs for the UAT users, so I am raising the request to create the new PV group today to avoid any delay in UAT preparation.
+Subject: Request to Create New PV Group – PV_MQS_Pricing_UAT_Test (Databricks TEST)
 
-Below is the access configuration I will be submitting, following the standard PV-group setup process and the MQS naming conventions.
+Hi Team,
 
-PV Group Creation Details (as per request form)
+I would like to request the creation of a new PV group to support Pricing UAT access in the Databricks TEST environment. All required details are provided below in the standard format.
+
+Create New Group – Access Request Details
 
 Request Type:
 Create New Group
@@ -14,10 +16,18 @@ Application / Platform:
 Databricks – TEST Workspace
 
 Group Description:
-Create PV group for Pricing UAT users to access MQS data views in Databricks TEST environment. Access needed to support UAT validation for Radar Live.
+PV group required to provide access for Pricing UAT users to read MQS-related data views in the Databricks TEST environment. This access is needed to support data validation activities for Radar Live UAT.
 
 Add Members (ADM Accounts Only):
-(ADM user list included in request)
+
+ADMxxxxx – User 1
+
+ADMxxxxx – User 2
+
+ADMxxxxx – User 3
+
+ADMxxxxx – User 4
+(Replace with your actual list of ADM IDs)
 
 Access Required:
 Read Only
@@ -29,9 +39,9 @@ PII Restriction:
 Non-PII access only
 
 Business Justification:
-Pricing UAT users require read-only access to MQS views in Databricks TEST to validate offline MQS data against the online systems as part of UAT.
+Pricing UAT users need controlled read-only access to the MQS views in Databricks TEST to validate offline MQS data against online systems as part of Radar Live UAT preparation.
 
-Since both of you are currently out of office, I will proceed with submitting this request with non-PII access.
-If any changes are required (naming, schema restrictions, PII requirements, etc.), please let me know when you are back and I can update the configuration or raise a follow-up request.
+Please let me know if you require any further information.
 
 Thanks,
+[Your Name]
