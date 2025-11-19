@@ -1,19 +1,34 @@
-Message to Nita (background + clarification request)
+Request Type:
+Create New Group
 
-Hi Nita,
+Group Name:
+PV_MQS_Pricing_UAT_Test
 
-I just wanted to update you on something related to the UAT preparation for the Pricing work.
+Application / Platform:
+Databricks – TEST Workspace
 
-To enable the UAT users to validate the data in the Test Databricks environment, we need to create a new PV group and grant them the correct schema access. I now have the list of ADM IDs for all the UAT users, so we can proceed with raising the access request.
+Group Description:
+Create PV group for Pricing UAT users to access MQS data views in Databricks TEST environment. Access required to support UAT validation activities for Radar Live.
 
-Before I submit the request, I need to confirm a couple of points with you:
+Add Members (ADM Accounts Only):
 
-PV Group Name – Do we need to follow any specific naming convention from the Pricing/Underwriting side for this UAT PV group?
-(My default suggestion is something like PV_Pricing_UAT_Test.)
+ADMxxxxx – User 1
 
-PII Restrictions – For UAT purposes, should we exclude any PII fields or PII-containing tables from the users’ access?
-Nate usually confirms the correct Data Restrictions and schema setup, but since he’s away until Monday, I want to ensure we set this up appropriately.
+ADMxxxxx – User 2
 
-My plan is to provide access only to the non-PII Bronze views required for UAT validation unless you advise otherwise.
+ADMxxxxx – User 3
 
-Once I have your confirmation on these two points, I’ll raise the security request and the cloud ticket so the group can be created and added to Databricks.
+ADMxxxxx – User 4
+(Replace with your actual list of ADM IDs)
+
+Access Required:
+Read Only
+
+Schema / Folders Required:
+mqs_athn_mtr_views
+
+PII Restriction:
+Non-PII access only
+
+Business Justification:
+Pricing UAT users require read-only access to MQS views in the Databricks TEST environment to validate offline MQS data against online systems as part of Radar Live UAT. BA and BICOE will confirm any additional restrictions when back.
