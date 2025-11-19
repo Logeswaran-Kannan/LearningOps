@@ -1,47 +1,9 @@
-Subject: Request to Create New PV Group – PV_MQS_Pricing_UAT_Test (Databricks TEST)
+Hi Hazel, hope you’re doing well! 😊
 
-Hi Team,
+I was speaking with Anukul earlier — he mentioned he’d already spoken to you about the idea of getting everyone together for a lunch/dinner/drinks before the Christmas break. It would be a nice relaxed catch-up with you, Phil, Anukul, Mani and myself.
 
-I would like to request the creation of a new PV group to support Pricing UAT access in the Databricks TEST environment. All required details are provided below in the standard format.
+Since Phil is Bournemouth-based and Anukul is happy to travel, we were thinking Bournemouth might be the easiest place to organise it.
 
-Create New Group – Access Request Details
+Before we look at dates, I just wanted to check with you first — do you have any plans to be in Bournemouth over the next few weeks before the holidays? If you’re already coming down, we can plan around that. Otherwise, we can find a date that works for everyone.
 
-Request Type:
-Create New Group
-
-Group Name:
-PV_MQS_Pricing_UAT_Test
-
-Application / Platform:
-Databricks – TEST Workspace
-
-Group Description:
-PV group required to provide access for Pricing UAT users to read MQS-related data views in the Databricks TEST environment. This access is needed to support data validation activities for Radar Live UAT.
-
-Add Members (ADM Accounts Only):
-
-ADMxxxxx – User 1
-
-ADMxxxxx – User 2
-
-ADMxxxxx – User 3
-
-ADMxxxxx – User 4
-(Replace with your actual list of ADM IDs)
-
-Access Required:
-Read Only
-
-Schema / Folders Required:
-mqs_athn_mtr_views
-
-PII Restriction:
-Non-PII access only
-
-Business Justification:
-Pricing UAT users need controlled read-only access to the MQS views in Databricks TEST to validate offline MQS data against online systems as part of Radar Live UAT preparation.
-
-Please let me know if you require any further information.
-
-Thanks,
-[Your Name]
+No pressure at all — just thought it would be good to meet in person before the year wraps up. Let me know what you think!
