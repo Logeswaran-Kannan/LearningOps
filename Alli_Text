@@ -1,9 +1,19 @@
-Subject: PV Group Setup for Underwriting & Pricing UAT Engagement
+Message to Nita (background + clarification request)
 
-Hi Paul Reid / Adrian,
+Hi Nita,
 
-As part of the Underwriting and Pricing UAT engagement, we’re planning to create a PV group in the test environment to provide access to the Radar Live Bronze tables in Databricks, where the offline RAW data is ingested and stored. This will allow the teams to reconcile the online data with the offline data during UAT, as previously discussed.
+I just wanted to update you on something related to the UAT preparation for the Pricing work.
 
-Could you please help coordinate and share the list of team members from both the Pricing and Underwriting teams who should be included in this group?
+To enable the UAT users to validate the data in the Test Databricks environment, we need to create a new PV group and grant them the correct schema access. I now have the list of ADM IDs for all the UAT users, so we can proceed with raising the access request.
 
-Thanks!
+Before I submit the request, I need to confirm a couple of points with you:
+
+PV Group Name – Do we need to follow any specific naming convention from the Pricing/Underwriting side for this UAT PV group?
+(My default suggestion is something like PV_Pricing_UAT_Test.)
+
+PII Restrictions – For UAT purposes, should we exclude any PII fields or PII-containing tables from the users’ access?
+Nate usually confirms the correct Data Restrictions and schema setup, but since he’s away until Monday, I want to ensure we set this up appropriately.
+
+My plan is to provide access only to the non-PII Bronze views required for UAT validation unless you advise otherwise.
+
+Once I have your confirmation on these two points, I’ll raise the security request and the cloud ticket so the group can be created and added to Databricks.
