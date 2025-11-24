@@ -2,47 +2,56 @@ WITH policy_holder AS (
     SELECT 
         QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
         PROPOSERPOLICYHOLDER_PRN AS POLICY_HOLDER_PRN
-    FROM core_tst.mqs.athn_mtr.dv_prsnl_quote_plhdr_rqst_mtr_athn_mqs_sat
+    FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_plhdr_rqst_mtr_athn_mqs_sat
 ),
 
 driver AS (
     SELECT
         QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
         DRIVER_PRN
-    FROM core_tst.mqs.athn_mtr.dv_prsnl_quote_driver_rqst_mtr_athn_mqs_sat
+    FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_driver_rqst_mtr_athn_mqs_sat
 ),
 
 vehicle AS (
     SELECT
-        QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
+        DRIVERPRN,
         VEHICLEPRN
-    FROM core_tst.mqs.athn_mtr.dv_quote_veh_cover_rqst_mtr_athn_mqs_sat
+    FROM core_tst.mqs.athn_mqs.dv_quote_veh_driver_use_rqst_mtr_athn_mqs_sat
 ),
 
--- Count drivers per quote
+joined AS (
+    SELECT
+        ph.QUOTE_KEY,
+        ph.POLICY_HOLDER_PRN,
+        d.DRIVER_PRN,
+        v.VEHICLEPRN
+    FROM policy_holder ph
+    JOIN driver d 
+      ON ph.QUOTE_KEY = d.QUOTE_KEY
+    JOIN vehicle v 
+      ON d.DRIVER_PRN = v.DRIVERPRN
+),
+
 driver_count AS (
     SELECT QUOTE_KEY, COUNT(DISTINCT DRIVER_PRN) AS driver_cnt
-    FROM driver
+    FROM joined
     GROUP BY QUOTE_KEY
 ),
 
--- Count vehicles per quote
 vehicle_count AS (
     SELECT QUOTE_KEY, COUNT(DISTINCT VEHICLEPRN) AS vehicle_cnt
-    FROM vehicle
+    FROM joined
     GROUP BY QUOTE_KEY
 )
 
-SELECT
-    ph.QUOTE_KEY,
-    ph.POLICY_HOLDER_PRN,
-    d.DRIVER_PRN,
-    v.VEHICLEPRN
-FROM policy_holder ph
-JOIN driver d ON ph.QUOTE_KEY = d.QUOTE_KEY
-JOIN vehicle v ON ph.QUOTE_KEY = v.QUOTE_KEY
-JOIN driver_count dc ON ph.QUOTE_KEY = dc.QUOTE_KEY
-JOIN vehicle_count vc ON ph.QUOTE_KEY = vc.QUOTE_KEY
-WHERE dc.driver_cnt = 1          -- exactly one driver
-  AND vc.vehicle_cnt = 1         -- exactly one vehicle
-  AND ph.POLICY_HOLDER_PRN <> d.DRIVER_PRN;   -- PH is not the driver
+SELECT 
+    j.QUOTE_KEY,
+    j.POLICY_HOLDER_PRN,
+    j.DRIVER_PRN,
+    j.VEHICLEPRN
+FROM joined j
+JOIN driver_count dc ON j.QUOTE_KEY = dc.QUOTE_KEY
+JOIN vehicle_count vc ON j.QUOTE_KEY = vc.QUOTE_KEY
+WHERE dc.driver_cnt = 1
+  AND vc.vehicle_cnt = 1
+  AND j.POLICY_HOLDER_PRN <> j.DRIVER_PRN;
