@@ -1,18 +1,17 @@
 WITH ph AS (
     SELECT 
         QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
-        PROPOSERPOLICYHOLDER_PRN AS PH_PRN
+        TRIM(CAST(PROPOSERPOLICYHOLDER_PRN AS STRING)) AS PH_PRN
     FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_plhdr_rqst_mtr_athn_mqs_sat
 ),
 
 dr AS (
     SELECT
         QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
-        DRIVER_PRN
+        TRIM(CAST(DRIVER_PRN AS STRING)) AS DRIVER_PRN
     FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_driver_rqst_mtr_athn_mqs_sat
 ),
 
--- Driver PRN list per quote
 driver_group AS (
     SELECT 
         QUOTE_KEY,
@@ -28,6 +27,5 @@ SELECT
 FROM ph
 LEFT JOIN driver_group dg
     ON ph.QUOTE_KEY = dg.QUOTE_KEY
-WHERE dg.DRIVER_LIST IS NULL                        -- No driver at all
-   OR NOT ARRAY_CONTAINS(dg.DRIVER_LIST, ph.PH_PRN) -- Policy holder not in driver list
-;
+WHERE dg.DRIVER_LIST IS NULL
+   OR NOT ARRAY_CONTAINS(dg.DRIVER_LIST, ph.PH_PRN);
