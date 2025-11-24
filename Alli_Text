@@ -1,57 +1,33 @@
-WITH policy_holder AS (
+WITH ph AS (
     SELECT 
         QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
-        PROPOSERPOLICYHOLDER_PRN AS POLICY_HOLDER_PRN
+        PROPOSERPOLICYHOLDER_PRN AS PH_PRN
     FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_plhdr_rqst_mtr_athn_mqs_sat
 ),
 
-driver AS (
+dr AS (
     SELECT
         QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
         DRIVER_PRN
     FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_driver_rqst_mtr_athn_mqs_sat
 ),
 
-vehicle AS (
-    SELECT
-        DRIVERPRN,
-        VEHICLEPRN
-    FROM core_tst.mqs.athn_mqs.dv_quote_veh_driver_use_rqst_mtr_athn_mqs_sat
-),
-
-joined AS (
-    SELECT
-        ph.QUOTE_KEY,
-        ph.POLICY_HOLDER_PRN,
-        d.DRIVER_PRN,
-        v.VEHICLEPRN
-    FROM policy_holder ph
-    JOIN driver d 
-      ON ph.QUOTE_KEY = d.QUOTE_KEY
-    JOIN vehicle v 
-      ON d.DRIVER_PRN = v.DRIVERPRN
-),
-
-driver_count AS (
-    SELECT QUOTE_KEY, COUNT(DISTINCT DRIVER_PRN) AS driver_cnt
-    FROM joined
-    GROUP BY QUOTE_KEY
-),
-
-vehicle_count AS (
-    SELECT QUOTE_KEY, COUNT(DISTINCT VEHICLEPRN) AS vehicle_cnt
-    FROM joined
+-- Driver PRN list per quote
+driver_group AS (
+    SELECT 
+        QUOTE_KEY,
+        COLLECT_SET(DRIVER_PRN) AS DRIVER_LIST
+    FROM dr
     GROUP BY QUOTE_KEY
 )
 
 SELECT 
-    j.QUOTE_KEY,
-    j.POLICY_HOLDER_PRN,
-    j.DRIVER_PRN,
-    j.VEHICLEPRN
-FROM joined j
-JOIN driver_count dc ON j.QUOTE_KEY = dc.QUOTE_KEY
-JOIN vehicle_count vc ON j.QUOTE_KEY = vc.QUOTE_KEY
-WHERE dc.driver_cnt = 1
-  AND vc.vehicle_cnt = 1
-  AND j.POLICY_HOLDER_PRN <> j.DRIVER_PRN;
+    ph.QUOTE_KEY,
+    ph.PH_PRN AS POLICY_HOLDER_PRN,
+    dg.DRIVER_LIST
+FROM ph
+LEFT JOIN driver_group dg
+    ON ph.QUOTE_KEY = dg.QUOTE_KEY
+WHERE dg.DRIVER_LIST IS NULL                        -- No driver at all
+   OR NOT ARRAY_CONTAINS(dg.DRIVER_LIST, ph.PH_PRN) -- Policy holder not in driver list
+;
