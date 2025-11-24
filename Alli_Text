@@ -20,13 +20,20 @@ driver_group AS (
     GROUP BY QUOTE_KEY
 ),
 
+veh_driver_use AS (
+    SELECT
+        TRIM(CAST(DRIVER_DRIVERPRN AS STRING)) AS DRIVER_PRN,
+        DRIVESVEHICLE_DRIVINGFREQUENCY
+    FROM core_tst.mqs.athn_mqs.dv_quote_veh_driver_use_rqst_mtr_athn_mqs_sat
+),
+
 match_check AS (
     SELECT
         ph.QUOTE_KEY,
         ph.POLICY_HOLDER_PRN,
         dg.DRIVER_LIST,
 
-        -- Identify which driver matches (if any)
+        -- Array of matching drivers
         FILTER(dg.DRIVER_LIST, d -> d = ph.POLICY_HOLDER_PRN) AS MATCHING_DRIVERS
 
     FROM ph
@@ -35,21 +42,26 @@ match_check AS (
 )
 
 SELECT
-    QUOTE_KEY,
-    POLICY_HOLDER_PRN,
-    DRIVER_LIST,
+    mc.QUOTE_KEY,
+    mc.POLICY_HOLDER_PRN,
+    mc.DRIVER_LIST,
 
     CASE 
-        WHEN DRIVER_LIST IS NULL THEN 'N'
-        WHEN SIZE(MATCHING_DRIVERS) > 0 THEN 'Y'
+        WHEN mc.DRIVER_LIST IS NULL THEN 'N'
+        WHEN SIZE(mc.MATCHING_DRIVERS) > 0 THEN 'Y'
         ELSE 'N'
     END AS IS_POLICY_HOLDER_IN_DRIVER_LIST,
 
-    -- New column showing exactly which driver matched
+    -- Extract which driver matched
     CASE
-        WHEN SIZE(MATCHING_DRIVERS) > 0 THEN MATCHING_DRIVERS[0]
+        WHEN SIZE(mc.MATCHING_DRIVERS) > 0 THEN mc.MATCHING_DRIVERS[0]
         ELSE NULL
-    END AS DRIVER_IN_LIST
+    END AS DRIVER_IN_LIST,
 
-FROM match_check
-ORDER BY QUOTE_KEY;
+    -- Driving frequency for that driver
+    vdu.DRIVESVEHICLE_DRIVINGFREQUENCY AS DRIVING_FREQUENCY
+
+FROM match_check mc
+LEFT JOIN veh_driver_use vdu
+    ON mc.MATCHING_DRIVERS[0] = vdu.DRIVER_PRN
+ORDER BY mc.QUOTE_KEY;
