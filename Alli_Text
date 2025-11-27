@@ -1,67 +1,21 @@
-WITH ph AS (
-    SELECT 
-        QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
-        TRIM(CAST(PROPOSERPOLICYHOLDER_PRN AS STRING)) AS POLICY_HOLDER_PRN
-    FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_plhdr_rqst_mtr_athn_mqs_sat
-),
+Subject: Clarification on MQSQUOTEID Behaviour (RL-1329)
 
-dr AS (
-    SELECT
-        QUOTE_MQS_QUOTE_LNK_KEY AS QUOTE_KEY,
-        TRIM(CAST(DRIVER_PRN AS STRING)) AS DRIVER_PRN
-    FROM core_tst.mqs.athn_mqs.dv_prsnl_quote_driver_rqst_mtr_athn_mqs_sat
-),
+Hi Team,
 
-driver_group AS (
-    SELECT 
-        QUOTE_KEY,
-        COLLECT_SET(DRIVER_PRN) AS DRIVER_LIST
-    FROM dr
-    GROUP BY QUOTE_KEY
-),
+Following up on the discussions with the Athena front-end team regarding RL-1329, I just wanted to clarify the behaviour we’re seeing around the MQSQUOTEID.
 
-veh_driver_use AS (
-    SELECT
-        TRIM(CAST(DRIVER_DRIVERPRN AS STRING)) AS DRIVER_PRN,
-        DRIVESVEHICLE_DRIVINGFREQUENCY
-    FROM core_tst.mqs.athn_mqs.dv_quote_veh_driver_use_rqst_mtr_athn_mqs_sat
-),
+Athena confirmed that the missing “MQS” prefix happens only when the service switches from the real MQS service to the mock service. This switch is triggered whenever the real MQS service is in downtime or service mode. To help them distinguish between the two internally, they intentionally drop the prefix in the interaction flow whenever the mock service is used.
 
-match_check AS (
-    SELECT
-        ph.QUOTE_KEY,
-        ph.POLICY_HOLDER_PRN,
-        dg.DRIVER_LIST,
+I highlighted that BICOE currently has no mechanism to identify whether the quote came via real or mock, and this could impact our reconciliation counts. Athena agreed to fix this, but it’s a low priority for them—and even with the fix, it won’t necessarily help us distinguish between real vs mock on our side.
 
-        -- Array of matching drivers
-        FILTER(dg.DRIVER_LIST, d -> d = ph.POLICY_HOLDER_PRN) AS MATCHING_DRIVERS
+What I want to understand better is the impact in Live:
 
-    FROM ph
-    LEFT JOIN driver_group dg
-        ON ph.QUOTE_KEY = dg.QUOTE_KEY
-)
+When Athena connects to the mock service, BICOE still receives the MQSQUOTEID from the interaction flow.
 
-SELECT
-    mc.QUOTE_KEY,
-    mc.POLICY_HOLDER_PRN,
-    mc.DRIVER_LIST,
+However, the same ID won’t appear in the actual MQS flow, since it didn’t come from real MQS.
 
-    CASE 
-        WHEN mc.DRIVER_LIST IS NULL THEN 'N'
-        WHEN SIZE(mc.MATCHING_DRIVERS) > 0 THEN 'Y'
-        ELSE 'N'
-    END AS IS_POLICY_HOLDER_IN_DRIVER_LIST,
+This looks like it will lead to reconciliation mismatches.
 
-    -- Extract which driver matched
-    CASE
-        WHEN SIZE(mc.MATCHING_DRIVERS) > 0 THEN mc.MATCHING_DRIVERS[0]
-        ELSE NULL
-    END AS DRIVER_IN_LIST,
+Before we move forward, I think we need a bit more discussion to agree on how this behaviour will affect BICOE and what we should expect in Live.
 
-    -- Driving frequency for that driver
-    vdu.DRIVESVEHICLE_DRIVINGFREQUENCY AS DRIVING_FREQUENCY
-
-FROM match_check mc
-LEFT JOIN veh_driver_use vdu
-    ON mc.MATCHING_DRIVERS[0] = vdu.DRIVER_PRN
-ORDER BY mc.QUOTE_KEY;
+Happy to discuss further.
