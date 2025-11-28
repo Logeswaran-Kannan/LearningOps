@@ -1,21 +1,109 @@
-Subject: Clarification on MQSQUOTEID Behaviour (RL-1329)
+import base64
+import snappy
+import json
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
 
-Hi Team,
+# ----------------------------------------------------
+# 1. UDF – Decode Base64 → Snappy → JSON string
+# ----------------------------------------------------
+def decode_snappy_base64(b64_str):
+    if b64_str is None:
+        return None
+    try:
+        raw = base64.b64decode(b64_str)
+        decompressed = snappy.decompress(raw)
+        return decompressed.decode("utf-8")
+    except:
+        return None
 
-Following up on the discussions with the Athena front-end team regarding RL-1329, I just wanted to clarify the behaviour we’re seeing around the MQSQUOTEID.
+decode_udf = udf(decode_snappy_base64, StringType())
 
-Athena confirmed that the missing “MQS” prefix happens only when the service switches from the real MQS service to the mock service. This switch is triggered whenever the real MQS service is in downtime or service mode. To help them distinguish between the two internally, they intentionally drop the prefix in the interaction flow whenever the mock service is used.
 
-I highlighted that BICOE currently has no mechanism to identify whether the quote came via real or mock, and this could impact our reconciliation counts. Athena agreed to fix this, but it’s a low priority for them—and even with the fix, it won’t necessarily help us distinguish between real vs mock on our side.
+# ----------------------------------------------------
+# 2. Load Your Table
+# ----------------------------------------------------
+table_name = "core_tst.mqs_athn_mtr.dlt_raw_enrichments"
+df = spark.table(table_name)
 
-What I want to understand better is the impact in Live:
 
-When Athena connects to the mock service, BICOE still receives the MQSQUOTEID from the interaction flow.
+# ----------------------------------------------------
+# 3. Decode Payload.data into JSON string
+# ----------------------------------------------------
+df_decoded = df.withColumn(
+    "payload_json",
+    decode_udf(col("Payload.data"))
+)
 
-However, the same ID won’t appear in the actual MQS flow, since it didn’t come from real MQS.
 
-This looks like it will lead to reconciliation mismatches.
+# ----------------------------------------------------
+# 4. Infer schema dynamically from JSON sample
+# ----------------------------------------------------
+sample_json = df_decoded.select("payload_json").dropna().limit(1).collect()[0][0]
+json_schema = spark.read.json(spark.sparkContext.parallelize([sample_json])).schema
 
-Before we move forward, I think we need a bit more discussion to agree on how this behaviour will affect BICOE and what we should expect in Live.
 
-Happy to discuss further.
+# ----------------------------------------------------
+# 5. Convert JSON string → struct using inferred schema
+# ----------------------------------------------------
+df_struct = df_decoded.withColumn(
+    "payload_struct",
+    from_json(col("payload_json"), json_schema)
+)
+
+
+# ----------------------------------------------------
+# 6. Deep flatten function (recursive)
+# ----------------------------------------------------
+def flatten_recursive(df):
+    # Find top-level columns that need flattening
+    complex_cols = [
+        (c.name, c.dataType) for c in df.schema.fields
+        if isinstance(c.dataType, (StructType, ArrayType, MapType))
+    ]
+
+    while complex_cols:
+        col_name, col_type = complex_cols.pop(0)
+
+        # ---- StructType: expand into separate columns
+        if isinstance(col_type, StructType):
+            expanded = [col(f"{col_name}.{f.name}").alias(f"{col_name}_{f.name}") for f in col_type.fields]
+            df = df.select("*", *expanded).drop(col_name)
+
+        # ---- ArrayType: explode into rows (if needed)
+        elif isinstance(col_type, ArrayType):
+            df = df.withColumn(col_name, explode_outer(col(col_name)))
+
+        # ---- MapType: explode keys into columns
+        elif isinstance(col_type, MapType):
+            df = df.select("*", *[
+                col(col_name).getItem(k).alias(f"{col_name}_{k}")
+                for k in df.select(map_keys(col(col_name))).dropna().limit(1).collect()[0][0]
+            ]).drop(col_name)
+
+        # Recompute fields list
+        complex_cols = [
+            (c.name, c.dataType) for c in df.schema.fields
+            if isinstance(c.dataType, (StructType, ArrayType, MapType))
+        ]
+
+    return df
+
+
+# ----------------------------------------------------
+# 7. Apply deep flattening on payload_struct
+# ----------------------------------------------------
+df_flat = flatten_recursive(df_struct.drop("payload_json"))
+
+
+# ----------------------------------------------------
+# 8. Clean column names (remove dots, spaces)
+# ----------------------------------------------------
+for c in df_flat.columns:
+    df_flat = df_flat.withColumnRenamed(c, c.replace(".", "_").replace(" ", "_"))
+
+
+# ----------------------------------------------------
+# 9. Show result
+# ----------------------------------------------------
+df_flat.display()
