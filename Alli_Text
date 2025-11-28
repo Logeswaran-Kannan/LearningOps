@@ -1,16 +1,25 @@
 from pyspark.sql.functions import col, udf
-from pyspark.sql.types import StringType, BinaryType
+from pyspark.sql.types import StringType
 import base64
 import snappy
 import json
 
-# 1. Load the table
+# Step 1: Load your table with VARIANT column (Payload)
 df = spark.table("core_tst.mqs_athn_mtr.dlt_raw_enrichments")
 
-# 2. Extract the base64-snappy encoded payload string
-df_extracted = df.selectExpr("Payload.rawEnrichment.data as compressed_data")
+# Step 2: Cast Payload to string to access as raw JSON
+df_str = df.withColumn("payload_str", col("Payload").cast("string"))
 
-# 3. UDF to decode and decompress the snappy data
+# Step 3: Extract rawEnrichment.data using a JSON function
+from pyspark.sql.functions import get_json_object
+
+# Use get_json_object to safely extract the nested field
+df_extracted = df_str.withColumn(
+    "compressed_data",
+    get_json_object("payload_str", "$.rawEnrichment.data")
+)
+
+# Step 4: Define a UDF to decode Base64 and decompress Snappy
 def decode_and_decompress(base64_str):
     try:
         decoded = base64.b64decode(base64_str)
@@ -21,19 +30,14 @@ def decode_and_decompress(base64_str):
 
 decode_udf = udf(decode_and_decompress, StringType())
 
-df_decompressed = df_extracted.withColumn("json_string", decode_udf(col("compressed_data")))
+# Step 5: Apply decompression
+df_decompressed = df_extracted.withColumn(
+    "json_string",
+    decode_udf(col("compressed_data"))
+).filter(col("json_string").isNotNull())
 
-# 4. Filter out failed decompression (if any)
-df_valid = df_decompressed.filter(col("json_string").isNotNull())
+# Step 6: Dynamically infer schema from the decompressed JSON
+json_df = spark.read.json(df_decompressed.rdd.map(lambda row: row["json_string"]))
 
-# 5. Infer schema dynamically from JSON string
-json_df = spark.read.json(df_valid.rdd.map(lambda row: row['json_string']))
-
-# Optional: cache if large
-json_df.cache()
-
-# 6. Flatten nested structure (adjust depth as needed)
-from pyspark.sql.functions import explode_outer
-
-flat_df = json_df.select("*")  # start with top-level
-flat_df.display()
+# Step 7: Preview the flat or nested structure
+json_df.display()
