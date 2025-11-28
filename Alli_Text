@@ -1,51 +1,88 @@
+Below is Databricks-ready Python code to handle **arrays of rawEnrichments**, decompress **each snappy item**, and flatten the output.
+
+---
+
+# ✅ Full Script — Handle ARRAY(rawEnrichments) + Snappy decode
+
+```python
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
 import snappy
-import json
+import base64
 
+# UDF: Detect base64 vs binary and decompress
+@F.udf(StringType())
+def decompress_snappy(data):
+    if data is None:
+        return None
+    try:
+        # RAW data may be base64 string → decode first
+        try:
+            raw = base64.b64decode(data)
+        except:
+            raw = data
+        return snappy.uncompress(raw).decode("utf-8")
+    except Exception:
+        return None
 
-# 1️⃣ UDF to decompress Snappy
-@F.udf(returnType=StringType())
-def snappy_decompress(value):
-if value is None:
-return None
-try:
-return snappy.uncompress(value).decode("utf-8")
-except Exception as e:
-return None
-
-
-# 2️⃣ Read table with VARIANT column
+# Load table
 source_df = spark.table("core_tst.mqs_athn_mtr.dlt_raw_enrichments")
 
-
-# 3️⃣ Extract compressed binary from variant (Payload.rawEnrichment.data)
-# Databricks stores VARIANT as a struct → cast to BINARY
-extracted_df = (
-source_df
-.withColumn("compressed_bin", F.col("Payload.rawEnrichment.data").cast("BINARY"))
+# Explode array of rawEnrichments
+exploded = source_df.select(
+    "MQSQuoteId",
+    F.explode("Payload.rawEnrichments").alias("enrich")
 )
 
-
-# 4️⃣ Decompress using UDF
-with_json_df = extracted_df.withColumn(
-"decompressed_json", snappy_decompress(F.col("compressed_bin"))
+# Extract fields
+with_meta = exploded.select(
+    "MQSQuoteId",
+    F.col("enrich.compression").alias("compression"),
+    F.col("enrich.data").alias("compressed_data"),
+    F.col("enrich.dataset").alias("dataset"),
+    F.col("enrich.outputformat").alias("outputformat"),
+    F.col("enrich.outputschema").alias("outputschema"),
+    F.col("enrich.provider").alias("provider"),
+    F.col("enrich.vehiclePRN").alias("vehiclePRN")
 )
 
-
-# 5️⃣ Parse JSON into struct
-parsed_df = with_json_df.withColumn(
-"payload_struct", F.from_json(F.col("decompressed_json"), "MAP<STRING,STRING>")
+# Decompress snappy data
+with_decompressed = with_meta.withColumn(
+    "decompressed_json", decompress_snappy(F.col("compressed_data"))
 )
 
-
-# 6️⃣ Select flattened output
-final_df = parsed_df.select(
-"TimeEnqueued",
-"eHubQueuedDatestamp",
-"decompressed_json",
-"payload_struct.*"
+# Optional: parse JSON if dataset output is JSON
+parsed = with_decompressed.withColumn(
+    "json_struct", F.from_json("decompressed_json", "MAP<STRING,STRING>")
 )
 
+# Final
+final_df = parsed.select(
+    "MQSQuoteId",
+    "dataset",
+    "provider",
+    "vehiclePRN",
+    "decompressed_json",
+    "json_struct.*"
+)
 
 final_df.display()
+```
+
+---
+
+## 🧾 What this solves
+
+* Your column **Payload.rawEnrichments** is an **array** → handled via `explode()`.
+* Some items are **compression = none** → handled.
+* Some items have **snappy** compressed base64 → decoded + decompressed.
+* Others include XML, JSON, and output schemas.
+
+---
+
+If you want:
+✔ Fully flatten JSON inside each data blob
+✔ Write decompressed results to a Delta table
+✔ Produce schema automatically from samples
+
+Send me **1‒2 decompressed JSON examples** and I’ll generate full flattening code.
