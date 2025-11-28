@@ -1,56 +1,51 @@
 from pyspark.sql import functions as F
-from pyspark.sql.types import StringType, MapType
-import base64
+from pyspark.sql.types import StringType
 import snappy
+import json
 
-# ------------------------------------------------------------
-# UDF: Base64 decode + Snappy decompress
-# ------------------------------------------------------------
-def decompress_snappy(b64):
-    if b64 is None:
-        return None
-    try:
-        decoded = base64.b64decode(b64)
-        uncompressed = snappy.decompress(decoded)
-        return uncompressed.decode("utf-8")
-    except Exception as e:
-        return f"ERROR: {str(e)}"
 
-decompress_udf = F.udf(decompress_snappy, StringType())
+# 1️⃣ UDF to decompress Snappy
+@F.udf(returnType=StringType())
+def snappy_decompress(value):
+if value is None:
+return None
+try:
+return snappy.uncompress(value).decode("utf-8")
+except Exception as e:
+return None
 
-# ------------------------------------------------------------
-# LOAD TABLE WITH VARIANT
-# ------------------------------------------------------------
-df = spark.table("core_tst.mqs_athn_mtr.dlt_raw_enrichments")
 
-# ------------------------------------------------------------
-# Extract snappy Base64 from VARIANT
-# Variant → struct → field access works directly
-# ------------------------------------------------------------
-df2 = df.withColumn(
-    "snappy_data",
-    F.col("Payload.rawEnrichment.data")     # accessing VARIANT field
-).withColumn(
-    "decompressed_json",
-    decompress_udf("snappy_data")           # apply decoder
+# 2️⃣ Read table with VARIANT column
+source_df = spark.table("core_tst.mqs_athn_mtr.dlt_raw_enrichments")
+
+
+# 3️⃣ Extract compressed binary from variant (Payload.rawEnrichment.data)
+# Databricks stores VARIANT as a struct → cast to BINARY
+extracted_df = (
+source_df
+.withColumn("compressed_bin", F.col("Payload.rawEnrichment.data").cast("BINARY"))
 )
 
-df2.select("TimeEnqueued", "eHubQueuedDatestamp", "decompressed_json").show(truncate=False)
 
-# ------------------------------------------------------------
-# Convert decompressed JSON text to struct/map
-# ------------------------------------------------------------
-df3 = df2.withColumn(
-    "json_map",
-    F.from_json("decompressed_json", MapType(StringType(), StringType()))
+# 4️⃣ Decompress using UDF
+with_json_df = extracted_df.withColumn(
+"decompressed_json", snappy_decompress(F.col("compressed_bin"))
 )
 
-# ------------------------------------------------------------
-# Flatten JSON into columns (if JSON is a simple map)
-# For nested JSON we use json_tuple or schema infer later
-# ------------------------------------------------------------
-df3.select(
-    "TimeEnqueued",
-    "eHubQueuedDatestamp",
-    "json_map.*"
-).show(truncate=False)
+
+# 5️⃣ Parse JSON into struct
+parsed_df = with_json_df.withColumn(
+"payload_struct", F.from_json(F.col("decompressed_json"), "MAP<STRING,STRING>")
+)
+
+
+# 6️⃣ Select flattened output
+final_df = parsed_df.select(
+"TimeEnqueued",
+"eHubQueuedDatestamp",
+"decompressed_json",
+"payload_struct.*"
+)
+
+
+final_df.display()
