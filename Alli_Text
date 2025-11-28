@@ -1,12 +1,17 @@
+# ================================================================
+# FULL PIPELINE: VARIANT → BASE64 → SNAPPY → JSON → FLATTEN
+# ================================================================
+
 import base64
 import snappy
 import json
+
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
 
-# ----------------------------------------------------
-# 1. UDF – Decode Base64 → Snappy → JSON string
-# ----------------------------------------------------
+# ---------------------------------------------------------------
+# 1. Decode UDF: Base64 → Snappy → JSON string
+# ---------------------------------------------------------------
 def decode_snappy_base64(b64_str):
     if b64_str is None:
         return None
@@ -14,96 +19,132 @@ def decode_snappy_base64(b64_str):
         raw = base64.b64decode(b64_str)
         decompressed = snappy.decompress(raw)
         return decompressed.decode("utf-8")
-    except:
+    except Exception:
         return None
 
 decode_udf = udf(decode_snappy_base64, StringType())
 
-
-# ----------------------------------------------------
-# 2. Load Your Table
-# ----------------------------------------------------
+# ---------------------------------------------------------------
+# 2. Load source table (contains VARIANT Payload)
+# ---------------------------------------------------------------
 table_name = "core_tst.mqs_athn_mtr.dlt_raw_enrichments"
 df = spark.table(table_name)
 
+# ---------------------------------------------------------------
+# 3. Convert VARIANT → STRING and extract the .data field
+# ---------------------------------------------------------------
+df1 = df.withColumn("payload_str", col("Payload").cast("string"))
 
-# ----------------------------------------------------
-# 3. Decode Payload.data into JSON string
-# ----------------------------------------------------
-df_decoded = df.withColumn(
-    "payload_json",
-    decode_udf(col("Payload.data"))
+df2 = df1.withColumn(
+    "payload_data_base64",
+    get_json_object(col("payload_str"), "$.data")
 )
 
+# ---------------------------------------------------------------
+# 4. Decode Snappy Base64 into raw JSON string
+# ---------------------------------------------------------------
+df3 = df2.withColumn(
+    "payload_json",
+    decode_udf(col("payload_data_base64"))
+)
 
-# ----------------------------------------------------
-# 4. Infer schema dynamically from JSON sample
-# ----------------------------------------------------
-sample_json = df_decoded.select("payload_json").dropna().limit(1).collect()[0][0]
-json_schema = spark.read.json(spark.sparkContext.parallelize([sample_json])).schema
+# ---------------------------------------------------------------
+# 5. Infer schema dynamically from decoded JSON
+# ---------------------------------------------------------------
+sample = df3.select("payload_json") \
+            .dropna() \
+            .limit(1) \
+            .collect()[0][0]
 
+json_schema = spark.read.json(
+    spark.sparkContext.parallelize([sample])
+).schema
 
-# ----------------------------------------------------
-# 5. Convert JSON string → struct using inferred schema
-# ----------------------------------------------------
-df_struct = df_decoded.withColumn(
+# ---------------------------------------------------------------
+# 6. Convert JSON string → struct
+# ---------------------------------------------------------------
+df_struct = df3.withColumn(
     "payload_struct",
     from_json(col("payload_json"), json_schema)
 )
 
-
-# ----------------------------------------------------
-# 6. Deep flatten function (recursive)
-# ----------------------------------------------------
+# ---------------------------------------------------------------
+# 7. Deep recursive flatten function
+# ---------------------------------------------------------------
 def flatten_recursive(df):
-    # Find top-level columns that need flattening
-    complex_cols = [
-        (c.name, c.dataType) for c in df.schema.fields
-        if isinstance(c.dataType, (StructType, ArrayType, MapType))
-    ]
+    complex_fields = True
 
-    while complex_cols:
-        col_name, col_type = complex_cols.pop(0)
+    while complex_fields:
 
-        # ---- StructType: expand into separate columns
+        # find complex fields
+        complex_fields = [
+            (field.name, field.dataType)
+            for field in df.schema.fields
+            if isinstance(field.dataType, (StructType, ArrayType, MapType))
+        ]
+
+        if not complex_fields:
+            break
+
+        col_name, col_type = complex_fields[0]
+
+        # ----- Struct -----
         if isinstance(col_type, StructType):
-            expanded = [col(f"{col_name}.{f.name}").alias(f"{col_name}_{f.name}") for f in col_type.fields]
-            df = df.select("*", *expanded).drop(col_name)
+            expanded_cols = [
+                col(f"{col_name}.{f.name}").alias(f"{col_name}_{f.name}")
+                for f in col_type.fields
+            ]
+            df = df.select("*", *expanded_cols).drop(col_name)
 
-        # ---- ArrayType: explode into rows (if needed)
+        # ----- Array -----
         elif isinstance(col_type, ArrayType):
             df = df.withColumn(col_name, explode_outer(col(col_name)))
 
-        # ---- MapType: explode keys into columns
+        # ----- Map -----
         elif isinstance(col_type, MapType):
-            df = df.select("*", *[
-                col(col_name).getItem(k).alias(f"{col_name}_{k}")
-                for k in df.select(map_keys(col(col_name))).dropna().limit(1).collect()[0][0]
-            ]).drop(col_name)
+            map_keys_list = (
+                df.select(map_keys(col(col_name)))
+                  .dropna()
+                  .limit(1)
+                  .collect()[0][0]
+            )
 
-        # Recompute fields list
-        complex_cols = [
-            (c.name, c.dataType) for c in df.schema.fields
-            if isinstance(c.dataType, (StructType, ArrayType, MapType))
-        ]
+            expanded_map_cols = [
+                col(col_name).getItem(k).alias(f"{col_name}_{k}")
+                for k in map_keys_list
+            ]
+
+            df = df.select("*", *expanded_map_cols).drop(col_name)
 
     return df
 
+# ---------------------------------------------------------------
+# 8. Apply deep flattening
+# ---------------------------------------------------------------
+df_flat = flatten_recursive(
+    df_struct.drop("payload_json", "payload_data_base64", "payload_str")
+)
 
-# ----------------------------------------------------
-# 7. Apply deep flattening on payload_struct
-# ----------------------------------------------------
-df_flat = flatten_recursive(df_struct.drop("payload_json"))
-
-
-# ----------------------------------------------------
-# 8. Clean column names (remove dots, spaces)
-# ----------------------------------------------------
+# ---------------------------------------------------------------
+# 9. Clean column names
+# ---------------------------------------------------------------
 for c in df_flat.columns:
-    df_flat = df_flat.withColumnRenamed(c, c.replace(".", "_").replace(" ", "_"))
+    df_flat = df_flat.withColumnRenamed(
+        c,
+        c.replace(".", "_").replace(" ", "_")
+    )
 
-
-# ----------------------------------------------------
-# 9. Show result
-# ----------------------------------------------------
+# ---------------------------------------------------------------
+# 10. Final output
+# ---------------------------------------------------------------
 df_flat.display()
+
+# ---------------------------------------------------------------
+# OPTIONAL: Save to table
+# ---------------------------------------------------------------
+# df_flat.write.format("delta").mode("overwrite") \
+#        .saveAsTable("core_tst.mqs_athn_mtr.enrichments_flattened")
+
+# ================================================================
+# END OF SCRIPT
+# ================================================================
