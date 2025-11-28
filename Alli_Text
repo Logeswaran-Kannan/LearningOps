@@ -1,101 +1,39 @@
-# ------------------------------------------------
-# 1. Load table
-# ------------------------------------------------
+from pyspark.sql.functions import col, udf
+from pyspark.sql.types import StringType, BinaryType
+import base64
+import snappy
+import json
+
+# 1. Load the table
 df = spark.table("core_tst.mqs_athn_mtr.dlt_raw_enrichments")
 
-from pyspark.sql.functions import *
-from pyspark.sql.types import *
-import base64, snappy
+# 2. Extract the base64-snappy encoded payload string
+df_extracted = df.selectExpr("Payload.rawEnrichment.data as compressed_data")
 
-# ------------------------------------------------
-# 2. Convert VARIANT → JSON string
-# ------------------------------------------------
-df1 = df.withColumn("payload_json", col("Payload").cast("STRING"))
-
-# ------------------------------------------------
-# 3. Extract rawEnrichments JSON array from VARIANT
-# ------------------------------------------------
-df2 = df1.withColumn(
-    "enrichments_json",
-    get_json_object(col("payload_json"), "$.rawEnrichments")
-)
-
-# ------------------------------------------------
-# 4. Convert rawEnrichments (string) → Array<STRING>
-#     (we don't know schema, so read as string array)
-# ------------------------------------------------
-df3 = df2.withColumn(
-    "enrichments",
-    from_json(col("enrichments_json"), ArrayType(StringType()))
-)
-
-# ------------------------------------------------
-# 5. Explode enrichment items (still JSON strings)
-# ------------------------------------------------
-df4 = df3.withColumn("enrich_raw", explode_outer(col("enrichments")))
-
-# ------------------------------------------------
-# 6. Extract compression + data fields from JSON string WITHOUT schema
-# ------------------------------------------------
-df5 = df4.withColumn("compression", get_json_object(col("enrich_raw"), "$.compression")) \
-         .withColumn("data",        get_json_object(col("enrich_raw"), "$.data"))
-
-# ------------------------------------------------
-# 7. Snappy decompress UDF (blindly, no schema)
-# ------------------------------------------------
-@udf(StringType())
-def snappy_decompress(b64_string):
-    if not b64_string:
-        return None
+# 3. UDF to decode and decompress the snappy data
+def decode_and_decompress(base64_str):
     try:
-        raw = base64.b64decode(b64_string)
-        out = snappy.uncompress(raw)
-        return out.decode("utf-8")
-    except:
+        decoded = base64.b64decode(base64_str)
+        decompressed = snappy.uncompress(decoded)
+        return decompressed.decode('utf-8')
+    except Exception as e:
         return None
 
-df6 = df5.withColumn(
-    "decompressed_json",
-    when(col("compression") == "snappy", snappy_decompress(col("data")))
-    .otherwise(None)
-)
+decode_udf = udf(decode_and_decompress, StringType())
 
-# ------------------------------------------------
-# 8. Infer schema dynamically from decompressed JSON
-# ------------------------------------------------
-sample = df6.select("decompressed_json").where("decompressed_json IS NOT NULL").limit(1).collect()
+df_decompressed = df_extracted.withColumn("json_string", decode_udf(col("compressed_data")))
 
-if sample and sample[0].decompressed_json:
-    inferred_schema = spark.read.json(
-        spark.sparkContext.parallelize([sample[0].decompressed_json])
-    ).schema
-else:
-    inferred_schema = None
+# 4. Filter out failed decompression (if any)
+df_valid = df_decompressed.filter(col("json_string").isNotNull())
 
-print("=== Inferred Schema ===")
-print(inferred_schema)
+# 5. Infer schema dynamically from JSON string
+json_df = spark.read.json(df_valid.rdd.map(lambda row: row['json_string']))
 
-# ------------------------------------------------
-# 9. Parse decompressed JSON using inferred schema
-# ------------------------------------------------
-if inferred_schema:
-    df7 = df6.withColumn(
-        "parsed",
-        from_json(col("decompressed_json"), inferred_schema)
-    )
-else:
-    df7 = df6
+# Optional: cache if large
+json_df.cache()
 
-# ------------------------------------------------
-# 10. Flatten final output
-# ------------------------------------------------
-final_df = df7.select(
-    "TimeEnqueued",
-    "eHubQueuedDatestamp",
-    "compression",
-    "data",
-    "decompressed_json",
-    col("parsed.*")
-)
+# 6. Flatten nested structure (adjust depth as needed)
+from pyspark.sql.functions import explode_outer
 
-final_df.display()
+flat_df = json_df.select("*")  # start with top-level
+flat_df.display()
