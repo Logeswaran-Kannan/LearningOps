@@ -4,40 +4,42 @@ import base64
 import snappy
 import json
 
-# Step 1: Load your table with VARIANT column (Payload)
+# STEP 1 — Load your table
 df = spark.table("core_tst.mqs_athn_mtr.dlt_raw_enrichments")
 
-# Step 2: Cast Payload to string to access as raw JSON
-df_str = df.withColumn("payload_str", col("Payload").cast("string"))
+# STEP 2 — Convert entire VARIANT column to string
+df_json = df.withColumn("payload_str", col("Payload").cast("string"))
 
-# Step 3: Extract rawEnrichment.data using a JSON function
+# STEP 3 — Extract the rawEnrichment.data using get_json_object
 from pyspark.sql.functions import get_json_object
 
-# Use get_json_object to safely extract the nested field
-df_extracted = df_str.withColumn(
+df_extracted = df_json.withColumn(
     "compressed_data",
     get_json_object("payload_str", "$.rawEnrichment.data")
 )
 
-# Step 4: Define a UDF to decode Base64 and decompress Snappy
-def decode_and_decompress(base64_str):
+# STEP 4 — Define UDF to decode base64 and decompress Snappy
+def decode_snappy(base64_str):
     try:
         decoded = base64.b64decode(base64_str)
-        decompressed = snappy.uncompress(decoded)
-        return decompressed.decode('utf-8')
+        uncompressed = snappy.uncompress(decoded)
+        return uncompressed.decode("utf-8")
     except Exception as e:
         return None
 
-decode_udf = udf(decode_and_decompress, StringType())
+decode_udf = udf(decode_snappy, StringType())
 
-# Step 5: Apply decompression
+# STEP 5 — Apply decompression
 df_decompressed = df_extracted.withColumn(
     "json_string",
     decode_udf(col("compressed_data"))
-).filter(col("json_string").isNotNull())
+)
 
-# Step 6: Dynamically infer schema from the decompressed JSON
-json_df = spark.read.json(df_decompressed.rdd.map(lambda row: row["json_string"]))
+# STEP 6 — Filter rows where decompression succeeded
+df_valid = df_decompressed.filter(col("json_string").isNotNull())
 
-# Step 7: Preview the flat or nested structure
+# STEP 7 — Dynamically infer schema of JSON and flatten
+json_df = spark.read.json(df_valid.rdd.map(lambda row: row["json_string"]))
+
+# STEP 8 — Show result
 json_df.display()
