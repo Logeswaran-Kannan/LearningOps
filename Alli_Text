@@ -1,65 +1,20 @@
-from pyspark.sql.functions import col, udf, get_json_object
-from pyspark.sql.types import StringType
-import base64
-import snappy
+Hi everyone,
+I’m Loges, the Test Manager from the BICOE team supporting the Radar Live workstream. We haven’t spoken before, but I’ve been coordinating the Databricks access required for your UAT activities.
 
-# Step 1 — Load source table
-df = spark.table("core_tst.mqs_athn_mtr.dlt_raw_enrichments")
+Your access to the core_tst.mqs_athn_mtr_views schema in the Test Databricks environment is now active. Below are some quick steps to get started:
 
-# Step 2 — Cast Payload to string (VARIANT is not directly navigable)
-df_str = df.withColumn("payload_str", col("Payload").cast("string"))
+1️⃣ Log in:
+Open the Databricks Test URL and sign in using your ADM account.
 
-# Step 3 — Safely extract compressed string from JSON path
-df_extracted = df_str.withColumn(
-    "compressed_data",
-    get_json_object(col("payload_str"), "$.rawEnrichment.data")
-)
+2️⃣ Navigate to the data:
+Go to Data → Catalog: core_tst → Schema: mqs_athn_mtr_views.
+You should see all the MQS views listed there.
 
-# Step 4 — Define UDF to decode base64 and decompress Snappy data
-def decode_snappy(base64_str):
-    try:
-        decoded = base64.b64decode(base64_str)
-        decompressed = snappy.uncompress(decoded)
-        return decompressed.decode("utf-8")
-    except Exception as e:
-        return None  # Optional: log or track errors here
+3️⃣ Run basic queries:
+Go to SQL → SQL Editor, select a SQL warehouse, and try:
+SELECT * FROM core_tst.mqs_athn_mtr_views.<table_name> LIMIT 50;
 
-decode_udf = udf(decode_snappy, StringType())
+4️⃣ Validate your records:
+Filter using your UAT Quote IDs to review the offline MQS data.
 
-# Step 5 — Apply decompression UDF
-df_decompressed = df_extracted.withColumn("json_string", decode_udf(col("compressed_data")))
-
-# Step 6 — Filter out rows with null/failed decompression
-df_valid = df_decompressed.filter(col("json_string").isNotNull())
-
-# Step 7 — Dynamically parse JSON string into structured DataFrame
-parsed_df = spark.read.json(df_valid.select("json_string").rdd.map(lambda r: r['json_string']))
-
-# Step 8 — Flatten nested structs (optional arrays handled separately)
-from pyspark.sql.types import StructType
-
-def flatten_df(df):
-    flat_cols = []
-    nested_cols = []
-
-    for field in df.schema.fields:
-        if isinstance(field.dataType, StructType):
-            nested_cols.append(field.name)
-        else:
-            flat_cols.append(field.name)
-
-    # flatten one level of struct columns
-    flat_df = df.select(
-        *flat_cols,
-        *[col(f"{nc}.{child.name}").alias(f"{nc}_{child.name}") 
-          for nc in nested_cols 
-          for child in df.schema[nc].dataType.fields]
-    )
-    
-    return flat_df
-
-# Apply flattening (repeat if there are multiple levels)
-flattened_df = flatten_df(parsed_df)
-
-# Step 9 — Display or use further
-flattened_df.display()
+If you have any issues accessing the schema or locating your data, please feel free to message me and I’ll be happy to help.
