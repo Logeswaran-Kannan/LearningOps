@@ -1,3 +1,4 @@
-At the moment, because we’re still in the component-level testing phase, we’re simply updating the original test cases and not maintaining a separate history for reruns.
+For the current component-level testing, we’re simply updating the original test cases when a rerun passes — we’re not maintaining a separate history at this stage.
 
-However, once we move into End-to-End testing, we will retain the original failed results as part of the audit trail. We won’t overwrite the initial status; instead, reruns will be tracked separately so the failure history is preserved.
+However, for E2E testing, we will follow the proper audit approach:
+we’ll retain the original failed results, not overwrite them, and create a separate rerun cycle so the full traceability is preserved.
