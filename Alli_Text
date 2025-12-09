@@ -1,136 +1,133 @@
 from pyspark.sql import functions as F
 
-# ---------------------------------------------------
+# --------------------------------------------
 # INPUT DATE RANGE
-# ---------------------------------------------------
-start_date = "2025-12-02"
-end_date   = "2025-12-09"
+# --------------------------------------------
+start_date = '2025-12-02'
+end_date   = '2025-12-09'
 
-# ---------------------------------------------------
-# LOAD TABLE A
-# ---------------------------------------------------
+# --------------------------------------------
+# LOAD TABLE A (Athena Source)
+# --------------------------------------------
 A = (
     spark.table("core_bld_radar_live.dlt_bronze_recon_athena_source")
     .filter((F.col("requestDate") >= start_date) & (F.col("requestDate") <= end_date))
-    .select(
-        F.col("mqsQuoteId"),
-        F.col("interactionId"),
-        F.col("product"),
-        F.col("requestDate"),
-        F.col("requestDateTime"),
-        F.lower(F.trim("mqsQuoteId")).alias("mqsQuoteId_norm"),
-        F.lower(F.trim("interactionId")).alias("interactionId_norm")
+    .withColumn("mqsQuoteId_norm", F.lower(F.trim("mqsQuoteId")))
+    .withColumn("interactionId_norm", F.lower(F.trim("interactionId")))
+    .withColumn(
+        "a_ts",
+        F.coalesce(
+            F.col("requestDateTime"),
+            F.to_timestamp(F.concat("requestDate", F.lit(" "), "requestTime"), "yyyy-MM-dd HH:mm:ss")
+        )
     )
 )
 
-# ---------------------------------------------------
-# LOAD TABLE B (ATHENA STREAM)
-# ---------------------------------------------------
+# --------------------------------------------
+# LOAD TABLE B (Athena Stream)
+# --------------------------------------------
 B = (
     spark.table("core_bld_radar_live.dlt_bronze_recon_athena_stream")
-    .select(
-        F.lower(F.trim("athenaStreamMqsQuoteId")).alias("mqsQuoteId_norm"),
-        F.lower(F.trim("athenaStreamInteractionId")).alias("interactionId_norm"),
-        F.col("athenaStreamQuoteDateTime").alias("b_ts")
-    )
+    .withColumn("mqsQuoteId_norm", F.lower(F.trim("athenaStreamMqsQuoteId")))
+    .withColumn("interactionId_norm", F.lower(F.trim("athenaStreamInteractionId")))
+    .withColumn("b_ts", F.col("athenaStreamQuoteDateTime"))
 )
 
-# ---------------------------------------------------
+# --------------------------------------------
 # LOAD TABLE C (MQS)
-# ---------------------------------------------------
+# --------------------------------------------
 C = (
     spark.table("core_bld_radar_live.dlt_bronze_recon_mqs")
-    .select(
-        F.lower(F.trim("mqsQuoteId")).alias("mqsQuoteId_norm"),
-        F.lower(F.trim("mQSInteractionId")).alias("interactionId_norm"),
-        F.col("mQSDateTime").alias("c_ts")
-    )
+    .withColumn("mqsQuoteId_norm", F.lower(F.trim("mqsQuoteId")))
+    .withColumn("interactionId_norm", F.lower(F.trim("mQSInteractionId")))
+    .withColumn("c_ts", F.col("mQSDateTime"))
 )
 
-# ---------------------------------------------------
-# BUILD TIMESTAMP IN A
-# ---------------------------------------------------
-A = A.withColumn("a_ts", F.col("requestDateTime"))
-
-# ---------------------------------------------------
-# A ↔ B MATCH (TIME DIFFERENCE)
-# ---------------------------------------------------
-AB = (
-    A.join(B, on=["mqsQuoteId_norm", "interactionId_norm"], how="left")
-     .withColumn(
-         "diff_hours_B",
-         F.abs(F.unix_timestamp("b_ts") - F.unix_timestamp("a_ts")) / 3600
-     )
-)
-
-AB_min = (
-    AB.groupBy("mqsQuoteId", "interactionId")
-      .agg(F.min("diff_hours_B").alias("min_diff_hours_B"))
-)
-
-# ---------------------------------------------------
-# A ↔ C MATCH (TIME DIFFERENCE)
-# ---------------------------------------------------
-AC = (
-    A.join(C, on=["mqsQuoteId_norm", "interactionId_norm"], how="left")
-     .withColumn(
-         "diff_hours_C",
-         F.abs(F.unix_timestamp("c_ts") - F.unix_timestamp("a_ts")) / 3600
-     )
-)
-
-AC_min = (
-    AC.groupBy("mqsQuoteId", "interactionId")
-      .agg(F.min("diff_hours_C").alias("min_diff_hours_C"))
-)
-
-# ---------------------------------------------------
-# FINAL RECON OUTPUT
-# ---------------------------------------------------
-final = (
-    A
-    .join(AB_min, on=["mqsQuoteId", "interactionId"], how="left")
-    .join(AC_min, on=["mqsQuoteId", "interactionId"], how="left")
-    .withColumn(
-        "athenaStreamExists",
-        F.when(F.col("min_diff_hours_B") <= 48, True).otherwise(False)
+# --------------------------------------------
+# 48-HOUR WINDOW MATCH A → B
+# --------------------------------------------
+match_A_B = (
+    A.join(
+        B,
+        on=[
+            "mqsQuoteId_norm",
+            "interactionId_norm"
+        ],
+        how="left"
     )
     .withColumn(
-        "mQSExists",
-        F.when(F.col("min_diff_hours_C") <= 48, True).otherwise(False)
+        "within48_B",
+        F.when(
+            (F.col("b_ts").isNotNull()) &
+            (F.abs(F.unix_timestamp("b_ts") - F.unix_timestamp("a_ts")) <= 48 * 3600),
+            1
+        ).otherwise(0)
     )
+    .select("mqsQuoteId_norm", "interactionId_norm", "requestDate", "within48_B")
+    .dropDuplicates(["mqsQuoteId_norm", "interactionId_norm"])
 )
 
-display(final)
+# --------------------------------------------
+# 48-HOUR WINDOW MATCH A → C
+# --------------------------------------------
+match_A_C = (
+    A.join(
+        C,
+        on=[
+            "mqsQuoteId_norm",
+            "interactionId_norm"
+        ],
+        how="left"
+    )
+    .withColumn(
+        "within48_C",
+        F.when(
+            (F.col("c_ts").isNotNull()) &
+            (F.abs(F.unix_timestamp("c_ts") - F.unix_timestamp("a_ts")) <= 48 * 3600),
+            1
+        ).otherwise(0)
+    )
+    .select("mqsQuoteId_norm", "interactionId_norm", "requestDate", "within48_C")
+    .dropDuplicates(["mqsQuoteId_norm", "interactionId_norm"])
+)
 
-# ---------------------------------------------------
-# KPI CALCULATIONS
-# ---------------------------------------------------
+# --------------------------------------------
+# COMBINE MATCH FLAGS
+# --------------------------------------------
+combined = (
+    match_A_B.join(
+        match_A_C,
+        on=["mqsQuoteId_norm", "interactionId_norm", "requestDate"],
+        how="outer"
+    )
+    .na.fill({"within48_B": 0, "within48_C": 0})
+)
 
-kpi_A = A.select("mqsQuoteId").distinct().count()
-kpi_B = B.select("mqsQuoteId_norm").distinct().count()
-kpi_C = C.select("mqsQuoteId_norm").distinct().count()
+# --------------------------------------------
+# KPI AGGREGATION PER DATE
+# --------------------------------------------
+kpi = (
+    combined.groupBy("requestDate")
+    .agg(
+        # Total A Quotes (distinct)
+        F.countDistinct("mqsQuoteId_norm").alias("total_A_quotes"),
 
-kpi_A_hit_B = final.filter("athenaStreamExists = true") \
-                   .select("mqsQuoteId").distinct().count()
+        # Total B Quotes (distinct)
+        F.lit(B.select(F.countDistinct("mqsQuoteId_norm")).first()[0]).alias("total_B_quotes"),
 
-kpi_A_hit_C = final.filter("mQSExists = true") \
-                   .select("mqsQuoteId").distinct().count()
+        # Total C Quotes (distinct)
+        F.lit(C.select(F.countDistinct("mqsQuoteId_norm")).first()[0]).alias("total_C_quotes"),
 
-kpi_A_hit_both = final.filter("athenaStreamExists = true AND mQSExists = true") \
-                      .select("mqsQuoteId").distinct().count()
+        # A Quotes hit B within 48 hours
+        F.sum("within48_B").alias("A_hit_B_48h"),
 
-# ---------------------------------------------------
-# PRINT KPI SUMMARY
-# ---------------------------------------------------
-print("=======================================")
-print("            KPI SUMMARY")
-print("=======================================")
-print(f"Distinct Quotes in A: {kpi_A}")
-print(f"Distinct Quotes in B: {kpi_B}")
-print(f"Distinct Quotes in C: {kpi_C}")
-print("---------------------------------------")
-print(f"Quotes from A that hit B (<=48h): {kpi_A_hit_B}")
-print(f"Quotes from A that hit C (<=48h): {kpi_A_hit_C}")
-print(f"Quotes from A that hit BOTH:     {kpi_A_hit_both}")
-print("=======================================")
+        # A Quotes hit C within 48 hours
+        F.sum("within48_C").alias("A_hit_C_48h"),
+
+        # A Quotes hit BOTH B & C within 48 hours
+        F.sum((F.col("within48_B") * F.col("within48_C"))).alias("A_hit_BC_48h")
+    )
+    .orderBy("requestDate")
+)
+
+kpi.display()
