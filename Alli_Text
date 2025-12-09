@@ -1,89 +1,68 @@
--- ===============================
--- STEP 1: Filter Table A
--- ===============================
-WITH filtered_A AS (
-
+-- =========================================
+-- STEP 1: Filter A and build a clean timestamp
+-- =========================================
+WITH A_filtered AS (
     SELECT
         mqsQuoteId,
         interactionId,
         product,
-        requestDateTime
+
+        -- make sure we always have a usable timestamp
+        COALESCE(
+            requestDateTime,
+            TO_TIMESTAMP(CONCAT(requestDate, ' ', requestTime), 'yyyy-MM-dd HH:mm:ss')
+        ) AS requestDateTime
     FROM core_bld_radar_live.dlt_bronze_recon_athena_source
     WHERE requestDate = '2025-12-05'
       AND product = 'PropositionWolfMotorInsurance'
 ),
 
--- Add 48-hour window
-A_with_window AS (
+A_window AS (
     SELECT
-        *,
-        requestDateTime AS a_time,
-        requestDateTime + INTERVAL 48 HOURS AS a_time_48h
-    FROM filtered_A
-),
-
--- ===============================
--- STEP 2: Match Against ATHENA STREAM (Table B)
--- ===============================
-match_B AS (
-    SELECT
-        A.mqsQuoteId,
-        A.interactionId,
-        B.athenaStreamQuoteDateTime,
-        CASE 
-            WHEN B.athenaStreamMqsQuoteId IS NOT NULL
-             AND B.athenaStreamInteractionId IS NOT NULL 
-            THEN true ELSE false 
-        END AS athenaStreamExists
-    FROM A_with_window A
-    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_athena_stream B
-      ON lower(trim(A.mqsQuoteId)) = lower(trim(B.athenaStreamMqsQuoteId))
-     AND lower(trim(A.interactionId)) = lower(trim(B.athenaStreamInteractionId))
-     AND B.athenaStreamQuoteDateTime BETWEEN A.a_time AND A.a_time_48h
-),
-
--- ===============================
--- STEP 3: Match Against MQS (Table C)
--- ===============================
-match_C AS (
-    SELECT
-        A.mqsQuoteId,
-        A.interactionId,
-        C.mQSDateTime,
-        CASE 
-            WHEN C.mqsQuoteId IS NOT NULL 
-             AND C.mQSInteractionId IS NOT NULL
-            THEN true ELSE false 
-        END AS mQSExists
-    FROM A_with_window A
-    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_mqs C
-      ON lower(trim(A.mqsQuoteId)) = lower(trim(C.mqsQuoteId))
-     AND lower(trim(A.interactionId)) = lower(trim(C.mQSInteractionId))
-     AND C.mQSDateTime BETWEEN A.a_time AND A.a_time_48h
+        mqsQuoteId,
+        interactionId,
+        product,
+        requestDateTime,
+        requestDateTime                           AS a_time,
+        requestDateTime + INTERVAL 48 HOURS       AS a_time_48h
+    FROM A_filtered
 )
 
--- ===============================
--- STEP 4: FINAL RECON OUTPUT (Missing in B or C)
--- ===============================
-SELECT DISTINCT
-    A.mqsQuoteId AS athenaSourceMqsQuoteId,
-    A.interactionId AS athenaSourceInteractionId,
-    A.product AS athenaSourceProduct,
-    A.requestDateTime AS athenaSourceRequestDateTime,
+-- =========================================
+-- STEP 2: For each A row, check if a match
+--         EXISTS in B (athena) and C (mqs)
+-- =========================================
+SELECT
+    A.mqsQuoteId                             AS athenaSourceMqsQuoteId,
+    A.interactionId                          AS athenaSourceInteractionId,
+    A.product                                AS athenaSourceProduct,
+    A.requestDateTime                        AS athenaSourceRequestDateTime,
 
-    -- From matches
-    COALESCE(B.athenaStreamExists, false) AS athenaStreamExists,
-    COALESCE(C.mQSExists, false) AS mQSExists
+    -- true if at least one matching Athena Stream row exists in 48h window
+    CASE WHEN EXISTS (
+        SELECT 1
+        FROM core_bld_radar_live.dlt_bronze_recon_athena_stream B
+        WHERE LOWER(TRIM(B.athenaStreamMqsQuoteId))   = LOWER(TRIM(A.mqsQuoteId))
+          AND LOWER(TRIM(B.athenaStreamInteractionId))= LOWER(TRIM(A.interactionId))
+          AND B.athenaStreamQuoteDateTime BETWEEN A.a_time AND A.a_time_48h
+    ) THEN TRUE ELSE FALSE END               AS athenaStreamExists,
 
-FROM A_with_window A
-LEFT JOIN match_B B
-    ON A.mqsQuoteId = B.mqsQuoteId
-   AND A.interactionId = B.interactionId
+    -- true if at least one matching MQS row exists in 48h window
+    CASE WHEN EXISTS (
+        SELECT 1
+        FROM core_bld_radar_live.dlt_bronze_recon_mqs C
+        WHERE LOWER(TRIM(C.mQSQuoteId))      = LOWER(TRIM(A.mqsQuoteId))
+          AND LOWER(TRIM(C.mQSInteractionId))= LOWER(TRIM(A.interactionId))
+          AND C.mQSDateTime BETWEEN A.a_time AND A.a_time_48h
+    ) THEN TRUE ELSE FALSE END               AS mQSExists
 
-LEFT JOIN match_C C
-    ON A.mqsQuoteId = C.mqsQuoteId
-   AND A.interactionId = C.interactionId
+FROM A_window A;
 
--- Only show missing or partially missing records
-WHERE COALESCE(B.athenaStreamExists, false) = false
-   OR COALESCE(C.mQSExists, false) = false;
+WITH recon AS (
+    -- paste the SELECT above here, without the final semicolon
+)
+SELECT *
+FROM recon
+WHERE athenaStreamExists = FALSE
+   OR mQSExists = FALSE;
+
