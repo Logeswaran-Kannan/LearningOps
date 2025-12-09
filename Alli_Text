@@ -1,68 +1,22 @@
--- =========================================
--- STEP 1: Filter A and build a clean timestamp
--- =========================================
-WITH A_filtered AS (
-    SELECT
-        mqsQuoteId,
-        interactionId,
-        product,
-
-        -- make sure we always have a usable timestamp
-        COALESCE(
-            requestDateTime,
-            TO_TIMESTAMP(CONCAT(requestDate, ' ', requestTime), 'yyyy-MM-dd HH:mm:ss')
-        ) AS requestDateTime
-    FROM core_bld_radar_live.dlt_bronze_recon_athena_source
-    WHERE requestDate = '2025-12-05'
-      AND product = 'PropositionWolfMotorInsurance'
-),
-
-A_window AS (
-    SELECT
-        mqsQuoteId,
-        interactionId,
-        product,
-        requestDateTime,
-        requestDateTime                           AS a_time,
-        requestDateTime + INTERVAL 48 HOURS       AS a_time_48h
-    FROM A_filtered
-)
-
--- =========================================
--- STEP 2: For each A row, check if a match
---         EXISTS in B (athena) and C (mqs)
--- =========================================
+-- DEBUG: show EXACT stored values in MQS + A
 SELECT
-    A.mqsQuoteId                             AS athenaSourceMqsQuoteId,
-    A.interactionId                          AS athenaSourceInteractionId,
-    A.product                                AS athenaSourceProduct,
-    A.requestDateTime                        AS athenaSourceRequestDateTime,
+    'A' AS source,
+    A.mqsQuoteId,
+    A.interactionId,
+    HEX(A.mqsQuoteId) AS a_q_hex,
+    HEX(A.interactionId) AS a_i_hex,
+    A.requestDateTime AS a_time
+FROM core_bld_radar_live.dlt_bronze_recon_athena_source A
+WHERE A.mqsQuoteId = 'MQS-b3a448b5-293a-453d-bd97-d4efe4cdf418'
 
-    -- true if at least one matching Athena Stream row exists in 48h window
-    CASE WHEN EXISTS (
-        SELECT 1
-        FROM core_bld_radar_live.dlt_bronze_recon_athena_stream B
-        WHERE LOWER(TRIM(B.athenaStreamMqsQuoteId))   = LOWER(TRIM(A.mqsQuoteId))
-          AND LOWER(TRIM(B.athenaStreamInteractionId))= LOWER(TRIM(A.interactionId))
-          AND B.athenaStreamQuoteDateTime BETWEEN A.a_time AND A.a_time_48h
-    ) THEN TRUE ELSE FALSE END               AS athenaStreamExists,
+UNION ALL
 
-    -- true if at least one matching MQS row exists in 48h window
-    CASE WHEN EXISTS (
-        SELECT 1
-        FROM core_bld_radar_live.dlt_bronze_recon_mqs C
-        WHERE LOWER(TRIM(C.mQSQuoteId))      = LOWER(TRIM(A.mqsQuoteId))
-          AND LOWER(TRIM(C.mQSInteractionId))= LOWER(TRIM(A.interactionId))
-          AND C.mQSDateTime BETWEEN A.a_time AND A.a_time_48h
-    ) THEN TRUE ELSE FALSE END               AS mQSExists
-
-FROM A_window A;
-
-WITH recon AS (
-    -- paste the SELECT above here, without the final semicolon
-)
-SELECT *
-FROM recon
-WHERE athenaStreamExists = FALSE
-   OR mQSExists = FALSE;
-
+SELECT
+    'MQS' AS source,
+    C.mqsQuoteId,
+    C.mQSInteractionId,
+    HEX(C.mqsQuoteId) AS c_q_hex,
+    HEX(C.mQSInteractionId) AS c_i_hex,
+    C.mQSDateTime AS c_time
+FROM core_bld_radar_live.dlt_bronze_recon_mqs C
+WHERE C.mqsQuoteId LIKE '%b3a448b5%';
