@@ -1,53 +1,87 @@
-WITH A AS (
+-- Filter A for the date + product we care about
+WITH A_filtered AS (
     SELECT
         mqsQuoteId,
         interactionId,
         product,
-        requestDateTime,
-        requestDateTime AS a_time,
-        requestDateTime + INTERVAL 48 HOURS AS a_time_48h
+        requestDate,
+        requestDateTime
     FROM core_bld_radar_live.dlt_bronze_recon_athena_source
     WHERE requestDate = '2025-12-05'
       AND product = 'PropositionWolfMotorInsurance'
 ),
 
-MQS AS (
+-- ============================
+-- Match to ATHENA STREAM (B)
+-- ============================
+B_match AS (
     SELECT
-        LOWER(TRIM(mqsQuoteId)) AS mqsQuoteId_norm,
-        LOWER(TRIM(mQSInteractionId)) AS interaction_norm,
-        -- FIX: correct timestamp construction
-        TO_TIMESTAMP(CONCAT(mQSDate, ' ', mQSTime), 'yyyy-MM-dd HH:mm:ss') AS mqs_ts
-    FROM core_bld_radar_live.dlt_bronze_recon_mqs
+        A.mqsQuoteId,
+        A.interactionId,
+        -- smallest time difference in hours between A and B
+        MIN(
+            ABS(
+                unix_timestamp(B.athenaStreamQuoteDateTime)
+              - unix_timestamp(A.requestDateTime)
+            ) / 3600.0
+        ) AS min_diff_hours_athena
+    FROM A_filtered A
+    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_athena_stream B
+      ON lower(trim(A.mqsQuoteId))    = lower(trim(B.athenaStreamMqsQuoteId))
+     AND lower(trim(A.interactionId)) = lower(trim(B.athenaStreamInteractionId))
+    GROUP BY A.mqsQuoteId, A.interactionId
 ),
 
-ATHENA AS (
+-- ============================
+-- Match to MQS (C)
+-- ============================
+C_match AS (
     SELECT
-        LOWER(TRIM(athenaStreamMqsQuoteId)) AS mqsQuoteId_norm,
-        LOWER(TRIM(athenaStreamInteractionId)) AS interaction_norm,
-        athenaStreamQuoteDateTime AS athena_ts
-    FROM core_bld_radar_live.dlt_bronze_recon_athena_stream
+        A.mqsQuoteId,
+        A.interactionId,
+        -- if you are sure mQSDateTime is populated, use it directly
+        MIN(
+            ABS(
+                unix_timestamp(C.mQSDateTime)
+              - unix_timestamp(A.requestDateTime)
+            ) / 3600.0
+        ) AS min_diff_hours_mqs
+    FROM A_filtered A
+    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_mqs C
+      ON lower(trim(A.mqsQuoteId))    = lower(trim(C.mqsQuoteId))
+     AND lower(trim(A.interactionId)) = lower(trim(C.mQSInteractionId))
+    GROUP BY A.mqsQuoteId, A.interactionId
 )
 
+-- ============================
+-- Final reconciliation view
+-- ============================
 SELECT
     A.mqsQuoteId,
     A.interactionId,
     A.product,
+    A.requestDate,
     A.requestDateTime,
 
-    -- ATHENA EXISTS
-    CASE WHEN EXISTS (
-        SELECT 1 FROM ATHENA B
-        WHERE LOWER(TRIM(A.mqsQuoteId)) = B.mqsQuoteId_norm
-          AND LOWER(TRIM(A.interactionId)) = B.interaction_norm
-          AND B.athena_ts BETWEEN A.a_time AND A.a_time_48h
-    ) THEN TRUE ELSE FALSE END AS athenaStreamExists,
+    B.min_diff_hours_athena,
+    C.min_diff_hours_mqs,
 
-    -- MQS EXISTS (FIXED LOGIC)
-    CASE WHEN EXISTS (
-        SELECT 1 FROM MQS C
-        WHERE LOWER(TRIM(A.mqsQuoteId)) = C.mqsQuoteId_norm
-          AND LOWER(TRIM(A.interactionId)) = C.interaction_norm
-          AND C.mqs_ts BETWEEN A.a_time AND A.a_time_48h
-    ) THEN TRUE ELSE FALSE END AS mQSExists
+    CASE
+        WHEN B.min_diff_hours_athena IS NOT NULL
+         AND B.min_diff_hours_athena <= 48 THEN true
+        ELSE false
+    END AS athenaStreamExists,
 
-FROM A;
+    CASE
+        WHEN C.min_diff_hours_mqs IS NOT NULL
+         AND C.min_diff_hours_mqs <= 48 THEN true
+        ELSE false
+    END AS mQSExists
+
+FROM A_filtered A
+LEFT JOIN B_match B
+       ON A.mqsQuoteId = B.mqsQuoteId
+      AND A.interactionId = B.interactionId
+LEFT JOIN C_match C
+       ON A.mqsQuoteId = C.mqsQuoteId
+      AND A.interactionId = C.interactionId;
