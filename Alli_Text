@@ -1,133 +1,124 @@
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
-# --------------------------------------------
-# INPUT DATE RANGE
-# --------------------------------------------
-start_date = '2025-12-02'
-end_date   = '2025-12-09'
+# -----------------------------------------------------------
+# 1. Load tables (A = Athena Source, B = Athena Stream, C = MQS)
+# -----------------------------------------------------------
 
-# --------------------------------------------
-# LOAD TABLE A (Athena Source)
-# --------------------------------------------
-A = (
-    spark.table("core_bld_radar_live.dlt_bronze_recon_athena_source")
-    .filter((F.col("requestDate") >= start_date) & (F.col("requestDate") <= end_date))
-    .withColumn("mqsQuoteId_norm", F.lower(F.trim("mqsQuoteId")))
-    .withColumn("interactionId_norm", F.lower(F.trim("interactionId")))
-    .withColumn(
-        "a_ts",
-        F.coalesce(
-            F.col("requestDateTime"),
-            F.to_timestamp(F.concat("requestDate", F.lit(" "), "requestTime"), "yyyy-MM-dd HH:mm:ss")
-        )
-    )
+A = spark.table("core_bld_radar_live.dlt_bronze_recon_athena_source") \
+    .withColumn("requestDateTime", F.col("requestDateTime")) \
+    .withColumn("requestDate", F.to_date("requestDate"))
+
+B = spark.table("core_bld_radar_live.dlt_bronze_recon_athena_stream") \
+    .withColumn("athena_ts", F.col("athenaStreamQuoteDateTime"))
+
+C = spark.table("core_bld_radar_live.dlt_bronze_recon_mqs") \
+    .withColumn("mqs_ts", F.col("mQSDateTime"))
+
+# -----------------------------------------------------------
+# 2. Filter for the date range
+# -----------------------------------------------------------
+
+start = "2025-12-02"
+end   = "2025-12-09"
+
+A = A.filter((F.col("requestDate") >= start) & (F.col("requestDate") <= end))
+B = B.filter(F.col("athena_ts").isNotNull())
+C = C.filter(F.col("mqs_ts").isNotNull())
+
+# Normalize join keys
+A_norm = A.withColumn("qid", F.lower(F.trim("mqsQuoteId"))) \
+          .withColumn("iid", F.lower(F.trim("interactionId")))
+
+B_norm = B.withColumn("qid", F.lower(F.trim("athenaStreamMqsQuoteId"))) \
+          .withColumn("iid", F.lower(F.trim("athenaStreamInteractionId")))
+
+C_norm = C.withColumn("qid", F.lower(F.trim("mqsQuoteId"))) \
+          .withColumn("iid", F.lower(F.trim("mQSInteractionId")))
+
+# -----------------------------------------------------------
+# 3. Join A→B and compute 48hr difference
+# -----------------------------------------------------------
+
+A_B = A_norm.join(
+    B_norm,
+    on=["qid", "iid"],
+    how="left"
+).withColumn(
+    "diff_hours_B",
+    F.abs(F.unix_timestamp("athena_ts") - F.unix_timestamp("requestDateTime")) / 3600
 )
 
-# --------------------------------------------
-# LOAD TABLE B (Athena Stream)
-# --------------------------------------------
-B = (
-    spark.table("core_bld_radar_live.dlt_bronze_recon_athena_stream")
-    .withColumn("mqsQuoteId_norm", F.lower(F.trim("athenaStreamMqsQuoteId")))
-    .withColumn("interactionId_norm", F.lower(F.trim("athenaStreamInteractionId")))
-    .withColumn("b_ts", F.col("athenaStreamQuoteDateTime"))
+# This flag matches only if within 48 hours
+A_B = A_B.withColumn(
+    "hit_B",
+    F.when(F.col("diff_hours_B") <= 48, F.lit(1)).otherwise(F.lit(0))
 )
 
-# --------------------------------------------
-# LOAD TABLE C (MQS)
-# --------------------------------------------
-C = (
-    spark.table("core_bld_radar_live.dlt_bronze_recon_mqs")
-    .withColumn("mqsQuoteId_norm", F.lower(F.trim("mqsQuoteId")))
-    .withColumn("interactionId_norm", F.lower(F.trim("mQSInteractionId")))
-    .withColumn("c_ts", F.col("mQSDateTime"))
+# -----------------------------------------------------------
+# 4. Join A→C and compute 48hr difference
+# -----------------------------------------------------------
+
+A_C = A_norm.join(
+    C_norm,
+    on=["qid", "iid"],
+    how="left"
+).withColumn(
+    "diff_hours_C",
+    F.abs(F.unix_timestamp("mqs_ts") - F.unix_timestamp("requestDateTime")) / 3600
 )
 
-# --------------------------------------------
-# 48-HOUR WINDOW MATCH A → B
-# --------------------------------------------
-match_A_B = (
-    A.join(
-        B,
-        on=[
-            "mqsQuoteId_norm",
-            "interactionId_norm"
-        ],
-        how="left"
-    )
-    .withColumn(
-        "within48_B",
-        F.when(
-            (F.col("b_ts").isNotNull()) &
-            (F.abs(F.unix_timestamp("b_ts") - F.unix_timestamp("a_ts")) <= 48 * 3600),
-            1
-        ).otherwise(0)
-    )
-    .select("mqsQuoteId_norm", "interactionId_norm", "requestDate", "within48_B")
-    .dropDuplicates(["mqsQuoteId_norm", "interactionId_norm"])
+A_C = A_C.withColumn(
+    "hit_C",
+    F.when(F.col("diff_hours_C") <= 48, F.lit(1)).otherwise(F.lit(0))
 )
 
-# --------------------------------------------
-# 48-HOUR WINDOW MATCH A → C
-# --------------------------------------------
-match_A_C = (
-    A.join(
-        C,
-        on=[
-            "mqsQuoteId_norm",
-            "interactionId_norm"
-        ],
-        how="left"
-    )
-    .withColumn(
-        "within48_C",
-        F.when(
-            (F.col("c_ts").isNotNull()) &
-            (F.abs(F.unix_timestamp("c_ts") - F.unix_timestamp("a_ts")) <= 48 * 3600),
-            1
-        ).otherwise(0)
-    )
-    .select("mqsQuoteId_norm", "interactionId_norm", "requestDate", "within48_C")
-    .dropDuplicates(["mqsQuoteId_norm", "interactionId_norm"])
+# -----------------------------------------------------------
+# 5. Aggregate KPIs per requestDate
+# -----------------------------------------------------------
+
+# KPIs from A only
+A_kpi = A_norm.groupBy("requestDate").agg(
+    F.countDistinct("mqsQuoteId").alias("A_total")
 )
 
-# --------------------------------------------
-# COMBINE MATCH FLAGS
-# --------------------------------------------
-combined = (
-    match_A_B.join(
-        match_A_C,
-        on=["mqsQuoteId_norm", "interactionId_norm", "requestDate"],
-        how="outer"
-    )
-    .na.fill({"within48_B": 0, "within48_C": 0})
+# KPIs from B and C independent of A
+B_kpi = B_norm.withColumn("date", F.to_date("athena_ts")) \
+    .groupBy("date").agg(F.countDistinct("qid").alias("B_total")) \
+    .withColumnRenamed("date", "requestDate")
+
+C_kpi = C_norm.withColumn("date", F.to_date("mqs_ts")) \
+    .groupBy("date").agg(F.countDistinct("qid").alias("C_total")) \
+    .withColumnRenamed("date", "requestDate")
+
+# KPIs from matches: A→B
+A_hit_B_kpi = A_B.groupBy("requestDate").agg(
+    F.countDistinct(F.when(F.col("hit_B") == 1, F.col("mqsQuoteId"))).alias("A_hit_B")
 )
 
-# --------------------------------------------
-# KPI AGGREGATION PER DATE
-# --------------------------------------------
-kpi = (
-    combined.groupBy("requestDate")
-    .agg(
-        # Total A Quotes (distinct)
-        F.countDistinct("mqsQuoteId_norm").alias("total_A_quotes"),
+# KPIs from matches: A→C
+A_hit_C_kpi = A_C.groupBy("requestDate").agg(
+    F.countDistinct(F.when(F.col("hit_C") == 1, F.col("mqsQuoteId"))).alias("A_hit_C")
+)
 
-        # Total B Quotes (distinct)
-        F.lit(B.select(F.countDistinct("mqsQuoteId_norm")).first()[0]).alias("total_B_quotes"),
+# Combined A→B and A→C hits
+A_both = A_norm.alias("a") \
+    .join(A_B.select("qid", "requestDate", "hit_B").alias("b"), ["qid", "requestDate"]) \
+    .join(A_C.select("qid", "requestDate", "hit_C").alias("c"), ["qid", "requestDate"]) \
+    .filter((F.col("hit_B") == 1) & (F.col("hit_C") == 1)) \
+    .groupBy("requestDate") \
+    .agg(F.countDistinct("qid").alias("A_hit_both"))
 
-        # Total C Quotes (distinct)
-        F.lit(C.select(F.countDistinct("mqsQuoteId_norm")).first()[0]).alias("total_C_quotes"),
+# -----------------------------------------------------------
+# 6. Combine all KPI metrics into 1 final table
+# -----------------------------------------------------------
 
-        # A Quotes hit B within 48 hours
-        F.sum("within48_B").alias("A_hit_B_48h"),
-
-        # A Quotes hit C within 48 hours
-        F.sum("within48_C").alias("A_hit_C_48h"),
-
-        # A Quotes hit BOTH B & C within 48 hours
-        F.sum((F.col("within48_B") * F.col("within48_C"))).alias("A_hit_BC_48h")
-    )
+final_kpi = A_kpi \
+    .join(B_kpi, "requestDate", "left") \
+    .join(C_kpi, "requestDate", "left") \
+    .join(A_hit_B_kpi, "requestDate", "left") \
+    .join(A_hit_C_kpi, "requestDate", "left") \
+    .join(A_both, "requestDate", "left") \
     .orderBy("requestDate")
-)
 
-kpi.display()
+display(final_kpi)
