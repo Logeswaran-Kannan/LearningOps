@@ -1,4 +1,63 @@
-For the current component-level testing, we’re simply updating the original test cases when a rerun passes — we’re not maintaining a separate history at this stage.
+WITH filtered_A AS (
+    SELECT
+        mqsQuoteId,
+        interactionId,
+        product,
+        requestDateTime
+    FROM core_bld_radar_live.dlt_bronze_recon_athena_source
+    WHERE requestDate = '2025-12-05'
+      AND product = 'PropositionWolfMotorInsurance'
+),
 
-However, for E2E testing, we will follow the proper audit approach:
-we’ll retain the original failed results, not overwrite them, and create a separate rerun cycle so the full traceability is preserved.
+-- 48-hour window calculations
+A_with_window AS (
+    SELECT
+        *,
+        requestDateTime AS a_time,
+        requestDateTime + INTERVAL 48 HOURS AS a_time_48h
+    FROM filtered_A
+),
+
+-- Match against B (Athena stream)
+match_B AS (
+    SELECT
+        A.mqsQuoteId,
+        A.interactionId,
+        B.athenaStreamQuoteDateTime,
+        CASE WHEN B.athenaStreamMqsQuoteId IS NOT NULL THEN true ELSE false END AS athenaStreamExists
+    FROM A_with_window A
+    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_athena_stream B
+      ON A.mqsQuoteId = B.athenaStreamMqsQuoteId
+     AND A.interactionId = B.athenaStreamInteractionId
+     AND B.athenaStreamQuoteDateTime BETWEEN A.a_time AND A.a_time_48h
+),
+
+-- Match against C (MQS)
+match_C AS (
+    SELECT
+        A.mqsQuoteId,
+        A.interactionId,
+        C.mQSDateTime,
+        CASE WHEN C.mQSQuoteId IS NOT NULL THEN true ELSE false END AS mQSExists
+    FROM A_with_window A
+    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_mqs C
+      ON A.mqsQuoteId = C.mQSQuoteId
+     AND A.interactionId = C.mQSInteractionId
+     AND C.mQSDateTime BETWEEN A.a_time AND A.a_time_48h
+)
+
+-- FINAL reconciliation result
+SELECT DISTINCT
+    A.mqsQuoteId AS athenaSourceMqsQuoteId,
+    A.interactionId AS athenaSourceInteractionId,
+    A.product AS athenaSourceProduct,
+    A.requestDateTime AS athenaSourceRequestDateTime,
+    B.athenaStreamExists,
+    C.mQSExists
+FROM A_with_window A
+LEFT JOIN match_B B
+    ON A.mqsQuoteId = B.mqsQuoteId AND A.interactionId = B.interactionId
+LEFT JOIN match_C C
+    ON A.mqsQuoteId = C.mqsQuoteId AND A.interactionId = C.interactionId
+WHERE (B.athenaStreamExists IS FALSE OR B.athenaStreamExists IS NULL)
+   OR (C.mQSExists IS FALSE OR C.mQSExists IS NULL);
