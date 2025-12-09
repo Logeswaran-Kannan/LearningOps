@@ -1,22 +1,9 @@
--- DEBUG: show EXACT stored values in MQS + A
 SELECT
-    'A' AS source,
-    A.mqsQuoteId,
-    A.interactionId,
-    HEX(A.mqsQuoteId) AS a_q_hex,
-    HEX(A.interactionId) AS a_i_hex,
-    A.requestDateTime AS a_time
-FROM core_bld_radar_live.dlt_bronze_recon_athena_source A
-WHERE A.mqsQuoteId = 'MQS-b3a448b5-293a-453d-bd97-d4efe4cdf418'
-
-UNION ALL
-
-SELECT
-    'MQS' AS source,
-    C.mqsQuoteId,
-    C.mQSInteractionId,
-    HEX(C.mqsQuoteId) AS c_q_hex,
-    HEX(C.mQSInteractionId) AS c_i_hex,
-    C.mQSDateTime AS c_time
-FROM core_bld_radar_live.dlt_bronze_recon_mqs C
-WHERE C.mqsQuoteId LIKE '%b3a448b5%';
+    mqsQuoteId,
+    mQSInteractionId,
+    mQSDate,
+    mQSTime,
+    mQSDateTime,
+    HEX(mQSDateTime) AS ts_hex
+FROM core_bld_radar_live.dlt_bronze_recon_mqs
+WHERE mqsQuoteId = 'MQS-b3a448b5-293a-453d-bd97-d4efe4cdf418';
