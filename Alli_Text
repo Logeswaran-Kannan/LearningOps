@@ -1,4 +1,8 @@
+-- ===============================
+-- STEP 1: Filter Table A
+-- ===============================
 WITH filtered_A AS (
+
     SELECT
         mqsQuoteId,
         interactionId,
@@ -9,7 +13,7 @@ WITH filtered_A AS (
       AND product = 'PropositionWolfMotorInsurance'
 ),
 
--- 48-hour window calculations
+-- Add 48-hour window
 A_with_window AS (
     SELECT
         *,
@@ -18,46 +22,68 @@ A_with_window AS (
     FROM filtered_A
 ),
 
--- Match against B (Athena stream)
+-- ===============================
+-- STEP 2: Match Against ATHENA STREAM (Table B)
+-- ===============================
 match_B AS (
     SELECT
         A.mqsQuoteId,
         A.interactionId,
         B.athenaStreamQuoteDateTime,
-        CASE WHEN B.athenaStreamMqsQuoteId IS NOT NULL THEN true ELSE false END AS athenaStreamExists
+        CASE 
+            WHEN B.athenaStreamMqsQuoteId IS NOT NULL
+             AND B.athenaStreamInteractionId IS NOT NULL 
+            THEN true ELSE false 
+        END AS athenaStreamExists
     FROM A_with_window A
     LEFT JOIN core_bld_radar_live.dlt_bronze_recon_athena_stream B
-      ON A.mqsQuoteId = B.athenaStreamMqsQuoteId
-     AND A.interactionId = B.athenaStreamInteractionId
+      ON lower(trim(A.mqsQuoteId)) = lower(trim(B.athenaStreamMqsQuoteId))
+     AND lower(trim(A.interactionId)) = lower(trim(B.athenaStreamInteractionId))
      AND B.athenaStreamQuoteDateTime BETWEEN A.a_time AND A.a_time_48h
 ),
 
--- Match against C (MQS)
+-- ===============================
+-- STEP 3: Match Against MQS (Table C)
+-- ===============================
 match_C AS (
     SELECT
         A.mqsQuoteId,
         A.interactionId,
         C.mQSDateTime,
-        CASE WHEN C.mQSQuoteId IS NOT NULL THEN true ELSE false END AS mQSExists
+        CASE 
+            WHEN C.mqsQuoteId IS NOT NULL 
+             AND C.mQSInteractionId IS NOT NULL
+            THEN true ELSE false 
+        END AS mQSExists
     FROM A_with_window A
     LEFT JOIN core_bld_radar_live.dlt_bronze_recon_mqs C
-      ON A.mqsQuoteId = C.mQSQuoteId
-     AND A.interactionId = C.mQSInteractionId
+      ON lower(trim(A.mqsQuoteId)) = lower(trim(C.mqsQuoteId))
+     AND lower(trim(A.interactionId)) = lower(trim(C.mQSInteractionId))
      AND C.mQSDateTime BETWEEN A.a_time AND A.a_time_48h
 )
 
--- FINAL reconciliation result
+-- ===============================
+-- STEP 4: FINAL RECON OUTPUT (Missing in B or C)
+-- ===============================
 SELECT DISTINCT
     A.mqsQuoteId AS athenaSourceMqsQuoteId,
     A.interactionId AS athenaSourceInteractionId,
     A.product AS athenaSourceProduct,
     A.requestDateTime AS athenaSourceRequestDateTime,
-    B.athenaStreamExists,
-    C.mQSExists
+
+    -- From matches
+    COALESCE(B.athenaStreamExists, false) AS athenaStreamExists,
+    COALESCE(C.mQSExists, false) AS mQSExists
+
 FROM A_with_window A
 LEFT JOIN match_B B
-    ON A.mqsQuoteId = B.mqsQuoteId AND A.interactionId = B.interactionId
+    ON A.mqsQuoteId = B.mqsQuoteId
+   AND A.interactionId = B.interactionId
+
 LEFT JOIN match_C C
-    ON A.mqsQuoteId = C.mqsQuoteId AND A.interactionId = C.interactionId
-WHERE (B.athenaStreamExists IS FALSE OR B.athenaStreamExists IS NULL)
-   OR (C.mQSExists IS FALSE OR C.mQSExists IS NULL);
+    ON A.mqsQuoteId = C.mqsQuoteId
+   AND A.interactionId = C.interactionId
+
+-- Only show missing or partially missing records
+WHERE COALESCE(B.athenaStreamExists, false) = false
+   OR COALESCE(C.mQSExists, false) = false;
