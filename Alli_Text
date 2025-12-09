@@ -41,7 +41,7 @@ C_norm = C.withColumn("qid", F.lower(F.trim("mqsQuoteId"))) \
 
 
 # ==========================================================
-# 4. A → B Matching (48-hour)
+# 4. A → B Matching (48 hours)
 # ==========================================================
 
 A_B = (
@@ -51,12 +51,10 @@ A_B = (
         "diff_hours_B",
         F.abs(F.unix_timestamp("b.b_ts") - F.unix_timestamp("a.requestDateTime")) / 3600
     )
-    .withColumn(
-        "hit_B",
-        F.when(F.col("diff_hours_B") <= 48, 1).otherwise(0)
-    )
+    .withColumn("hit_B", F.when(F.col("diff_hours_B") <= 48, 1).otherwise(0))
     .select(
         "a.qid",
+        "a.product",
         "a.mqsQuoteId",
         "a.interactionId",
         "a.requestDate",
@@ -68,7 +66,7 @@ A_B = (
 
 
 # ==========================================================
-# 5. A → C Matching (48-hour)
+# 5. A → C Matching (48 hours)
 # ==========================================================
 
 A_C = (
@@ -78,12 +76,10 @@ A_C = (
         "diff_hours_C",
         F.abs(F.unix_timestamp("c.c_ts") - F.unix_timestamp("a.requestDateTime")) / 3600
     )
-    .withColumn(
-        "hit_C",
-        F.when(F.col("diff_hours_C") <= 48, 1).otherwise(0)
-    )
+    .withColumn("hit_C", F.when(F.col("diff_hours_C") <= 48, 1).otherwise(0))
     .select(
         "a.qid",
+        "a.product",
         "a.mqsQuoteId",
         "a.interactionId",
         "a.requestDate",
@@ -93,60 +89,87 @@ A_C = (
     )
 )
 
-
 # ==========================================================
-# 6. KPI Aggregations
+# 6. KPI Aggregations (Date + Product Level)
 # ==========================================================
 
-# Distinct A counts per date
-A_kpi = A_norm.groupBy("requestDate").agg(
-    F.countDistinct("mqsQuoteId").alias("A_total")
+
+# ----------------------------
+# A KPIs (per date + product)
+# ----------------------------
+A_kpi = A_norm.groupBy("requestDate", "product").agg(
+    F.countDistinct("mqsQuoteId").alias("A_total"),
+    F.sum(F.when(F.col("mqsQuoteId").isNull(), 1).otherwise(0)).alias("A_null_count"),
+    F.sum(F.when(~F.col("mqsQuoteId").startsWith("MQS"), 1).otherwise(0)).alias("A_non_mqs_prefix")
 )
 
-# Distinct B counts per date
+
+# ----------------------------
+# B KPIs (per date + product)
+# ----------------------------
 B_kpi = B_norm.withColumn("b_date", F.to_date("b_ts")) \
-    .groupBy("b_date").agg(
-        F.countDistinct("qid").alias("B_total")
+    .join(A_norm.select("product", "qid").dropDuplicates(), on="qid", how="left") \
+    .groupBy("b_date", "product") \
+    .agg(
+        F.countDistinct("qid").alias("B_total"),
+        F.sum(F.when(F.col("athenaStreamMqsQuoteId").isNull(), 1).otherwise(0)).alias("B_null_count"),
+        F.sum(F.when(~F.col("athenaStreamMqsQuoteId").startsWith("MQS"), 1).otherwise(0)).alias("B_non_mqs_prefix")
     ).withColumnRenamed("b_date", "requestDate")
 
-# Distinct C counts per date
+
+# ----------------------------
+# C KPIs (per date + product)
+# ----------------------------
 C_kpi = C_norm.withColumn("c_date", F.to_date("c_ts")) \
-    .groupBy("c_date").agg(
-        F.countDistinct("qid").alias("C_total")
+    .join(A_norm.select("product", "qid").dropDuplicates(), on="qid", how="left") \
+    .groupBy("c_date", "product") \
+    .agg(
+        F.countDistinct("qid").alias("C_total"),
+        F.sum(F.when(F.col("mqsQuoteId").isNull(), 1).otherwise(0)).alias("C_null_count"),
+        F.sum(F.when(~F.col("mqsQuoteId").startsWith("MQS"), 1).otherwise(0)).alias("C_non_mqs_prefix")
     ).withColumnRenamed("c_date", "requestDate")
 
-# A → B hits
-A_hit_B_kpi = A_B.groupBy("requestDate").agg(
+
+# ----------------------------
+# A → B Hit KPIs
+# ----------------------------
+A_hit_B_kpi = A_B.groupBy("requestDate", "product").agg(
     F.countDistinct(F.when(F.col("hit_B") == 1, F.col("mqsQuoteId"))).alias("A_hit_B")
 )
 
-# A → C hits
-A_hit_C_kpi = A_C.groupBy("requestDate").agg(
+# ----------------------------
+# A → C Hit KPIs
+# ----------------------------
+A_hit_C_kpi = A_C.groupBy("requestDate", "product").agg(
     F.countDistinct(F.when(F.col("hit_C") == 1, F.col("mqsQuoteId"))).alias("A_hit_C")
 )
 
-# A → BOTH B and C hits
+# ----------------------------
+# A → Both B and C
+# ----------------------------
 A_both = (
-    A_B.select("qid", "requestDate", "hit_B")
-    .join(A_C.select("qid", "requestDate", "hit_C"), on=["qid", "requestDate"])
+    A_B.select("qid", "product", "requestDate", "hit_B")
+    .join(A_C.select("qid", "product", "requestDate", "hit_C"), on=["qid", "product", "requestDate"])
     .filter((F.col("hit_B") == 1) & (F.col("hit_C") == 1))
-    .groupBy("requestDate")
+    .groupBy("requestDate", "product")
     .agg(F.countDistinct("qid").alias("A_hit_both"))
 )
 
 
 # ==========================================================
-# 7. Combine KPIs into Final Output
+# 7. Combine All KPIs + Reconciliation Score
 # ==========================================================
 
 final_kpi = (
     A_kpi
-    .join(B_kpi, "requestDate", "left")
-    .join(C_kpi, "requestDate", "left")
-    .join(A_hit_B_kpi, "requestDate", "left")
-    .join(A_hit_C_kpi, "requestDate", "left")
-    .join(A_both, "requestDate", "left")
-    .orderBy("requestDate")
+    .join(B_kpi, ["requestDate", "product"], "left")
+    .join(C_kpi, ["requestDate", "product"], "left")
+    .join(A_hit_B_kpi, ["requestDate", "product"], "left")
+    .join(A_hit_C_kpi, ["requestDate", "product"], "left")
+    .join(A_both, ["requestDate", "product"], "left")
+    .withColumn("Reconciliation_Score_Percent",
+                F.round((F.col("A_hit_both") / F.col("A_total")) * 100, 2))
+    .orderBy("requestDate", "product")
 )
 
 display(final_kpi)
