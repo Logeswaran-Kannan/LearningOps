@@ -1,87 +1,129 @@
--- Filter A for the date + product we care about
-WITH A_filtered AS (
-    SELECT
-        mqsQuoteId,
-        interactionId,
-        product,
-        requestDate,
-        requestDateTime
-    FROM core_bld_radar_live.dlt_bronze_recon_athena_source
-    WHERE requestDate = '2025-12-05'
-      AND product = 'PropositionWolfMotorInsurance'
-),
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
--- ============================
--- Match to ATHENA STREAM (B)
--- ============================
-B_match AS (
-    SELECT
-        A.mqsQuoteId,
-        A.interactionId,
-        -- smallest time difference in hours between A and B
-        MIN(
-            ABS(
-                unix_timestamp(B.athenaStreamQuoteDateTime)
-              - unix_timestamp(A.requestDateTime)
-            ) / 3600.0
-        ) AS min_diff_hours_athena
-    FROM A_filtered A
-    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_athena_stream B
-      ON lower(trim(A.mqsQuoteId))    = lower(trim(B.athenaStreamMqsQuoteId))
-     AND lower(trim(A.interactionId)) = lower(trim(B.athenaStreamInteractionId))
-    GROUP BY A.mqsQuoteId, A.interactionId
-),
+# ---------------------------------------------
+# INPUT PARAMETERS
+# ---------------------------------------------
+start_date = "2025-12-02"
+end_date   = "2025-12-09"
 
--- ============================
--- Match to MQS (C)
--- ============================
-C_match AS (
-    SELECT
-        A.mqsQuoteId,
-        A.interactionId,
-        -- if you are sure mQSDateTime is populated, use it directly
-        MIN(
-            ABS(
-                unix_timestamp(C.mQSDateTime)
-              - unix_timestamp(A.requestDateTime)
-            ) / 3600.0
-        ) AS min_diff_hours_mqs
-    FROM A_filtered A
-    LEFT JOIN core_bld_radar_live.dlt_bronze_recon_mqs C
-      ON lower(trim(A.mqsQuoteId))    = lower(trim(C.mqsQuoteId))
-     AND lower(trim(A.interactionId)) = lower(trim(C.mQSInteractionId))
-    GROUP BY A.mqsQuoteId, A.interactionId
-)
+# ---------------------------------------------
+# LOAD TABLES
+# ---------------------------------------------
+A = spark.table("core_bld_radar_live.dlt_bronze_recon_athena_source") \
+    .filter((F.col("requestDate") >= start_date) & (F.col("requestDate") <= end_date))
 
--- ============================
--- Final reconciliation view
--- ============================
-SELECT
-    A.mqsQuoteId,
-    A.interactionId,
-    A.product,
-    A.requestDate,
-    A.requestDateTime,
+B = spark.table("core_bld_radar_live.dlt_bronze_recon_athena_stream")
+C = spark.table("core_bld_radar_live.dlt_bronze_recon_mqs")
 
-    B.min_diff_hours_athena,
-    C.min_diff_hours_mqs,
+# ---------------------------------------------
+# NORMALISE KEYS
+# ---------------------------------------------
+A = A.withColumn("mqsQuoteId_norm", F.lower(F.trim("mqsQuoteId"))) \
+     .withColumn("interactionId_norm", F.lower(F.trim("interactionId")))
 
-    CASE
-        WHEN B.min_diff_hours_athena IS NOT NULL
-         AND B.min_diff_hours_athena <= 48 THEN true
-        ELSE false
-    END AS athenaStreamExists,
+B = B.withColumn("mqsQuoteId_norm", F.lower(F.trim("athenaStreamMqsQuoteId"))) \
+     .withColumn("interactionId_norm", F.lower(F.trim("athenaStreamInteractionId")))
 
-    CASE
-        WHEN C.min_diff_hours_mqs IS NOT NULL
-         AND C.min_diff_hours_mqs <= 48 THEN true
-        ELSE false
-    END AS mQSExists
+C = C.withColumn("mqsQuoteId_norm", F.lower(F.trim("mqsQuoteId"))) \
+     .withColumn("interactionId_norm", F.lower(F.trim("mQSInteractionId")))
 
-FROM A_filtered A
-LEFT JOIN B_match B
-       ON A.mqsQuoteId = B.mqsQuoteId
-      AND A.interactionId = B.interactionId
-LEFT JOIN C_match C
-       ON A.mqsQuoteId = C.mqsQuoteId
-      AND A.interactionId = C.interactionId;
+# ---------------------------------------------
+# BUILD VALID TIMESTAMPS
+# ---------------------------------------------
+A = A.withColumn("a_ts", F.col("requestDateTime"))
+
+# B timestamp
+B = B.withColumn("b_ts", F.col("athenaStreamQuoteDateTime"))
+
+# C timestamp – assume mQSDateTime is populated
+C = C.withColumn("c_ts", F.col("mQSDateTime"))
+
+# ---------------------------------------------
+# JOIN A ↔ B AND COMPUTE TIME DIFFERENCE
+# ---------------------------------------------
+AB = A.join(
+        B,
+        on=["mqsQuoteId_norm", "interactionId_norm"],
+        how="left"
+    ).withColumn(
+        "diff_hours_B",
+        F.abs(F.unix_timestamp("b_ts") - F.unix_timestamp("a_ts")) / 3600
+    )
+
+# Get minimum diff per A quote-id + interactionId
+AB_min = AB.groupBy("mqsQuoteId", "interactionId") \
+    .agg(F.min("diff_hours_B").alias("min_diff_hours_B"))
+
+# ---------------------------------------------
+# JOIN A ↔ C AND COMPUTE TIME DIFFERENCE
+# ---------------------------------------------
+AC = A.join(
+        C,
+        on=["mqsQuoteId_norm", "interactionId_norm"],
+        how="left"
+    ).withColumn(
+        "diff_hours_C",
+        F.abs(F.unix_timestamp("c_ts") - F.unix_timestamp("a_ts")) / 3600
+    )
+
+AC_min = AC.groupBy("mqsQuoteId", "interactionId") \
+    .agg(F.min("diff_hours_C").alias("min_diff_hours_C"))
+
+# ---------------------------------------------
+# FINAL RECONCILIATION TABLE
+# ---------------------------------------------
+final = A.select("mqsQuoteId", "interactionId", "product", "requestDate", "a_ts") \
+    .join(AB_min, on=["mqsQuoteId", "interactionId"], how="left") \
+    .join(AC_min, on=["mqsQuoteId", "interactionId"], how="left") \
+    .withColumn(
+        "athenaStreamExists",
+        F.when(F.col("min_diff_hours_B") <= 48, F.lit(True)).otherwise(F.lit(False))
+    ) \
+    .withColumn(
+        "mQSExists",
+        F.when(F.col("min_diff_hours_C") <= 48, F.lit(True)).otherwise(F.lit(False))
+    )
+
+final.cache()
+
+# ---------------------------------------------
+# SHOW RECONCILIATION OUTPUT
+# ---------------------------------------------
+display(final)
+
+# ---------------------------------------------
+# KPI METRICS
+# ---------------------------------------------
+
+# Distinct counts
+kpi_A = A.select("mqsQuoteId").distinct().count()
+kpi_B = B.select("athenaStreamMqsQuoteId").distinct().count()
+kpi_C = C.select("mqsQuoteId").distinct().count()
+
+# A matched to B
+kpi_A_hit_B = final.filter("athenaStreamExists = true") \
+    .select("mqsQuoteId").distinct().count()
+
+# A matched to C
+kpi_A_hit_C = final.filter("mQSExists = true") \
+    .select("mqsQuoteId").distinct().count()
+
+# A matched to BOTH B and C
+kpi_A_hit_both = final.filter("athenaStreamExists = true AND mQSExists = true") \
+    .select("mqsQuoteId").distinct().count()
+
+# ---------------------------------------------
+# PRINT KPI SUMMARY
+# ---------------------------------------------
+print("=======================================")
+print("            KPI SUMMARY")
+print("=======================================")
+print(f"Distinct Quotes in A: {kpi_A}")
+print(f"Distinct Quotes in B: {kpi_B}")
+print(f"Distinct Quotes in C: {kpi_C}")
+print("---------------------------------------")
+print(f"Quotes from A that hit B (within 48h): {kpi_A_hit_B}")
+print(f"Quotes from A that hit C (within 48h): {kpi_A_hit_C}")
+print(f"Quotes from A that hit BOTH B and C  : {kpi_A_hit_both}")
+print("=======================================")
