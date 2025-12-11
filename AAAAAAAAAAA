@@ -1,19 +1,11 @@
-Hi Hazel,
+Hi team,
 
-These are a few points coming to the top of my mind from a BAU changes perspective that we should factor into our testing and impact assessment:
+From the pipeline side we have verified that the data ingestion and the Active/Passive Cosmos DB switch performed by BICOE is working as expected. The Radar microservices are picking up the correct active database after the switch.
 
-Data quality rules may need to be added or amended without breaking the LRT pipeline logic.
+However, the behaviour you are seeing via SOAP UI appears to be coming through the Product Adapter layer. SOAP UI calls go through the adapter, which may still be pointing to the previous database or using an outdated connection reference. This would explain why the response differs from what we validate directly in Cosmos DB after the switch.
 
-Renaming of existing elements could impact downstream processes as our codebase is case-sensitive.
+At this stage there is no indication of an issue in the ingestion pipeline itself. It would be helpful if a defect could be raised on the Product Adapter side so the correct team can investigate the connection being used.
 
-DLQ routing needs to be validated to ensure malformed messages are handled correctly.
+Rob is currently on sick leave, but once he is back I will reconfirm the details with him as well.
 
-Raw Enrichment dataset decoding should be checked, including handling of error responses from enrichment providers.
-
-Changes to datatypes on existing payload elements may cause schema evolution issues and need explicit validation.
-
-Backward compatibility must be confirmed so both old quotes and new model quotes continue to flow consistently.
-
-Payload size changes could impact performance across streaming and BICOE ingestion layers.
-
-Active/Passive model switching needs to be validated to ensure the correct versioned model is consistently used end-to-end.
+Let me know if you need any further information from the pipeline side.
