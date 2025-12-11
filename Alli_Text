@@ -1,181 +1,19 @@
-from pyspark.sql import functions as F
+Hi Hazel,
 
-# ==========================================================
-# 1. Load Tables
-# ==========================================================
+These are a few points coming to the top of my mind from a BAU changes perspective that we should factor into our testing and impact assessment:
 
-A = spark.table("core_bld_radar_live.dlt_bronze_recon_athena_source") \
-        .withColumn("requestDate", F.to_date("requestDate"))
+Data quality rules may need to be added or amended without breaking the LRT pipeline logic.
 
-B = spark.table("core_bld_radar_live.dlt_bronze_recon_athena_stream")
+Renaming of existing elements could impact downstream processes as our codebase is case-sensitive.
 
-C = spark.table("core_bld_radar_live.dlt_bronze_recon_mqs")
+DLQ routing needs to be validated to ensure malformed messages are handled correctly.
 
+Raw Enrichment dataset decoding should be checked, including handling of error responses from enrichment providers.
 
-# ==========================================================
-# 2. Filter by Date Range
-# ==========================================================
+Changes to datatypes on existing payload elements may cause schema evolution issues and need explicit validation.
 
-start_date = "2025-12-02"
-end_date   = "2025-12-09"
+Backward compatibility must be confirmed so both old quotes and new model quotes continue to flow consistently.
 
-A = A.filter((F.col("requestDate") >= start_date) & (F.col("requestDate") <= end_date))
-B = B.filter(F.col("athenaStreamQuoteDateTime").isNotNull())
-C = C.filter(F.col("mQSDateTime").isNotNull())
+Payload size changes could impact performance across streaming and BICOE ingestion layers.
 
-
-# ==========================================================
-# 3. Normalise Keys
-# ==========================================================
-
-A_norm = A.withColumn("qid", F.lower(F.trim(F.col("mqsQuoteId")))) \
-          .withColumn("iid", F.lower(F.trim(F.col("interactionId"))))
-
-B_norm = B.withColumn("qid", F.lower(F.trim(F.col("athenaStreamMqsQuoteId")))) \
-          .withColumn("iid", F.lower(F.trim(F.col("athenaStreamInteractionId")))) \
-          .withColumn("b_ts", F.col("athenaStreamQuoteDateTime"))
-
-C_norm = C.withColumn("qid", F.lower(F.trim(F.col("mqsQuoteId")))) \
-          .withColumn("iid", F.lower(F.trim(F.col("mQSInteractionId")))) \
-          .withColumn("c_ts", F.col("mQSDateTime"))
-
-
-# ==========================================================
-# 4. A → B Matching (48-hour)
-# ==========================================================
-
-A_B = (
-    A_norm.alias("a")
-    .join(B_norm.alias("b"), on=["qid", "iid"], how="left")
-    .withColumn(
-        "diff_hours_B",
-        F.abs(F.unix_timestamp(F.col("b.b_ts")) - F.unix_timestamp(F.col("a.requestDateTime"))) / 3600
-    )
-    .withColumn("hit_B", F.when(F.col("diff_hours_B") <= 48, F.lit(1)).otherwise(F.lit(0)))
-    .select(
-        F.col("a.qid"),
-        F.col("a.product"),
-        F.col("a.mqsQuoteId"),
-        F.col("a.interactionId"),
-        F.col("a.requestDate"),
-        F.col("a.requestDateTime"),
-        F.col("diff_hours_B"),
-        F.col("hit_B")
-    )
-)
-
-
-# ==========================================================
-# 5. A → C Matching (48-hour)
-# ==========================================================
-
-A_C = (
-    A_norm.alias("a")
-    .join(C_norm.alias("c"), on=["qid", "iid"], how="left")
-    .withColumn(
-        "diff_hours_C",
-        F.abs(F.unix_timestamp(F.col("c.c_ts")) - F.unix_timestamp(F.col("a.requestDateTime"))) / 3600
-    )
-    .withColumn("hit_C", F.when(F.col("diff_hours_C") <= 48, F.lit(1)).otherwise(F.lit(0)))
-    .select(
-        F.col("a.qid"),
-        F.col("a.product"),
-        F.col("a.mqsQuoteId"),
-        F.col("a.interactionId"),
-        F.col("a.requestDate"),
-        F.col("a.requestDateTime"),
-        F.col("diff_hours_C"),
-        F.col("hit_C")
-    )
-)
-
-
-# ==========================================================
-# 6. KPI Aggregations (Date + Product Level)
-# ==========================================================
-
-# ----------------------------
-# A KPIs
-# ----------------------------
-A_kpi = A_norm.groupBy("requestDate", "product").agg(
-    F.countDistinct(F.col("mqsQuoteId")).alias("A_total"),
-    F.sum(F.when(F.col("mqsQuoteId").isNull(), 1).otherwise(0)).alias("A_null_count"),
-    F.sum(F.when(~F.col("mqsQuoteId").startswith("MQS"), 1).otherwise(0)).alias("A_non_mqs_prefix")
-)
-
-# ----------------------------
-# B KPIs
-# ----------------------------
-B_kpi = (
-    B_norm.withColumn("b_date", F.to_date("b_ts"))
-    .join(A_norm.select("product", "qid").dropDuplicates(), on="qid", how="left")
-    .groupBy("b_date", "product")
-    .agg(
-        F.countDistinct("qid").alias("B_total"),
-        F.sum(F.when(F.col("athenaStreamMqsQuoteId").isNull(), 1).otherwise(0)).alias("B_null_count"),
-        F.sum(F.when(~F.col("athenaStreamMqsQuoteId").startswith("MQS"), 1).otherwise(0)).alias("B_non_mqs_prefix")
-    )
-    .withColumnRenamed("b_date", "requestDate")
-)
-
-# ----------------------------
-# C KPIs
-# ----------------------------
-C_kpi = (
-    C_norm.withColumn("c_date", F.to_date("c_ts"))
-    .join(A_norm.select("product", "qid").dropDuplicates(), on="qid", how="left")
-    .groupBy("c_date", "product")
-    .agg(
-        F.countDistinct("qid").alias("C_total"),
-        F.sum(F.when(F.col("mqsQuoteId").isNull(), 1).otherwise(0)).alias("C_null_count"),
-        F.sum(F.when(~F.col("mqsQuoteId").startswith("MQS"), 1).otherwise(0)).alias("C_non_mqs_prefix")
-    )
-    .withColumnRenamed("c_date", "requestDate")
-)
-
-
-# ----------------------------
-# A → B Hits
-# ----------------------------
-A_hit_B_kpi = A_B.groupBy("requestDate", "product").agg(
-    F.countDistinct(F.when(F.col("hit_B") == 1, F.col("mqsQuoteId"))).alias("A_hit_B")
-)
-
-# ----------------------------
-# A → C Hits
-# ----------------------------
-A_hit_C_kpi = A_C.groupBy("requestDate", "product").agg(
-    F.countDistinct(F.when(F.col("hit_C") == 1, F.col("mqsQuoteId"))).alias("A_hit_C")
-)
-
-# ----------------------------
-# A → both B and C
-# ----------------------------
-A_both = (
-    A_B.alias("b")
-    .join(A_C.alias("c"), on=["qid", "product", "requestDate"])
-    .filter((F.col("b.hit_B") == 1) & (F.col("c.hit_C") == 1))
-    .groupBy("requestDate", "product")
-    .agg(F.countDistinct("qid").alias("A_hit_both"))
-)
-
-
-# ==========================================================
-# 7. Combine All KPIs + Score
-# ==========================================================
-
-final_kpi = (
-    A_kpi
-    .join(B_kpi, ["requestDate", "product"], "left")
-    .join(C_kpi, ["requestDate", "product"], "left")
-    .join(A_hit_B_kpi, ["requestDate", "product"], "left")
-    .join(A_hit_C_kpi, ["requestDate", "product"], "left")
-    .join(A_both, ["requestDate", "product"], "left")
-    .withColumn(
-        "Reconciliation_Score_Percent",
-        F.round((F.col("A_hit_both") / F.col("A_total")) * 100, 2)
-    )
-    .orderBy("requestDate", "product")
-)
-
-display(final_kpi)
+Active/Passive model switching needs to be validated to ensure the correct versioned model is consistently used end-to-end.
