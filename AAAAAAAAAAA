@@ -1,11 +1,19 @@
 Hi team,
 
-From the pipeline side we have verified that the data ingestion and the Active/Passive Cosmos DB switch performed by BICOE is working as expected. The Radar microservices are picking up the correct active database after the switch.
+For the defect description, you can capture the issue as follows:
 
-However, the behaviour you are seeing via SOAP UI appears to be coming through the Product Adapter layer. SOAP UI calls go through the adapter, which may still be pointing to the previous database or using an outdated connection reference. This would explain why the response differs from what we validate directly in Cosmos DB after the switch.
+Observed Behaviour
+When testing vehicle-detail lookup through SOAP UI (via the Product Adapter), the response does not match the data currently stored in the active Cosmos DB after the Active/Passive switch. Radar services and the ingestion pipeline are reading from the correct active database, but the data returned through the Product Adapter appears to be coming from a different or older database.
 
-At this stage there is no indication of an issue in the ingestion pipeline itself. It would be helpful if a defect could be raised on the Product Adapter side so the correct team can investigate the connection being used.
+Suspected Cause
+The SOAP UI path goes through the Product Adapter layer, which may still be pointing to the previous Cosmos DB instance or using an out-of-date connection configuration. This would cause a mismatch between what Radar reads (correct active DB) and what the Product Adapter returns.
 
-Rob is currently on sick leave, but once he is back I will reconfirm the details with him as well.
+Why This Is Not a Pipeline Issue
+The BICOE ingestion pipeline successfully switches to the new active database and the data is correctly ingested and visible in Cosmos DB. The mismatch appears only when calling via the Product Adapter, not when validating the data directly.
 
-Let me know if you need any further information from the pipeline side.
+Action Required
+Please investigate the Product Adapter configuration to confirm which Cosmos DB endpoint it is using after the switch, and ensure it aligns with the active database selected by Radar.
+
+I will reconfirm the technical details with Rob once he is back from sick leave, but based on current evidence there is no fault in the ingestion pipeline.
+
+Let me know if any additional clarification is needed.
