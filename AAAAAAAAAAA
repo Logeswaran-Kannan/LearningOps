@@ -1,19 +1,10 @@
-Hi team,
+Hi Steve,
 
-For the defect description, you can capture the issue as follows:
+Agree with Arindom’s explanation — since we are using standard compression/decompression libraries and this approach is already proven across the wider project, we don’t see any risk of data loss. From our side, we are comfortable skipping this test.
 
-Observed Behaviour
-When testing vehicle-detail lookup through SOAP UI (via the Product Adapter), the response does not match the data currently stored in the active Cosmos DB after the Active/Passive switch. Radar services and the ingestion pipeline are reading from the correct active database, but the data returned through the Product Adapter appears to be coming from a different or older database.
+The only point to confirm is whether all DE feeds are expected to be compressed, as we’ve seen cases like Watchlist where compression wasn’t applied. But overall, the risk is minimal.
 
-Suspected Cause
-The SOAP UI path goes through the Product Adapter layer, which may still be pointing to the previous Cosmos DB instance or using an out-of-date connection configuration. This would cause a mismatch between what Radar reads (correct active DB) and what the Product Adapter returns.
+On the size limits, Databricks can handle messages up to ~16 MB, and our largest payloads are only 200–300 KB, so we are well within safe limits.
 
-Why This Is Not a Pipeline Issue
-The BICOE ingestion pipeline successfully switches to the new active database and the data is correctly ingested and visible in Cosmos DB. The mismatch appears only when calling via the Product Adapter, not when validating the data directly.
-
-Action Required
-Please investigate the Product Adapter configuration to confirm which Cosmos DB endpoint it is using after the switch, and ensure it aligns with the active database selected by Radar.
-
-I will reconfirm the technical details with Rob once he is back from sick leave, but based on current evidence there is no fault in the ingestion pipeline.
-
-Let me know if any additional clarification is needed.
+Thanks,
+Logeswaran
