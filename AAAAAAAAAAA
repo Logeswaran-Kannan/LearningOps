@@ -1,21 +1,9 @@
 Hi Nita and Paul,
 
-Hope you’re both well. I just wanted to make sure I’m following the right approach for the PV Group setup in Databricks.
+Thanks Paul for the input earlier — that really helped me understand the Databricks requirements more clearly.
 
-Thanks, Paul, for the extra context on the Databricks requirements — that really helped clarify a few things for me. And Nita, thanks again for walking me through the overall PV process earlier.
+Nita, based on that, I believe the PV group we’re working with is intended only for Databricks. If that's the case, it sounds like we’ll need to rename it to follow the Databricks naming convention (pv-azuredatabricks-…) and also update the name in our Confluence requirements page and in Azure. After that, a request would need to be raised to Cloud Squad to sync the group via SCIM so it becomes available in Databricks.
 
-From what I understand now, Databricks needs a couple of additional steps on top of the standard PV workflow:
+Could you please confirm if the PV group is indeed meant solely for Databricks? If so, I can proceed with the renaming request. If not, then I’ll follow the process Paul suggested and create a separate Databricks-specific group.
 
-The PV group needs to follow the Databricks naming convention (pv-azuredatabricks-…), and
-
-Cloud Squad need to sync the group via SCIM before it becomes available in Databricks.
-
-To make sure I’m proceeding correctly, could we confirm whether the current PV group is intended only for Databricks use?
-
-If so, we may need to rename it to match the convention.
-
-If it’s being used elsewhere, it sounds like creating a separate Databricks-specific group would be better.
-
-Once that’s agreed, Nita, would you be able to raise the IT request to Cloud Squad for the sync as part of the PV process?
-
-Really appreciate both of your guidance on this — just want to make sure everything is aligned before I move any further.
+Happy to take the next steps once I get your guidance. Thanks so much for your help on this
