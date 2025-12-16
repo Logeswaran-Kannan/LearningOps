@@ -1,10 +1,21 @@
-Hi Steve,
+Hi Nita and Paul,
 
-Agree with Arindom’s explanation — since we are using standard compression/decompression libraries and this approach is already proven across the wider project, we don’t see any risk of data loss. From our side, we are comfortable skipping this test.
+Hope you’re both well. I just wanted to make sure I’m following the right approach for the PV Group setup in Databricks.
 
-The only point to confirm is whether all DE feeds are expected to be compressed, as we’ve seen cases like Watchlist where compression wasn’t applied. But overall, the risk is minimal.
+Thanks, Paul, for the extra context on the Databricks requirements — that really helped clarify a few things for me. And Nita, thanks again for walking me through the overall PV process earlier.
 
-On the size limits, Databricks can handle messages up to ~16 MB, and our largest payloads are only 200–300 KB, so we are well within safe limits.
+From what I understand now, Databricks needs a couple of additional steps on top of the standard PV workflow:
 
-Thanks,
-Logeswaran
+The PV group needs to follow the Databricks naming convention (pv-azuredatabricks-…), and
+
+Cloud Squad need to sync the group via SCIM before it becomes available in Databricks.
+
+To make sure I’m proceeding correctly, could we confirm whether the current PV group is intended only for Databricks use?
+
+If so, we may need to rename it to match the convention.
+
+If it’s being used elsewhere, it sounds like creating a separate Databricks-specific group would be better.
+
+Once that’s agreed, Nita, would you be able to raise the IT request to Cloud Squad for the sync as part of the PV process?
+
+Really appreciate both of your guidance on this — just want to make sure everything is aligned before I move any further.
