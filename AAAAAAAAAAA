@@ -1,5 +1,3 @@
-There’s a defect raised on MQSQuoteIds in SIT coming through without the “MQS” prefix. Alison mentioned this is intentional in pre-prod to help distinguish mock IDs from real ones, and adding the prefix could risk mixing them if switching occurs.
+We’re seeing some Interaction records where the MQSQuoteID is coming through without the ‘MQS’ prefix. Our expectation was that MQSQuoteID should always start with “MQS”, so we wanted to check whether these are considered valid records.
 
-From our side, we originally asked for the prefix to be added for consistency with downstream expectations.
-
-Could I please get your views on whether SIT should follow the pre-prod approach (no prefix) or align to the full MQS prefix format? Just want to ensure we proceed correctly.
+At the moment, these MQSQuoteIDs without the prefix also don’t appear to have any corresponding MQS data in the MQS flow, which is why we’re unsure if they’re mock IDs or something else.
