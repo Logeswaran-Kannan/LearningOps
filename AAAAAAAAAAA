@@ -1,9 +1,5 @@
-Hi Nita and Paul,
+There’s a defect raised on MQSQuoteIds in SIT coming through without the “MQS” prefix. Alison mentioned this is intentional in pre-prod to help distinguish mock IDs from real ones, and adding the prefix could risk mixing them if switching occurs.
 
-Thanks Paul for the input earlier — that really helped me understand the Databricks requirements more clearly.
+From our side, we originally asked for the prefix to be added for consistency with downstream expectations.
 
-Nita, based on that, I believe the PV group we’re working with is intended only for Databricks. If that's the case, it sounds like we’ll need to rename it to follow the Databricks naming convention (pv-azuredatabricks-…) and also update the name in our Confluence requirements page and in Azure. After that, a request would need to be raised to Cloud Squad to sync the group via SCIM so it becomes available in Databricks.
-
-Could you please confirm if the PV group is indeed meant solely for Databricks? If so, I can proceed with the renaming request. If not, then I’ll follow the process Paul suggested and create a separate Databricks-specific group.
-
-Happy to take the next steps once I get your guidance. Thanks so much for your help on this
+Could I please get your views on whether SIT should follow the pre-prod approach (no prefix) or align to the full MQS prefix format? Just want to ensure we proceed correctly.
