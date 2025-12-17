@@ -1,44 +1,8 @@
-Test Details – Data Quality Test Case Identification & Execution
-
-Objective:
-Identify key business-critical columns across all message types and validate that data quality rules applied post-load do not cause any functional or volume impact to downstream data pipelines. These test cases will form part of the regression pack for post-live checkout.
-
-Scope:
-
-All message types processed by the pipeline (e.g., New Business, Mid-Term Adjustment, Renewal, Cancellation, etc.)
-
-Validation of important business columns such as identifiers, financial fields, status indicators, and mandatory reference data.
-
-Verification that DQ checks do not block or alter valid data during end-to-end load.
-
-Test Approach:
-
-Identify Important Columns:
-
-Review schema for each message type.
-
-Highlight columns that are business-critical (e.g., MQSQuoteId, product reference, premium amounts, effective dates).
-
-Prioritise columns with dependency across upstream/downstream systems.
-
-Design Data Quality Test Cases:
-
-Positive: Valid/expected values must pass without rejecting or modifying records.
-
-Negative: Nulls, incorrect formats, or invalid values should trigger expected DQ behaviour.
-
-Edge Cases: Optional fields, default values, prefix rules (e.g., MQS prefix), datatype variations.
-
-Execution:
-
-Inject controlled test data covering all scenarios.
-
-Validate that pipeline loads data successfully without volume drop or schema impact.
-
-Confirm DQ rules log or flag errors correctly without blocking business-critical flows.
-
-Outcome Expected:
-
-Assurance that DQ rules do not break or interrupt daily processing.
-
-Stable baseline test pack for future regression, ensuring post-live changes do not impact critical columns or load behaviour.
+Filter(
+  [Assignee].[Assignee].Members,
+  ([Measures].[Issues created],
+   [Status].[Done]) = 0
+  AND
+  ([Measures].[Issues created],
+   [Status].[Closed]) = 0
+)
