@@ -1,8 +1,1 @@
-Filter(
-  [Assignee].[Assignee].Members,
-  ([Measures].[Issues created],
-   [Status].[Done]) = 0
-  AND
-  ([Measures].[Issues created],
-   [Status].[Closed]) = 0
-)
+<h2 style="color:red;">High Priority Issues</h2>
