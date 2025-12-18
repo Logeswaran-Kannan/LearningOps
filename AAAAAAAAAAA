@@ -1,1 +1,8 @@
-<h2 style="color:red;">High Priority Issues</h2>
+Sum(
+  { [Defect Priority].[P1 - Showstopper],
+    [Defect Priority].[P2 - High],
+    [Defect Priority].[P3 - Medium],
+    [Defect Priority].[P4 - Low]
+  },
+  [Measures].[Open issues]
+) > 0
