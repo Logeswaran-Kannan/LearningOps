@@ -1,8 +1,4 @@
 Sum(
-  { [Defect Priority].[P1 - Showstopper],
-    [Defect Priority].[P2 - High],
-    [Defect Priority].[P3 - Medium],
-    [Defect Priority].[P4 - Low]
-  },
-  [Measures].[Open issues]
-) > 0
+  { [Time].[Day].CurrentDateMember },
+  [Measures].[Issues created]
+)
