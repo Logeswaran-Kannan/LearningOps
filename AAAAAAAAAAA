@@ -1,4 +1,7 @@
 Sum(
-  { [Time].[Day].CurrentDateMember },
+  Filter(
+    [Time].[Day].Members,
+    [Time].CurrentHierarchyMember.Name = Format(Now(), "yyyy-MM-dd")
+  ),
   [Measures].[Issues created]
 )
