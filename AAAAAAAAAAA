@@ -1,7 +1,29 @@
-Sum(
-  Filter(
-    [Time].[Day].Members,
-    [Time].CurrentHierarchyMember.Name = Format(Now(), "yyyy-MM-dd")
-  ),
-  [Measures].[Issues created]
-)
+# Set this to your catalog and schema
+catalog_name = "your_catalog"        # optional if not using Unity Catalog
+schema_name = "your_schema"
+
+# If using Unity Catalog, set the catalog first:
+spark.sql(f"USE CATALOG {catalog_name}")
+
+# Select the schema
+spark.sql(f"USE {schema_name}")
+
+# Get list of all tables in the schema
+tables = spark.sql("SHOW TABLES").select("tableName").rdd.flatMap(lambda x: x).collect()
+
+# Create a list to store results
+results = []
+
+for tbl in tables:
+    full_table_name = f"{schema_name}.{tbl}"
+    try:
+        count = spark.table(full_table_name).count()
+        results.append((tbl, count))
+        print(f"Table: {tbl} → Count: {count}")
+    except Exception as e:
+        results.append((tbl, f"ERROR: {str(e)}"))
+        print(f"Table: {tbl} → ERROR: {e}")
+
+# Convert to DataFrame for a cleaner display
+df_results = spark.createDataFrame(results, ["table_name", "row_count"])
+display(df_results)
