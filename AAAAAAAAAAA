@@ -1,13 +1,3 @@
-UAT Sign-off Request – LRT Active/Passive Switch (BICoE Data Pipeline)
-
-Hi Team,
-
-As part of the LRT Active/Passive switch, the BICoE data pipeline activities have been completed and the handover and support from the BICoE side have been marked as complete.
-
-From our validation, the data ingestion pipeline is functioning as expected and the Active/Passive switch is working correctly from a BICoE data pipeline perspective. Based on our discussions, RL-1448 appears to be related to behaviour outside of the BICoE data pipeline scope.
-
-Could you please confirm UAT completion and provide sign-off for the BICoE data pipeline component? This will allow us to formally close testing for this component from the BICoE side.
-
-Please let us know if any additional clarification is required.
-
-Thanks, <your name>
+dbutils.fs.ls(
+    "wasbs://quote-cache-deletion-incoming@dev001uksst2003.blob.core.windows.net/"
+)
