@@ -1,29 +1,11 @@
-# Set this to your catalog and schema
-catalog_name = "your_catalog"        # optional if not using Unity Catalog
-schema_name = "your_schema"
+Hi Team,
 
-# If using Unity Catalog, set the catalog first:
-spark.sql(f"USE CATALOG {catalog_name}")
+As part of the LRT Active/Passive switch, the BICoE data pipeline activities have been completed and the handover and support from the BICoE side have been marked as complete.
 
-# Select the schema
-spark.sql(f"USE {schema_name}")
+From our validation, the data ingestion pipeline is functioning as expected and the Active/Passive switch is working correctly from a BICoE data pipeline perspective. Based on our discussions, RL-1448 appears to be related to behaviour outside of the BICoE data pipeline scope.
 
-# Get list of all tables in the schema
-tables = spark.sql("SHOW TABLES").select("tableName").rdd.flatMap(lambda x: x).collect()
+Could you please confirm UAT completion and provide sign-off for the BICoE data pipeline component? This will allow us to formally close testing for this component from the BICoE side.
 
-# Create a list to store results
-results = []
+Please let us know if any additional clarification is required.
 
-for tbl in tables:
-    full_table_name = f"{schema_name}.{tbl}"
-    try:
-        count = spark.table(full_table_name).count()
-        results.append((tbl, count))
-        print(f"Table: {tbl} → Count: {count}")
-    except Exception as e:
-        results.append((tbl, f"ERROR: {str(e)}"))
-        print(f"Table: {tbl} → ERROR: {e}")
-
-# Convert to DataFrame for a cleaner display
-df_results = spark.createDataFrame(results, ["table_name", "row_count"])
-display(df_results)
+Thanks, <your name>
