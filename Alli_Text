@@ -1,19 +1,28 @@
-Hi Hazel,
+from pyspark.sql import functions as F
 
-These are a few points coming to the top of my mind from a BAU changes perspective that we should factor into our testing and impact assessment:
+# Read the table
+df = spark.table("core_rl_test.flow.ehubstream")
 
-Data quality rules may need to be added or amended without breaking the LRT pipeline logic.
+# Calculate payload size in bytes
+# length() = number of characters
+# If payload is UTF-8 JSON, this is usually acceptable for size comparison
+df_with_size = df.withColumn(
+    "payload_size_bytes",
+    F.length(F.col("payload"))
+)
 
-Renaming of existing elements could impact downstream processes as our codebase is case-sensitive.
+# Derive year-month from enduedate
+df_with_month = df_with_size.withColumn(
+    "year_month",
+    F.date_format(F.col("enduedate"), "yyyy-MM")
+)
 
-DLQ routing needs to be validated to ensure malformed messages are handled correctly.
+# Aggregate min and max payload size per month
+payload_size_stats = df_with_month.groupBy("year_month").agg(
+    F.min("payload_size_bytes").alias("min_payload_size_bytes"),
+    F.max("payload_size_bytes").alias("max_payload_size_bytes"),
+    F.count("*").alias("record_count")
+).orderBy("year_month")
 
-Raw Enrichment dataset decoding should be checked, including handling of error responses from enrichment providers.
-
-Changes to datatypes on existing payload elements may cause schema evolution issues and need explicit validation.
-
-Backward compatibility must be confirmed so both old quotes and new model quotes continue to flow consistently.
-
-Payload size changes could impact performance across streaming and BICOE ingestion layers.
-
-Active/Passive model switching needs to be validated to ensure the correct versioned model is consistently used end-to-end.
+# Display results
+display(payload_size_stats)
