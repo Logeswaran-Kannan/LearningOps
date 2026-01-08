@@ -3,15 +3,14 @@ from pyspark.sql import functions as F
 # Read the table
 df = spark.table("core_rl_test.flow.ehubstream")
 
-# Calculate payload size in bytes
-# length() = number of characters
-# If payload is UTF-8 JSON, this is usually acceptable for size comparison
+# Calculate payload size in MB
+# length() gives character count; convert to MB
 df_with_size = df.withColumn(
-    "payload_size_bytes",
-    F.length(F.col("payload"))
+    "payload_size_mb",
+    (F.length(F.col("payload")) / (1024 * 1024)).cast("double")
 )
 
-# Derive year-month from enduedate
+# Extract year-month from enduedate
 df_with_month = df_with_size.withColumn(
     "year_month",
     F.date_format(F.col("enduedate"), "yyyy-MM")
@@ -19,10 +18,19 @@ df_with_month = df_with_size.withColumn(
 
 # Aggregate min and max payload size per month
 payload_size_stats = df_with_month.groupBy("year_month").agg(
-    F.min("payload_size_bytes").alias("min_payload_size_bytes"),
-    F.max("payload_size_bytes").alias("max_payload_size_bytes"),
+    F.round(F.min("payload_size_mb"), 4).alias("min_payload_size_mb"),
+    F.round(F.max("payload_size_mb"), 4).alias("max_payload_size_mb"),
     F.count("*").alias("record_count")
 ).orderBy("year_month")
 
-# Display results
+# Display result
 display(payload_size_stats)
+
+
+large_payloads = df_with_month.filter(F.col("payload_size_mb") > 1)
+
+display(large_payloads.select(
+    "enduedate",
+    "payload_size_mb",
+    "payload"
+))
