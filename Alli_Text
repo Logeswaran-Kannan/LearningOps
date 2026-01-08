@@ -1,29 +1,9 @@
-from pyspark.sql import functions as F
-
-df = spark.table("core_rl_test.flow.ehubstream")
-
-# Filter by JSON element
-df_filtered = df.filter(
-    F.get_json_object(F.col("interactionmessage"), "$._id") == "12RG45TY"
-)
-
-# Payload size in MB
-df_with_size = df_filtered.withColumn(
-    "payload_size_mb",
-    (F.length(F.col("payload")) / (1024 * 1024)).cast("double")
-)
-
-# Year-month from enduedate
-df_with_month = df_with_size.withColumn(
-    "year_month",
-    F.date_format(F.col("enduedate"), "yyyy-MM")
-)
-
-# Min / Max payload size per month
-result = df_with_month.groupBy("year_month").agg(
-    F.round(F.min("payload_size_mb"), 4).alias("min_payload_mb"),
-    F.round(F.max("payload_size_mb"), 4).alias("max_payload_mb"),
-    F.count("*").alias("record_count")
-).orderBy("year_month")
-
-display(result)
+SELECT
+    enduedate,
+    get_json_object(interactionmessage, '$._id') AS interaction_id,
+    (LENGTH(payload) / (1024.0 * 1024.0)) AS payload_size_mb,
+    payload
+FROM core_rl_test.flow.ehubstream
+WHERE get_json_object(interactionmessage, '$._id') = '12RG45TY'
+ORDER BY payload_size_mb DESC
+LIMIT 5;
