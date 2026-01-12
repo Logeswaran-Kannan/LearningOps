@@ -1,3 +1,5 @@
-dbutils.fs.ls(
-    "wasbs://quote-cache-deletion-incoming@dev001uksst2003.blob.core.windows.net/"
-)
+final_recon.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable("final_recon.recon_indicator_row_level")
