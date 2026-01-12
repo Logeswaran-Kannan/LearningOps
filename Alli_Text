@@ -1,9 +1,6 @@
-SELECT
-    enduedate,
-    get_json_object(interactionmessage, '$._id') AS interaction_id,
-    (LENGTH(payload) / (1024.0 * 1024.0)) AS payload_size_mb,
-    payload
-FROM core_rl_test.flow.ehubstream
-WHERE get_json_object(interactionmessage, '$._id') = '12RG45TY'
-ORDER BY payload_size_mb DESC
-LIMIT 5;
+From a BICoE data-pipeline testing perspective, the environment plan is acceptable for phased testing, but not suitable for full parallel, isolated P4 and regression execution.
+Any defects arising from ML Gateway sharing, Athena unavailability, or protected TEST clusters should be classified as environmental limitations rather than pipeline failures.
+
+5. Suggested One-Line BICoE Comment (for email / deck)
+
+“BICoE confirms the environment plan supports functional and partial performance testing; however, testing confidence is constrained by shared ML Gateway usage, Athena downtime, and protected TEST clusters, which limits parallel execution and full end-to-end regression coverage.
