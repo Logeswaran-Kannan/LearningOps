@@ -1,37 +1,5 @@
-SELECT
-    requestDate,
-    product,
-
-    /* ---------------- TOTAL ---------------- */
-    COUNT(*) AS total_csv_records,
-
-    /* ---------------- SCENARIO COUNTS ---------------- */
-    SUM(is_matched_both_in_window) AS matched_both_in_window,
-    SUM(is_matched_both_backdated) AS matched_both_backdated,
-    SUM(is_athena_only)            AS athena_only,
-    SUM(is_mqs_only)               AS mqs_only,
-    SUM(is_missing_both)           AS missing_both,
-    SUM(is_csv_missing_prefix)     AS csv_missing_prefix,
-    SUM(is_csv_quote_null)         AS csv_quote_null,
-
-    /* ---------------- RECONCILIATION COUNTS ---------------- */
-    -- Athena reconciled = key exists in Athena (window OR backdated)
-    SUM(athena_exists) AS athena_reconciled_cnt,
-
-    -- MQS reconciled = key exists in MQS (window OR backdated)
-    SUM(mqs_exists) AS mqs_reconciled_cnt,
-
-    /* ---------------- RECONCILIATION % ---------------- */
-    ROUND(
-        100.0 * SUM(athena_exists) / COUNT(*),
-        2
-    ) AS athena_reconciled_pct,
-
-    ROUND(
-        100.0 * SUM(mqs_exists) / COUNT(*),
-        2
-    ) AS mqs_reconciled_pct
-
-FROM recon_indicator_row_level
-GROUP BY requestDate, product
-ORDER BY requestDate, product;
+final_recon.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable("final_recon.recon_indicator_row_level")
