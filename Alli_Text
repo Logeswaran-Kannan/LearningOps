@@ -1,43 +1,33 @@
-from pyspark.sql import functions as F
-from pyspark.sql.types import *
-import base64, snappy
-
-payload_schema = StructType([
-    StructField("MQSQuoteId", StringType()),
-    StructField(
-        "rawEnrichments",
-        ArrayType(
-            StructType([
-                StructField("compression", StringType()),
-                StructField("data", StringType()),
-                StructField("provider", StringType())
-            ])
-        )
-    )
-])
-
-def base64_snappy_utf8(data):
-    try:
-        if data is None:
-            return None
-        return snappy.decompress(base64.b64decode(data)).decode("utf-8")
-    except Exception:
-        return None
-
-decompress_udf = F.udf(base64_snappy_utf8, StringType())
-
-final_df = (
-    spark.table("core_rl_test.flow.ehubstream")
-    .withColumn("payload_struct", F.from_json(F.to_json("payload"), payload_schema))
-    .filter(F.col("payload_struct.MQSQuoteId") == "MQS-34354")
-    .withColumn("raw", F.explode("payload_struct.rawEnrichments"))
-    .filter((F.col("raw.provider") == "experian") & (F.col("raw.compression") == "snappy"))
-    .withColumn("decompressed_payload", decompress_udf(F.col("raw.data")))
-    .select(
-        F.col("payload_struct.MQSQuoteId").alias("MQSQuoteId"),
-        F.col("raw.provider"),
-        F.col("decompressed_payload")
-    )
+WITH parsed AS (
+  SELECT
+    from_json(
+      to_json(payload),
+      'STRUCT<
+        MQSQuoteId: STRING,
+        rawEnrichments: ARRAY<
+          STRUCT<
+            compression: STRING,
+            data: STRING,
+            provider: STRING
+          >
+        >
+      >'
+    ) AS p
+  FROM core_rl_test.flow.ehubstream
+),
+filtered AS (
+  SELECT
+    p.MQSQuoteId,
+    r.provider,
+    r.data
+  FROM parsed
+  LATERAL VIEW explode(p.rawEnrichments) r
+  WHERE p.MQSQuoteId = 'MQS-34354'
+    AND r.provider = 'experian'
+    AND r.compression = 'snappy'
 )
-
-display(final_df)
+SELECT
+  MQSQuoteId,
+  provider,
+  cast(snappy_uncompress(unbase64(data)) AS STRING) AS decompressed_payload
+FROM filtered;
