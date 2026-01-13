@@ -1,4 +1,89 @@
 from pyspark.sql import functions as F
+from pyspark.sql.types import *
+import snappy
+import base64
+
+# ------------------------------------------------------------
+# Config
+# ------------------------------------------------------------
+TABLE_NAME = "core_rl_test.flow.ehubstream"
+TARGET_MQS_QUOTE_ID = "MQS-34354"
+TARGET_PROVIDER = "experian"
+
+# ------------------------------------------------------------
+# Schema for payload.rawEnrichments
+# ------------------------------------------------------------
+raw_enrichment_schema = ArrayType(
+    StructType([
+        StructField("compression", StringType(), True),
+        StructField("data", StringType(), True),
+        StructField("dataset", StringType(), True),
+        StructField("outputformat", StringType(), True),
+        StructField("provider", StringType(), True),
+        StructField("vehiclePRN", StringType(), True)
+    ])
+)
+
+# ------------------------------------------------------------
+# UDF: Base64 → Snappy → UTF-8
+# ------------------------------------------------------------
+def base64_snappy_utf8(data):
+    try:
+        if data is None:
+            return None
+        binary = base64.b64decode(data)
+        return snappy.decompress(binary).decode("utf-8")
+    except UnicodeDecodeError:
+        return "UTF8_DECODE_ERROR"
+    except Exception as e:
+        return f"DECOMPRESSION_ERROR: {str(e)}"
+
+decompress_udf = F.udf(base64_snappy_utf8, StringType())
+
+# ------------------------------------------------------------
+# Read → Parse VARIANT → Explode → Filter → Decompress
+# ------------------------------------------------------------
+final_df = (
+    spark.table(TABLE_NAME)
+    # Filter MQSQuoteId early (still works on VARIANT)
+    .filter(F.col("payload.MQSQuoteId") == TARGET_MQS_QUOTE_ID)
+
+    # Convert rawEnrichments VARIANT → ARRAY<STRUCT>
+    .withColumn(
+        "rawEnrichments",
+        F.from_json(
+            F.col("payload.rawEnrichments").cast("string"),
+            raw_enrichment_schema
+        )
+    )
+
+    # Explode array
+    .withColumn("rawEnrichment", F.explode("rawEnrichments"))
+
+    # Filter provider + compression
+    .filter(
+        (F.col("rawEnrichment.provider") == TARGET_PROVIDER) &
+        (F.col("rawEnrichment.compression") == "snappy")
+    )
+
+    # Decompress data
+    .withColumn(
+        "decompressed_payload",
+        decompress_udf(F.col("rawEnrichment.data"))
+    )
+
+    .select(
+        F.col("payload.MQSQuoteId").alias("MQSQuoteId"),
+        F.col("rawEnrichment.provider").alias("provider"),
+        F.col("decompressed_payload")
+    )
+)
+
+# ------------------------------------------------------------
+# Display
+# ------------------------------------------------------------
+display(final_df)
+from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
 import snappy
 import base64
