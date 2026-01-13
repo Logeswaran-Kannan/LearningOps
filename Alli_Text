@@ -11,11 +11,11 @@ TARGET_MQS_QUOTE_ID = "MQS-34354"
 # ------------------------------------------------------------
 # UDF: Snappy Decompress + UTF-8 Decode
 # ------------------------------------------------------------
-def snappy_decompress_utf8(payload):
+def snappy_decompress_utf8(payload_bin):
     try:
-        if payload is None:
+        if payload_bin is None:
             return None
-        return snappy.decompress(payload).decode("utf-8")
+        return snappy.decompress(payload_bin).decode("utf-8")
     except UnicodeDecodeError:
         return "UTF8_DECODE_ERROR"
     except Exception as e:
@@ -24,18 +24,22 @@ def snappy_decompress_utf8(payload):
 snappy_decompress_utf8_udf = F.udf(snappy_decompress_utf8, StringType())
 
 # ------------------------------------------------------------
-# Read, Filter, Decompress
+# Read, Convert VARIANT → BINARY, Filter, Decompress
 # ------------------------------------------------------------
 final_df = (
     spark.table(TABLE_NAME)
     # Extract MQSquoteId from headers JSON
     .withColumn("MQSquoteId", F.get_json_object("headers", "$.MQSquoteId"))
-    # Filter required MQSquoteId
     .filter(F.col("MQSquoteId") == TARGET_MQS_QUOTE_ID)
-    # Snappy decompress payload and decode as UTF-8
+    # Convert VARIANT payload to BINARY
+    .withColumn(
+        "payload_binary",
+        F.expr("CAST(payload AS BINARY)")
+    )
+    # Snappy decompress
     .withColumn(
         "decompressed_payload",
-        snappy_decompress_utf8_udf(F.col("payload"))
+        snappy_decompress_utf8_udf(F.col("payload_binary"))
     )
     .select(
         "MQSquoteId",
@@ -45,6 +49,6 @@ final_df = (
 )
 
 # ------------------------------------------------------------
-# Display Result
+# Display
 # ------------------------------------------------------------
 display(final_df)
