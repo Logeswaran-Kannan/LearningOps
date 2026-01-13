@@ -1,50 +1,54 @@
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
 import snappy
+import base64
 
 # ------------------------------------------------------------
 # Config
 # ------------------------------------------------------------
 TABLE_NAME = "core_rl_test.flow.ehubstream"
 TARGET_MQS_QUOTE_ID = "MQS-34354"
+TARGET_PROVIDER = "experian"
 
 # ------------------------------------------------------------
-# UDF: Snappy Decompress + UTF-8 Decode
+# UDF: Base64 → Snappy → UTF-8
 # ------------------------------------------------------------
-def snappy_decompress_utf8(payload_bin):
+def base64_snappy_utf8(data):
     try:
-        if payload_bin is None:
+        if data is None:
             return None
-        return snappy.decompress(payload_bin).decode("utf-8")
+        binary = base64.b64decode(data)
+        return snappy.decompress(binary).decode("utf-8")
     except UnicodeDecodeError:
         return "UTF8_DECODE_ERROR"
     except Exception as e:
         return f"DECOMPRESSION_ERROR: {str(e)}"
 
-snappy_decompress_utf8_udf = F.udf(snappy_decompress_utf8, StringType())
+decompress_udf = F.udf(base64_snappy_utf8, StringType())
 
 # ------------------------------------------------------------
-# Read, Convert VARIANT → BINARY, Filter, Decompress
+# Read → Filter MQSQuoteId → Explode → Filter Provider
 # ------------------------------------------------------------
 final_df = (
     spark.table(TABLE_NAME)
-    # Extract MQSquoteId from headers JSON
-    .withColumn("MQSquoteId", F.get_json_object("headers", "$.MQSquoteId"))
-    .filter(F.col("MQSquoteId") == TARGET_MQS_QUOTE_ID)
-    # Convert VARIANT payload to BINARY
-    .withColumn(
-        "payload_binary",
-        F.expr("CAST(payload AS BINARY)")
+    # Filter on MQSQuoteId first (reduces data early)
+    .filter(F.col("payload.MQSQuoteId") == TARGET_MQS_QUOTE_ID)
+    # Explode rawEnrichments array
+    .withColumn("rawEnrichment", F.explode(F.col("payload.rawEnrichments")))
+    # Filter provider + compression
+    .filter(
+        (F.col("rawEnrichment.provider") == TARGET_PROVIDER) &
+        (F.col("rawEnrichment.compression") == "snappy")
     )
-    # Snappy decompress
+    # Decompress data
     .withColumn(
         "decompressed_payload",
-        snappy_decompress_utf8_udf(F.col("payload_binary"))
+        decompress_udf(F.col("rawEnrichment.data"))
     )
     .select(
-        "MQSquoteId",
-        "headers",
-        "decompressed_payload"
+        F.col("payload.MQSQuoteId").alias("MQSQuoteId"),
+        F.col("rawEnrichment.provider").alias("provider"),
+        F.col("decompressed_payload")
     )
 )
 
