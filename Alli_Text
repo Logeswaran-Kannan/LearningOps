@@ -1,5 +1,50 @@
-final_recon.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable("final_recon.recon_indicator_row_level")
+from pyspark.sql import functions as F
+from pyspark.sql.types import StringType
+import snappy
+
+# ------------------------------------------------------------
+# Config
+# ------------------------------------------------------------
+TABLE_NAME = "core_rl_test.flow.ehubstream"
+TARGET_MQS_QUOTE_ID = "MQS-34354"
+
+# ------------------------------------------------------------
+# UDF: Snappy Decompress + UTF-8 Decode
+# ------------------------------------------------------------
+def snappy_decompress_utf8(payload):
+    try:
+        if payload is None:
+            return None
+        return snappy.decompress(payload).decode("utf-8")
+    except UnicodeDecodeError:
+        return "UTF8_DECODE_ERROR"
+    except Exception as e:
+        return f"DECOMPRESSION_ERROR: {str(e)}"
+
+snappy_decompress_utf8_udf = F.udf(snappy_decompress_utf8, StringType())
+
+# ------------------------------------------------------------
+# Read, Filter, Decompress
+# ------------------------------------------------------------
+final_df = (
+    spark.table(TABLE_NAME)
+    # Extract MQSquoteId from headers JSON
+    .withColumn("MQSquoteId", F.get_json_object("headers", "$.MQSquoteId"))
+    # Filter required MQSquoteId
+    .filter(F.col("MQSquoteId") == TARGET_MQS_QUOTE_ID)
+    # Snappy decompress payload and decode as UTF-8
+    .withColumn(
+        "decompressed_payload",
+        snappy_decompress_utf8_udf(F.col("payload"))
+    )
+    .select(
+        "MQSquoteId",
+        "headers",
+        "decompressed_payload"
+    )
+)
+
+# ------------------------------------------------------------
+# Display Result
+# ------------------------------------------------------------
+display(final_df)
