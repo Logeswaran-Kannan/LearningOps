@@ -1,27 +1,96 @@
-Subject: Summary of BA Discussion – Reconciliation Logic and Next Steps
+from pyspark.sql.functions import col, round
 
-Hi all,
+# ==============================
+# INPUT: LIST OF TABLES
+# ==============================
+tables = [
+    "db1.table1",
+    "db1.table2",
+    "db1.table3"
+]
 
-Thanks again to Nikki, Nitta, and Rob for the helpful discussion earlier today around the reconciliation logic and related scenarios.
+# ==============================
+# RESULT CONTAINER
+# ==============================
+results = []
 
-Just summarising the key points we agreed on:
+# ==============================
+# PROFILING LOGIC
+# ==============================
+for table in tables:
+    df = spark.table(table)
+    total_count = df.count()
 
-1. Lag Catch-Up Window
-We’ve agreed to stick with a 48-hour window (instead of 72 hours) for identifying missing messages.
-This helps the Service Excellence team spot any issues sooner.
-The 72-hour option was mainly to avoid overloading the exception table with messages outside the 48h window, but as confirmed, these are test-only backdated samples (used for renewals by the source team) and won’t happen in production.
+    # MQSQuoteId – not null & unique
+    mqs_not_null = df.filter(col("MQSQuoteId").isNotNull()).count()
+    mqs_distinct = df.select("MQSQuoteId").distinct().count()
 
-2. Null MQSQuoteID in Master CSV
-Some records in the master CSV have a null MQSQuoteID, which is expected for Polaris-originated data. These only have an interactionId and are meant to be reconciled against Athena only.
-The current process already handles CSV vs Athena and CSV vs MQS separately, so no changes needed here.
+    # EHUBQUEUEDDATETSTAMP – not null
+    ts_not_null = df.filter(col("EHUBQUEUEDDATETSTAMP").isNotNull()).count()
 
-3. Missing MQS Prefix in Quote IDs
-We’re seeing a few test samples in the CSV without the MQS prefix. This is a test-only scenario and can be excluded from reconciliation counts as agreed.
+    # Distinct controlled columns
+    provider_distinct = [r[0] for r in df.select("provider").distinct().collect()]
+    dataset_distinct = [r[0] for r in df.select("dataset").distinct().collect()]
+    outputformat_distinct = [r[0] for r in df.select("outputformat").distinct().collect()]
 
-4. Interaction Type Mapping
-Rob will be updating the process to include a lookup for the interaction types provided by Athena.
-These interaction type codes (e.g., RNEW, RQOT, etc.) will be mapped to descriptive labels (like Renewal, Quote Request, etc.) to make the reconciliation reports and exception outputs clearer and more business-friendly.
-The lookup mapping will be sourced from the reference table shared by Glen, and once applied, it should help in better categorisation and filtering during analysis or reporting.
+    # Population metrics function
+    def population_metrics(column):
+        populated = df.filter(col(column).isNotNull()).count()
+        nulls = total_count - populated
+        pct = round((populated / total_count) * 100, 2) if total_count > 0 else 0
+        return populated, nulls, pct
 
-Let me know if I missed anything or if there’s anything further to pick up.
-Thanks all again for the time and input.
+    driverPRN_pop, driverPRN_null, driverPRN_pct = population_metrics("driverPRN")
+    driverPRNMap_pop, driverPRNMap_null, driverPRNMap_pct = population_metrics("driverPRNMap")
+    vehiclePRN_pop, vehiclePRN_null, vehiclePRN_pct = population_metrics("vehiclePRN")
+    errorMessage_pop, errorMessage_null, errorMessage_pct = population_metrics("errorMessage")
+
+    # DATA – not null
+    data_not_null = df.filter(col("DATA").isNotNull()).count()
+
+    results.append((
+        table,
+        total_count,
+        mqs_not_null,
+        mqs_distinct,
+        ts_not_null,
+        provider_distinct,
+        dataset_distinct,
+        outputformat_distinct,
+        driverPRN_pop, driverPRN_null, driverPRN_pct,
+        driverPRNMap_pop, driverPRNMap_null, driverPRNMap_pct,
+        vehiclePRN_pop, vehiclePRN_null, vehiclePRN_pct,
+        errorMessage_pop, errorMessage_null, errorMessage_pct,
+        data_not_null
+    ))
+
+# ==============================
+# FINAL PROFILE DATAFRAME
+# ==============================
+columns = [
+    "table_name",
+    "total_records",
+    "mqsquoteid_not_null",
+    "mqsquoteid_distinct",
+    "timestamp_not_null",
+    "provider_distinct_values",
+    "dataset_distinct_values",
+    "outputformat_distinct_values",
+    "driverPRN_populated",
+    "driverPRN_null",
+    "driverPRN_population_pct",
+    "driverPRNMap_populated",
+    "driverPRNMap_null",
+    "driverPRNMap_population_pct",
+    "vehiclePRN_populated",
+    "vehiclePRN_null",
+    "vehiclePRN_population_pct",
+    "errorMessage_populated",
+    "errorMessage_null",
+    "errorMessage_population_pct",
+    "DATA_not_null"
+]
+
+profile_df = spark.createDataFrame(results, columns)
+
+display(profile_df)
