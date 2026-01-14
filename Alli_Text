@@ -1,4 +1,4 @@
-from pyspark.sql.functions import col, round
+from pyspark.sql.functions import col
 
 # ==============================
 # INPUT: LIST OF TABLES
@@ -9,14 +9,8 @@ tables = [
     "db1.table3"
 ]
 
-# ==============================
-# RESULT CONTAINER
-# ==============================
 results = []
 
-# ==============================
-# PROFILING LOGIC
-# ==============================
 for table in tables:
     df = spark.table(table)
     total_count = df.count()
@@ -28,16 +22,16 @@ for table in tables:
     # EHUBQUEUEDDATETSTAMP – not null
     ts_not_null = df.filter(col("EHUBQUEUEDDATETSTAMP").isNotNull()).count()
 
-    # Distinct controlled columns
+    # Distinct values
     provider_distinct = [r[0] for r in df.select("provider").distinct().collect()]
     dataset_distinct = [r[0] for r in df.select("dataset").distinct().collect()]
     outputformat_distinct = [r[0] for r in df.select("outputformat").distinct().collect()]
 
-    # Population metrics function
+    # Population metrics
     def population_metrics(column):
         populated = df.filter(col(column).isNotNull()).count()
         nulls = total_count - populated
-        pct = round((populated / total_count) * 100, 2) if total_count > 0 else 0
+        pct = round((populated / total_count) * 100, 2) if total_count > 0 else 0.0
         return populated, nulls, pct
 
     driverPRN_pop, driverPRN_null, driverPRN_pct = population_metrics("driverPRN")
@@ -64,9 +58,6 @@ for table in tables:
         data_not_null
     ))
 
-# ==============================
-# FINAL PROFILE DATAFRAME
-# ==============================
 columns = [
     "table_name",
     "total_records",
@@ -92,5 +83,4 @@ columns = [
 ]
 
 profile_df = spark.createDataFrame(results, columns)
-
 display(profile_df)
