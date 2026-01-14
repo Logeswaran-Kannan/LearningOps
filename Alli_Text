@@ -1,8 +1,5 @@
 from pyspark.sql.functions import col
 
-# ==============================
-# INPUT: LIST OF TABLES
-# ==============================
 tables = [
     "db1.table1",
     "db1.table2",
@@ -15,23 +12,19 @@ for table in tables:
     df = spark.table(table)
     total_count = df.count()
 
-    # MQSQuoteId – not null & unique
     mqs_not_null = df.filter(col("MQSQuoteId").isNotNull()).count()
     mqs_distinct = df.select("MQSQuoteId").distinct().count()
 
-    # EHUBQUEUEDDATETSTAMP – not null
     ts_not_null = df.filter(col("EHUBQUEUEDDATETSTAMP").isNotNull()).count()
 
-    # Distinct values
     provider_distinct = [r[0] for r in df.select("provider").distinct().collect()]
     dataset_distinct = [r[0] for r in df.select("dataset").distinct().collect()]
     outputformat_distinct = [r[0] for r in df.select("outputformat").distinct().collect()]
 
-    # Population metrics
     def population_metrics(column):
         populated = df.filter(col(column).isNotNull()).count()
         nulls = total_count - populated
-        pct = round((populated / total_count) * 100, 2) if total_count > 0 else 0.0
+        pct = (populated * 100.0 / total_count) if total_count > 0 else 0.0
         return populated, nulls, pct
 
     driverPRN_pop, driverPRN_null, driverPRN_pct = population_metrics("driverPRN")
@@ -39,7 +32,6 @@ for table in tables:
     vehiclePRN_pop, vehiclePRN_null, vehiclePRN_pct = population_metrics("vehiclePRN")
     errorMessage_pop, errorMessage_null, errorMessage_pct = population_metrics("errorMessage")
 
-    # DATA – not null
     data_not_null = df.filter(col("DATA").isNotNull()).count()
 
     results.append((
