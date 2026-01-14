@@ -1,78 +1,52 @@
-from pyspark.sql.functions import col
+Subject: RADAR Live – Data Enrichment Tables Available for UAT Validation
 
-tables = [
-    "db1.table1",
-    "db1.table2",
-    "db1.table3"
-]
+Hi <Name>,
 
-results = []
+Hope you’re doing well.
 
-for table in tables:
-    df = spark.table(table)
-    total_count = df.count()
+As discussed earlier in **early December**, the **RADAR Live data enrichment tables** are now available in the **test environment** and the necessary access has been provided for UAT validation.
 
-    mqs_not_null = df.filter(col("MQSQuoteId").isNotNull()).count()
-    mqs_distinct = df.select("MQSQuoteId").distinct().count()
+Could you please confirm that:
 
-    ts_not_null = df.filter(col("EHUBQUEUEDDATETSTAMP").isNotNull()).count()
+* You’re able to access the Databricks link
+* You can see the enrichment tables and their data
 
-    provider_distinct = [r[0] for r in df.select("provider").distinct().collect()]
-    dataset_distinct = [r[0] for r in df.select("dataset").distinct().collect()]
-    outputformat_distinct = [r[0] for r in df.select("outputformat").distinct().collect()]
+It would be really helpful if you could also share any **initial observations** on the tables, such as:
 
-    def population_metrics(column):
-        populated = df.filter(col(column).isNotNull()).count()
-        nulls = total_count - populated
-        pct = (populated * 100.0 / total_count) if total_count > 0 else 0.0
-        return populated, nulls, pct
+* Table structure and column definitions
+* Data fields and values
+* Any concerns or questions around the **decompressed data**, data completeness, or consistency
 
-    driverPRN_pop, driverPRN_null, driverPRN_pct = population_metrics("driverPRN")
-    driverPRNMap_pop, driverPRNMap_null, driverPRNMap_pct = population_metrics("driverPRNMap")
-    vehiclePRN_pop, vehiclePRN_null, vehiclePRN_pct = population_metrics("vehiclePRN")
-    errorMessage_pop, errorMessage_null, errorMessage_pct = population_metrics("errorMessage")
+### How to check the tables in Databricks
 
-    data_not_null = df.filter(col("DATA").isNotNull()).count()
+**Option 1: Using Data Explorer**
 
-    results.append((
-        table,
-        total_count,
-        mqs_not_null,
-        mqs_distinct,
-        ts_not_null,
-        provider_distinct,
-        dataset_distinct,
-        outputformat_distinct,
-        driverPRN_pop, driverPRN_null, driverPRN_pct,
-        driverPRNMap_pop, driverPRNMap_null, driverPRNMap_pct,
-        vehiclePRN_pop, vehiclePRN_null, vehiclePRN_pct,
-        errorMessage_pop, errorMessage_null, errorMessage_pct,
-        data_not_null
-    ))
+1. Open Databricks
+2. Go to **Data** → **Catalog / Schema**
+3. Navigate to the relevant database
+4. Select the enrichment table
+5. Use **Preview Table** or **Sample Data** to view records
 
-columns = [
-    "table_name",
-    "total_records",
-    "mqsquoteid_not_null",
-    "mqsquoteid_distinct",
-    "timestamp_not_null",
-    "provider_distinct_values",
-    "dataset_distinct_values",
-    "outputformat_distinct_values",
-    "driverPRN_populated",
-    "driverPRN_null",
-    "driverPRN_population_pct",
-    "driverPRNMap_populated",
-    "driverPRNMap_null",
-    "driverPRNMap_population_pct",
-    "vehiclePRN_populated",
-    "vehiclePRN_null",
-    "vehiclePRN_population_pct",
-    "errorMessage_populated",
-    "errorMessage_null",
-    "errorMessage_population_pct",
-    "DATA_not_null"
-]
+**Option 2: Using SQL Editor**
 
-profile_df = spark.createDataFrame(results, columns)
-display(profile_df)
+1. Open **SQL Editor** in Databricks
+2. Run:
+
+   ```sql
+   SHOW TABLES IN <schema_name>;
+   ```
+3. Query a table:
+
+   ```sql
+   SELECT * FROM <schema_name>.<table_name> LIMIT 100;
+   ```
+4. Review column values, populated fields, and decompressed data
+
+Please let us know:
+
+* If you’re able to access everything successfully
+* Any observations or feedback on the listed tables that we should address
+
+Your input will help us close out the UAT smoothly.
+
+Thanks, <Your Name>
