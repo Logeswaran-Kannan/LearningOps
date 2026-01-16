@@ -1,52 +1,37 @@
-Subject: RADAR Live – Data Enrichment Tables Available for UAT Validation
+Thanks for raising this point — it’s a valid question and happy to clarify the current design and controls in place.
 
-Hi <Name>,
+Yes, this is intentionally designed as a single job, and the key reason is that data integrity is enforced before anything is loaded into Cosmos DB or made active.
 
-Hope you’re doing well.
+A few important points to clarify:
 
-As discussed earlier in **early December**, the **RADAR Live data enrichment tables** are now available in the **test environment** and the necessary access has been provided for UAT validation.
+The job will not load any data into the database if it fails data quality checks.
 
-Could you please confirm that:
+Data Quality (DQ) rules are configurable and customisable, and can be made as strong as required.
 
-* You’re able to access the Databricks link
-* You can see the enrichment tables and their data
+Only when all configured DQ validations pass, the job proceeds to:
 
-It would be really helpful if you could also share any **initial observations** on the tables, such as:
+Load the data into Cosmos DB
 
-* Table structure and column definitions
-* Data fields and values
-* Any concerns or questions around the **decompressed data**, data completeness, or consistency
+Mark the file as active/passive as part of the same controlled flow
 
-### How to check the tables in Databricks
+If any data quality or integrity issue is detected, the job fails early, and:
 
-**Option 1: Using Data Explorer**
+Data is not loaded
 
-1. Open Databricks
-2. Go to **Data** → **Catalog / Schema**
-3. Navigate to the relevant database
-4. Select the enrichment table
-5. Use **Preview Table** or **Sample Data** to view records
+The file is not activated
 
-**Option 2: Using SQL Editor**
+Downstream quote processing is therefore protected
 
-1. Open **SQL Editor** in Databricks
-2. Run:
+Because of this, the risk scenario mentioned (data with issues getting loaded and quotes failing immediately) should not occur, as the activation step is dependent on successful DQ validation.
 
-   ```sql
-   SHOW TABLES IN <schema_name>;
-   ```
-3. Query a table:
+While splitting the job into two (load + activate) can offer flexibility, the current approach achieves the same safety by:
 
-   ```sql
-   SELECT * FROM <schema_name>.<table_name> LIMIT 100;
-   ```
-4. Review column values, populated fields, and decompressed data
+Enforcing strict pre-load validation
 
-Please let us know:
+Preventing partial or inconsistent states
 
-* If you’re able to access everything successfully
-* Any observations or feedback on the listed tables that we should address
+Keeping activation tightly coupled to validated data only
 
-Your input will help us close out the UAT smoothly.
+We believe this design gives sufficient control, provided the DQ rules are defined strictly enough to catch issues upfront, which is the recommended approach.
 
-Thanks, <Your Name>
+Happy to discuss further or refine DQ rules if UAT has specific integrity checks in mind.
