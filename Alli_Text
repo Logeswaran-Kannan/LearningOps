@@ -57,18 +57,6 @@ final_df = (
     interval_df
     .crossJoin(agg_df)
     .withColumn("run_date", run_date)
-)
-
-if final_df.rdd.isEmpty():
-    final_df = (
-        interval_df
-        .withColumn("message_type", F.lit("ALL"))
-        .withColumn("message_count", F.lit(0))
-        .withColumn("run_date", run_date)
-    )
-
-final_df = (
-    final_df
     .withColumn(
         "is_sla_breach",
         F.when(F.col("message_count") == 0, F.lit(1)).otherwise(F.lit(0))
