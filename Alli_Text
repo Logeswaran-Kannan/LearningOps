@@ -2,6 +2,7 @@ from pyspark.sql import functions as F
 
 SLA_THRESHOLD = 100
 TARGET_TABLE = "core_bld.default.monitoring_ehub_30min_metrics"
+SOURCE_TABLE = "mqs_athn_mtr.ehubstream"
 
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
@@ -17,10 +18,6 @@ USING DELTA
 PARTITIONED BY (run_date)
 """)
 
-run_ts = F.current_timestamp()
-run_date = F.current_date()
-day_start = F.date_trunc("day", run_ts)
-
 today_exists = spark.sql(f"""
 SELECT 1
 FROM {TARGET_TABLE}
@@ -28,74 +25,85 @@ WHERE run_date = current_date()
 LIMIT 1
 """).count() > 0
 
+day_start_df = spark.sql("SELECT date_trunc('day', current_timestamp()) AS day_start")
+day_start = day_start_df.select("day_start").first()["day_start"]
+
 if today_exists:
-    interval_start_expr = (
-        day_start +
-        F.expr(
-            "INTERVAL 1 SECOND * (CAST((unix_timestamp(current_timestamp()) - unix_timestamp(date_trunc('day', current_timestamp()))) / 1800 AS INT) * 1800)"
-        )
+    # Single interval row for the CURRENT 30-min slot aligned to day start (00:00/00:30/...)
+    intervals_df = spark.sql("""
+    WITH p AS (
+      SELECT
+        current_timestamp() AS now_ts,
+        date_trunc('day', current_timestamp()) AS day_start
+    ),
+    i AS (
+      SELECT
+        day_start + INTERVAL 1 SECOND * (
+          CAST((unix_timestamp(now_ts) - unix_timestamp(day_start)) / 1800 AS INT) * 1800
+        ) AS interval_start
+      FROM p
     )
+    SELECT
+      interval_start,
+      interval_start + INTERVAL 30 MINUTES AS interval_end,
+      date_format(interval_start, 'HH:mm') AS interval_time
+    FROM i
+    """)
 
-    intervals_df = (
-        spark.range(1)
-        .select(interval_start_expr.alias("interval_start"))
-        .withColumn("interval_end", F.col("interval_start") + F.expr("INTERVAL 30 MINUTES"))
-        .withColumn("interval_time", F.date_format("interval_start", "HH:mm"))
-    )
-
+    # Cross join so interval_start/interval_end are resolvable inside the filter
     src_df = (
-        spark.table("mqs_athn_mtr.ehubstream")
-        .filter(
-            (F.col("TimeEnqueued") >= F.col("interval_start")) &
-            (F.col("TimeEnqueued") < F.col("interval_end"))
-        )
+        spark.table(SOURCE_TABLE)
         .select(
             F.col("TimeEnqueued"),
             F.col("headers.messageType").alias("message_type")
         )
+        .crossJoin(intervals_df.select("interval_start", "interval_end"))
+        .filter(
+            (F.col("TimeEnqueued") >= F.col("interval_start")) &
+            (F.col("TimeEnqueued") <  F.col("interval_end"))
+        )
+        .select("TimeEnqueued", "message_type", "interval_start")
     )
 
 else:
+    # Full day backfill: 00:00 -> now, every 30 mins
     intervals_df = (
         spark.range(0, 48)
         .select(
-            (day_start + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
+            (F.lit(day_start) + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
         )
         .withColumn("interval_end", F.col("interval_start") + F.expr("INTERVAL 30 MINUTES"))
         .withColumn("interval_time", F.date_format("interval_start", "HH:mm"))
-        .filter(F.col("interval_start") <= run_ts)
+        .filter(F.col("interval_start") <= F.current_timestamp())
     )
 
     src_df = (
-        spark.table("mqs_athn_mtr.ehubstream")
+        spark.table(SOURCE_TABLE)
         .filter(
-            (F.col("TimeEnqueued") >= day_start) &
-            (F.col("TimeEnqueued") < run_ts)
+            (F.col("TimeEnqueued") >= F.lit(day_start)) &
+            (F.col("TimeEnqueued") <  F.current_timestamp())
         )
         .select(
             F.col("TimeEnqueued"),
             F.col("headers.messageType").alias("message_type")
         )
-    )
-
-bucketed_df = (
-    src_df
-    .withColumn(
-        "interval_start",
-        day_start + F.expr(
-            "INTERVAL 1 SECOND * (CAST((unix_timestamp(TimeEnqueued) - unix_timestamp(date_trunc('day', TimeEnqueued))) / 1800 AS INT) * 1800)"
+        .withColumn(
+            "interval_start",
+            F.lit(day_start) + F.expr(
+                "INTERVAL 1 SECOND * (CAST((unix_timestamp(TimeEnqueued) - unix_timestamp(date_trunc('day', TimeEnqueued))) / 1800 AS INT) * 1800)"
+            )
         )
+        .select("TimeEnqueued", "message_type", "interval_start")
     )
-)
 
 agg_by_type_df = (
-    bucketed_df
+    src_df
     .groupBy("interval_start", "message_type")
     .agg(F.count("*").alias("message_count"))
 )
 
 agg_all_df = (
-    bucketed_df
+    src_df
     .groupBy("interval_start")
     .agg(F.count("*").alias("message_count"))
     .withColumn("message_type", F.lit("ALL"))
@@ -107,15 +115,11 @@ final_df = (
     intervals_df
     .join(agg_df, on="interval_start", how="left")
     .fillna({"message_count": 0})
-    .withColumn("run_date", run_date)
+    .withColumn("run_date", F.current_date())
     .withColumn(
         "is_sla_breach",
-        F.when(F.col("message_count") < SLA_THRESHOLD, F.lit(1)).otherwise(F.lit(0))
+        F.when(F.col("message_count") < F.lit(SLA_THRESHOLD), F.lit(1)).otherwise(F.lit(0))
     )
-)
-
-(
-    final_df
     .select(
         "interval_start",
         "interval_end",
@@ -125,6 +129,10 @@ final_df = (
         "run_date",
         "is_sla_breach"
     )
+)
+
+(
+    final_df
     .write
     .format("delta")
     .mode("append")
