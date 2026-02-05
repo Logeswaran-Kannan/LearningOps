@@ -1,5 +1,7 @@
 from pyspark.sql import functions as F
 
+SLA_THRESHOLD = 100
+
 spark.sql("""
 CREATE TABLE IF NOT EXISTS core_bld.default.monitoring_ehub_30min_metrics (
   interval_start TIMESTAMP,
@@ -19,44 +21,53 @@ run_date = F.current_date()
 
 day_start = F.date_trunc("day", run_ts)
 
-interval_index = (
-    (F.unix_timestamp(run_ts) - F.unix_timestamp(day_start)) / 1800
-).cast("int")
-
-interval_start = day_start + F.expr("INTERVAL 1 SECOND") * (interval_index * 1800)
-interval_end = interval_start + F.expr("INTERVAL 30 MINUTES")
-
-interval_df = (
-    spark.range(1)
+intervals_df = (
+    spark.range(0, 48)
     .select(
-        interval_start.alias("interval_start"),
-        interval_end.alias("interval_end")
+        (day_start + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
+    )
+    .withColumn(
+        "interval_end",
+        F.col("interval_start") + F.expr("INTERVAL 30 MINUTES")
     )
     .withColumn(
         "interval_time",
-        F.date_format(interval_start, "HH:mm")
+        F.date_format("interval_start", "HH:mm")
     )
+    .filter(F.col("interval_start") <= run_ts)
 )
 
 src_df = (
     spark.table("mqs_athn_mtr.ehubstream")
     .filter(
-        (F.col("TimeEnqueued") >= interval_start) &
-        (F.col("TimeEnqueued") < interval_end)
+        (F.col("TimeEnqueued") >= day_start) &
+        (F.col("TimeEnqueued") < run_ts)
     )
     .select(
+        F.col("TimeEnqueued"),
         F.col("headers.messageType").alias("message_type")
     )
 )
 
-agg_by_type_df = (
+bucketed_df = (
     src_df
-    .groupBy("message_type")
+    .withColumn(
+        "interval_start",
+        day_start + F.expr(
+            "INTERVAL 1 SECOND * (CAST((unix_timestamp(TimeEnqueued) - unix_timestamp(date_trunc('day', TimeEnqueued))) / 1800 AS INT) * 1800)"
+        )
+    )
+)
+
+agg_by_type_df = (
+    bucketed_df
+    .groupBy("interval_start", "message_type")
     .agg(F.count("*").alias("message_count"))
 )
 
 agg_all_df = (
-    src_df
+    bucketed_df
+    .groupBy("interval_start")
     .agg(F.count("*").alias("message_count"))
     .withColumn("message_type", F.lit("ALL"))
 )
@@ -64,12 +75,17 @@ agg_all_df = (
 agg_df = agg_by_type_df.unionByName(agg_all_df)
 
 final_df = (
-    interval_df
-    .crossJoin(agg_df)
+    intervals_df
+    .join(
+        agg_df,
+        on="interval_start",
+        how="left"
+    )
+    .fillna({"message_count": 0})
     .withColumn("run_date", run_date)
     .withColumn(
         "is_sla_breach",
-        F.when(F.col("message_count") == 0, F.lit(1)).otherwise(F.lit(0))
+        F.when(F.col("message_count") < SLA_THRESHOLD, F.lit(1)).otherwise(F.lit(0))
     )
 )
 
@@ -86,7 +102,8 @@ final_df = (
     )
     .write
     .format("delta")
-    .mode("append")
+    .mode("overwrite")
+    .option("replaceWhere", "run_date = current_date()")
     .saveAsTable("core_bld.default.monitoring_ehub_30min_metrics")
 )
 
