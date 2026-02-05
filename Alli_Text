@@ -6,8 +6,9 @@ CREATE TABLE IF NOT EXISTS core_bld.default.monitoring_ehub_30min_metrics (
   interval_end   TIMESTAMP,
   message_type   STRING,
   message_count  BIGINT,
-  is_sla_breach  INT,
-  run_date       DATE
+  interval_time  STRING,
+  run_date       DATE,
+  is_sla_breach  INT
 )
 USING DELTA
 PARTITIONED BY (run_date)
@@ -16,23 +17,32 @@ PARTITIONED BY (run_date)
 run_ts = F.current_timestamp()
 run_date = F.current_date()
 
-window_start = run_ts - F.expr("INTERVAL 30 MINUTES")
-window_end = run_ts
+day_start = F.date_trunc("day", run_ts)
+
+interval_index = (
+    (F.unix_timestamp(run_ts) - F.unix_timestamp(day_start)) / 1800
+).cast("int")
+
+interval_start = day_start + F.expr("INTERVAL 1 SECOND") * (interval_index * 1800)
+interval_end = interval_start + F.expr("INTERVAL 30 MINUTES")
 
 interval_df = (
     spark.range(1)
-    .select(F.date_trunc("minute", window_start).alias("interval_start"))
+    .select(
+        interval_start.alias("interval_start"),
+        interval_end.alias("interval_end")
+    )
     .withColumn(
-        "interval_end",
-        F.col("interval_start") + F.expr("INTERVAL 30 MINUTES")
+        "interval_time",
+        F.date_format(interval_start, "HH:mm")
     )
 )
 
 src_df = (
     spark.table("mqs_athn_mtr.ehubstream")
     .filter(
-        (F.col("TimeEnqueued") >= window_start) &
-        (F.col("TimeEnqueued") < window_end)
+        (F.col("TimeEnqueued") >= interval_start) &
+        (F.col("TimeEnqueued") < interval_end)
     )
     .select(
         F.col("headers.messageType").alias("message_type")
@@ -70,8 +80,9 @@ final_df = (
         "interval_end",
         "message_type",
         "message_count",
-        "is_sla_breach",
-        "run_date"
+        "interval_time",
+        "run_date",
+        "is_sla_breach"
     )
     .write
     .format("delta")
