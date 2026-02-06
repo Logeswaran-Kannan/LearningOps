@@ -58,4 +58,72 @@ valid_ids_df = (
     .distinct()
 )
 
-# ===================
+# =========================
+# Read flow stream (partition pruning via HubQueuedDatestamp)
+# =========================
+flow_df = (
+    spark.table(SOURCE_FLOW_TABLE)
+    .filter(
+        (F.col("HubQueuedDatestamp") >= F.to_date(refresh_start)) &
+        (F.col("HubQueuedDatestamp") <= F.current_date())
+    )
+    .select(
+        F.to_timestamp(F.get_json_object("payload", "$.timestamp")).alias("event_ts"),
+        F.get_json_object("payload", "$.interaction.status").alias("status"),
+        F.get_json_object("payload", "$.interaction.mqsQuoteId").alias("mqs_quote_id"),
+        F.get_json_object("payload", "$.interaction.id").alias("interaction_id")
+    )
+    .filter(F.col("event_ts").isNotNull())
+)
+
+# =========================
+# Join (fast, scalable)
+# =========================
+joined_df = flow_df.join(
+    valid_ids_df,
+    on="interaction_id",
+    how="inner"
+)
+
+# =========================
+# Fixed 30-minute bucketing from day start
+# =========================
+bucketed_df = (
+    joined_df
+    .withColumn("run_date", F.to_date("event_ts"))
+    .withColumn(
+        "time_slice",
+        F.date_format(
+            F.date_trunc("day", F.col("event_ts")) +
+            F.expr(
+                "INTERVAL 1 SECOND * (CAST((unix_timestamp(event_ts) - unix_timestamp(date_trunc('day', event_ts))) / 1800 AS INT) * 1800)"
+            ),
+            "HH:mm"
+        )
+    )
+)
+
+# =========================
+# Aggregate
+# =========================
+final_df = (
+    bucketed_df
+    .groupBy("run_date", "time_slice", "status")
+    .agg(F.count("mqs_quote_id").alias("mqs_quote_cnt"))
+    .withColumn(
+        "is_sla_breach",
+        F.when(F.col("mqs_quote_cnt") < F.lit(SLA_THRESHOLD), F.lit(1)).otherwise(F.lit(0))
+    )
+)
+
+# =========================
+# Overwrite only affected partitions
+# =========================
+(
+    final_df
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .option("replaceWhere", replace_where)
+    .saveAsTable(TARGET_TABLE)
+)
