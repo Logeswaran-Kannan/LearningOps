@@ -19,30 +19,25 @@ PARTITIONED BY (run_date)
 """)
 
 run_ts = F.current_timestamp()
-today = F.current_date()
-start_day = today - F.expr("INTERVAL 2 DAYS")
+start_ts = F.date_trunc("day", run_ts) - F.expr("INTERVAL 2 DAYS")
 
-# ---------- Generate all 30-min intervals for last 3 days ----------
+# ---------- Generate 30-min intervals for last 3 days (SMALL DF) ----------
 intervals_df = (
     spark.range(0, 48 * 3)
     .select(
-        (
-            F.date_trunc("day", run_ts)
-            - F.expr("INTERVAL 2 DAYS")
-            + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)
-        ).alias("interval_start")
+        (start_ts + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
     )
+    .filter(F.col("interval_start") <= run_ts)
     .withColumn("interval_end", F.col("interval_start") + F.expr("INTERVAL 30 MINUTES"))
     .withColumn("interval_time", F.date_format("interval_start", "HH:mm"))
     .withColumn("run_date", F.to_date("interval_start"))
-    .filter(F.col("interval_start") <= run_ts)
 )
 
-# ---------- Read streaming source as batch (last 3 days only) ----------
+# ---------- Read streaming table as batch (ONLY last 3 days) ----------
 src_df = (
     spark.table(SOURCE_TABLE)
     .filter(
-        (F.col("TimeEnqueued") >= F.date_trunc("day", start_day)) &
+        (F.col("TimeEnqueued") >= start_ts) &
         (F.col("TimeEnqueued") < run_ts)
     )
     .select(
@@ -51,7 +46,7 @@ src_df = (
     )
 )
 
-# ---------- Bucket events into fixed 30-min slots ----------
+# ---------- Bucket once (cheap arithmetic) ----------
 bucketed_df = (
     src_df
     .withColumn(
@@ -63,7 +58,7 @@ bucketed_df = (
     )
 )
 
-# ---------- Aggregations ----------
+# ---------- Aggregate ----------
 agg_by_type_df = (
     bucketed_df
     .groupBy("interval_start", "message_type")
@@ -79,11 +74,11 @@ agg_all_df = (
 
 agg_df = agg_by_type_df.unionByName(agg_all_df)
 
-# ---------- Join with intervals (no gaps) ----------
+# ---------- Join intervals (no gaps) ----------
 final_df = (
     intervals_df
     .join(agg_df, on="interval_start", how="left")
-    .fillna({"message_count": 0, "message_type": "ALL"})
+    .fillna({"message_count": 0})
     .withColumn(
         "is_sla_breach",
         F.when(F.col("message_count") < SLA_THRESHOLD, F.lit(1)).otherwise(F.lit(0))
@@ -105,9 +100,6 @@ final_df = (
     .write
     .format("delta")
     .mode("overwrite")
-    .option(
-        "replaceWhere",
-        "run_date >= current_date() - INTERVAL 2 DAYS"
-    )
+    .option("replaceWhere", "run_date >= current_date() - INTERVAL 2 DAYS")
     .saveAsTable(TARGET_TABLE)
 )
