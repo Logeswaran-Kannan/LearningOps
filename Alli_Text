@@ -18,83 +18,38 @@ USING DELTA
 PARTITIONED BY (run_date)
 """)
 
-today_exists = spark.sql(f"""
-SELECT 1
-FROM {TARGET_TABLE}
-WHERE run_date = current_date()
-LIMIT 1
-""").count() > 0
+now_ts = F.current_timestamp()
+start_ts = now_ts - F.expr("INTERVAL 2 DAYS")
+day_start = F.date_trunc("day", start_ts)
 
-day_start_df = spark.sql("SELECT date_trunc('day', current_timestamp()) AS day_start")
-day_start = day_start_df.select("day_start").first()["day_start"]
-
-if today_exists:
-    # Single interval row for the CURRENT 30-min slot aligned to day start (00:00/00:30/...)
-    intervals_df = spark.sql("""
-    WITH p AS (
-      SELECT
-        current_timestamp() AS now_ts,
-        date_trunc('day', current_timestamp()) AS day_start
-    ),
-    i AS (
-      SELECT
-        day_start + INTERVAL 1 SECOND * (
-          CAST((unix_timestamp(now_ts) - unix_timestamp(day_start)) / 1800 AS INT) * 1800
-        ) AS interval_start
-      FROM p
+intervals_df = (
+    spark.range(0, 144)   # 3 days * 48 intervals
+    .select(
+        (day_start + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
     )
-    SELECT
-      interval_start,
-      interval_start + INTERVAL 30 MINUTES AS interval_end,
-      date_format(interval_start, 'HH:mm') AS interval_time
-    FROM i
-    """)
+    .withColumn("interval_end", F.col("interval_start") + F.expr("INTERVAL 30 MINUTES"))
+    .withColumn("interval_time", F.date_format("interval_start", "HH:mm"))
+    .withColumn("run_date", F.to_date("interval_start"))
+    .filter(F.col("interval_start") <= now_ts)
+)
 
-    # Cross join so interval_start/interval_end are resolvable inside the filter
-    src_df = (
-        spark.table(SOURCE_TABLE)
-        .select(
-            F.col("TimeEnqueued"),
-            F.col("headers.messageType").alias("message_type")
-        )
-        .crossJoin(intervals_df.select("interval_start", "interval_end"))
-        .filter(
-            (F.col("TimeEnqueued") >= F.col("interval_start")) &
-            (F.col("TimeEnqueued") <  F.col("interval_end"))
-        )
-        .select("TimeEnqueued", "message_type", "interval_start")
+src_df = (
+    spark.table(SOURCE_TABLE)
+    .filter(
+        (F.col("TimeEnqueued") >= day_start) &
+        (F.col("TimeEnqueued") < now_ts)
     )
-
-else:
-    # Full day backfill: 00:00 -> now, every 30 mins
-    intervals_df = (
-        spark.range(0, 48)
-        .select(
-            (F.lit(day_start) + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
-        )
-        .withColumn("interval_end", F.col("interval_start") + F.expr("INTERVAL 30 MINUTES"))
-        .withColumn("interval_time", F.date_format("interval_start", "HH:mm"))
-        .filter(F.col("interval_start") <= F.current_timestamp())
+    .select(
+        F.col("TimeEnqueued"),
+        F.col("headers.messageType").alias("message_type")
     )
-
-    src_df = (
-        spark.table(SOURCE_TABLE)
-        .filter(
-            (F.col("TimeEnqueued") >= F.lit(day_start)) &
-            (F.col("TimeEnqueued") <  F.current_timestamp())
+    .withColumn(
+        "interval_start",
+        day_start + F.expr(
+            "INTERVAL 1 SECOND * (CAST((unix_timestamp(TimeEnqueued) - unix_timestamp(date_trunc('day', TimeEnqueued))) / 1800 AS INT) * 1800)"
         )
-        .select(
-            F.col("TimeEnqueued"),
-            F.col("headers.messageType").alias("message_type")
-        )
-        .withColumn(
-            "interval_start",
-            F.lit(day_start) + F.expr(
-                "INTERVAL 1 SECOND * (CAST((unix_timestamp(TimeEnqueued) - unix_timestamp(date_trunc('day', TimeEnqueued))) / 1800 AS INT) * 1800)"
-            )
-        )
-        .select("TimeEnqueued", "message_type", "interval_start")
     )
+)
 
 agg_by_type_df = (
     src_df
@@ -115,10 +70,9 @@ final_df = (
     intervals_df
     .join(agg_df, on="interval_start", how="left")
     .fillna({"message_count": 0})
-    .withColumn("run_date", F.current_date())
     .withColumn(
         "is_sla_breach",
-        F.when(F.col("message_count") < F.lit(SLA_THRESHOLD), F.lit(1)).otherwise(F.lit(0))
+        F.when(F.col("message_count") < SLA_THRESHOLD, F.lit(1)).otherwise(F.lit(0))
     )
     .select(
         "interval_start",
@@ -135,11 +89,7 @@ final_df = (
     final_df
     .write
     .format("delta")
-    .mode("append")
+    .mode("overwrite")
+    .option("replaceWhere", "run_date >= current_date() - INTERVAL 2 DAYS")
     .saveAsTable(TARGET_TABLE)
 )
-
-spark.sql(f"""
-DELETE FROM {TARGET_TABLE}
-WHERE run_date < current_date() - INTERVAL 2 DAYS
-""")
