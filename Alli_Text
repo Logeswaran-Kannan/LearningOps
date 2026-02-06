@@ -1,16 +1,14 @@
 from pyspark.sql import functions as F
 
-# =========================
-# Parameters
-# =========================
-SLA_THRESHOLD = 100   # <-- change SLA here
+SLA_THRESHOLD = 100
+
 SOURCE_FLOW_TABLE = "core.flow.ehubstream"
 SOURCE_MQS_TABLE  = "core.mqs_athn_mtr.ehubstream"
 TARGET_TABLE      = "core_bld.default.monitoring_mqs_status_30min"
 
-# =========================
+# -------------------------------------------------------
 # Create target table
-# =========================
+# -------------------------------------------------------
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
   run_date        DATE,
@@ -23,9 +21,9 @@ USING DELTA
 PARTITIONED BY (run_date)
 """)
 
-# =========================
+# -------------------------------------------------------
 # Detect first run
-# =========================
+# -------------------------------------------------------
 is_first_run = spark.sql(
     f"SELECT COUNT(*) c FROM {TARGET_TABLE}"
 ).first()["c"] == 0
@@ -33,9 +31,6 @@ is_first_run = spark.sql(
 run_ts = F.current_timestamp()
 today_start = F.date_trunc("day", run_ts)
 
-# =========================
-# Decide refresh window
-# =========================
 if is_first_run:
     refresh_start = today_start - F.expr("INTERVAL 2 DAYS")
     replace_where = "run_date >= current_date() - INTERVAL 2 DAYS"
@@ -43,24 +38,25 @@ else:
     refresh_start = today_start
     replace_where = "run_date = current_date()"
 
-# =========================
-# Read valid interaction IDs (JOIN instead of IN)
-# =========================
+# -------------------------------------------------------
+# Build valid interaction keys (matches SQL concatenation logic)
+# -------------------------------------------------------
 valid_ids_df = (
     spark.table(SOURCE_MQS_TABLE)
     .filter(F.col("eHubQueuedDatestamp") >= F.to_date(refresh_start))
     .select(
         F.coalesce(
-            F.col("headers.externalID"),
-            F.col("headers.MQSQuoteID")
-        ).alias("interaction_id")
+            F.col("headers.MQSQuoteID"),
+            F.col("headers.externalID")
+        ).alias("join_key")
     )
+    .where(F.col("join_key").isNotNull())
     .distinct()
 )
 
-# =========================
-# Read flow stream (partition pruning via HubQueuedDatestamp)
-# =========================
+# -------------------------------------------------------
+# Read flow table (partition pruning)
+# -------------------------------------------------------
 flow_df = (
     spark.table(SOURCE_FLOW_TABLE)
     .filter(
@@ -70,24 +66,25 @@ flow_df = (
     .select(
         F.to_timestamp(F.get_json_object("payload", "$.timestamp")).alias("event_ts"),
         F.get_json_object("payload", "$.interaction.status").alias("status"),
-        F.get_json_object("payload", "$.interaction.mqsQuoteId").alias("mqs_quote_id"),
-        F.get_json_object("payload", "$.interaction.id").alias("interaction_id")
+        F.coalesce(
+            F.get_json_object("payload", "$.interaction.mqsQuoteId"),
+            F.get_json_object("payload", "$.interaction.id")
+        ).alias("join_key")
     )
     .filter(F.col("event_ts").isNotNull())
 )
 
-# =========================
-# Join (fast, scalable)
-# =========================
-joined_df = flow_df.join(
-    valid_ids_df,
-    on="interaction_id",
-    how="inner"
+# -------------------------------------------------------
+# JOIN (this now works correctly)
+# -------------------------------------------------------
+joined_df = (
+    flow_df
+    .join(valid_ids_df, on="join_key", how="inner")
 )
 
-# =========================
-# Fixed 30-minute bucketing from day start
-# =========================
+# -------------------------------------------------------
+# Fixed 30-min bucket (same as SQL intent)
+# -------------------------------------------------------
 bucketed_df = (
     joined_df
     .withColumn("run_date", F.to_date("event_ts"))
@@ -96,29 +93,29 @@ bucketed_df = (
         F.date_format(
             F.date_trunc("day", F.col("event_ts")) +
             F.expr(
-                "INTERVAL 1 SECOND * (CAST((unix_timestamp(event_ts) - unix_timestamp(date_trunc('day', event_ts))) / 1800 AS INT) * 1800)"
+                "INTERVAL 1 SECOND * (CAST((unix_timestamp(event_ts) - unix_timestamp(date_trunc('day', event_ts))) / 300 AS INT) * 300)"
             ),
             "HH:mm"
         )
     )
 )
 
-# =========================
+# -------------------------------------------------------
 # Aggregate
-# =========================
+# -------------------------------------------------------
 final_df = (
     bucketed_df
     .groupBy("run_date", "time_slice", "status")
-    .agg(F.count("mqs_quote_id").alias("mqs_quote_cnt"))
+    .agg(F.count("*").alias("mqs_quote_cnt"))
     .withColumn(
         "is_sla_breach",
-        F.when(F.col("mqs_quote_cnt") < F.lit(SLA_THRESHOLD), F.lit(1)).otherwise(F.lit(0))
+        F.when(F.col("mqs_quote_cnt") < SLA_THRESHOLD, F.lit(1)).otherwise(F.lit(0))
     )
 )
 
-# =========================
-# Overwrite only affected partitions
-# =========================
+# -------------------------------------------------------
+# Overwrite affected partitions only
+# -------------------------------------------------------
 (
     final_df
     .write
