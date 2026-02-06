@@ -1,50 +1,132 @@
-WITH src AS (
-  SELECT
-    to_timestamp(get_json_object(payload, '$.timestamp')) AS event_ts,
-    get_json_object(payload, '$.interaction.status')     AS status,
-    get_json_object(payload, '$.interaction.mqsQuoteId') AS mqs_quote_id,
-    get_json_object(payload, '$.interaction.id')         AS interaction_id
-  FROM core.flow.ehubstream
-  WHERE HubQueuedDatestamp = DATE '2026-02-06'
-),
+from pyspark.sql import functions as F
+from datetime import datetime, timedelta
 
-valid_quotes AS (
-  SELECT DISTINCT
-    headers['externalID'] AS interaction_id
-  FROM core.mqs_athn_mtr.ehubstream
-  WHERE cast(enqueuedTime AS DATE) = DATE '2026-02-06'
-),
+# ----------------------------------
+# Config
+# ----------------------------------
+TARGET_TABLE = "core_bld.defult.monitoring_mqs_status_30mins"
 
-bucketed AS (
-  SELECT
-    date(event_ts) AS run_date,
-    date_format(
-      date_trunc('day', event_ts)
-      + INTERVAL 1 SECOND *
-        (CAST(
-           (unix_timestamp(event_ts)
-            - unix_timestamp(date_trunc('day', event_ts))) / 1800
-         AS INT) * 1800),
-      'HH:mm'
-    ) AS time_slice,
-    status,
-    mqs_quote_id
-  FROM src s
-  INNER JOIN valid_quotes v
-    ON s.interaction_id = v.interaction_id
+today = datetime.now().strftime("%Y-%m-%d")
+retention_date = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+
+# ----------------------------------
+# Create target table if not exists
+# ----------------------------------
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
+    run_date DATE,
+    time_slice STRING,
+    status STRING,
+    mqs_quote_count BIGINT,
+    is_sla_breach INT
+)
+USING DELTA
+PARTITIONED BY (run_date)
+""")
+
+# ----------------------------------
+# Source tables
+# ----------------------------------
+ehub_df = spark.table("core.flow.ehubstream")
+mqs_df  = spark.table("core.mqs_athn_mtr.ehubstream")
+
+# ----------------------------------
+# MQS reference IDs (early filter)
+# ----------------------------------
+mqs_ids_df = (
+    mqs_df
+    .filter(F.to_date("enqueuedTime") == today)
+    .select(
+        F.coalesce(
+            F.col("headers")["MQSQuoteId"],
+            F.col("headers")["externalId"]
+        ).alias("ref_id")
+    )
+    .distinct()
 )
 
-SELECT
-  run_date,
-  time_slice,
-  status,
-  COUNT(mqs_quote_id) AS mqs_quote_id
-FROM bucketed
-GROUP BY
-  run_date,
-  time_slice,
-  status
-ORDER BY
-  run_date,
-  time_slice,
-  status;
+# ----------------------------------
+# Parse JSON once (performance)
+# ----------------------------------
+ehub_parsed_df = (
+    ehub_df
+    .filter(F.col("HubQueuedDatestamp") == today)
+    .withColumn("event_ts", F.to_timestamp(F.get_json_object("Payload", "$.timestamp")))
+    .withColumn("status", F.get_json_object("Payload", "$.interaction.status"))
+    .withColumn(
+        "interaction_id",
+        F.coalesce(
+            F.get_json_object("Payload", "$.interaction.mqsQuoteId"),
+            F.get_json_object("Payload", "$.interaction._id")
+        )
+    )
+    .select("event_ts", "status", "interaction_id")
+)
+
+# ----------------------------------
+# Join with MQS IDs (broadcast)
+# ----------------------------------
+joined_df = (
+    ehub_parsed_df
+    .join(
+        F.broadcast(mqs_ids_df),
+        ehub_parsed_df.interaction_id == mqs_ids_df.ref_id,
+        "inner"
+    )
+)
+
+# ----------------------------------
+# 30-minute aggregation
+# ----------------------------------
+agg_df = (
+    joined_df
+    .groupBy(
+        F.window("event_ts", "30 minutes").alias("time_window"),
+        "status"
+    )
+    .agg(F.count("*").alias("mqs_quote_count"))
+)
+
+# ----------------------------------
+# Final formatting + SLA logic
+# ----------------------------------
+final_df = (
+    agg_df
+    .withColumn("run_date", F.to_date(F.col("time_window.start")))
+    .withColumn("time_slice", F.date_format(F.col("time_window.start"), "HH:mm"))
+    .withColumn(
+        "is_sla_breach",
+        F.when(F.col("mqs_quote_count") < 3, F.lit(1)).otherwise(F.lit(0))
+    )
+    .select(
+        "run_date",
+        "time_slice",
+        "status",
+        "mqs_quote_count",
+        "is_sla_breach"
+    )
+)
+
+# ----------------------------------
+# Refresh today’s data (idempotent)
+# ----------------------------------
+spark.sql(f"""
+DELETE FROM {TARGET_TABLE}
+WHERE run_date = DATE('{today}')
+""")
+
+(
+    final_df
+    .write
+    .format("delta")
+    .mode("append")
+    .saveAsTable(TARGET_TABLE)
+)
+
+# ----------------------------------
+# Retention: keep only last 3 days
+# ----------------------------------
+spark.sql(f"""
+DELETE FROM {TARGET_TABLE}
+WHERE run_date < DATE('{retention_date}')
+""")
