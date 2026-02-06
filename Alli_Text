@@ -4,6 +4,7 @@ SLA_THRESHOLD = 100
 TARGET_TABLE = "core_bld.default.monitoring_ehub_30min_metrics"
 SOURCE_TABLE = "mqs_athn_mtr.ehubstream"
 
+# ---------- Create table if not exists ----------
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
   interval_start TIMESTAMP,
@@ -18,26 +19,38 @@ USING DELTA
 PARTITIONED BY (run_date)
 """)
 
-run_ts = F.current_timestamp()
-start_ts = F.date_trunc("day", run_ts) - F.expr("INTERVAL 2 DAYS")
+# ---------- Check if table already has data ----------
+is_first_run = spark.sql(f"SELECT COUNT(*) c FROM {TARGET_TABLE}").first()["c"] == 0
 
-# ---------- Generate 30-min intervals for last 3 days (SMALL DF) ----------
+run_ts = F.current_timestamp()
+today_start = F.date_trunc("day", run_ts)
+
+# ---------- Decide refresh window ----------
+if is_first_run:
+    refresh_start = today_start - F.expr("INTERVAL 2 DAYS")
+    replace_where = "run_date >= current_date() - INTERVAL 2 DAYS"
+else:
+    refresh_start = today_start
+    replace_where = "run_date = current_date()"
+
+# ---------- Generate 30-min intervals ----------
 intervals_df = (
     spark.range(0, 48 * 3)
     .select(
-        (start_ts + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
+        (refresh_start + F.expr("INTERVAL 1 SECOND") * (F.col("id") * 1800)).alias("interval_start")
     )
     .filter(F.col("interval_start") <= run_ts)
     .withColumn("interval_end", F.col("interval_start") + F.expr("INTERVAL 30 MINUTES"))
     .withColumn("interval_time", F.date_format("interval_start", "HH:mm"))
     .withColumn("run_date", F.to_date("interval_start"))
+    .filter(F.col("run_date") >= F.to_date(refresh_start))
 )
 
-# ---------- Read streaming table as batch (ONLY last 3 days) ----------
+# ---------- Read streaming source (minimal scan) ----------
 src_df = (
     spark.table(SOURCE_TABLE)
     .filter(
-        (F.col("TimeEnqueued") >= start_ts) &
+        (F.col("TimeEnqueued") >= refresh_start) &
         (F.col("TimeEnqueued") < run_ts)
     )
     .select(
@@ -46,7 +59,7 @@ src_df = (
     )
 )
 
-# ---------- Bucket once (cheap arithmetic) ----------
+# ---------- Bucket events into 30-min slots ----------
 bucketed_df = (
     src_df
     .withColumn(
@@ -58,7 +71,7 @@ bucketed_df = (
     )
 )
 
-# ---------- Aggregate ----------
+# ---------- Aggregations ----------
 agg_by_type_df = (
     bucketed_df
     .groupBy("interval_start", "message_type")
@@ -74,7 +87,7 @@ agg_all_df = (
 
 agg_df = agg_by_type_df.unionByName(agg_all_df)
 
-# ---------- Join intervals (no gaps) ----------
+# ---------- Join with intervals (no gaps) ----------
 final_df = (
     intervals_df
     .join(agg_df, on="interval_start", how="left")
@@ -94,12 +107,12 @@ final_df = (
     )
 )
 
-# ---------- Overwrite only last 3 days ----------
+# ---------- Overwrite only affected days ----------
 (
     final_df
     .write
     .format("delta")
     .mode("overwrite")
-    .option("replaceWhere", "run_date >= current_date() - INTERVAL 2 DAYS")
+    .option("replaceWhere", replace_where)
     .saveAsTable(TARGET_TABLE)
 )
