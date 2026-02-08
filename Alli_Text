@@ -1,12 +1,10 @@
-CREATE MATERIALIZED VIEW IF NOT EXISTS core_bld.default.monitoring_mqs_interaction_sta
-AS
 WITH flow_base AS (
     SELECT
-        to_date(get_json_object(payload, '$.timestamp'))              AS run_date,
-        timestamp(get_json_object(payload, '$.timestamp'))            AS event_ts,
-        get_json_object(payload, '$.interaction.status')              AS status,
-        get_json_object(payload, '$.interaction.mqsQuoteId')           AS mqs_quote_id,
-        get_json_object(payload, '$.interaction.id')                  AS interaction_id
+        to_date(get_json_object(payload, '$.timestamp'))   AS run_date,
+        timestamp(get_json_object(payload, '$.timestamp')) AS event_ts,
+        get_json_object(payload, '$.interaction.status')   AS status,
+        get_json_object(payload, '$.interaction.mqsQuoteId') AS mqs_quote_id,
+        get_json_object(payload, '$.interaction.id')         AS interaction_id
     FROM core.flow.ehubstream
     WHERE eHubQueuedDatestamp = current_date()
 ),
@@ -22,7 +20,6 @@ mtr_keys AS (
 joined_data AS (
     SELECT
         f.run_date,
-        -- 30-min bucket start
         from_unixtime(
             floor(unix_timestamp(f.event_ts) / 1800) * 1800
         ) AS interval_start,
@@ -46,5 +43,8 @@ SELECT
 FROM joined_data
 GROUP BY
     run_date,
+    interval_start,
+    status
+ORDER BY
     interval_start,
     status;
