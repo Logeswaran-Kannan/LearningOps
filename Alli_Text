@@ -1,105 +1,101 @@
 from pyspark.sql import functions as F
+from datetime import date, timedelta
 
-target_table = "core_bld.default.monitoring_mqs_interaction_sta"
+SOURCE_SCHEMA = "core.mqs_athn_mtr"
+TARGET_TABLE  = "core_bld.default.monitoring_mqs_30min"
 
-# ----------------------------------------
-# 1. Date boundaries (last 3 days)
-# ----------------------------------------
-start_date = F.date_sub(F.current_date(), 2)
+TABLES = [
+    "dit_stop_quote",
+    "dit_quote_request",
+    "dit_precomp_response",
+    "dit_rating_response",
+    "dit_rating_request",
+    "dit_raw_enrichments",
+    "dit_cache_id",
+    "dit_rating_request_dvla_removed"
+]
 
-# ----------------------------------------
-# 2. FLOW stream (last 3 days)
-# ----------------------------------------
-flow_df = (
-    spark.table("core.flow.ehubstream")
-    .filter(
-        (F.col("eHubQueuedDatestamp") >= start_date) &
-        (F.col("eHubQueuedDatestamp") <= F.current_date())
-    )
-    .select(
-        F.to_date(F.get_json_object("payload", "$.timestamp")).alias("run_date"),
-        F.to_timestamp(F.get_json_object("payload", "$.timestamp")).alias("event_ts"),
-        F.get_json_object("payload", "$.interaction.status").alias("status"),
-        F.get_json_object("payload", "$.interaction.mqsQuoteId").alias("mqs_quote_id"),
-        F.get_json_object("payload", "$.interaction.id").alias("interaction_id"),
-    )
-    .filter(
-        F.col("event_ts") >= F.date_trunc("day", F.date_sub(F.current_date(), 2))
-    )
-)
+RETENTION_DAYS = 3
+SLA_THRESHOLD = 1   # set N here (e.g. <3, <5 etc.)
 
-# ----------------------------------------
-# 3. MTR stream (last 3 days)
-# ----------------------------------------
-mtr_df = (
-    spark.table("core.mqs_atnh_mtr.ehubstream")
-    .filter(
-        F.to_date("enqueuedTime") >= start_date
-    )
-    .select(
-        F.col("headers")["mqsQuoteId"].alias("mqs_quote_id"),
-        F.col("headers")["externalId"].alias("interaction_id"),
-    )
-    .dropDuplicates()
-)
+today = date.today()
+start_date = today - timedelta(days=RETENTION_DAYS - 1)
 
-# ----------------------------------------
-# 4. Join (multi-column, fastest)
-# ----------------------------------------
-joined_df = (
-    flow_df.join(
-        mtr_df,
-        on=["mqs_quote_id", "interaction_id"],
-        how="inner"
-    )
-    .select(
-        "run_date",
-        F.from_unixtime(
-            (F.unix_timestamp("event_ts") / 1800).cast("long") * 1800
-        ).alias("interval_start"),
-        "status",
-        "mqs_quote_id",
-    )
-)
-
-# ----------------------------------------
-# 5. Aggregate + SLA breach flag
-# ----------------------------------------
-final_df = (
-    joined_df
-    .groupBy("run_date", "interval_start", "status")
-    .agg(
-        F.count("mqs_quote_id").alias("total_count")
-    )
-    .withColumn(
-        "is_sla_breach",
-        F.when(F.col("total_count") < 3, F.lit(1)).otherwise(F.lit(0))
-    )
-)
-
-# ----------------------------------------
-# 6. Create target table if not exists
-# ----------------------------------------
 spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {target_table} (
+CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
     run_date DATE,
     interval_start TIMESTAMP,
-    status STRING,
-    total_count BIGINT,
-    is_sla_breach INT
+    interval_end TIMESTAMP,
+    message_type STRING,
+    message_count BIGINT,
+    is_sla_flag INT
 )
 USING DELTA
-PARTITIONED BY (run_date)
 """)
 
-# ----------------------------------------
-# 7. FULL REFRESH (overwrite all 3 days)
-# ----------------------------------------
+# Retention cleanup (always keep last 3 days only)
+spark.sql(f"""
+DELETE FROM {TARGET_TABLE}
+WHERE run_date < date_sub(current_date(), {RETENTION_DAYS - 1})
+""")
+
+# Detect first run (table empty)
+is_first_run = spark.table(TARGET_TABLE).limit(1).count() == 0
+
+if is_first_run:
+    interval_start_expr = f"timestamp('{start_date} 00:00:00')"
+    date_filter_expr = f"eHubQueuedDatestamp >= date_sub(current_date(), {RETENTION_DAYS - 1})"
+else:
+    spark.sql(f"DELETE FROM {TARGET_TABLE} WHERE run_date = current_date()")
+    interval_start_expr = "timestamp(current_date())"
+    date_filter_expr = "eHubQueuedDatestamp = current_date()"
+
+intervals_df = (
+    spark.sql(f"""
+        SELECT explode(
+            sequence(
+                {interval_start_expr},
+                current_timestamp(),
+                interval 30 minutes
+            )
+        ) AS interval_start
+    """)
+    .withColumn("interval_end", F.expr("interval_start + interval 30 minutes"))
+    .withColumn("run_date", F.to_date("interval_start"))
+)
+
+final_df = None
+
+for table in TABLES:
+    src_df = (
+        spark.table(f"{SOURCE_SCHEMA}.{table}")
+        .filter(date_filter_expr)
+        .select("enqueuedTime")
+    )
+
+    agg_df = (
+        intervals_df
+        .join(
+            src_df,
+            (src_df.enqueuedTime >= intervals_df.interval_start) &
+            (src_df.enqueuedTime < intervals_df.interval_end),
+            "left"
+        )
+        .groupBy("run_date", "interval_start", "interval_end")
+        .agg(F.count("enqueuedTime").alias("message_count"))
+        .withColumn("message_type", F.lit(table))
+        .withColumn(
+            "is_sla_flag",
+            F.when(F.col("message_count") < SLA_THRESHOLD, 1).otherwise(0)
+        )
+    )
+
+    final_df = agg_df if final_df is None else final_df.unionByName(agg_df)
+
 (
     final_df
     .write
+    .mode("append")
     .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(target_table)
+    .saveAsTable(TARGET_TABLE)
 )
