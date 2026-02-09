@@ -1,4 +1,4 @@
-spark.sql(f"""
-DELETE FROM {TARGET_TABLE}
-WHERE run_date < current_date() - INTERVAL 2 DAYS
-""")
+{
+  "sla_breach_count": 3,
+  "alert_time": "2026-02-09T11:30:00Z"
+}
