@@ -27,7 +27,7 @@ tables = [
     "core.mqs_athn_mtr_views.vw_mqs_watchlist_vehiclecapstones"
 ]
 
-TARGET_TABLE = "core_bld.default.monitoring_mqs_data_profile_daily"
+TARGET_TABLE = "core_bld.default.monitoring_mqs_data_profile_daily_provider"
 DATE_COL = "EHUBQUEUEDDATETSTAMP"
 
 RULE1_EXCEPT = "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis"
@@ -38,10 +38,8 @@ RULE3_EXCEPT = {
 }
 
 # =========================
-# DETERMINE RUN MODE
+# RUN MODE
 # =========================
-run_date = F.current_date()
-
 def table_exists(tbl):
     try:
         return spark.catalog.tableExists(tbl)
@@ -49,16 +47,9 @@ def table_exists(tbl):
         return False
 
 target_exists = table_exists(TARGET_TABLE)
+is_first_run = not target_exists or spark.table(TARGET_TABLE).count() == 0
 
-if target_exists:
-    is_first_run = spark.table(TARGET_TABLE).count() == 0
-else:
-    is_first_run = True
-
-if is_first_run:
-    start_date = F.date_sub(F.current_date(), 2)  # last 3 days
-else:
-    start_date = F.current_date()                 # today only
+start_date = F.date_sub(F.current_date(), 2) if is_first_run else F.current_date()
 
 # =========================
 # OUTPUT SCHEMA
@@ -66,19 +57,22 @@ else:
 schema = T.StructType([
     T.StructField("run_date", T.DateType(), False),
     T.StructField("table_name", T.StringType(), False),
+    T.StructField("provider", T.StringType(), False),
+
     T.StructField("total_records", T.LongType(), False),
-    T.StructField("provider_distinct_values", T.ArrayType(T.StringType()), True),
     T.StructField("dataset_distinct_values", T.ArrayType(T.StringType()), True),
     T.StructField("outputformat_distinct_values", T.ArrayType(T.StringType()), True),
+
     T.StructField("errorMessage_population_pct", T.DoubleType(), False),
     T.StructField("DATA_not_null", T.LongType(), False),
+
     T.StructField("Is_sla_flag", T.IntegerType(), False),
     T.StructField("dq_status", T.StringType(), False),
     T.StructField("dq_fail_reasons", T.ArrayType(T.StringType()), True)
 ])
 
 # =========================
-# BUILD RESULTS
+# PROCESS TABLES
 # =========================
 results = None
 
@@ -89,33 +83,28 @@ for t in tables:
         .where(F.col(DATE_COL) <= F.current_date())
     )
 
-    agg = df.agg(
-        F.count("*").alias("total_records"),
-        F.collect_set("provider").alias("provider_distinct_values"),
-        F.collect_set("dataset").alias("dataset_distinct_values"),
-        F.collect_set("outputformat").alias("outputformat_distinct_values"),
-        (F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)) * 100.0
-         / F.when(F.count("*") == 0, 1).otherwise(F.count("*"))
-        ).alias("errorMessage_population_pct"),
-        F.sum(F.when(F.col("DATA").isNotNull(), 1).otherwise(0)).alias("DATA_not_null"),
-        F.sum(F.when(F.col("provider").isNull(), 1).otherwise(0)).alias("provider_nulls"),
-        F.sum(F.when(F.col("dataset").isNull(), 1).otherwise(0)).alias("dataset_nulls"),
-        F.sum(F.when(F.col("outputformat").isNull(), 1).otherwise(0)).alias("outputformat_nulls"),
-        F.sum(F.when(F.col("DATA").isNull(), 1).otherwise(0)).alias("DATA_nulls")
-    )
-
-    enriched = (
-        agg
+    agg = (
+        df.groupBy("provider")
+        .agg(
+            F.count("*").alias("total_records"),
+            F.collect_set("dataset").alias("dataset_distinct_values"),
+            F.collect_set("outputformat").alias("outputformat_distinct_values"),
+            (F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)) * 100.0
+             / F.when(F.count("*") == 0, 1).otherwise(F.count("*"))
+            ).alias("errorMessage_population_pct"),
+            F.sum(F.when(F.col("DATA").isNotNull(), 1).otherwise(0)).alias("DATA_not_null"),
+            F.sum(F.when(F.col("dataset").isNull(), 1).otherwise(0)).alias("dataset_nulls"),
+            F.sum(F.when(F.col("outputformat").isNull(), 1).otherwise(0)).alias("outputformat_nulls"),
+            F.sum(F.when(F.col("DATA").isNull(), 1).otherwise(0)).alias("DATA_nulls")
+        )
         .withColumn("run_date", F.current_date())
         .withColumn("table_name", F.lit(t))
         .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
     )
 
-    # DQ rules
     dq_reasons = F.array_remove(F.array(
         F.when((t != RULE1_EXCEPT) & (F.col("errorMessage_population_pct") > 2),
                F.lit("ERROR_MESSAGE_PCT_GT_2")),
-        F.when(F.col("provider_nulls") > 0, F.lit("PROVIDER_HAS_NULL")),
         F.when((t not in RULE3_EXCEPT) & (F.col("dataset_nulls") > 0),
                F.lit("DATASET_HAS_NULL")),
         F.when((t not in RULE3_EXCEPT) & (F.col("outputformat_nulls") > 0),
@@ -124,7 +113,7 @@ for t in tables:
     ), F.lit(None))
 
     final = (
-        enriched
+        agg
         .withColumn("dq_fail_reasons", dq_reasons)
         .withColumn("dq_status", F.when(F.size(dq_reasons) > 0, "FAIL").otherwise("PASS"))
         .select([c.name for c in schema])
@@ -133,14 +122,11 @@ for t in tables:
     results = final if results is None else results.unionByName(final)
 
 # =========================
-# CREATE TARGET IF NEEDED
+# CREATE / WRITE / RETENTION
 # =========================
 if not target_exists:
     spark.createDataFrame([], schema).write.format("delta").saveAsTable(TARGET_TABLE)
 
-# =========================
-# WRITE + RETENTION
-# =========================
 if is_first_run:
     spark.sql(f"DELETE FROM {TARGET_TABLE}")
 else:
