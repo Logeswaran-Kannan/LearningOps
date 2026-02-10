@@ -32,67 +32,41 @@ ath_df = spark.table(ATHENA_TBL)
 mqs_df = spark.table(MQS_TBL)
 
 # ============================================================
-# CSV STANDARDIZATION (KEEP ALL CSV COLUMNS)
+# CSV STANDARDIZATION (SOURCE OF TRUTH)
 # ============================================================
 csv_std = (
     csv_df
     .withColumn("request_ts", F.to_timestamp("requestDate"))
     .withColumn("requestDate", F.to_date("request_ts"))
-    .withColumn("quoteId_norm", normalize_quote_id(F.col("mqsQuoteId")))
+    .withColumn("quoteId_norm", normalize_quote_id("mqsQuoteId"))
     .withColumn(
         "csv_quote_is_null",
-        F.col("mqsQuoteId").isNull() | (F.trim(F.col("mqsQuoteId")) == "")
+        F.col("mqsQuoteId").isNull() | (F.trim("mqsQuoteId") == "")
     )
     .withColumn(
         "csv_quote_missing_prefix",
         (~F.col("csv_quote_is_null")) &
-        (~F.upper(F.col("mqsQuoteId")).startswith("MQS-"))
+        (~F.upper("mqsQuoteId").startswith("MQS-"))
     )
     .withColumn("csv_row_id", F.monotonically_increasing_id())
 )
 
 # ============================================================
-# ATHENA STANDARDIZATION (QUOTE-BASED)
+# ATHENA STANDARDIZATION (SINGLE PASS)
 # ============================================================
 ath_std = (
     ath_df
     .select(
         F.col("athenaStreamInteractionId").alias("interactionId"),
-        normalize_quote_id(F.col("athenaStreamMqsQuoteId")).alias("quoteId_norm"),
+        normalize_quote_id("athenaStreamMqsQuoteId").alias("quoteId_norm"),
         F.to_timestamp("athenaStreamQuoteDateTime").alias("athena_ts")
     )
-    .dropDuplicates()
 )
 
 # ============================================================
-# ATHENA STANDARDIZATION (INTERACTION-ONLY)
+# ATHENA QUOTE-BASED MATCH (ONLY NON-NULL QUOTES)
 # ============================================================
-ath_interaction_std = (
-    ath_df
-    .select(
-        F.col("athenaStreamInteractionId").alias("interactionId"),
-        F.to_timestamp("athenaStreamQuoteDateTime").alias("athena_ts")
-    )
-    .dropDuplicates(["interactionId"])
-)
-
-# ============================================================
-# MQS STANDARDIZATION
-# ============================================================
-mqs_std = (
-    mqs_df
-    .select(
-        F.col("mQSInteractionId").alias("interactionId"),
-        normalize_quote_id(F.col("mQSQuoteId")).alias("quoteId_norm"),
-        F.to_timestamp("mQSDateTime").alias("mqs_ts")
-    )
-    .dropDuplicates()
-)
-
-# ============================================================
-# ATHENA MATCHING (QUOTE-BASED)
-# ============================================================
-ath_match = (
+ath_quote_match = (
     csv_std
     .filter(F.col("csv_quote_is_null") == False)
     .join(ath_std, ["interactionId", "quoteId_norm"], "left")
@@ -110,21 +84,38 @@ ath_match = (
 )
 
 # ============================================================
-# ATHENA MATCHING (INTERACTION-ONLY FOR CSV QUOTE NULL)
+# ATHENA INTERACTION-ONLY MATCH (CSV QUOTE NULL ONLY)
 # ============================================================
 ath_interaction_match = (
     csv_std
     .filter(F.col("csv_quote_is_null") == True)
-    .join(ath_interaction_std, ["interactionId"], "left")
-    .select(
-        "csv_row_id",
-        F.when(F.col("athena_ts").isNotNull(), 1).otherwise(0)
+    .select("csv_row_id", "interactionId")
+    .join(
+        ath_std.select("interactionId").dropDuplicates(),
+        "interactionId",
+        "left"
+    )
+    .groupBy("csv_row_id")
+    .agg(
+        F.max(F.when(F.col("interactionId").isNotNull(), 1).otherwise(0))
          .alias("athena_interaction_exists")
     )
 )
 
 # ============================================================
-# MQS MATCHING
+# MQS STANDARDIZATION
+# ============================================================
+mqs_std = (
+    mqs_df
+    .select(
+        F.col("mQSInteractionId").alias("interactionId"),
+        normalize_quote_id("mQSQuoteId").alias("quoteId_norm"),
+        F.to_timestamp("mQSDateTime").alias("mqs_ts")
+    )
+)
+
+# ============================================================
+# MQS MATCH
 # ============================================================
 mqs_match = (
     csv_std
@@ -143,14 +134,14 @@ mqs_match = (
 )
 
 # ============================================================
-# FINAL RECONCILIATION TABLE
+# FINAL RECONCILIATION
 # ============================================================
 final_recon = (
     csv_std
-    .join(ath_match, "csv_row_id", "left")
+    .join(ath_quote_match, "csv_row_id", "left")
     .join(mqs_match, "csv_row_id", "left")
     .join(ath_interaction_match, "csv_row_id", "left")
-    # ---------------- SCENARIO FLAGS ----------------
+    # ---------------- SCENARIOS ----------------
     .withColumn(
         "is_matched_both_in_window",
         F.when((F.col("athena_in_window") == 1) & (F.col("mqs_in_window") == 1), 1).otherwise(0)
@@ -163,16 +154,13 @@ final_recon = (
             1
         ).otherwise(0)
     )
-    .withColumn(
-        "is_athena_only",
+    .withColumn("is_athena_only",
         F.when((F.col("athena_exists") == 1) & (F.col("mqs_exists") == 0), 1).otherwise(0)
     )
-    .withColumn(
-        "is_mqs_only",
+    .withColumn("is_mqs_only",
         F.when((F.col("athena_exists") == 0) & (F.col("mqs_exists") == 1), 1).otherwise(0)
     )
-    .withColumn(
-        "is_missing_both",
+    .withColumn("is_missing_both",
         F.when(
             (F.col("athena_exists") == 0) &
             (F.col("mqs_exists") == 0) &
@@ -180,8 +168,8 @@ final_recon = (
             1
         ).otherwise(0)
     )
-    .withColumn("is_csv_quote_null", F.when(F.col("csv_quote_is_null"), 1).otherwise(0))
-    .withColumn("is_csv_missing_prefix", F.when(F.col("csv_quote_missing_prefix"), 1).otherwise(0))
+    .withColumn("is_csv_quote_null", F.col("csv_quote_is_null").cast("int"))
+    .withColumn("is_csv_missing_prefix", F.col("csv_quote_missing_prefix").cast("int"))
     .withColumn(
         "is_csv_quote_null_athena_hit",
         F.when(
@@ -201,7 +189,7 @@ final_recon = (
 )
 
 # ============================================================
-# SAFE FILL FOR INDICATORS ONLY
+# SAFE FILL (INDICATORS ONLY)
 # ============================================================
 indicator_cols = [
     "athena_exists", "athena_in_window",
