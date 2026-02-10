@@ -27,116 +27,136 @@ tables = [
     "core.mqs_athn_mtr_views.vw_mqs_watchlist_vehiclecapstones"
 ]
 
-TARGET_TABLE = "core_bld.default.monitoring_mqs_data_profile_daily_provider"
+TARGET_TABLE = "core_bld.default.monitoring_mqs_data_profile_daily"
 DATE_COL = "EHUBQUEUEDDATETSTAMP"
 
-RULE1_EXCEPT = "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis"
-RULE3_EXCEPT = {
+RULE1_EXCEPT_TABLE = "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis"
+RULE3_EXCEPT_TABLES = {
     "core.mqs_athn_mtr_views.vw_mqs_mot",
     "core.mqs_athn_mtr_views.vw_mqs_mylicence",
     "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis"
 }
 
+run_date = F.current_date()
+
 # =========================
 # RUN MODE
 # =========================
-def table_exists(tbl):
-    try:
-        return spark.catalog.tableExists(tbl)
-    except:
-        return False
+target_exists = spark.catalog.tableExists(TARGET_TABLE)
 
-target_exists = table_exists(TARGET_TABLE)
-is_first_run = not target_exists or spark.table(TARGET_TABLE).count() == 0
-
-start_date = F.date_sub(F.current_date(), 2) if is_first_run else F.current_date()
+if not target_exists:
+    scope_start_date = F.date_sub(F.current_date(), 2)
+    first_run = True
+else:
+    scope_start_date = F.current_date()
+    first_run = False
 
 # =========================
-# OUTPUT SCHEMA
+# RESULT SCHEMA
 # =========================
 schema = T.StructType([
     T.StructField("run_date", T.DateType(), False),
     T.StructField("table_name", T.StringType(), False),
-    T.StructField("provider", T.StringType(), False),
-
+    T.StructField("EHUBQUEUEDDATETSTAMP", T.DateType(), False),
     T.StructField("total_records", T.LongType(), False),
+    T.StructField("errorMessage_population_pct", T.DoubleType(), False),
+    T.StructField("provider_distinct_values", T.ArrayType(T.StringType()), True),
     T.StructField("dataset_distinct_values", T.ArrayType(T.StringType()), True),
     T.StructField("outputformat_distinct_values", T.ArrayType(T.StringType()), True),
-
-    T.StructField("errorMessage_population_pct", T.DoubleType(), False),
     T.StructField("DATA_not_null", T.LongType(), False),
-
     T.StructField("Is_sla_flag", T.IntegerType(), False),
     T.StructField("dq_status", T.StringType(), False),
-    T.StructField("dq_fail_reasons", T.ArrayType(T.StringType()), True)
+    T.StructField("dq_fail_reasons", T.ArrayType(T.StringType()), True),
 ])
+
+final_df = None
 
 # =========================
 # PROCESS TABLES
 # =========================
-results = None
-
 for t in tables:
     df = (
         spark.table(t)
-        .where(F.col(DATE_COL) >= start_date)
-        .where(F.col(DATE_COL) <= F.current_date())
+        .filter(F.col(DATE_COL) >= scope_start_date)
+        .filter(F.col(DATE_COL) <= F.current_date())
     )
 
     agg = (
-        df.groupBy("provider")
+        df.groupBy(DATE_COL)
         .agg(
             F.count("*").alias("total_records"),
+            (F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)) * 100.0 / F.count("*"))
+                .alias("errorMessage_population_pct"),
+            F.collect_set("provider").alias("provider_distinct_values"),
             F.collect_set("dataset").alias("dataset_distinct_values"),
             F.collect_set("outputformat").alias("outputformat_distinct_values"),
-            (F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)) * 100.0
-             / F.when(F.count("*") == 0, 1).otherwise(F.count("*"))
-            ).alias("errorMessage_population_pct"),
             F.sum(F.when(F.col("DATA").isNotNull(), 1).otherwise(0)).alias("DATA_not_null"),
-            F.sum(F.when(F.col("dataset").isNull(), 1).otherwise(0)).alias("dataset_nulls"),
-            F.sum(F.when(F.col("outputformat").isNull(), 1).otherwise(0)).alias("outputformat_nulls"),
-            F.sum(F.when(F.col("DATA").isNull(), 1).otherwise(0)).alias("DATA_nulls")
+            F.sum(F.when(F.col("provider").isNull(), 1).otherwise(0)).alias("provider_null_cnt"),
+            F.sum(F.when(F.col("dataset").isNull(), 1).otherwise(0)).alias("dataset_null_cnt"),
+            F.sum(F.when(F.col("outputformat").isNull(), 1).otherwise(0)).alias("outputformat_null_cnt"),
+            F.sum(F.when(F.col("DATA").isNull(), 1).otherwise(0)).alias("DATA_null_cnt")
         )
         .withColumn("run_date", F.current_date())
         .withColumn("table_name", F.lit(t))
         .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
     )
 
-    dq_reasons = F.array_remove(F.array(
-        F.when((t != RULE1_EXCEPT) & (F.col("errorMessage_population_pct") > 2),
-               F.lit("ERROR_MESSAGE_PCT_GT_2")),
-        F.when((t not in RULE3_EXCEPT) & (F.col("dataset_nulls") > 0),
-               F.lit("DATASET_HAS_NULL")),
-        F.when((t not in RULE3_EXCEPT) & (F.col("outputformat_nulls") > 0),
-               F.lit("OUTPUTFORMAT_HAS_NULL")),
-        F.when(F.col("DATA_nulls") > 0, F.lit("DATA_HAS_NULL"))
-    ), F.lit(None))
-
-    final = (
-        agg
-        .withColumn("dq_fail_reasons", dq_reasons)
-        .withColumn("dq_status", F.when(F.size(dq_reasons) > 0, "FAIL").otherwise("PASS"))
-        .select([c.name for c in schema])
+    # =========================
+    # DQ RULES
+    # =========================
+    rule1 = F.when(
+        (F.lit(t) != RULE1_EXCEPT_TABLE) &
+        (F.col("errorMessage_population_pct") > 2),
+        F.lit("RULE1_errorMessage_pct_gt_2")
     )
 
-    results = final if results is None else results.unionByName(final)
+    rule2 = F.when(F.col("provider_null_cnt") > 0, F.lit("RULE2_provider_null"))
+
+    rule3 = F.when(
+        (~F.lit(t).isin(list(RULE3_EXCEPT_TABLES))) &
+        ((F.col("dataset_null_cnt") > 0) | (F.col("outputformat_null_cnt") > 0)),
+        F.lit("RULE3_dataset_or_outputformat_null")
+    )
+
+    rule4 = F.when(F.col("DATA_null_cnt") > 0, F.lit("RULE4_DATA_null"))
+
+    agg = (
+        agg
+        .withColumn(
+            "dq_fail_reasons",
+            F.array_remove(F.array(rule1, rule2, rule3, rule4), F.lit(None))
+        )
+        .withColumn(
+            "dq_status",
+            F.when(F.size("dq_fail_reasons") > 0, "FAIL").otherwise("PASS")
+        )
+        .select([f.name for f in schema.fields])
+    )
+
+    final_df = agg if final_df is None else final_df.unionByName(agg)
 
 # =========================
-# CREATE / WRITE / RETENTION
+# CREATE TARGET IF NEEDED
 # =========================
 if not target_exists:
     spark.createDataFrame([], schema).write.format("delta").saveAsTable(TARGET_TABLE)
 
-if is_first_run:
+# =========================
+# REFRESH + RETENTION
+# =========================
+if first_run:
     spark.sql(f"DELETE FROM {TARGET_TABLE}")
 else:
-    spark.sql(f"DELETE FROM {TARGET_TABLE} WHERE run_date = current_date()")
+    spark.sql(f"DELETE FROM {TARGET_TABLE} WHERE EHUBQUEUEDDATETSTAMP = current_date()")
 
-results.write.mode("append").format("delta").saveAsTable(TARGET_TABLE)
+final_df.write.mode("append").format("delta").saveAsTable(TARGET_TABLE)
 
-spark.sql(f"""
+# Keep only last 3 days
+spark.sql(
+    f"""
     DELETE FROM {TARGET_TABLE}
-    WHERE run_date < date_sub(current_date(), 2)
-""")
+    WHERE EHUBQUEUEDDATETSTAMP < date_sub(current_date(), 2)
+    """
+)
 
-display(spark.table(TARGET_TABLE))
+display(spark.table(TARGET_TABLE).orderBy("table_name", F.col("EHUBQUEUEDDATETSTAMP").desc()))
