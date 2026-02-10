@@ -1,37 +1,21 @@
-r1 = F.when(
-    (F.col("table_name") != RULE1_EXCEPT) &
-    (F.col("errorMessage_population_pct") > F.lit(2.0)),
-    F.lit("RULE1_errorMessage_pct_gt_2")
-)
-
-r2 = F.when(
-    F.col("provider_null_cnt") > 0,
-    F.lit("RULE2_provider_null")
-)
-
-r3 = F.when(
-    (~F.col("table_name").isin(list(RULE3_EXCEPT))) &
-    (
-        (F.col("dataset_null_cnt") > 0) |
-        (F.col("outputformat_null_cnt") > 0)
-    ),
-    F.lit("RULE3_dataset_or_outputformat_null")
-)
-
-r4 = F.when(
-    F.col("DATA_null_cnt") > 0,
-    F.lit("RULE4_DATA_null")
-)
-
-out = (
-    agg
-    .withColumn(
-        "dq_fail_reasons",
-        F.array_remove(F.array(r1, r2, r3, r4), F.lit(None))
+# =========================
+# REFRESH TARGET DATA
+# =========================
+if table_exists:
+    # Incremental run → refresh today only
+    spark.sql(
+        f"""
+        DELETE FROM {TARGET_TABLE}
+        WHERE EHUBQUEUEDDATESTAMP = current_date()
+        """
     )
-    .withColumn(
-        "dq_status",
-        F.when(F.size("dq_fail_reasons") > 0, F.lit("FAIL"))
-         .otherwise(F.lit("PASS"))
-    )
+else:
+    # First run → clean slate
+    spark.sql(f"DELETE FROM {TARGET_TABLE}")
+
+spark.sql(
+    f"""
+    DELETE FROM {TARGET_TABLE}
+    WHERE EHUBQUEUEDDATESTAMP < date_sub(current_date(), 2)
+    """
 )
