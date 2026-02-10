@@ -1,1 +1,43 @@
 .withColumn("table_name", F.lower(F.trim(F.lit(t))))
+
+
+agg = (
+    agg
+    .withColumn("table_name", F.lower(F.trim(F.lit(t))))
+    .withColumn("run_date", F.col(DATE_COL))
+    .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
+)
+
+
+r1 = F.when(
+    (F.col("errorMessage_population_pct") > F.lit(2.0)) &
+    (F.col("table_name") != F.lit(RULE1_EXCEPT)),
+    F.lit("RULE1_errorMessage_pct_gt_2")
+)
+
+
+agg = (
+    df.groupBy(DATE_COL)
+      .agg(
+          F.count("*").alias("total_records"),
+          F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)).alias("err_cnt"),
+          F.collect_set("provider").alias("provider_distinct_values"),
+          F.collect_set("dataset").alias("dataset_distinct_values"),
+          F.collect_set("outputformat").alias("outputformat_distinct_values"),
+          F.sum(F.when(F.col("DATA").isNotNull(), 1).otherwise(0)).alias("DATA_not_null")
+      )
+      .withColumn(
+          "errorMessage_population_pct",
+          F.round(
+              F.when(
+                  F.col("total_records") > 0,
+                  (F.col("err_cnt") * 100.0) / F.col("total_records")
+              ).otherwise(F.lit(0.0)),
+              2   # ← round to 2 decimal places
+          )
+      )
+      .withColumn("errorMessage_population_pct", F.col("errorMessage_population_pct").cast("double"))
+      .withColumn("table_name", F.lower(F.trim(F.lit(t))))
+      .withColumn("run_date", F.col(DATE_COL))
+      .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
+)
