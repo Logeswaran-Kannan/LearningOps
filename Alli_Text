@@ -1,34 +1,6 @@
-table_exists = spark.catalog.tableExists(TARGET_TABLE)
-
-is_first_run = (
-    (not table_exists) or
-    (table_exists and spark.table(TARGET_TABLE).count() == 0)
+agg = (
+    agg
+    .withColumn("table_name", F.lit(t))                # <-- REQUIRED for DQ
+    .withColumn("run_date", F.col(DATE_COL))
+    .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
 )
-
-start_date = (
-    F.date_sub(F.current_date(), 2)
-    if is_first_run
-    else F.current_date()
-)
-
-
-if not table_exists:
-    spark.createDataFrame([], SCHEMA) \
-         .write.format("delta") \
-         .saveAsTable(TARGET_TABLE)
-
-
-# =========================
-# REFRESH TARGET DATA
-# =========================
-if is_first_run:
-    # First run → full rebuild (last 3 days)
-    spark.sql(f"DELETE FROM {TARGET_TABLE}")
-else:
-    # Incremental run → refresh today only
-    spark.sql(
-        f"""
-        DELETE FROM {TARGET_TABLE}
-        WHERE EHUBQUEUEDDATESTAMP = current_date()
-        """
-    )
