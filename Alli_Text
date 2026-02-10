@@ -1,101 +1,322 @@
+# Databricks PySpark script: 30-min interval data profiling (last 3 days), incremental refresh (today only),
+# SLA flag, PASS/FAIL DQ rules, 3-day retention, and writes to core_bld.default (Delta table).
+
 from pyspark.sql import functions as F
-from datetime import date, timedelta
+from pyspark.sql import types as T
 
-SOURCE_SCHEMA = "core.mqs_athn_mtr"
-TARGET_TABLE  = "core_bld.default.monitoring_mqs_30min"
-
-TABLES = [
-    "dit_stop_quote",
-    "dit_quote_request",
-    "dit_precomp_response",
-    "dit_rating_response",
-    "dit_rating_request",
-    "dit_raw_enrichments",
-    "dit_cache_id",
-    "dit_rating_request_dvla_removed"
+# =========================
+# CONFIG
+# =========================
+tables = [
+    # Replace with your input tables (all share same schema)
+    "core.mqs_athn_mtr.table1",
+    "core.mqs_athn_mtr.table2",
+    "core.mqs_athn_mtr.table3",
 ]
 
-RETENTION_DAYS = 3
-SLA_THRESHOLD = 1   # set N here (e.g. <3, <5 etc.)
+TARGET_TABLE = "core_bld.default.monitoring_mqs_data_profile_30mins"
 
-today = date.today()
-start_date = today - timedelta(days=RETENTION_DAYS - 1)
+DATE_COL = "EHUBQUEUEDDATETSTAMP"   # date-only field (indexed)
+TS_COL_CANDIDATES = ["enqueuedTime", "enqueuedtime", "enQueuedTime", "EnqueuedTime"]  # timestamp field in your tables
 
-spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
-    run_date DATE,
-    interval_start TIMESTAMP,
-    interval_end TIMESTAMP,
-    message_type STRING,
-    message_count BIGINT,
-    is_sla_flag INT
-)
-USING DELTA
-""")
+# DQ rule exceptions
+RULE1_EXCEPT_TABLE = "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis"
+RULE3_EXCEPT_TABLES = {
+    "core.mqs_athn_mtr_views.vw_mqs_mot",
+    "core.mqs_athn_mtr_views.vw_mqs_mylicence",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis",
+}
 
-# Retention cleanup (always keep last 3 days only)
-spark.sql(f"""
-DELETE FROM {TARGET_TABLE}
-WHERE run_date < date_sub(current_date(), {RETENTION_DAYS - 1})
-""")
+# =========================
+# HELPERS
+# =========================
+def table_exists(full_name: str) -> bool:
+    try:
+        return spark.catalog.tableExists(full_name)
+    except Exception:
+        # some workspaces require db/table split
+        if "." in full_name:
+            parts = full_name.split(".")
+            if len(parts) >= 2:
+                db = ".".join(parts[:-1])
+                tbl = parts[-1]
+                return spark.catalog.tableExists(db, tbl)
+        return False
 
-# Detect first run (table empty)
-is_first_run = spark.table(TARGET_TABLE).limit(1).count() == 0
+def resolve_ts_col(df):
+    cols = set(df.columns)
+    for c in TS_COL_CANDIDATES:
+        if c in cols:
+            return c
+    # hard fallback: if none exists, we cannot form 30-min intervals reliably
+    raise ValueError(f"No timestamp column found. Tried: {TS_COL_CANDIDATES}. Available: {df.columns}")
+
+def floor_to_30min(ts_col):
+    # interval_start = timestamp floored to 30 minutes
+    # 1800 seconds = 30 minutes
+    return F.from_unixtime((F.unix_timestamp(ts_col) / F.lit(1800)).cast("long") * F.lit(1800)).cast("timestamp")
+
+def make_interval_grid(start_ts, end_ts):
+    # sequence(start, end, interval 30 minutes) then explode
+    return (
+        spark.sql(f"""
+          SELECT explode(sequence(
+            timestamp'{start_ts}',
+            timestamp'{end_ts}',
+            interval 30 minutes
+          )) AS interval_start
+        """)
+    )
+
+# =========================
+# DETERMINE RUN MODE
+# - First run (no table OR empty): build last 3 days (00:00 -> now)
+# - Incremental: rebuild today only (00:00 -> now)
+# =========================
+now_ts = spark.sql("select current_timestamp() as ts").collect()[0]["ts"]
+today = spark.sql("select current_date() as d").collect()[0]["d"]
+run_date = today
+
+target_exists = table_exists(TARGET_TABLE)
+
+is_first_run = True
+if target_exists:
+    try:
+        is_first_run = (spark.table(TARGET_TABLE).limit(1).count() == 0)
+    except Exception:
+        is_first_run = True
 
 if is_first_run:
-    interval_start_expr = f"timestamp('{start_date} 00:00:00')"
-    date_filter_expr = f"eHubQueuedDatestamp >= date_sub(current_date(), {RETENTION_DAYS - 1})"
+    scope_start_date = spark.sql("select date_sub(current_date(), 2) as d").collect()[0]["d"]  # last 3 days incl today
 else:
-    spark.sql(f"DELETE FROM {TARGET_TABLE} WHERE run_date = current_date()")
-    interval_start_expr = "timestamp(current_date())"
-    date_filter_expr = "eHubQueuedDatestamp = current_date()"
+    scope_start_date = today  # refresh only today
 
-intervals_df = (
-    spark.sql(f"""
-        SELECT explode(
-            sequence(
-                {interval_start_expr},
-                current_timestamp(),
-                interval 30 minutes
-            )
-        ) AS interval_start
-    """)
-    .withColumn("interval_end", F.expr("interval_start + interval 30 minutes"))
-    .withColumn("run_date", F.to_date("interval_start"))
-)
+# timestamps for the grid
+scope_start_ts = f"{scope_start_date} 00:00:00"
+scope_end_ts = now_ts.strftime("%Y-%m-%d %H:%M:%S")
 
-final_df = None
+interval_grid = make_interval_grid(scope_start_ts, scope_end_ts)
 
-for table in TABLES:
-    src_df = (
-        spark.table(f"{SOURCE_SCHEMA}.{table}")
-        .filter(date_filter_expr)
-        .select("enqueuedTime")
+# =========================
+# OUTPUT SCHEMA (stable)
+# =========================
+out_schema = T.StructType([
+    T.StructField("run_date", T.DateType(), False),
+    T.StructField("table_name", T.StringType(), False),
+    T.StructField("interval_start", T.TimestampType(), False),
+
+    T.StructField("total_records", T.LongType(), False),
+
+    T.StructField("mqsquoteid_not_null", T.LongType(), False),
+    T.StructField("mqsquoteid_distinct", T.LongType(), False),
+    T.StructField("timestamp_not_null", T.LongType(), False),
+
+    T.StructField("provider_distinct_values", T.ArrayType(T.StringType()), True),
+    T.StructField("dataset_distinct_values", T.ArrayType(T.StringType()), True),
+    T.StructField("outputformat_distinct_values", T.ArrayType(T.StringType()), True),
+
+    T.StructField("driverPRN_populated", T.LongType(), False),
+    T.StructField("driverPRN_null", T.LongType(), False),
+    T.StructField("driverPRN_population_pct", T.DoubleType(), False),
+
+    T.StructField("driverPRNMap_populated", T.LongType(), False),
+    T.StructField("driverPRNMap_null", T.LongType(), False),
+    T.StructField("driverPRNMap_population_pct", T.DoubleType(), False),
+
+    T.StructField("vehiclePRN_populated", T.LongType(), False),
+    T.StructField("vehiclePRN_null", T.LongType(), False),
+    T.StructField("vehiclePRN_population_pct", T.DoubleType(), False),
+
+    T.StructField("errorMessage_populated", T.LongType(), False),
+    T.StructField("errorMessage_null", T.LongType(), False),
+    T.StructField("errorMessage_population_pct", T.DoubleType(), False),
+
+    T.StructField("DATA_not_null", T.LongType(), False),
+    T.StructField("DATA_null", T.LongType(), False),
+
+    T.StructField("Is_sla_flag", T.IntegerType(), False),
+
+    # DQ results
+    T.StructField("dq_status", T.StringType(), False),   # PASS / FAIL
+    T.StructField("dq_fail_reasons", T.ArrayType(T.StringType()), True),
+])
+
+# =========================
+# BUILD PER-TABLE RESULTS (UNION ALL)
+# =========================
+all_results = None
+
+for t in tables:
+    df = spark.table(t)
+    ts_col = resolve_ts_col(df)
+
+    # Hard filter on indexed date column (last 3 days or today only)
+    df_f = (
+        df
+        .where(F.col(DATE_COL) >= F.lit(scope_start_date))
+        .where(F.col(DATE_COL) <= F.current_date())
+        # cap to "now" to satisfy "00:00 -> current time"
+        .where(F.col(ts_col) >= F.to_timestamp(F.lit(scope_start_ts)))
+        .where(F.col(ts_col) <= F.to_timestamp(F.lit(scope_end_ts)))
+        .withColumn("interval_start", floor_to_30min(F.col(ts_col)))
     )
 
-    agg_df = (
-        intervals_df
-        .join(
-            src_df,
-            (src_df.enqueuedTime >= intervals_df.interval_start) &
-            (src_df.enqueuedTime < intervals_df.interval_end),
-            "left"
+    # Aggregate metrics per 30-min interval
+    agg = (
+        df_f.groupBy("interval_start")
+        .agg(
+            F.count(F.lit(1)).alias("total_records"),
+
+            F.sum(F.when(F.col("MQSQuoteId").isNotNull(), F.lit(1)).otherwise(F.lit(0))).alias("mqsquoteid_not_null"),
+            F.countDistinct("MQSQuoteId").alias("mqsquoteid_distinct"),
+            F.sum(F.when(F.col(DATE_COL).isNotNull(), F.lit(1)).otherwise(F.lit(0))).alias("timestamp_not_null"),
+
+            # Distinct values (can include nulls; we also compute null-counts for DQ rules below)
+            F.collect_set(F.col("provider").cast("string")).alias("provider_distinct_values"),
+            F.collect_set(F.col("dataset").cast("string")).alias("dataset_distinct_values"),
+            F.collect_set(F.col("outputformat").cast("string")).alias("outputformat_distinct_values"),
+
+            F.sum(F.when(F.col("driverPRN").isNotNull(), 1).otherwise(0)).alias("driverPRN_populated"),
+            F.sum(F.when(F.col("driverPRN").isNull(), 1).otherwise(0)).alias("driverPRN_null"),
+
+            F.sum(F.when(F.col("driverPRNMap").isNotNull(), 1).otherwise(0)).alias("driverPRNMap_populated"),
+            F.sum(F.when(F.col("driverPRNMap").isNull(), 1).otherwise(0)).alias("driverPRNMap_null"),
+
+            F.sum(F.when(F.col("vehiclePRN").isNotNull(), 1).otherwise(0)).alias("vehiclePRN_populated"),
+            F.sum(F.when(F.col("vehiclePRN").isNull(), 1).otherwise(0)).alias("vehiclePRN_null"),
+
+            F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)).alias("errorMessage_populated"),
+            F.sum(F.when(F.col("errorMessage").isNull(), 1).otherwise(0)).alias("errorMessage_null"),
+
+            F.sum(F.when(F.col("DATA").isNotNull(), 1).otherwise(0)).alias("DATA_not_null"),
+            F.sum(F.when(F.col("DATA").isNull(), 1).otherwise(0)).alias("DATA_null"),
+
+            # Null presence checks for DQ rules
+            F.sum(F.when(F.col("provider").isNull(), 1).otherwise(0)).alias("provider_null_cnt"),
+            F.sum(F.when(F.col("dataset").isNull(), 1).otherwise(0)).alias("dataset_null_cnt"),
+            F.sum(F.when(F.col("outputformat").isNull(), 1).otherwise(0)).alias("outputformat_null_cnt"),
         )
-        .groupBy("run_date", "interval_start", "interval_end")
-        .agg(F.count("enqueuedTime").alias("message_count"))
-        .withColumn("message_type", F.lit(table))
+        # percentages (safe when total_records=0)
+        .withColumn("driverPRN_population_pct",
+                    F.when(F.col("total_records") > 0, (F.col("driverPRN_populated") * 100.0) / F.col("total_records")).otherwise(F.lit(0.0)))
+        .withColumn("driverPRNMap_population_pct",
+                    F.when(F.col("total_records") > 0, (F.col("driverPRNMap_populated") * 100.0) / F.col("total_records")).otherwise(F.lit(0.0)))
+        .withColumn("vehiclePRN_population_pct",
+                    F.when(F.col("total_records") > 0, (F.col("vehiclePRN_populated") * 100.0) / F.col("total_records")).otherwise(F.lit(0.0)))
+        .withColumn("errorMessage_population_pct",
+                    F.when(F.col("total_records") > 0, (F.col("errorMessage_populated") * 100.0) / F.col("total_records")).otherwise(F.lit(0.0)))
+    )
+
+    # Join to interval grid to ensure zero-count intervals exist (SLA)
+    # For missing intervals, fill metrics as zeros/empty arrays.
+    base = (
+        interval_grid
+        .join(agg, on="interval_start", how="left")
+        .withColumn("run_date", F.lit(run_date).cast("date"))
+        .withColumn("table_name", F.lit(t))
+        .fillna({
+            "total_records": 0,
+            "mqsquoteid_not_null": 0,
+            "mqsquoteid_distinct": 0,
+            "timestamp_not_null": 0,
+
+            "driverPRN_populated": 0, "driverPRN_null": 0,
+            "driverPRNMap_populated": 0, "driverPRNMap_null": 0,
+            "vehiclePRN_populated": 0, "vehiclePRN_null": 0,
+            "errorMessage_populated": 0, "errorMessage_null": 0,
+            "DATA_not_null": 0, "DATA_null": 0,
+
+            "provider_null_cnt": 0, "dataset_null_cnt": 0, "outputformat_null_cnt": 0,
+
+            "driverPRN_population_pct": 0.0,
+            "driverPRNMap_population_pct": 0.0,
+            "vehiclePRN_population_pct": 0.0,
+            "errorMessage_population_pct": 0.0,
+        })
+        .withColumn("provider_distinct_values",
+                    F.when(F.col("provider_distinct_values").isNull(), F.array().cast("array<string>")).otherwise(F.col("provider_distinct_values")))
+        .withColumn("dataset_distinct_values",
+                    F.when(F.col("dataset_distinct_values").isNull(), F.array().cast("array<string>")).otherwise(F.col("dataset_distinct_values")))
+        .withColumn("outputformat_distinct_values",
+                    F.when(F.col("outputformat_distinct_values").isNull(), F.array().cast("array<string>")).otherwise(F.col("outputformat_distinct_values")))
+        .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, F.lit(1)).otherwise(F.lit(0)).cast("int"))
+    )
+
+    # =========================
+    # DQ RULES -> PASS/FAIL
+    # =========================
+    # Rule 1: errorMessage_population_pct <= 2%, except lexis view
+    rule1_fail = F.when(
+        (F.lit(t) != F.lit(RULE1_EXCEPT_TABLE)) & (F.col("errorMessage_population_pct") > F.lit(2.0)),
+        F.lit("RULE1_errorMessage_pct_gt_2")
+    )
+
+    # Rule 2: provider has ANY null -> fail
+    rule2_fail = F.when(F.col("provider_null_cnt") > 0, F.lit("RULE2_provider_has_null"))
+
+    # Rule 3: dataset/outputformat nulls not allowed, except specific tables
+    rule3_applicable = F.lit(t).isin([x for x in RULE3_EXCEPT_TABLES]) == F.lit(False)
+    rule3_fail_dataset = F.when(rule3_applicable & (F.col("dataset_null_cnt") > 0), F.lit("RULE3_dataset_has_null"))
+    rule3_fail_output = F.when(rule3_applicable & (F.col("outputformat_null_cnt") > 0), F.lit("RULE3_outputformat_has_null"))
+
+    # Rule 4: DATA should not be null for any tables
+    rule4_fail = F.when(F.col("DATA_null") > 0, F.lit("RULE4_DATA_has_null"))
+
+    base = (
+        base
         .withColumn(
-            "is_sla_flag",
-            F.when(F.col("message_count") < SLA_THRESHOLD, 1).otherwise(0)
+            "dq_fail_reasons",
+            F.array_remove(
+                F.array(rule1_fail, rule2_fail, rule3_fail_dataset, rule3_fail_output, rule4_fail),
+                F.lit(None)
+            )
         )
+        .withColumn("dq_status", F.when(F.size(F.col("dq_fail_reasons")) > 0, F.lit("FAIL")).otherwise(F.lit("PASS")))
     )
 
-    final_df = agg_df if final_df is None else final_df.unionByName(agg_df)
+    # Select final columns in stable order
+    final = base.select([F.col(f.name) for f in out_schema.fields])
 
-(
-    final_df
-    .write
-    .mode("append")
-    .format("delta")
-    .saveAsTable(TARGET_TABLE)
-)
+    all_results = final if all_results is None else all_results.unionByName(final)
+
+# =========================
+# CREATE TARGET TABLE IF NOT EXISTS
+# =========================
+if not target_exists:
+    empty = spark.createDataFrame([], out_schema)
+    (empty.write.format("delta").mode("overwrite").saveAsTable(TARGET_TABLE))
+
+# =========================
+# WRITE STRATEGY
+# - First run: rebuild last 3 days -> delete scope then append
+# - Incremental: rebuild today only -> delete today then append
+# =========================
+if is_first_run:
+    # delete last 3 days in target (safety), then append rebuilt
+    spark.sql(f"""
+      DELETE FROM {TARGET_TABLE}
+      WHERE interval_start >= date_sub(current_date(), 2)
+    """)
+else:
+    # delete only today (00:00 -> end) then append rebuilt
+    spark.sql(f"""
+      DELETE FROM {TARGET_TABLE}
+      WHERE interval_start >= current_date()
+    """)
+
+(all_results
+ .write
+ .format("delta")
+ .mode("append")
+ .saveAsTable(TARGET_TABLE))
+
+# =========================
+# 3-DAY RETENTION
+# =========================
+spark.sql(f"""
+  DELETE FROM {TARGET_TABLE}
+  WHERE interval_start < date_sub(current_date(), 2)
+""")
+
+# Optional: show latest output
+display(spark.table(TARGET_TABLE).orderBy(F.col("table_name"), F.col("interval_start").desc()).limit(200))
