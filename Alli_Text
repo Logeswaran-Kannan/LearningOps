@@ -1,6 +1,198 @@
-agg = (
-    agg
-    .withColumn("table_name", F.lit(t))                # <-- REQUIRED for DQ
-    .withColumn("run_date", F.col(DATE_COL))
-    .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+
+# =====================================================
+# CONFIG
+# =====================================================
+TABLES = [
+    "core.mqs_athn_mtr_views.vw_mqs_experian_automotive",
+    "core.mqs_athn_mtr_views.vw_mqs_experian_creditscore",
+    "core.mqs_athn_mtr_views.vw_mqs_experian_cue",
+    "core.mqs_athn_mtr_views.vw_mqs_experian_cue_migrated",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_emailage",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_emailage_migrated",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_header",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_policyinsightsncd",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_policyinsightsncd_migrated",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_quoteintelligence",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_quoteintelligence_migrated",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_riskinsights",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis_riskinsights_migrated",
+    "core.mqs_athn_mtr_views.vw_mqs_mot",
+    "core.mqs_athn_mtr_views.vw_mqs_mylicence",
+    "core.mqs_athn_mtr_views.vw_mqs_vrnlookup_hri",
+    "core.mqs_athn_mtr_views.vw_mqs_vrnlookup_vfs",
+    "core.mqs_athn_mtr_views.vw_mqs_watchlist_personcapstones",
+    "core.mqs_athn_mtr_views.vw_mqs_watchlist_vehiclecapstones"
+]
+
+TARGET_TABLE = "core_bld.default.monitoring_mqs_data_profile_daily"
+DATE_COL = "EHUBQUEUEDDATESTAMP"
+
+RULE1_EXCEPT = "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis"
+RULE3_EXCEPT = {
+    "core.mqs_athn_mtr_views.vw_mqs_mot",
+    "core.mqs_athn_mtr_views.vw_mqs_mylicence",
+    "core.mqs_athn_mtr_views.vw_mqs_lexis_nexis"
+}
+
+# =====================================================
+# TARGET SCHEMA (LOCKED)
+# =====================================================
+SCHEMA = T.StructType([
+    T.StructField("run_date", T.DateType(), False),
+    T.StructField("table_name", T.StringType(), False),
+    T.StructField("EHUBQUEUEDDATESTAMP", T.DateType(), False),
+    T.StructField("total_records", T.LongType(), False),
+    T.StructField("errorMessage_population_pct", T.DoubleType(), False),
+    T.StructField("provider_distinct_values", T.ArrayType(T.StringType()), True),
+    T.StructField("dataset_distinct_values", T.ArrayType(T.StringType()), True),
+    T.StructField("outputformat_distinct_values", T.ArrayType(T.StringType()), True),
+    T.StructField("DATA_not_null", T.LongType(), False),
+    T.StructField("Is_sla_flag", T.IntegerType(), False),
+    T.StructField("dq_status", T.StringType(), False),
+    T.StructField("dq_fail_reasons", T.ArrayType(T.StringType()), True)
+])
+
+# =====================================================
+# FIRST RUN DETECTION
+# =====================================================
+table_exists = spark.catalog.tableExists(TARGET_TABLE)
+is_first_run = (not table_exists) or (table_exists and spark.table(TARGET_TABLE).count() == 0)
+
+start_date = (
+    F.date_sub(F.current_date(), 2)
+    if is_first_run
+    else F.current_date()
+)
+
+# =====================================================
+# BUILD METRICS (NO DQ HERE)
+# =====================================================
+final_df = None
+
+for t in TABLES:
+
+    df = (
+        spark.table(t)
+        .filter(F.col(DATE_COL) >= start_date)
+        .filter(F.col(DATE_COL) <= F.current_date())
+    )
+
+    agg = (
+        df.groupBy(DATE_COL)
+        .agg(
+            F.count("*").alias("total_records"),
+            F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)).alias("err_cnt"),
+            F.collect_set("provider").alias("provider_distinct_values"),
+            F.collect_set("dataset").alias("dataset_distinct_values"),
+            F.collect_set("outputformat").alias("outputformat_distinct_values"),
+            F.sum(F.when(F.col("DATA").isNotNull(), 1).otherwise(0)).alias("DATA_not_null")
+        )
+        .withColumn(
+            "errorMessage_population_pct",
+            F.when(
+                F.col("total_records") > 0,
+                (F.col("err_cnt") * 100.0) / F.col("total_records")
+            ).otherwise(F.lit(0.0))
+        )
+        .withColumn("errorMessage_population_pct", F.col("errorMessage_population_pct").cast("double"))
+        .withColumn("table_name", F.lit(t))
+        .withColumn("run_date", F.col(DATE_COL))
+        .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
+        .select(
+            "run_date",
+            "table_name",
+            DATE_COL,
+            "total_records",
+            "errorMessage_population_pct",
+            "provider_distinct_values",
+            "dataset_distinct_values",
+            "outputformat_distinct_values",
+            "DATA_not_null",
+            "Is_sla_flag"
+        )
+    )
+
+    final_df = agg if final_df is None else final_df.unionByName(agg)
+
+# =====================================================
+# APPLY DQ RULES (ONCE, AFTER UNION)
+# =====================================================
+final_df = final_df.withColumn(
+    "dq_fail_reasons",
+    F.array_remove(
+        F.array(
+            # Rule 1
+            F.when(
+                (F.col("table_name") != RULE1_EXCEPT) &
+                (F.col("errorMessage_population_pct") > 2),
+                F.lit("RULE1_errorMessage_pct_gt_2")
+            ),
+            # Rule 2
+            F.when(
+                (F.col("provider_distinct_values").isNull()) |
+                (F.size(F.col("provider_distinct_values")) == 0),
+                F.lit("RULE2_provider_missing")
+            ),
+            # Rule 3
+            F.when(
+                (~F.col("table_name").isin(list(RULE3_EXCEPT))) &
+                (
+                    (F.size(F.col("dataset_distinct_values")) == 0) |
+                    (F.size(F.col("outputformat_distinct_values")) == 0)
+                ),
+                F.lit("RULE3_dataset_or_outputformat_missing")
+            ),
+            # Rule 4
+            F.when(
+                F.col("DATA_not_null") == 0,
+                F.lit("RULE4_DATA_missing")
+            )
+        ),
+        F.lit(None)
+    )
+)
+
+final_df = final_df.withColumn(
+    "dq_status",
+    F.when(F.size("dq_fail_reasons") > 0, "FAIL").otherwise("PASS")
+)
+
+final_df = final_df.select([c.name for c in SCHEMA.fields])
+
+# =====================================================
+# CREATE TARGET IF NEEDED
+# =====================================================
+if not table_exists:
+    spark.createDataFrame([], SCHEMA) \
+         .write.format("delta") \
+         .saveAsTable(TARGET_TABLE)
+
+# =====================================================
+# REFRESH + RETENTION
+# =====================================================
+if is_first_run:
+    spark.sql(f"DELETE FROM {TARGET_TABLE}")
+else:
+    spark.sql(
+        f"""
+        DELETE FROM {TARGET_TABLE}
+        WHERE EHUBQUEUEDDATESTAMP = current_date()
+        """
+    )
+
+final_df.write.mode("append").format("delta").saveAsTable(TARGET_TABLE)
+
+spark.sql(
+    f"""
+    DELETE FROM {TARGET_TABLE}
+    WHERE EHUBQUEUEDDATESTAMP < date_sub(current_date(), 2)
+    """
+)
+
+display(
+    spark.table(TARGET_TABLE)
+         .orderBy("table_name", F.col("EHUBQUEUEDDATESTAMP").desc())
 )
