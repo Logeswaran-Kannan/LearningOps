@@ -1,43 +1,223 @@
-.withColumn("table_name", F.lower(F.trim(F.lit(t))))
+from pyspark.sql import functions as F
 
+# ============================================================
+# PARAMETERS
+# ============================================================
+WINDOW_HOURS   = 48
+WINDOW_SECONDS = WINDOW_HOURS * 3600
 
-agg = (
-    agg
-    .withColumn("table_name", F.lower(F.trim(F.lit(t))))
-    .withColumn("run_date", F.col(DATE_COL))
-    .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
+CSV_TBL    = "core_bld.radar_live.dlt_bronze_recon_athena_source"
+ATHENA_TBL = "core_bld.radar_live.dlt_bronze_recon_athena_stream"
+MQS_TBL    = "core_bld.radar_live.dlt_bronze_recon_mqs"
+
+# ============================================================
+# HELPER: Normalize MQS Quote Id
+# ============================================================
+def normalize_quote_id(col):
+    c = F.trim(col)
+    looks_like_guid = (F.length(c) == 36) & (F.instr(c, "-") > 0)
+
+    return (
+        F.when(c.isNull() | (c == ""), None)
+         .when(F.upper(c).startswith("MQS-"), c)
+         .when(looks_like_guid, F.concat(F.lit("MQS-"), c))
+         .otherwise(c)
+    )
+
+# ============================================================
+# LOAD TABLES
+# ============================================================
+csv_df = spark.table(CSV_TBL)
+ath_df = spark.table(ATHENA_TBL)
+mqs_df = spark.table(MQS_TBL)
+
+# ============================================================
+# CSV STANDARDIZATION (KEEP ALL CSV COLUMNS)
+# ============================================================
+csv_std = (
+    csv_df
+    .withColumn("request_ts", F.to_timestamp("requestDate"))
+    .withColumn("requestDate", F.to_date("request_ts"))
+    .withColumn("quoteId_norm", normalize_quote_id(F.col("mqsQuoteId")))
+    .withColumn(
+        "csv_quote_is_null",
+        F.col("mqsQuoteId").isNull() | (F.trim(F.col("mqsQuoteId")) == "")
+    )
+    .withColumn(
+        "csv_quote_missing_prefix",
+        (~F.col("csv_quote_is_null")) &
+        (~F.upper(F.col("mqsQuoteId")).startswith("MQS-"))
+    )
+    .withColumn("csv_row_id", F.monotonically_increasing_id())
 )
 
-
-r1 = F.when(
-    (F.col("errorMessage_population_pct") > F.lit(2.0)) &
-    (F.col("table_name") != F.lit(RULE1_EXCEPT)),
-    F.lit("RULE1_errorMessage_pct_gt_2")
+# ============================================================
+# ATHENA STANDARDIZATION (QUOTE-BASED)
+# ============================================================
+ath_std = (
+    ath_df
+    .select(
+        F.col("athenaStreamInteractionId").alias("interactionId"),
+        normalize_quote_id(F.col("athenaStreamMqsQuoteId")).alias("quoteId_norm"),
+        F.to_timestamp("athenaStreamQuoteDateTime").alias("athena_ts")
+    )
+    .dropDuplicates()
 )
 
-
-agg = (
-    df.groupBy(DATE_COL)
-      .agg(
-          F.count("*").alias("total_records"),
-          F.sum(F.when(F.col("errorMessage").isNotNull(), 1).otherwise(0)).alias("err_cnt"),
-          F.collect_set("provider").alias("provider_distinct_values"),
-          F.collect_set("dataset").alias("dataset_distinct_values"),
-          F.collect_set("outputformat").alias("outputformat_distinct_values"),
-          F.sum(F.when(F.col("DATA").isNotNull(), 1).otherwise(0)).alias("DATA_not_null")
-      )
-      .withColumn(
-          "errorMessage_population_pct",
-          F.round(
-              F.when(
-                  F.col("total_records") > 0,
-                  (F.col("err_cnt") * 100.0) / F.col("total_records")
-              ).otherwise(F.lit(0.0)),
-              2   # ← round to 2 decimal places
-          )
-      )
-      .withColumn("errorMessage_population_pct", F.col("errorMessage_population_pct").cast("double"))
-      .withColumn("table_name", F.lower(F.trim(F.lit(t))))
-      .withColumn("run_date", F.col(DATE_COL))
-      .withColumn("Is_sla_flag", F.when(F.col("total_records") == 0, 1).otherwise(0))
+# ============================================================
+# ATHENA STANDARDIZATION (INTERACTION-ONLY)
+# ============================================================
+ath_interaction_std = (
+    ath_df
+    .select(
+        F.col("athenaStreamInteractionId").alias("interactionId"),
+        F.to_timestamp("athenaStreamQuoteDateTime").alias("athena_ts")
+    )
+    .dropDuplicates(["interactionId"])
 )
+
+# ============================================================
+# MQS STANDARDIZATION
+# ============================================================
+mqs_std = (
+    mqs_df
+    .select(
+        F.col("mQSInteractionId").alias("interactionId"),
+        normalize_quote_id(F.col("mQSQuoteId")).alias("quoteId_norm"),
+        F.to_timestamp("mQSDateTime").alias("mqs_ts")
+    )
+    .dropDuplicates()
+)
+
+# ============================================================
+# ATHENA MATCHING (QUOTE-BASED)
+# ============================================================
+ath_match = (
+    csv_std
+    .filter(F.col("csv_quote_is_null") == False)
+    .join(ath_std, ["interactionId", "quoteId_norm"], "left")
+    .withColumn(
+        "athena_abs_diff_sec",
+        F.abs(F.col("athena_ts").cast("long") - F.col("request_ts").cast("long"))
+    )
+    .groupBy("csv_row_id")
+    .agg(
+        F.max(F.when(F.col("athena_ts").isNotNull(), 1).otherwise(0)).alias("athena_exists"),
+        F.max(F.when(F.col("athena_abs_diff_sec") <= WINDOW_SECONDS, 1).otherwise(0))
+            .alias("athena_in_window"),
+        F.expr("min_by(athena_ts, athena_abs_diff_sec)").alias("athena_closest_ts")
+    )
+)
+
+# ============================================================
+# ATHENA MATCHING (INTERACTION-ONLY FOR CSV QUOTE NULL)
+# ============================================================
+ath_interaction_match = (
+    csv_std
+    .filter(F.col("csv_quote_is_null") == True)
+    .join(ath_interaction_std, ["interactionId"], "left")
+    .select(
+        "csv_row_id",
+        F.when(F.col("athena_ts").isNotNull(), 1).otherwise(0)
+         .alias("athena_interaction_exists")
+    )
+)
+
+# ============================================================
+# MQS MATCHING
+# ============================================================
+mqs_match = (
+    csv_std
+    .join(mqs_std, ["interactionId", "quoteId_norm"], "left")
+    .withColumn(
+        "mqs_abs_diff_sec",
+        F.abs(F.col("mqs_ts").cast("long") - F.col("request_ts").cast("long"))
+    )
+    .groupBy("csv_row_id")
+    .agg(
+        F.max(F.when(F.col("mqs_ts").isNotNull(), 1).otherwise(0)).alias("mqs_exists"),
+        F.max(F.when(F.col("mqs_abs_diff_sec") <= WINDOW_SECONDS, 1).otherwise(0))
+            .alias("mqs_in_window"),
+        F.expr("min_by(mqs_ts, mqs_abs_diff_sec)").alias("mqs_closest_ts")
+    )
+)
+
+# ============================================================
+# FINAL RECONCILIATION TABLE
+# ============================================================
+final_recon = (
+    csv_std
+    .join(ath_match, "csv_row_id", "left")
+    .join(mqs_match, "csv_row_id", "left")
+    .join(ath_interaction_match, "csv_row_id", "left")
+    # ---------------- SCENARIO FLAGS ----------------
+    .withColumn(
+        "is_matched_both_in_window",
+        F.when((F.col("athena_in_window") == 1) & (F.col("mqs_in_window") == 1), 1).otherwise(0)
+    )
+    .withColumn(
+        "is_matched_both_backdated",
+        F.when(
+            (F.col("athena_exists") == 1) & (F.col("mqs_exists") == 1) &
+            ((F.col("athena_in_window") == 0) | (F.col("mqs_in_window") == 0)),
+            1
+        ).otherwise(0)
+    )
+    .withColumn(
+        "is_athena_only",
+        F.when((F.col("athena_exists") == 1) & (F.col("mqs_exists") == 0), 1).otherwise(0)
+    )
+    .withColumn(
+        "is_mqs_only",
+        F.when((F.col("athena_exists") == 0) & (F.col("mqs_exists") == 1), 1).otherwise(0)
+    )
+    .withColumn(
+        "is_missing_both",
+        F.when(
+            (F.col("athena_exists") == 0) &
+            (F.col("mqs_exists") == 0) &
+            (F.col("csv_quote_is_null") == False),
+            1
+        ).otherwise(0)
+    )
+    .withColumn("is_csv_quote_null", F.when(F.col("csv_quote_is_null"), 1).otherwise(0))
+    .withColumn("is_csv_missing_prefix", F.when(F.col("csv_quote_missing_prefix"), 1).otherwise(0))
+    .withColumn(
+        "is_csv_quote_null_athena_hit",
+        F.when(
+            (F.col("csv_quote_is_null") == True) &
+            (F.col("athena_interaction_exists") == 1),
+            1
+        ).otherwise(0)
+    )
+    .withColumn(
+        "is_csv_quote_null_athena_miss",
+        F.when(
+            (F.col("csv_quote_is_null") == True) &
+            (F.coalesce(F.col("athena_interaction_exists"), F.lit(0)) == 0),
+            1
+        ).otherwise(0)
+    )
+)
+
+# ============================================================
+# SAFE FILL FOR INDICATORS ONLY
+# ============================================================
+indicator_cols = [
+    "athena_exists", "athena_in_window",
+    "mqs_exists", "mqs_in_window",
+    "athena_interaction_exists",
+    "is_matched_both_in_window",
+    "is_matched_both_backdated",
+    "is_athena_only",
+    "is_mqs_only",
+    "is_missing_both",
+    "is_csv_quote_null",
+    "is_csv_missing_prefix",
+    "is_csv_quote_null_athena_hit",
+    "is_csv_quote_null_athena_miss"
+]
+
+final_recon = final_recon.fillna(0, subset=indicator_cols)
+
+final_recon.createOrReplaceTempView("recon_indicator_row_level")
