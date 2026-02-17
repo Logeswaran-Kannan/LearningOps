@@ -3,18 +3,14 @@ WITH bounds AS (
     date_trunc('day', current_timestamp()) AS day_start,
     current_timestamp()                   AS now_ts
 ),
-
 latest_interval AS (
-  -- Only consider today’s intervals and <= now
   SELECT MAX(e.interval_end) AS max_interval
   FROM core_bld.default.monitoring_ehub_30min_metrics e
   CROSS JOIN bounds b
   WHERE e.interval_end >= b.day_start
     AND e.interval_end <= b.now_ts
 ),
-
 ehub_latest AS (
-  -- Reduce EHUB to ONLY latest interval rows
   SELECT
     e.run_date,
     e.interval_end,
@@ -26,9 +22,7 @@ ehub_latest AS (
     ON e.interval_end = l.max_interval
   WHERE e.message_type <> 'ALL'
 ),
-
 bronze_latest AS (
-  -- Reduce Bronze to ONLY latest interval rows, map message types once
   SELECT
     CASE
       WHEN message_type = 'dlt_quote_request' THEN 'mqs-quote-request'
@@ -47,32 +41,19 @@ bronze_latest AS (
   FROM core_bld.default.monitoring_mqs_bronze_30min b
   JOIN latest_interval l
     ON b.interval_end = l.max_interval
+),
+breaches AS (
+  SELECT
+    e.run_date,
+    e.interval_end,
+    e.message_type_link
+  FROM ehub_latest e
+  LEFT JOIN bronze_latest b
+    ON e.message_type_link = b.message_type_link
+   AND e.interval_end      = b.interval_end
+  WHERE e.ehub_sla = 1
+     OR COALESCE(b.is_sla_flag,0) = 1
 )
 
-SELECT
-  e.run_date,
-  e.interval_end,
-  e.message_type_link,
-
-  e.ehub_count,
-  e.ehub_sla,
-
-  COALESCE(b.message_count, 0) AS bronze_count,
-  COALESCE(b.is_sla_flag, 0)   AS bronze_sla,
-
-  e.ehub_count - COALESCE(b.message_count, 0) AS count_difference,
-
-  CASE
-    WHEN e.ehub_sla = 1 AND COALESCE(b.is_sla_flag,0) = 1 THEN 'EHUB & BRONZE'
-    WHEN e.ehub_sla = 1 THEN 'EHUB'
-    WHEN COALESCE(b.is_sla_flag,0) = 1 THEN 'BRONZE'
-  END AS breach_source
-
-FROM ehub_latest e
-LEFT JOIN bronze_latest b
-  ON e.message_type_link = b.message_type_link
- AND e.interval_end      = b.interval_end
-
--- Return rows ONLY when breached (so alert triggers only on breach)
-WHERE e.ehub_sla = 1
-   OR COALESCE(b.is_sla_flag,0) = 1
+SELECT COUNT(*) AS breach_count
+FROM breaches;
