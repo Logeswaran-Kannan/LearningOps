@@ -1,92 +1,84 @@
 WITH bounds AS (
-  SELECT
-    date_trunc('day', current_timestamp()) AS day_start,
-    current_timestamp()                   AS now_ts
+    SELECT date_trunc('day', current_timestamp()) AS day_start
 ),
 
 latest_interval AS (
-  SELECT MAX(e.interval_end) AS max_interval
-  FROM core_bld.default.monitoring_ehub_30min_metrics e
-  CROSS JOIN bounds b
-  WHERE e.interval_end >= b.day_start
-    AND e.interval_end <= b.now_ts
+    SELECT MAX(e.interval_end) AS max_interval
+    FROM core_bld.default.monitoring_ehub_30min_metrics e
+    JOIN bounds b
+      ON e.interval_end >= b.day_start
 ),
 
-ehub_latest AS (
-  SELECT
+bronze_mapped AS (
+    SELECT 
+        CASE 
+            WHEN message_type = 'dlt_quote_request' THEN 'mqs-quote-request'
+            WHEN message_type = 'dlt_precomp_response' THEN 'precomp-response'
+            WHEN message_type = 'dlt_rating_request' THEN 'rating-request'
+            WHEN message_type = 'dlt_rating_response' THEN 'rating-response'
+            WHEN message_type = 'dlt_cache_id' THEN 'quote-cache-id'
+            WHEN message_type = 'dlt_stop_quote' THEN 'stop-quote'
+            WHEN message_type = 'dlt_rating_request_dvla_removed' THEN 'dlt_rating_request_dvla_removed'
+            WHEN message_type = 'dlt_raw_enrichments' THEN 'dlt_raw_enrichments'
+            ELSE 'others'
+        END AS message_type_link,
+        interval_end,
+        message_count,
+        is_sla_flag
+    FROM core_bld.default.monitoring_mqs_bronze_30min
+),
+
+interaction_agg AS (
+    -- Aggregate interaction at interval level
+    SELECT 
+        interval_start,
+        SUM(total_count) AS total_interaction_count
+    FROM core_bld.default.monitoring_mqs_interaction_status
+    GROUP BY interval_start
+)
+
+SELECT
     e.run_date,
     e.interval_end,
     e.message_type AS message_type_link,
+
+    -- EHUB
     e.message_count AS ehub_count,
-    e.is_sla_breach AS ehub_sla
-  FROM core_bld.default.monitoring_ehub_30min_metrics e
-  JOIN latest_interval l
-    ON e.interval_end = l.max_interval
-  WHERE e.message_type <> 'ALL'
-),
+    e.is_sla_breach AS ehub_sla,
 
-bronze_latest AS (
-  SELECT
+    -- Bronze
+    COALESCE(b.message_count,0) AS bronze_count,
+    COALESCE(b.is_sla_flag,0)   AS bronze_sla,
+
+    -- Difference
+    e.message_count - COALESCE(b.message_count,0) AS count_difference,
+
+    -- Maintain SAME column name
     CASE
-      WHEN message_type = 'dlt_quote_request' THEN 'mqs-quote-request'
-      WHEN message_type = 'dlt_precomp_response' THEN 'precomp-response'
-      WHEN message_type = 'dlt_rating_request' THEN 'rating-request'
-      WHEN message_type = 'dlt_rating_response' THEN 'rating-response'
-      WHEN message_type = 'dlt_cache_id' THEN 'quote-cache-id'
-      WHEN message_type = 'dlt_stop_quote' THEN 'stop-quote'
-      WHEN message_type = 'dlt_rating_request_dvla_removed' THEN 'dlt_rating_request_dvla_removed'
-      WHEN message_type = 'dlt_raw_enrichments' THEN 'dlt_raw_enrichments'
-      ELSE 'others'
-    END AS message_type_link,
-    interval_end,
-    message_count,
-    is_sla_flag
-  FROM core_bld.default.monitoring_mqs_bronze_30min b
-  JOIN latest_interval l
-    ON b.interval_end = l.max_interval
-),
+        WHEN e.is_sla_breach = 1 
+             AND COALESCE(b.is_sla_flag,0) = 1 THEN 'EHUB & BRONZE'
+        WHEN e.is_sla_breach = 1 THEN 'EHUB'
+        WHEN COALESCE(b.is_sla_flag,0) = 1 THEN 'BRONZE'
+        WHEN COALESCE(i.total_interaction_count,0) = 0 THEN 'INTERACTION'
+    END AS breach_source
 
-interaction_latest AS (
-  -- Interaction table is interval-level (not message_type level)
-  -- Breach rule: SUM(total_count) = 0 for the latest interval
-  SELECT
-    i.interval_start,
-    SUM(COALESCE(i.total_count,0)) AS interaction_total_count
-  FROM core_bld.default.monitoring_mqs_interaction_status i
-  JOIN latest_interval l
-    ON i.interval_start = l.max_interval
-  GROUP BY i.interval_start
-),
+FROM core_bld.default.monitoring_ehub_30min_metrics e
 
-breaches AS (
-  -- EHUB/Bronze breaches at message_type_link level
-  SELECT
-    e.interval_end,
-    e.message_type_link,
-    CASE WHEN e.ehub_sla = 1 THEN 1 ELSE 0 END AS ehub_breach,
-    CASE WHEN COALESCE(b.is_sla_flag,0) = 1 THEN 1 ELSE 0 END AS bronze_breach,
-    0 AS interaction_breach
-  FROM ehub_latest e
-  LEFT JOIN bronze_latest b
-    ON e.message_type_link = b.message_type_link
-   AND e.interval_end      = b.interval_end
-  WHERE e.ehub_sla = 1
-     OR COALESCE(b.is_sla_flag,0) = 1
+LEFT JOIN bronze_mapped b
+    ON e.message_type = b.message_type_link
+   AND e.interval_end = b.interval_end
 
-  UNION ALL
+LEFT JOIN interaction_agg i
+    ON e.interval_end = i.interval_start
 
-  -- Interaction breach as a single row (interval-level)
-  SELECT
-    l.max_interval AS interval_end,
-    'INTERACTION_TOTAL' AS message_type_link,
-    0 AS ehub_breach,
-    0 AS bronze_breach,
-    CASE WHEN COALESCE(x.interaction_total_count,0) = 0 THEN 1 ELSE 0 END AS interaction_breach
-  FROM latest_interval l
-  LEFT JOIN interaction_latest x
-    ON x.interval_start = l.max_interval
-  WHERE COALESCE(x.interaction_total_count,0) = 0
+JOIN latest_interval l
+    ON e.interval_end = l.max_interval
+
+WHERE e.message_type <> 'ALL'
+
+-- Only return rows when ANY breach exists
+AND (
+       e.is_sla_breach = 1
+    OR COALESCE(b.is_sla_flag,0) = 1
+    OR COALESCE(i.total_interaction_count,0) = 0
 )
-
-SELECT COUNT(*) AS breach_count
-FROM breaches;
