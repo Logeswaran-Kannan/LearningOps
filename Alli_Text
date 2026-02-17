@@ -1,120 +1,25 @@
+WITH latest_interval AS (
+    SELECT MAX(interval_end) AS max_interval
+    FROM core_bld.default.monitoring_ehub_30min_metrics
+)
+
 SELECT
-    run_date,
-    table_name,
-    EHUBQUEUEDDATESTAMP,
-    total_records,
-
-    ROUND(errorMessage_population_pct, 2) AS errorMessage_population_pct,
-
-    provider_distinct_values,
-    dataset_distinct_values,
-    outputformat_distinct_values,
-    DATA_not_null,
-    Is_sla_flag,
-
-    -- =====================================================
-    -- DQ FAIL REASON
-    -- =====================================================
-    CASE
-
-        -- Rule 1: error % > 2 (after rounding), except specific table
-        WHEN ROUND(errorMessage_population_pct, 2) > 2
-             AND LOWER(table_name) <> 'core.mqs_athn_mtr_views.vw_mqs_lexis_nexis'
-        THEN 'ErrorMessage % greater than 2%'
-
-        -- Rule 2: provider missing
-        WHEN provider_distinct_values IS NULL
-             OR size(provider_distinct_values) = 0
-        THEN 'Provider missing'
-
-        -- Rule 3: dataset/outputformat missing (with exceptions)
-        WHEN LOWER(table_name) NOT IN (
-                'core.mqs_athn_mtr_views.vw_mqs_mot',
-                'core.mqs_athn_mtr_views.vw_mqs_mylicence',
-                'core.mqs_athn_mtr_views.vw_mqs_lexis_nexis'
-             )
-             AND (
-                    dataset_distinct_values IS NULL
-                 OR size(dataset_distinct_values) = 0
-                 OR outputformat_distinct_values IS NULL
-                 OR size(outputformat_distinct_values) = 0
-             )
-        THEN 'Dataset or OutputFormat missing'
-
-        -- Rule 4: DATA missing
-        WHEN DATA_not_null = 0
-        THEN 'DATA column missing'
-
-        ELSE NULL
-    END AS dq_fail_reason,
-
-    -- =====================================================
-    -- DQ STATUS
-    -- =====================================================
-    CASE
-        WHEN
-            (
-                ROUND(errorMessage_population_pct, 2) > 2
-                AND LOWER(table_name) <> 'core.mqs_athn_mtr_views.vw_mqs_lexis_nexis'
-            )
-            OR provider_distinct_values IS NULL
-            OR size(provider_distinct_values) = 0
-            OR (
-                LOWER(table_name) NOT IN (
-                    'core.mqs_athn_mtr_views.vw_mqs_mot',
-                    'core.mqs_athn_mtr_views.vw_mqs_mylicence',
-                    'core.mqs_athn_mtr_views.vw_mqs_lexis_nexis'
-                )
-                AND (
-                    dataset_distinct_values IS NULL
-                    OR size(dataset_distinct_values) = 0
-                    OR outputformat_distinct_values IS NULL
-                    OR size(outputformat_distinct_values) = 0
-                )
-            )
-            OR DATA_not_null = 0
-        THEN 'FAIL'
-        ELSE 'PASS'
-    END AS dq_status,
-
-    -- =====================================================
-    -- FINAL STATUS (SLA + DQ Combined)
-    -- =====================================================
-    CASE
-        WHEN Is_sla_flag = 1 AND
-             (
-                ROUND(errorMessage_population_pct, 2) > 2
-                AND LOWER(table_name) <> 'core.mqs_athn_mtr_views.vw_mqs_lexis_nexis'
-             )
-        THEN 'CRITICAL (SLA + DQ Breach)'
-
-        WHEN Is_sla_flag = 1
-        THEN 'SLA BREACH'
-
-        WHEN
-            (
-                ROUND(errorMessage_population_pct, 2) > 2
-                AND LOWER(table_name) <> 'core.mqs_athn_mtr_views.vw_mqs_lexis_nexis'
-            )
-            OR provider_distinct_values IS NULL
-            OR size(provider_distinct_values) = 0
-            OR (
-                LOWER(table_name) NOT IN (
-                    'core.mqs_athn_mtr_views.vw_mqs_mot',
-                    'core.mqs_athn_mtr_views.vw_mqs_mylicence',
-                    'core.mqs_athn_mtr_views.vw_mqs_lexis_nexis'
-                )
-                AND (
-                    dataset_distinct_values IS NULL
-                    OR size(dataset_distinct_values) = 0
-                    OR outputformat_distinct_values IS NULL
-                    OR size(outputformat_distinct_values) = 0
-                )
-            )
-            OR DATA_not_null = 0
-        THEN 'DQ FAILURE'
-
-        ELSE 'HEALTHY'
-    END AS final_status
-
-FROM core_bld.default.monitoring_mqs_data_profile_daily;
+    a.run_date       AS ehub_rundate,
+    a.interval_end   AS interval_end,
+    a.message_type,
+    a.message_count  AS ehub_message_count,
+    b.message_count  AS bronze_message_count,
+    a.is_sla_breach  AS ehub_is_sla_breach,
+    b.is_sla_flag    AS bronze_is_sla_breach,
+    a.message_count - b.message_count AS count_difference
+FROM core_bld.default.monitoring_ehub_30min_metrics a
+LEFT JOIN core_bld.default.monitoring_mqs_bronze_30min b
+    ON a.message_type = b.message_type_link
+   AND a.interval_end = b.interval_end
+JOIN latest_interval l
+    ON a.interval_end = l.max_interval
+WHERE a.message_type <> 'ALL'
+  AND (
+        a.is_sla_breach = 1
+     OR b.is_sla_flag = 1
+      )
