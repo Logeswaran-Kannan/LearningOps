@@ -1,12 +1,28 @@
 {
-  "interval_end": "2026-02-17T17:30:00",
-  "breach_count": 2,
-  "details": [
+  "type": "AdaptiveCard",
+  "version": "1.4",
+  "body": [
     {
-      "message_type": "rating-request",
-      "ehub_count": 18385,
-      "bronze_count": 0,
-      "breach_source": "BRONZE"
+      "type": "TextBlock",
+      "text": "⚠ SLA BREACH DETECTED",
+      "weight": "Bolder",
+      "size": "Large",
+      "color": "Attention"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Interval: @{triggerBody()?['interval_end']}",
+      "wrap": true
+    },
+    {
+      "type": "TextBlock",
+      "text": "Impacted Message Types: @{triggerBody()?['breach_count']}",
+      "wrap": true
+    },
+    {
+      "type": "TextBlock",
+      "text": "Immediate investigation required.",
+      "wrap": true
     }
   ]
 }
