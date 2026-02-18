@@ -1,21 +1,5 @@
-<h2 style="color:red;">⚠ SLA BREACH DETECTED</h2>
+Streaming Pipeline Lag – External Dependency (Databricks Platform Issue)
+The data pipeline is experiencing significant lag in processing streaming data within Delta Live Tables, causing SLA breaches and delays in downstream data availability. Despite high compute allocation, the lag persists, indicating a potential streaming state management or Delta write bottleneck at the Databricks platform level.
 
-<p>
-<b>Environment:</b> BICoE Monitoring<br>
-<b>Triggered At:</b> {{ALERT_TRIGGERED_AT}}
-</p>
-
-<hr>
-
-<p>
-The following message types breached SLA in the latest 30-minute interval:
-</p>
-
-{{QUERY_RESULT_TABLE}}
-
-<hr>
-
-<p style="font-size:12px;color:gray;">
-This is an automated alert from Databricks Monitoring.
-Please investigate EHUB / Bronze processing immediately.
-</p>
+Business Impact & External Dependency
+This issue is impacting the continuity and freshness of Rating Request, Rating Response, Underwriting, and Rating Results views. The incident has been formally raised with Databricks, and resolution is dependent on platform-level investigation outside the project’s direct control.
