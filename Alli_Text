@@ -1,5 +1,9 @@
-The test data that has already been sent will not be lost. Messages are retained in Event Hub for 7 days, so they will remain available for consumption during that retention window.
+Hi,
 
-Once the pipeline is fully set up and running, it will read from Event Hub and automatically ingest the queued messages. There should be no need for the tester to redo the testing, provided we bring the pipeline online within the retention period.
+I will be on planned leave today and will be out of the office.
 
-We’ll confirm once the ingestion has successfully completed.
+In my absence, please reach out to Hazel for any urgent matters. I will respond to your queries once I am back.
+
+Thank you for your understanding.
+
+Best regards,
