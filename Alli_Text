@@ -1,9 +1,25 @@
-Hi,
+1️⃣ Developer & Test Team Coordination
+Strong collaboration between Development and Testing teams was critical in managing the highly complex streaming data architecture.
+All development team members proactively addressed issues in real time, reducing turnaround time and preventing downstream impact.
+This close coordination significantly improved stability and confidence before go-live.
 
-I will be on planned leave today and will be out of the office.
+2️⃣ Automation Framework & Data Quality Monitoring
+The automation framework developed by the Testing team enabled proactive monitoring and immediate data quality validation post go-live.
+It provided strong visibility for Application Support teams to quickly assess issues and system health.
+The solution was well appreciated by the Central Data Quality Governance team for strengthening control and transparency.
 
-In my absence, please reach out to Hazel for any urgent matters. I will respond to your queries once I am back.
 
-Thank you for your understanding.
+1️⃣ Clarity on Test Phase Dependencies
+We identified the need for clearer articulation of dependencies between Component Link Testing and E2E testing phases.
+Ambiguity around test data ownership and readiness created avoidable confusion and sequencing challenges.
+Going forward, formal dependency mapping and entry/exit criteria must be agreed upfront.
 
-Best regards,
+2️⃣ Better Use of Test Data Across Phases
+Test data generated during Component Link Testing was not optimally leveraged for downstream Unit and E2E preparation.
+Clear guidance on how test outputs feed subsequent phases would improve efficiency and reduce rework.
+Establishing a structured data handover model will strengthen overall test execution.
+
+3️⃣ Dependency Governance in Complex Streams
+In a highly complex streaming ecosystem, making one phase a hard dependency without full impact assessment increased risk.
+Dependency decisions should be collaboratively validated across Dev, Test, and Business stakeholders.
+Stronger governance on phase gating will improve predictability and delivery confidence.
