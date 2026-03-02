@@ -1,25 +1,216 @@
-1️⃣ Developer & Test Team Coordination
-Strong collaboration between Development and Testing teams was critical in managing the highly complex streaming data architecture.
-All development team members proactively addressed issues in real time, reducing turnaround time and preventing downstream impact.
-This close coordination significantly improved stability and confidence before go-live.
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
-2️⃣ Automation Framework & Data Quality Monitoring
-The automation framework developed by the Testing team enabled proactive monitoring and immediate data quality validation post go-live.
-It provided strong visibility for Application Support teams to quickly assess issues and system health.
-The solution was well appreciated by the Central Data Quality Governance team for strengthening control and transparency.
+# ---------------------------
+# Config
+# ---------------------------
+TARGET_TABLE = "core_bld.default.monitoring_mqs_bronze_30min_update"
 
+TABLES = [
+    "core.mqs_athn_mtr.dlt_quote_request",
+    "core.mqs_athn_mtr.dlt_rating_request_v2",
+    "core.mqs_athn_mtr.dlt_rating_response_v2",
+    "core.mqs_athn_mtr.dlt_stop_quote",
+    "core.mqs_athn_mtr.dlt_cache_id",
+    "core.mqs_athn_mtr.dlt_precomp_response",
+    "core.mqs_athn_mtr.dlt_raw_enrichments",
+    "core.mqs_athn_mtr.dlt_rating_response_uw_results_v2",
+    "core.mqs_athn_mtr.dlt_rating_request_dvla_removed_v2",
+    "core.mqs_athn_mtr.dlt_rating_response_pricing_results_v2"
+]
 
-1️⃣ Clarity on Test Phase Dependencies
-We identified the need for clearer articulation of dependencies between Component Link Testing and E2E testing phases.
-Ambiguity around test data ownership and readiness created avoidable confusion and sequencing challenges.
-Going forward, formal dependency mapping and entry/exit criteria must be agreed upfront.
+INTERVAL_MINUTES = 30
+RETENTION_DAYS = 2
 
-2️⃣ Better Use of Test Data Across Phases
-Test data generated during Component Link Testing was not optimally leveraged for downstream Unit and E2E preparation.
-Clear guidance on how test outputs feed subsequent phases would improve efficiency and reduce rework.
-Establishing a structured data handover model will strengthen overall test execution.
+# ---------------------------
+# Helpers
+# ---------------------------
+def ensure_target_table():
+    spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
+        run_date       DATE,
+        interval_start TIMESTAMP,
+        interval_end   TIMESTAMP,
+        message_type   STRING,
+        message_count  BIGINT,
+        is_sla_flag    INT
+    )
+    USING delta
+    """)
 
-3️⃣ Dependency Governance in Complex Streams
-In a highly complex streaming ecosystem, making one phase a hard dependency without full impact assessment increased risk.
-Dependency decisions should be collaboratively validated across Dev, Test, and Business stakeholders.
-Stronger governance on phase gating will improve predictability and delivery confidence.
+def target_is_empty() -> bool:
+    # Safe even if just created
+    return spark.table(TARGET_TABLE).limit(1).count() == 0
+
+def floor_to_30min(ts_col):
+    # floor timestamp to the nearest 30-minute boundary
+    # compute minutes since epoch, floor-divide, then convert back
+    return F.from_unixtime(
+        (F.floor(F.unix_timestamp(ts_col) / (INTERVAL_MINUTES * 60)) * (INTERVAL_MINUTES * 60)).cast("long")
+    ).cast("timestamp")
+
+def build_intervals_df(start_ts, end_ts_exclusive):
+    """
+    Create a dataframe of 30-min intervals:
+    [start, start+30m), ... up to end_ts_exclusive (not included).
+    """
+    # number of 30-min steps between start and end (exclusive)
+    seconds = int((end_ts_exclusive - start_ts).total_seconds())
+    steps = seconds // (INTERVAL_MINUTES * 60)
+    if steps <= 0:
+        return spark.createDataFrame([], schema="""
+            interval_start TIMESTAMP,
+            interval_end TIMESTAMP,
+            run_date DATE
+        """)
+
+    # Spark range creates [0..steps-1]
+    df = (spark.range(steps)
+          .select(
+              (F.expr(f"timestamp '{start_ts}'") + F.expr(f"INTERVAL {INTERVAL_MINUTES} MINUTES") * F.col("id")).alias("interval_start")
+          )
+          .withColumn("interval_end", F.col("interval_start") + F.expr(f"INTERVAL {INTERVAL_MINUTES} MINUTES"))
+          .withColumn("run_date", F.to_date(F.col("interval_start")))
+         )
+    return df
+
+def pick_time_column(src_df):
+    """
+    Prefer enqueuedTime if present (timestamp).
+    If not, use eHubQueuedDatestamp (date) cast to timestamp at midnight.
+    If both exist, use enqueuedTime for interval bucketing.
+    """
+    cols = set([c.lower() for c in src_df.columns])
+    if "enqueuedtime" in cols:
+        # preserve original case by finding actual column name
+        col = [c for c in src_df.columns if c.lower() == "enqueuedtime"][0]
+        return F.col(col).cast("timestamp")
+    elif "ehubqueueddatestamp" in cols:
+        col = [c for c in src_df.columns if c.lower() == "ehubqueueddatestamp"][0]
+        # date -> timestamp at 00:00:00
+        return F.to_timestamp(F.col(col).cast("date"))
+    else:
+        return None
+
+def compute_counts_for_intervals(table_name, intervals_df):
+    """
+    Returns df with columns:
+      run_date, interval_start, interval_end, message_type, message_count, is_sla_flag
+    for the provided intervals.
+    """
+    src = spark.table(table_name)
+    time_expr = pick_time_column(src)
+    if time_expr is None:
+        # If neither column exists, mark count as null or 0; here we treat as 0 and SLA breach
+        base = intervals_df.withColumn("message_type", F.lit(table_name.split(".")[-1])) \
+                           .withColumn("message_count", F.lit(0).cast("bigint")) \
+                           .withColumn("is_sla_flag", F.lit(1))
+        return base.select("run_date","interval_start","interval_end","message_type","message_count","is_sla_flag")
+
+    # restrict source scan to the interval span
+    min_ts = intervals_df.agg(F.min("interval_start")).collect()[0][0]
+    max_ts = intervals_df.agg(F.max("interval_end")).collect()[0][0]
+
+    filtered = src.where((time_expr >= F.lit(min_ts)) & (time_expr < F.lit(max_ts)))
+
+    # bucket to 30-min start time
+    bucketed = filtered.withColumn("interval_start", floor_to_30min(time_expr))
+
+    agg = (bucketed.groupBy("interval_start")
+           .count()
+           .withColumnRenamed("count", "message_count"))
+
+    # join to ensure all intervals exist (fill missing with 0)
+    out = (intervals_df.join(agg, on="interval_start", how="left")
+           .withColumn("message_count", F.coalesce(F.col("message_count"), F.lit(0).cast("bigint")))
+           .withColumn("message_type", F.lit(table_name.split(".")[-1]))
+           .withColumn("is_sla_flag", F.when(F.col("message_count") == 0, F.lit(1)).otherwise(F.lit(0)))
+          )
+
+    return out.select("run_date","interval_start","interval_end","message_type","message_count","is_sla_flag")
+
+def upsert_into_target(batch_df):
+    batch_df.createOrReplaceTempView("batch_monitoring")
+
+    spark.sql(f"""
+    MERGE INTO {TARGET_TABLE} t
+    USING batch_monitoring s
+      ON t.message_type = s.message_type
+     AND t.interval_start = s.interval_start
+     AND t.interval_end = s.interval_end
+    WHEN MATCHED THEN UPDATE SET
+        t.run_date = s.run_date,
+        t.message_count = s.message_count,
+        t.is_sla_flag = s.is_sla_flag
+    WHEN NOT MATCHED THEN INSERT (
+        run_date, interval_start, interval_end, message_type, message_count, is_sla_flag
+    ) VALUES (
+        s.run_date, s.interval_start, s.interval_end, s.message_type, s.message_count, s.is_sla_flag
+    )
+    """)
+
+def apply_retention():
+    # Keep only last 2 days based on run_date
+    spark.sql(f"""
+      DELETE FROM {TARGET_TABLE}
+      WHERE run_date < date_sub(current_date(), {RETENTION_DAYS})
+    """)
+
+# ---------------------------
+# Main logic
+# ---------------------------
+ensure_target_table()
+
+# compute "last completed" 30-min interval end
+# current_time floored to 30-min boundary is "current boundary"
+# last completed interval is [current_boundary - 30m, current_boundary)
+now_ts = spark.sql("SELECT current_timestamp() as ts").collect()[0]["ts"]
+
+# floor to 30-min boundary in Spark to avoid timezone mismatch
+current_boundary = spark.sql(f"""
+SELECT from_unixtime(
+  floor(unix_timestamp(current_timestamp()) / ({INTERVAL_MINUTES}*60)) * ({INTERVAL_MINUTES}*60)
+) as boundary
+""").collect()[0]["boundary"]
+
+last_interval_start = spark.sql(f"SELECT timestampadd(MINUTE, -{INTERVAL_MINUTES}, timestamp '{current_boundary}') as s").collect()[0]["s"]
+last_interval_end   = current_boundary
+
+# Decide whether this is first-load backfill or incremental
+if target_is_empty():
+    # backfill: from 2 days ago 00:00 to last completed interval end
+    start_date = spark.sql("SELECT date_sub(current_date(), 2) as d").collect()[0]["d"]
+    start_ts = spark.sql(f"SELECT to_timestamp('{start_date} 00:00:00') as ts").collect()[0]["ts"]
+
+    # build intervals up to last_interval_end (exclusive)
+    import datetime
+    intervals_df = build_intervals_df(start_ts.to_pydatetime(), last_interval_end.to_pydatetime())
+
+    all_batches = []
+    for t in TABLES:
+        all_batches.append(compute_counts_for_intervals(t, intervals_df))
+
+    batch_df = all_batches[0]
+    for df in all_batches[1:]:
+        batch_df = batch_df.unionByName(df)
+
+    upsert_into_target(batch_df)
+    apply_retention()
+
+else:
+    # incremental: refresh only the last completed interval each run
+    import datetime
+    intervals_df = build_intervals_df(last_interval_start.to_pydatetime(), last_interval_end.to_pydatetime())
+
+    all_batches = []
+    for t in TABLES:
+        all_batches.append(compute_counts_for_intervals(t, intervals_df))
+
+    batch_df = all_batches[0]
+    for df in all_batches[1:]:
+        batch_df = batch_df.unionByName(df)
+
+    upsert_into_target(batch_df)
+    apply_retention()
+
+print("Monitoring load complete.")
