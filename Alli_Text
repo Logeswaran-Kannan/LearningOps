@@ -1,12 +1,12 @@
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-# ---------------------------
-# Config
-# ---------------------------
+# ============================================================
+# CONFIG
+# ============================================================
 TARGET_TABLE = "core_bld.default.monitoring_mqs_bronze_30min_update"
 
-TABLES = [
+SOURCE_TABLES = [
     "core.mqs_athn_mtr.dlt_quote_request",
     "core.mqs_athn_mtr.dlt_rating_request_v2",
     "core.mqs_athn_mtr.dlt_rating_response_v2",
@@ -16,16 +16,20 @@ TABLES = [
     "core.mqs_athn_mtr.dlt_raw_enrichments",
     "core.mqs_athn_mtr.dlt_rating_response_uw_results_v2",
     "core.mqs_athn_mtr.dlt_rating_request_dvla_removed_v2",
-    "core.mqs_athn_mtr.dlt_rating_response_pricing_results_v2"
+    "core.mqs_athn_mtr.dlt_rating_response_pricing_results_v2",
 ]
 
 INTERVAL_MINUTES = 30
 RETENTION_DAYS = 2
 
-# ---------------------------
-# Helpers
-# ---------------------------
+# If you want the “load timestamp” to always be enqueuedTime when present:
+PREFER_ENQUEUED_TIME = True
+
+# ============================================================
+# TARGET TABLE (partitioned, Delta)
+# ============================================================
 def ensure_target_table():
+    # Partitioning improves merge & retention deletes
     spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
         run_date       DATE,
@@ -36,112 +40,168 @@ def ensure_target_table():
         is_sla_flag    INT
     )
     USING delta
+    PARTITIONED BY (run_date)
     """)
 
 def target_is_empty() -> bool:
-    # Safe even if just created
     return spark.table(TARGET_TABLE).limit(1).count() == 0
 
-def floor_to_30min(ts_col):
-    # floor timestamp to the nearest 30-minute boundary
-    # compute minutes since epoch, floor-divide, then convert back
+# ============================================================
+# TIME WINDOW HELPERS (all Spark-side, no Python datetime)
+# ============================================================
+def current_boundary_expr():
+    # floor current_timestamp to 30-min boundary
+    return f"""
+    from_unixtime(
+      floor(unix_timestamp(current_timestamp()) / ({INTERVAL_MINUTES}*60)) * ({INTERVAL_MINUTES}*60)
+    )
+    """
+
+def build_intervals_df(start_ts_expr: str, end_ts_expr: str):
+    """
+    Build a small dimension DF of 30-min intervals in [start, end),
+    where both inputs are Spark SQL timestamp expressions.
+    """
+    return spark.sql(f"""
+        WITH bounds AS (
+            SELECT
+                {start_ts_expr} AS start_ts,
+                {end_ts_expr}   AS end_ts
+        ),
+        seq AS (
+            SELECT explode(
+                sequence(
+                    start_ts,
+                    end_ts - INTERVAL {INTERVAL_MINUTES} MINUTES,
+                    INTERVAL {INTERVAL_MINUTES} MINUTES
+                )
+            ) AS interval_start
+            FROM bounds
+        )
+        SELECT
+            interval_start,
+            interval_start + INTERVAL {INTERVAL_MINUTES} MINUTES AS interval_end,
+            DATE(interval_start) AS run_date
+        FROM seq
+    """)
+
+def interval_floor_30min(col_ts):
     return F.from_unixtime(
-        (F.floor(F.unix_timestamp(ts_col) / (INTERVAL_MINUTES * 60)) * (INTERVAL_MINUTES * 60)).cast("long")
+        (F.floor(F.unix_timestamp(col_ts) / (INTERVAL_MINUTES * 60)) * (INTERVAL_MINUTES * 60)).cast("long")
     ).cast("timestamp")
 
-def build_intervals_df(start_ts, end_ts_exclusive):
-    """
-    Create a dataframe of 30-min intervals:
-    [start, start+30m), ... up to end_ts_exclusive (not included).
-    """
-    # number of 30-min steps between start and end (exclusive)
-    seconds = int((end_ts_exclusive - start_ts).total_seconds())
-    steps = seconds // (INTERVAL_MINUTES * 60)
-    if steps <= 0:
-        return spark.createDataFrame([], schema="""
-            interval_start TIMESTAMP,
-            interval_end TIMESTAMP,
-            run_date DATE
-        """)
+# ============================================================
+# COLUMN DISCOVERY + PRUNING STRATEGY
+# ============================================================
+def normalize_col_lookup(df):
+    # map lowercase -> original
+    return {c.lower(): c for c in df.columns}
 
-    # Spark range creates [0..steps-1]
-    df = (spark.range(steps)
-          .select(
-              (F.expr(f"timestamp '{start_ts}'") + F.expr(f"INTERVAL {INTERVAL_MINUTES} MINUTES") * F.col("id")).alias("interval_start")
-          )
-          .withColumn("interval_end", F.col("interval_start") + F.expr(f"INTERVAL {INTERVAL_MINUTES} MINUTES"))
-          .withColumn("run_date", F.to_date(F.col("interval_start")))
-         )
-    return df
+def choose_time_expr(df):
+    """
+    Returns a Column expression for the timestamp used for 30-min bucketing.
+    Preference: enqueuedTime (timestamp) if present, else eHubQueuedDatestamp (date at midnight).
+    """
+    m = normalize_col_lookup(df)
+    has_enq = "enqueuedtime" in m
+    has_ehub = "ehubqueueddatestamp" in m
 
-def pick_time_column(src_df):
-    """
-    Prefer enqueuedTime if present (timestamp).
-    If not, use eHubQueuedDatestamp (date) cast to timestamp at midnight.
-    If both exist, use enqueuedTime for interval bucketing.
-    """
-    cols = set([c.lower() for c in src_df.columns])
-    if "enqueuedtime" in cols:
-        # preserve original case by finding actual column name
-        col = [c for c in src_df.columns if c.lower() == "enqueuedtime"][0]
-        return F.col(col).cast("timestamp")
-    elif "ehubqueueddatestamp" in cols:
-        col = [c for c in src_df.columns if c.lower() == "ehubqueueddatestamp"][0]
-        # date -> timestamp at 00:00:00
-        return F.to_timestamp(F.col(col).cast("date"))
-    else:
-        return None
+    if PREFER_ENQUEUED_TIME and has_enq:
+        return F.col(m["enqueuedtime"]).cast("timestamp"), True, has_ehub
+    if has_ehub:
+        # date-only fallback
+        return F.to_timestamp(F.col(m["ehubqueueddatestamp"]).cast("date")), False, True
+    if has_enq:
+        return F.col(m["enqueuedtime"]).cast("timestamp"), True, has_ehub
 
-def compute_counts_for_intervals(table_name, intervals_df):
+    return None, False, False
+
+def apply_pruning(df, time_col_expr, has_ehub_date, window_start_ts, window_end_ts):
     """
-    Returns df with columns:
-      run_date, interval_start, interval_end, message_type, message_count, is_sla_flag
-    for the provided intervals.
+    For huge tables, prune by:
+      1) eHubQueuedDatestamp date range (if present) -> partition pruning
+      2) timestamp range filter -> exact window
+    """
+    pruned = df
+
+    # Date pruning first (if column exists)
+    if has_ehub_date:
+        m = normalize_col_lookup(df)
+        ehub_col = m["ehubqueueddatestamp"]
+        pruned = pruned.where(
+            (F.col(ehub_col) >= F.to_date(F.lit(window_start_ts))) &
+            (F.col(ehub_col) <= F.to_date(F.lit(window_end_ts)))
+        )
+
+    # Timestamp pruning (exact)
+    pruned = pruned.where(
+        (time_col_expr >= F.lit(window_start_ts)) &
+        (time_col_expr <  F.lit(window_end_ts))
+    )
+
+    return pruned
+
+# ============================================================
+# CORE COUNT COMPUTATION (optimized)
+# ============================================================
+def compute_table_counts_for_intervals(table_name: str, intervals_df, window_start_ts, window_end_ts):
+    """
+    Efficiently:
+      - prune the source to [window_start_ts, window_end_ts)
+      - bucket to 30-min
+      - aggregate count
+      - left join to intervals to fill missing as 0
     """
     src = spark.table(table_name)
-    time_expr = pick_time_column(src)
+    time_expr, using_enqueued, has_ehub = choose_time_expr(src)
+
+    short_name = table_name.split(".")[-1]
+
+    # If neither exists, output 0 for all intervals (SLA breach)
     if time_expr is None:
-        # If neither column exists, mark count as null or 0; here we treat as 0 and SLA breach
-        base = intervals_df.withColumn("message_type", F.lit(table_name.split(".")[-1])) \
-                           .withColumn("message_count", F.lit(0).cast("bigint")) \
-                           .withColumn("is_sla_flag", F.lit(1))
-        return base.select("run_date","interval_start","interval_end","message_type","message_count","is_sla_flag")
+        out = (intervals_df
+               .withColumn("message_type", F.lit(short_name))
+               .withColumn("message_count", F.lit(0).cast("bigint"))
+               .withColumn("is_sla_flag", F.lit(1)))
+        return out.select("run_date","interval_start","interval_end","message_type","message_count","is_sla_flag")
 
-    # restrict source scan to the interval span
-    min_ts = intervals_df.agg(F.min("interval_start")).collect()[0][0]
-    max_ts = intervals_df.agg(F.max("interval_end")).collect()[0][0]
+    # Prune aggressively for big tables
+    pruned = apply_pruning(src, time_expr, has_ehub, window_start_ts, window_end_ts)
 
-    filtered = src.where((time_expr >= F.lit(min_ts)) & (time_expr < F.lit(max_ts)))
+    # Aggregate counts by 30-min bucket
+    agg = (pruned
+           .withColumn("interval_start", interval_floor_30min(time_expr))
+           .groupBy("interval_start")
+           .agg(F.count(F.lit(1)).alias("message_count"))
+    )
 
-    # bucket to 30-min start time
-    bucketed = filtered.withColumn("interval_start", floor_to_30min(time_expr))
-
-    agg = (bucketed.groupBy("interval_start")
-           .count()
-           .withColumnRenamed("count", "message_count"))
-
-    # join to ensure all intervals exist (fill missing with 0)
-    out = (intervals_df.join(agg, on="interval_start", how="left")
+    # Join to intervals (intervals_df is small; broadcast is safe)
+    out = (intervals_df.hint("broadcast")
+           .join(agg, on="interval_start", how="left")
            .withColumn("message_count", F.coalesce(F.col("message_count"), F.lit(0).cast("bigint")))
-           .withColumn("message_type", F.lit(table_name.split(".")[-1]))
+           .withColumn("message_type", F.lit(short_name))
            .withColumn("is_sla_flag", F.when(F.col("message_count") == 0, F.lit(1)).otherwise(F.lit(0)))
-          )
+    )
 
     return out.select("run_date","interval_start","interval_end","message_type","message_count","is_sla_flag")
 
-def upsert_into_target(batch_df):
+# ============================================================
+# UPSERT + RETENTION (fast)
+# ============================================================
+def merge_into_target(batch_df):
     batch_df.createOrReplaceTempView("batch_monitoring")
 
+    # MERGE is idempotent and safe for reruns
     spark.sql(f"""
     MERGE INTO {TARGET_TABLE} t
     USING batch_monitoring s
-      ON t.message_type = s.message_type
-     AND t.interval_start = s.interval_start
-     AND t.interval_end = s.interval_end
+      ON  t.run_date = s.run_date
+      AND t.message_type = s.message_type
+      AND t.interval_start = s.interval_start
+      AND t.interval_end = s.interval_end
     WHEN MATCHED THEN UPDATE SET
-        t.run_date = s.run_date,
         t.message_count = s.message_count,
-        t.is_sla_flag = s.is_sla_flag
+        t.is_sla_flag   = s.is_sla_flag
     WHEN NOT MATCHED THEN INSERT (
         run_date, interval_start, interval_end, message_type, message_count, is_sla_flag
     ) VALUES (
@@ -150,67 +210,65 @@ def upsert_into_target(batch_df):
     """)
 
 def apply_retention():
-    # Keep only last 2 days based on run_date
+    # Partition-friendly retention
     spark.sql(f"""
       DELETE FROM {TARGET_TABLE}
       WHERE run_date < date_sub(current_date(), {RETENTION_DAYS})
     """)
 
-# ---------------------------
-# Main logic
-# ---------------------------
+# ============================================================
+# DRIVER: backfill vs incremental
+# ============================================================
 ensure_target_table()
 
-# compute "last completed" 30-min interval end
-# current_time floored to 30-min boundary is "current boundary"
-# last completed interval is [current_boundary - 30m, current_boundary)
-now_ts = spark.sql("SELECT current_timestamp() as ts").collect()[0]["ts"]
+boundary = spark.sql(f"SELECT {current_boundary_expr()} AS boundary").collect()[0]["boundary"]
+last_start = spark.sql(f"SELECT timestampadd(MINUTE, -{INTERVAL_MINUTES}, timestamp '{boundary}') AS s").collect()[0]["s"]
+last_end   = boundary
 
-# floor to 30-min boundary in Spark to avoid timezone mismatch
-current_boundary = spark.sql(f"""
-SELECT from_unixtime(
-  floor(unix_timestamp(current_timestamp()) / ({INTERVAL_MINUTES}*60)) * ({INTERVAL_MINUTES}*60)
-) as boundary
-""").collect()[0]["boundary"]
-
-last_interval_start = spark.sql(f"SELECT timestampadd(MINUTE, -{INTERVAL_MINUTES}, timestamp '{current_boundary}') as s").collect()[0]["s"]
-last_interval_end   = current_boundary
-
-# Decide whether this is first-load backfill or incremental
 if target_is_empty():
-    # backfill: from 2 days ago 00:00 to last completed interval end
-    start_date = spark.sql("SELECT date_sub(current_date(), 2) as d").collect()[0]["d"]
-    start_ts = spark.sql(f"SELECT to_timestamp('{start_date} 00:00:00') as ts").collect()[0]["ts"]
+    # -----------------------
+    # FIRST LOAD (BACKFILL)
+    # -----------------------
+    # From (today-2days) 00:00 to last completed interval end
+    start_ts_expr = "date_trunc('day', date_sub(current_timestamp(), 2))"
+    end_ts_expr   = current_boundary_expr()
 
-    # build intervals up to last_interval_end (exclusive)
-    import datetime
-    intervals_df = build_intervals_df(start_ts.to_pydatetime(), last_interval_end.to_pydatetime())
+    intervals_df = build_intervals_df(start_ts_expr, end_ts_expr)
 
-    all_batches = []
-    for t in TABLES:
-        all_batches.append(compute_counts_for_intervals(t, intervals_df))
+    # Window bounds for pruning (Spark -> Python values once; acceptable)
+    window_bounds = intervals_df.agg(F.min("interval_start").alias("mn"),
+                                     F.max("interval_end").alias("mx")).collect()[0]
+    window_start_ts = window_bounds["mn"]
+    window_end_ts   = window_bounds["mx"]
 
-    batch_df = all_batches[0]
-    for df in all_batches[1:]:
-        batch_df = batch_df.unionByName(df)
+    # Build union of per-table results
+    batch = None
+    for t in SOURCE_TABLES:
+        df_t = compute_table_counts_for_intervals(t, intervals_df, window_start_ts, window_end_ts)
+        batch = df_t if batch is None else batch.unionByName(df_t)
 
-    upsert_into_target(batch_df)
+    merge_into_target(batch)
     apply_retention()
 
 else:
-    # incremental: refresh only the last completed interval each run
-    import datetime
-    intervals_df = build_intervals_df(last_interval_start.to_pydatetime(), last_interval_end.to_pydatetime())
+    # -----------------------
+    # INCREMENTAL (refresh last completed 30-min)
+    # -----------------------
+    # interval = [boundary-30min, boundary)
+    intervals_df = build_intervals_df(
+        f"timestamp '{last_start}'",
+        f"timestamp '{last_end}'"
+    )
 
-    all_batches = []
-    for t in TABLES:
-        all_batches.append(compute_counts_for_intervals(t, intervals_df))
+    window_start_ts = last_start
+    window_end_ts   = last_end
 
-    batch_df = all_batches[0]
-    for df in all_batches[1:]:
-        batch_df = batch_df.unionByName(df)
+    batch = None
+    for t in SOURCE_TABLES:
+        df_t = compute_table_counts_for_intervals(t, intervals_df, window_start_ts, window_end_ts)
+        batch = df_t if batch is None else batch.unionByName(df_t)
 
-    upsert_into_target(batch_df)
+    merge_into_target(batch)
     apply_retention()
 
-print("Monitoring load complete.")
+print("Monitoring job completed successfully.")
