@@ -1,5 +1,9 @@
-⚠ **SLA BREACH DETECTED**
-
-**Triggered At:** {{ALERT_TRIGGERED_AT}}
-
-{{QUERY_RESULT_TABLE}}
+SELECT
+  CONCAT(
+    '🔹 Message Type: ', message_type_link,
+    ' | EHUB: ', ehub_count,
+    ' | Bronze: ', bronze_count,
+    ' | Diff: ', count_difference,
+    ' | Source: ', breach_source
+  ) AS alert_message
+FROM your_query_here
