@@ -1,9 +1,74 @@
 SELECT
-  CONCAT(
-    '🔹 Message Type: ', message_type_link,
-    ' | EHUB: ', ehub_count,
-    ' | Bronze: ', bronze_count,
-    ' | Diff: ', count_difference,
-    ' | Source: ', breach_source
-  ) AS alert_message
-FROM your_query_here
+    COALESCE(
+        DATE(requestTimestamp),
+        DATE(MQSTimestamp),
+        DATE(athenaTimestamp)
+    ) AS reconDate,
+
+    COUNT(*) AS total_records,
+
+    COUNT_IF(existsInCSV = true AND MQSQuoteId IS NULL) AS csv_quote_null,
+
+    COUNT_IF(
+        existsInCSV = true AND
+        existsInMQS = true AND
+        existsInAthena = true AND
+        allMatching = true
+    ) AS matched_in_window,
+
+    COUNT_IF(
+        existsInCSV = true AND
+        existsInMQS = true AND
+        existsInAthena = true AND
+        allMatching = false
+    ) AS matched_backdated,
+
+    COUNT_IF(
+        existsInCSV = true AND
+        existsInMQS = true AND
+        existsInAthena = true
+    ) AS matched_overall,
+
+    COUNT_IF(
+        existsInCSV = false AND
+        existsInMQS = true AND
+        existsInAthena = false
+    ) AS mqs_only,
+
+    COUNT_IF(
+        existsInCSV = false AND
+        existsInMQS = false AND
+        existsInAthena = true
+    ) AS athena_only,
+
+    COUNT_IF(
+        existsInCSV = false AND
+        existsInMQS = false AND
+        existsInAthena = false
+    ) AS missing,
+
+    COUNT_IF(
+        existsInCSV = true AND
+        MQSQuoteId IS NULL AND
+        existsInAthena = true
+    ) AS csv_quote_null_athena_hit,
+
+    COUNT_IF(
+        existsInCSV = true AND
+        MQSQuoteId IS NULL AND
+        existsInAthena = false
+    ) AS csv_quote_null_athena_miss,
+
+    COUNT_IF(existsInCSV IS NULL AND existsInMQS = true) AS reverse_recon_mqs,
+    COUNT_IF(existsInCSV IS NULL AND existsInAthena = true) AS reverse_recon_athena
+
+FROM core_bld.radar_live.reconciliation_history
+
+GROUP BY
+    COALESCE(
+        DATE(requestTimestamp),
+        DATE(MQSTimestamp),
+        DATE(athenaTimestamp)
+    )
+
+ORDER BY reconDate;
