@@ -2,7 +2,7 @@ import json
 import requests
 
 WEBHOOK_URL = "YOUR_TEAMS_WEBHOOK_URL"
-DASHBOARD_URL = "https://YOUR-DATABRICKS-WORKSPACE/sql/dashboards/YOUR_DASHBOARD_ID"
+DASHBOARD_URL = "YOUR_DATABRICKS_DASHBOARD_URL"
 
 query = """
 WITH bounds AS (
@@ -93,166 +93,207 @@ WHERE
        e.ehub_sla = 1
     OR COALESCE(b.is_sla_flag, 0) = 1
     OR COALESCE(i.total_interaction_count, 0) = 0
+ORDER BY e.message_type_link
 """
 
 df = spark.sql(query)
 rows = [r.asDict() for r in df.collect()]
 
-def build_metric_factset(row):
-    return {
-        "type": "FactSet",
-        "facts": [
-            {"title": "Interval", "value": str(row["interval_end"])},
-            {"title": "EHUB Count", "value": str(row["ehub_count"])},
-            {"title": "Bronze Count", "value": str(row["bronze_count"])},
-            {"title": "Difference", "value": str(row["count_difference"])},
-            {"title": "Source", "value": str(row["breach_source"])}
-        ]
-    }
+def truncate_text(value, max_len=28):
+    s = "" if value is None else str(value)
+    return s if len(s) <= max_len else s[:max_len - 3] + "..."
 
-def build_breach_container(row):
-    return {
-        "type": "Container",
-        "style": "attention",
-        "bleed": True,
-        "separator": True,
-        "items": [
+def status_block(has_breach: bool):
+    if has_breach:
+        return [
             {
-                "type": "TextBlock",
-                "text": f"⚠ {row['message_type_link']}",
-                "weight": "Bolder",
-                "size": "Medium",
-                "wrap": True
-            },
-            build_metric_factset(row)
-        ]
-    }
-
-def build_healthy_container(run_ts):
-    return {
-        "type": "Container",
-        "style": "good",
-        "bleed": True,
-        "items": [
-            {
-                "type": "TextBlock",
-                "text": "✅ System Healthy",
-                "weight": "Bolder",
-                "size": "Large",
-                "wrap": True
-            },
-            {
-                "type": "TextBlock",
-                "text": "All monitored streams are within SLA for the latest run.",
-                "wrap": True,
-                "spacing": "Small"
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {"title": "Checked At", "value": str(run_ts)},
-                    {"title": "Status", "value": "Operational"}
+                "type": "Container",
+                "style": "attention",
+                "bleed": True,
+                "items": [
+                    {
+                        "type": "TextBlock",
+                        "text": "⚠️  SLA BREACH DETECTED",
+                        "weight": "Bolder",
+                        "size": "Large",
+                        "wrap": True
+                    },
+                    {
+                        "type": "TextBlock",
+                        "text": "Immediate review required for EHUB / Bronze / Interaction pipeline health.",
+                        "wrap": True,
+                        "spacing": "Small"
+                    }
                 ]
             }
         ]
-    }
-
-def build_header(title_icon, title_text, subtitle, color):
     return [
         {
             "type": "Container",
+            "style": "good",
+            "bleed": True,
             "items": [
                 {
                     "type": "TextBlock",
-                    "text": f"{title_icon} RADAR LIVE Monitoring",
+                    "text": "✅  SYSTEM HEALTHY",
                     "weight": "Bolder",
                     "size": "Large",
                     "wrap": True
                 },
                 {
                     "type": "TextBlock",
-                    "text": title_text,
-                    "weight": "Bolder",
-                    "size": "ExtraLarge",
-                    "color": color,
+                    "text": "No SLA breach detected in the latest monitoring cycle.",
                     "wrap": True,
                     "spacing": "Small"
-                },
-                {
-                    "type": "TextBlock",
-                    "text": subtitle,
-                    "wrap": True,
-                    "spacing": "Small",
-                    "isSubtle": True
                 }
             ]
         }
     ]
 
-def build_card(rows):
-    run_ts = spark.sql("select current_timestamp() as ts").collect()[0]["ts"]
+def summary_block(rows):
+    impacted = len(rows)
+    latest_interval = str(rows[0]["interval_end"]) if rows else str(
+        spark.sql("select current_timestamp() as ts").collect()[0]["ts"]
+    )
 
     if rows:
-        total_breaches = len(rows)
-        latest_interval = rows[0]["interval_end"]
+        source_counts = {}
+        for r in rows:
+            src = str(r.get("breach_source", "UNKNOWN"))
+            source_counts[src] = source_counts.get(src, 0) + 1
+        source_text = ", ".join([f"{k}: {v}" for k, v in source_counts.items()])
+    else:
+        source_text = "No impacted flows"
 
-        body = []
-        body.extend(build_header(
-            "⚠",
-            "SLA Breach Detected",
-            "Immediate attention required. Please review the impacted streams below.",
-            "Attention"
-        ))
-
-        body.append(
-            {
-                "type": "Container",
-                "style": "emphasis",
-                "items": [
-                    {
-                        "type": "FactSet",
-                        "facts": [
-                            {"title": "Environment", "value": "RADAR LIVE"},
-                            {"title": "Status", "value": "Breach"},
-                            {"title": "Latest Interval", "value": str(latest_interval)},
-                            {"title": "Impacted Types", "value": str(total_breaches)}
-                        ]
-                    }
-                ]
-            }
-        )
-
-        for row in rows[:5]:
-            body.append(build_breach_container(row))
-
-        if total_breaches > 5:
-            body.append(
-                {
-                    "type": "TextBlock",
-                    "text": f"⚙ Additional impacted message types not shown: {total_breaches - 5}",
-                    "wrap": True,
-                    "spacing": "Medium"
-                }
-            )
-
-        body.append(
+    return {
+        "type": "Container",
+        "spacing": "Medium",
+        "items": [
             {
                 "type": "TextBlock",
-                "text": "🛠 Recommended action: Review dashboard, validate pipeline health, and investigate upstream/downstream flow delays.",
-                "wrap": True,
-                "spacing": "Medium"
+                "text": "RADAR LIVE | Production Monitoring",
+                "weight": "Bolder",
+                "size": "Medium"
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Environment", "value": "Production"},
+                    {"title": "Interval", "value": latest_interval},
+                    {"title": "Impacted Flows", "value": str(impacted)},
+                    {"title": "Affected Source", "value": source_text}
+                ]
             }
-        )
+        ]
+    }
 
+def table_header():
+    return {
+        "type": "ColumnSet",
+        "separator": True,
+        "spacing": "Medium",
+        "columns": [
+            {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "wrap": True}]},
+            {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "EHUB", "weight": "Bolder", "horizontalAlignment": "Center"}]},
+            {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Bronze", "weight": "Bolder", "horizontalAlignment": "Center"}]},
+            {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Diff", "weight": "Bolder", "horizontalAlignment": "Center"}]},
+            {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Breach Source", "weight": "Bolder", "wrap": True}]}
+        ]
+    }
+
+def table_rows(rows, max_rows=8):
+    items = []
+    for r in rows[:max_rows]:
+        breach_source = str(r.get("breach_source", "UNKNOWN"))
+        source_icon = "⚠️" if breach_source != "INTERACTION" else "🛠️"
+
+        items.append({
+            "type": "ColumnSet",
+            "separator": True,
+            "spacing": "Small",
+            "columns": [
+                {
+                    "type": "Column",
+                    "width": 3,
+                    "items": [{
+                        "type": "TextBlock",
+                        "text": truncate_text(r.get("message_type_link")),
+                        "wrap": True
+                    }]
+                },
+                {
+                    "type": "Column",
+                    "width": 1,
+                    "items": [{
+                        "type": "TextBlock",
+                        "text": str(r.get("ehub_count", 0)),
+                        "horizontalAlignment": "Center"
+                    }]
+                },
+                {
+                    "type": "Column",
+                    "width": 1,
+                    "items": [{
+                        "type": "TextBlock",
+                        "text": str(r.get("bronze_count", 0)),
+                        "horizontalAlignment": "Center"
+                    }]
+                },
+                {
+                    "type": "Column",
+                    "width": 1,
+                    "items": [{
+                        "type": "TextBlock",
+                        "text": str(r.get("count_difference", 0)),
+                        "horizontalAlignment": "Center"
+                    }]
+                },
+                {
+                    "type": "Column",
+                    "width": 2,
+                    "items": [{
+                        "type": "TextBlock",
+                        "text": f"{source_icon} {breach_source}",
+                        "wrap": True
+                    }]
+                }
+            ]
+        })
+
+    if len(rows) > max_rows:
+        items.append({
+            "type": "TextBlock",
+            "text": f"... and {len(rows) - max_rows} more impacted message types",
+            "isSubtle": True,
+            "spacing": "Small",
+            "wrap": True
+        })
+
+    return items
+
+def build_card(rows):
+    has_breach = len(rows) > 0
+
+    body = []
+    body.extend(status_block(has_breach))
+    body.append(summary_block(rows))
+
+    if has_breach:
+        body.append({
+            "type": "TextBlock",
+            "text": "Impact Summary",
+            "weight": "Bolder",
+            "spacing": "Medium"
+        })
+        body.append(table_header())
+        body.extend(table_rows(rows, max_rows=8))
     else:
-        body = []
-        body.extend(build_header(
-            "✅",
-            "All Systems Operational",
-            "No SLA breaches detected for the latest monitoring cycle.",
-            "Good"
-        ))
-        body.append(build_healthy_container(run_ts))
+        body.append({
+            "type": "TextBlock",
+            "text": "All monitored message types are within SLA for the current cycle.",
+            "wrap": True,
+            "spacing": "Medium"
+        })
 
     return {
         "type": "message",
