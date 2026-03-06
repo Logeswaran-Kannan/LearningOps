@@ -21,7 +21,7 @@ USING DELTA
 """)
 
 # =========================================================
-# 2. BREACH QUERY
+# 2. CORE SQL
 # =========================================================
 query = """
 WITH bounds AS (
@@ -86,44 +86,64 @@ interaction_latest_minus_1 AS (
     FROM core_bld.default.monitoring_mqs_interaction_status
     WHERE interval_start = (SELECT interaction_interval FROM latest_minus_1_interaction)
     GROUP BY interval_start
+),
+final_status AS (
+    SELECT
+        e.run_date,
+        e.interval_end,
+        e.message_type_link,
+        e.ehub_count,
+        e.ehub_sla,
+        COALESCE(b.message_count, 0) AS bronze_count,
+        COALESCE(b.is_sla_flag, 0) AS bronze_sla,
+        e.ehub_count - COALESCE(b.message_count, 0) AS count_difference,
+        ABS(e.ehub_count - COALESCE(b.message_count, 0)) AS abs_count_difference,
+        CASE
+            WHEN e.ehub_sla = 1 AND COALESCE(b.is_sla_flag, 0) = 1 THEN '⚠ EHUB & BRONZE'
+            WHEN e.ehub_sla = 1 THEN '⚠ EHUB'
+            WHEN COALESCE(b.is_sla_flag, 0) = 1 THEN '⚠ BRONZE'
+            WHEN COALESCE(i.total_interaction_count, 0) = 0 THEN '🛠 INTERACTION'
+        END AS breach_source
+    FROM ehub_latest e
+    LEFT JOIN bronze_latest b
+        ON e.message_type_link = b.message_type_link
+       AND e.interval_end = b.interval_end
+    LEFT JOIN interaction_latest_minus_1 i
+        ON 1 = 1
 )
-SELECT
-    e.run_date,
-    e.interval_end,
-    e.message_type_link,
-    e.ehub_count,
-    e.ehub_sla,
-    COALESCE(b.message_count, 0) AS bronze_count,
-    COALESCE(b.is_sla_flag, 0) AS bronze_sla,
-    e.ehub_count - COALESCE(b.message_count, 0) AS count_difference,
-    CASE
-        WHEN e.ehub_sla = 1 AND COALESCE(b.is_sla_flag, 0) = 1 THEN '⚠ EHUB & BRONZE'
-        WHEN e.ehub_sla = 1 THEN '⚠ EHUB'
-        WHEN COALESCE(b.is_sla_flag, 0) = 1 THEN '⚠ BRONZE'
-        WHEN COALESCE(i.total_interaction_count, 0) = 0 THEN '🛠 INTERACTION'
-    END AS breach_source
-FROM ehub_latest e
-LEFT JOIN bronze_latest b
-    ON e.message_type_link = b.message_type_link
-   AND e.interval_end = b.interval_end
-LEFT JOIN interaction_latest_minus_1 i
-    ON 1 = 1
+SELECT *
+FROM final_status
 WHERE
-       e.ehub_sla = 1
-    OR COALESCE(b.is_sla_flag, 0) = 1
-    OR COALESCE(i.total_interaction_count, 0) = 0
-ORDER BY e.message_type_link
+       ehub_sla = 1
+    OR bronze_sla = 1
+    OR breach_source = '🛠 INTERACTION'
+ORDER BY abs_count_difference DESC, message_type_link
 LIMIT 6
 """
 
 breach_df = spark.sql(query)
 rows = [r.asDict() for r in breach_df.collect()]
 
+# =========================================================
+# 3. GET LATEST MONITORING INTERVAL ALWAYS
+#    This is used for recovery message as "Recovered At"
+# =========================================================
+latest_interval_df = spark.sql("""
+WITH bounds AS (
+    SELECT date_trunc('day', current_timestamp()) AS day_start
+)
+SELECT MAX(interval_end) AS latest_interval
+FROM core_bld.default.monitoring_ehub_30min_metrics
+WHERE interval_end >= (SELECT day_start FROM bounds)
+  AND message_type <> 'ALL'
+""")
+latest_interval = latest_interval_df.collect()[0]["latest_interval"]
+
 current_status = "BREACH" if rows else "HEALTHY"
-current_interval = rows[0]["interval_end"] if rows else spark.sql("SELECT current_timestamp() ts").collect()[0]["ts"]
+current_interval = latest_interval
 
 # =========================================================
-# 3. READ PREVIOUS STATUS
+# 4. READ PREVIOUS STATUS
 # =========================================================
 state_df = spark.table(STATE_TABLE).filter(F.col("alert_name") == ALERT_NAME)
 state_rows = state_df.collect()
@@ -133,15 +153,34 @@ if state_rows:
     previous_status = state_rows[0]["current_status"]
 
 # =========================================================
-# 4. BUILD TEAMS CARD
+# 5. CARD HELPERS
 # =========================================================
-def safe_text(value, max_len=24):
+def safe_text(value, max_len=22):
     s = "" if value is None else str(value)
     return s if len(s) <= max_len else s[:max_len - 3] + "..."
 
-def breach_card(rows):
-    interval_text = str(rows[0]["interval_end"])
-    impacted_count = len(rows)
+def summarize_sources(items):
+    counts = {}
+    for r in items:
+        src = str(r.get("breach_source", "UNKNOWN"))
+        counts[src] = counts.get(src, 0) + 1
+    return ", ".join([f"{k}: {v}" for k, v in counts.items()])
+
+def comparison_line(items):
+    if not items:
+        return "EHUB and Bronze counts are aligned within SLA for the latest monitored interval."
+
+    max_diff = max([abs(int(r.get("count_difference", 0))) for r in items]) if items else 0
+    non_zero = sum([1 for r in items if int(r.get("count_difference", 0)) != 0])
+
+    if max_diff == 0:
+        return "EHUB and Bronze counts are aligned for the monitored interval."
+    return f"Count comparison indicates {non_zero} impacted flow(s), with a maximum EHUB vs Bronze variance of {max_diff}."
+
+def breach_card(items, interval_value):
+    impacted_count = len(items)
+    source_summary = summarize_sources(items)
+    compare_text = comparison_line(items)
 
     body = [
         {
@@ -157,7 +196,7 @@ def breach_card(rows):
                 },
                 {
                     "type": "TextBlock",
-                    "text": "Radar Live production monitoring has identified a pipeline health issue requiring immediate attention.",
+                    "text": "Radar Live production monitoring has detected a service degradation requiring immediate review.",
                     "wrap": True,
                     "size": "Small",
                     "spacing": "Small"
@@ -169,11 +208,18 @@ def breach_card(rows):
             "spacing": "Medium",
             "facts": [
                 {"title": "Environment", "value": "Production"},
-                {"title": "Interval", "value": interval_text},
+                {"title": "Interval", "value": str(interval_value)},
                 {"title": "Impacted Flows", "value": str(impacted_count)},
-                {"title": "Severity", "value": "High"},
-                {"title": "Dashboard", "value": DASHBOARD_URL}
+                {"title": "Affected Areas", "value": source_summary[:120]},
+                {"title": "Severity", "value": "High"}
             ]
+        },
+        {
+            "type": "TextBlock",
+            "text": compare_text,
+            "wrap": True,
+            "size": "Small",
+            "spacing": "Small"
         },
         {
             "type": "TextBlock",
@@ -194,7 +240,7 @@ def breach_card(rows):
         }
     ]
 
-    for r in rows:
+    for r in items[:6]:
         body.append({
             "type": "ColumnSet",
             "separator": True,
@@ -207,6 +253,24 @@ def breach_card(rows):
                 {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": str(r["breach_source"]), "wrap": True, "size": "Small"}]}
             ]
         })
+
+    body.extend([
+        {
+            "type": "TextBlock",
+            "text": f"Dashboard: {DASHBOARD_URL}",
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True,
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "🛠 Please investigate the affected flows and validate upstream/downstream processing.",
+            "wrap": True,
+            "size": "Small",
+            "spacing": "Small"
+        }
+    ])
 
     return {
         "type": "message",
@@ -224,6 +288,54 @@ def breach_card(rows):
     }
 
 def healthy_card(interval_value):
+    body = [
+        {
+            "type": "Container",
+            "style": "good",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "✅ RETURNED TO NORMAL",
+                    "weight": "Bolder",
+                    "size": "Large",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Radar Live monitoring confirms the service flow has recovered and is now operating within SLA.",
+                    "wrap": True,
+                    "size": "Small",
+                    "spacing": "Small"
+                }
+            ]
+        },
+        {
+            "type": "FactSet",
+            "spacing": "Medium",
+            "facts": [
+                {"title": "Environment", "value": "Production"},
+                {"title": "Recovered At", "value": str(interval_value)},
+                {"title": "Status", "value": "Healthy"},
+                {"title": "Verification", "value": "Latest monitored interval is within SLA"}
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "EHUB and Bronze counts are aligned within the latest monitoring interval, and no active SLA breach is currently detected.",
+            "wrap": True,
+            "size": "Small",
+            "spacing": "Small"
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Dashboard: {DASHBOARD_URL}",
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True,
+            "spacing": "Medium"
+        }
+    ]
+
     return {
         "type": "message",
         "attachments": [
@@ -233,53 +345,22 @@ def healthy_card(interval_value):
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
                     "version": "1.2",
-                    "body": [
-                        {
-                            "type": "Container",
-                            "style": "good",
-                            "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "✅ RETURNED TO NORMAL",
-                                    "weight": "Bolder",
-                                    "size": "Large",
-                                    "wrap": True
-                                },
-                                {
-                                    "type": "TextBlock",
-                                    "text": "Radar Live monitoring confirms the affected flow has recovered and is back within SLA.",
-                                    "wrap": True,
-                                    "size": "Small",
-                                    "spacing": "Small"
-                                }
-                            ]
-                        },
-                        {
-                            "type": "FactSet",
-                            "spacing": "Medium",
-                            "facts": [
-                                {"title": "Environment", "value": "Production"},
-                                {"title": "Recovered At", "value": str(interval_value)},
-                                {"title": "Status", "value": "Healthy"},
-                                {"title": "Dashboard", "value": DASHBOARD_URL}
-                            ]
-                        }
-                    ]
+                    "body": body
                 }
             }
         ]
     }
 
 # =========================================================
-# 5. SEND ONLY ON STATUS CHANGE
+# 6. SEND ONLY ON STATUS CHANGE
 # =========================================================
 payload = None
 
 if previous_status is None:
     if current_status == "BREACH":
-        payload = breach_card(rows)
+        payload = breach_card(rows, current_interval)
 elif previous_status == "HEALTHY" and current_status == "BREACH":
-    payload = breach_card(rows)
+    payload = breach_card(rows, current_interval)
 elif previous_status == "BREACH" and current_status == "HEALTHY":
     payload = healthy_card(current_interval)
 
@@ -297,7 +378,7 @@ else:
     print(f"No notification sent. Previous={previous_status}, Current={current_status}")
 
 # =========================================================
-# 6. UPSERT STATE
+# 7. UPSERT STATE
 # =========================================================
 spark.sql(f"DELETE FROM {STATE_TABLE} WHERE alert_name = '{ALERT_NAME}'")
 
@@ -308,4 +389,4 @@ spark.createDataFrame(
     "last_notified_at", F.current_timestamp()
 ).write.mode("append").saveAsTable(STATE_TABLE)
 
-print(f"State updated: {current_status}")
+print(f"State updated: {current_status}, interval={current_interval}")
