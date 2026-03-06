@@ -1,27 +1,23 @@
+import json
+import requests
+
+WEBHOOK_URL = "YOUR_TEAMS_WEBHOOK_URL"
+
+query = """
 WITH bounds AS (
     SELECT date_trunc('day', current_timestamp()) AS day_start
 ),
-
-/* =========================================================
-   LATEST EHUB / BRONZE INTERVAL (MQS side = latest)
-   ========================================================= */
 latest_mqs_interval AS (
     SELECT MAX(interval_end) AS max_interval
     FROM core_bld.default.monitoring_ehub_30min_metrics
     WHERE interval_end >= (SELECT day_start FROM bounds)
       AND message_type <> 'ALL'
 ),
-
-/* =========================================================
-   INTERACTION INTERVAL = LATEST - 1
-   (second latest interval_start for today)
-   ========================================================= */
 interaction_intervals AS (
     SELECT DISTINCT interval_start
     FROM core_bld.default.monitoring_mqs_interaction_status
     WHERE interval_start >= (SELECT day_start FROM bounds)
 ),
-
 latest_minus_1_interaction AS (
     SELECT interval_start AS interaction_interval
     FROM (
@@ -32,10 +28,6 @@ latest_minus_1_interaction AS (
     ) x
     WHERE rn = 2
 ),
-
-/* =========================================================
-   EHUB LATEST
-   ========================================================= */
 ehub_latest AS (
     SELECT
         run_date,
@@ -47,10 +39,6 @@ ehub_latest AS (
     WHERE message_type <> 'ALL'
       AND interval_end = (SELECT max_interval FROM latest_mqs_interval)
 ),
-
-/* =========================================================
-   BRONZE LATEST
-   ========================================================= */
 bronze_latest AS (
     SELECT
         CASE
@@ -71,11 +59,6 @@ bronze_latest AS (
     WHERE message_type <> 'ALL'
       AND interval_end = (SELECT max_interval FROM latest_mqs_interval)
 ),
-
-/* =========================================================
-   INTERACTION LATEST - 1
-   Aggregate at interval level
-   ========================================================= */
 interaction_latest_minus_1 AS (
     SELECT
         interval_start,
@@ -87,39 +70,117 @@ interaction_latest_minus_1 AS (
     )
     GROUP BY interval_start
 )
-
-/* =========================================================
-   FINAL OUTPUT
-   ========================================================= */
 SELECT
     e.run_date,
     e.interval_end,
     e.message_type_link,
-
     e.ehub_count,
     e.ehub_sla,
-
     COALESCE(b.message_count, 0) AS bronze_count,
     COALESCE(b.is_sla_flag, 0) AS bronze_sla,
-
     e.ehub_count - COALESCE(b.message_count, 0) AS count_difference,
-
     CASE
         WHEN e.ehub_sla = 1 AND COALESCE(b.is_sla_flag, 0) = 1 THEN 'EHUB & BRONZE'
         WHEN e.ehub_sla = 1 THEN 'EHUB'
         WHEN COALESCE(b.is_sla_flag, 0) = 1 THEN 'BRONZE'
         WHEN COALESCE(i.total_interaction_count, 0) = 0 THEN 'INTERACTION'
     END AS breach_source
-
 FROM ehub_latest e
 LEFT JOIN bronze_latest b
     ON e.message_type_link = b.message_type_link
    AND e.interval_end = b.interval_end
 LEFT JOIN interaction_latest_minus_1 i
     ON 1 = 1
-
 WHERE
        e.ehub_sla = 1
     OR COALESCE(b.is_sla_flag, 0) = 1
     OR COALESCE(i.total_interaction_count, 0) = 0
-;
+"""
+
+df = spark.sql(query)
+rows = df.collect()
+
+def build_card(rows):
+    if rows:
+        status_text = "SLA BREACH DETECTED"
+        status_color = "attention"   # red/orange emphasis in Adaptive Cards
+        intro = "Please investigate EHUB / Bronze / Interaction processing."
+        facts = []
+
+        # Keep card compact
+        for r in rows[:8]:
+            facts.extend([
+                {"title": "Message Type", "value": str(r["message_type_link"])},
+                {"title": "Interval", "value": str(r["interval_end"])},
+                {"title": "EHUB Count", "value": str(r["ehub_count"])},
+                {"title": "Bronze Count", "value": str(r["bronze_count"])},
+                {"title": "Difference", "value": str(r["count_difference"])},
+                {"title": "Source", "value": str(r["breach_source"])},
+            ])
+    else:
+        status_text = "SYSTEM HEALTHY"
+        status_color = "good"        # green emphasis
+        intro = "No SLA breach detected in the latest run."
+        facts = [
+            {"title": "Status", "value": "OK"},
+            {"title": "Run Time", "value": str(spark.sql("select current_timestamp() as ts").collect()[0]["ts"])},
+        ]
+
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "text": "RADAR LIVE - Automated SLA Monitoring",
+                            "weight": "Bolder",
+                            "size": "Medium"
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": status_text,
+                            "weight": "Bolder",
+                            "color": status_color,
+                            "size": "Large",
+                            "wrap": True
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": intro,
+                            "wrap": True
+                        },
+                        {
+                            "type": "FactSet",
+                            "facts": facts
+                        }
+                    ],
+                    "actions": [
+                        {
+                            "type": "Action.OpenURL",
+                            "title": "Open Databricks",
+                            "url": "https://<your-databricks-workspace-url>"
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+payload = build_card(rows)
+
+resp = requests.post(
+    WEBHOOK_URL,
+    headers={"Content-Type": "application/json"},
+    data=json.dumps(payload),
+    timeout=30
+)
+
+resp.raise_for_status()
+
+print(f"Posted to Teams successfully. HTTP {resp.status_code}")
