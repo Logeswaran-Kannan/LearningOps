@@ -3,7 +3,6 @@ import requests
 
 WEBHOOK_URL = "YOUR_TEAMS_WEBHOOK_URL"
 
-# Your breach query
 query = """
 WITH bounds AS (
     SELECT date_trunc('day', current_timestamp()) AS day_start
@@ -98,77 +97,176 @@ WHERE
 df = spark.sql(query)
 rows = [r.asDict() for r in df.collect()]
 
-def build_card(rows):
-    if rows:
-        body = [
+workspace_url = "https://<your-databricks-workspace-url>"
+dashboard_url = "https://<your-dashboard-url>"
+
+def metric_fact(title, value):
+    return {"title": title, "value": str(value)}
+
+def build_breach_container(r):
+    return {
+        "type": "Container",
+        "style": "emphasis",
+        "bleed": False,
+        "spacing": "Medium",
+        "items": [
             {
                 "type": "TextBlock",
-                "text": "RADAR LIVE - Automated SLA Monitoring",
+                "text": f"{r['message_type_link']}",
                 "weight": "Bolder",
-                "size": "Medium"
-            },
-            {
-                "type": "TextBlock",
-                "text": "SLA BREACH DETECTED",
-                "weight": "Bolder",
-                "color": "Attention",
-                "size": "Large"
-            },
-            {
-                "type": "TextBlock",
-                "text": "Please investigate EHUB / Bronze / Interaction processing immediately.",
+                "size": "Medium",
                 "wrap": True
+            },
+            {
+                "type": "TextBlock",
+                "text": f"Breach Source: {r['breach_source']}",
+                "color": "Attention",
+                "weight": "Bolder",
+                "wrap": True,
+                "spacing": "Small"
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    metric_fact("Interval", r["interval_end"]),
+                    metric_fact("EHUB Count", r["ehub_count"]),
+                    metric_fact("EHUB SLA", r["ehub_sla"]),
+                    metric_fact("Bronze Count", r["bronze_count"]),
+                    metric_fact("Bronze SLA", r["bronze_sla"]),
+                    metric_fact("Difference", r["count_difference"])
+                ]
             }
         ]
+    }
 
-        for r in rows[:6]:
-            body.extend([
+def build_card(rows):
+    breach_count = len(rows)
+    latest_interval = str(rows[0]["interval_end"]) if rows else "Latest run"
+    has_breach = breach_count > 0
+
+    status_text = "SLA BREACH DETECTED" if has_breach else "SYSTEM HEALTHY"
+    status_color = "Attention" if has_breach else "Good"
+    status_style = "attention" if has_breach else "good"
+    intro_text = (
+        "Immediate attention required. One or more monitored message types breached SLA in the latest run."
+        if has_breach else
+        "All monitored pipelines are operating within expected SLA for the latest run."
+    )
+
+    body = [
+        {
+            "type": "Container",
+            "style": "default",
+            "items": [
                 {
-                    "type": "Container",
-                    "separator": True,
-                    "items": [
-                        {
-                            "type": "TextBlock",
-                            "text": f"Message Type: {r['message_type_link']}",
-                            "weight": "Bolder",
-                            "wrap": True
-                        },
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {"title": "Interval", "value": str(r["interval_end"])},
-                                {"title": "EHUB Count", "value": str(r["ehub_count"])},
-                                {"title": "EHUB SLA", "value": str(r["ehub_sla"])},
-                                {"title": "Bronze Count", "value": str(r["bronze_count"])},
-                                {"title": "Bronze SLA", "value": str(r["bronze_sla"])},
-                                {"title": "Difference", "value": str(r["count_difference"])},
-                                {"title": "Source", "value": str(r["breach_source"])}
-                            ]
-                        }
+                    "type": "TextBlock",
+                    "text": "RADAR LIVE",
+                    "weight": "Bolder",
+                    "size": "ExtraLarge",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Automated SLA Monitoring Notification",
+                    "spacing": "None",
+                    "isSubtle": True,
+                    "wrap": True
+                }
+            ]
+        },
+        {
+            "type": "Container",
+            "style": status_style,
+            "bleed": True,
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": status_text,
+                    "weight": "Bolder",
+                    "size": "Large",
+                    "color": "Light",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": intro_text,
+                    "color": "Light",
+                    "wrap": True,
+                    "spacing": "Small"
+                }
+            ]
+        },
+        {
+            "type": "Container",
+            "spacing": "Medium",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "Run Summary",
+                    "weight": "Bolder",
+                    "size": "Medium"
+                },
+                {
+                    "type": "FactSet",
+                    "facts": [
+                        metric_fact("Environment", "RADAR LIVE"),
+                        metric_fact("Latest Interval", latest_interval),
+                        metric_fact("Breaches", breach_count),
+                        metric_fact("Status", status_text)
                     ]
                 }
-            ])
+            ]
+        }
+    ]
+
+    if has_breach:
+        body.append({
+            "type": "TextBlock",
+            "text": "Impacted Message Types",
+            "weight": "Bolder",
+            "size": "Medium",
+            "spacing": "Medium"
+        })
+
+        for r in rows[:5]:
+            body.append(build_breach_container(r))
+
+        if breach_count > 5:
+            body.append({
+                "type": "TextBlock",
+                "text": f"...and {breach_count - 5} more impacted message type(s).",
+                "isSubtle": True,
+                "wrap": True,
+                "spacing": "Medium"
+            })
+
     else:
-        body = [
-            {
-                "type": "TextBlock",
-                "text": "RADAR LIVE - Automated SLA Monitoring",
-                "weight": "Bolder",
-                "size": "Medium"
-            },
-            {
-                "type": "TextBlock",
-                "text": "SYSTEM HEALTHY",
-                "weight": "Bolder",
-                "color": "Good",
-                "size": "Large"
-            },
-            {
-                "type": "TextBlock",
-                "text": "No SLA breach detected in the latest run.",
-                "wrap": True
-            }
-        ]
+        body.append({
+            "type": "Container",
+            "style": "good",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "No action required.",
+                    "weight": "Bolder",
+                    "color": "Good",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Monitoring completed successfully with no SLA breach identified.",
+                    "wrap": True
+                }
+            ]
+        })
+
+    body.append({
+        "type": "TextBlock",
+        "text": "Generated automatically by Databricks scheduled monitoring.",
+        "isSubtle": True,
+        "spacing": "Medium",
+        "wrap": True
+    })
 
     return {
         "type": "message",
@@ -179,7 +277,19 @@ def build_card(rows):
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
                     "version": "1.4",
-                    "body": body
+                    "body": body,
+                    "actions": [
+                        {
+                            "type": "Action.OpenURL",
+                            "title": "Open Databricks Workspace",
+                            "url": workspace_url
+                        },
+                        {
+                            "type": "Action.OpenURL",
+                            "title": "Open Monitoring Dashboard",
+                            "url": dashboard_url
+                        }
+                    ]
                 }
             }
         ]
