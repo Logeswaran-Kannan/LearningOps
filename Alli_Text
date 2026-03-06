@@ -22,9 +22,8 @@ interaction_intervals AS (
 latest_minus_1_interaction AS (
     SELECT interval_start AS interaction_interval
     FROM (
-        SELECT
-            interval_start,
-            ROW_NUMBER() OVER (ORDER BY interval_start DESC) AS rn
+        SELECT interval_start,
+               ROW_NUMBER() OVER (ORDER BY interval_start DESC) AS rn
         FROM interaction_intervals
     ) x
     WHERE rn = 2
@@ -78,10 +77,10 @@ SELECT
     COALESCE(b.is_sla_flag, 0) AS bronze_sla,
     e.ehub_count - COALESCE(b.message_count, 0) AS count_difference,
     CASE
-        WHEN e.ehub_sla = 1 AND COALESCE(b.is_sla_flag, 0) = 1 THEN 'EHUB & BRONZE'
-        WHEN e.ehub_sla = 1 THEN 'EHUB'
-        WHEN COALESCE(b.is_sla_flag, 0) = 1 THEN 'BRONZE'
-        WHEN COALESCE(i.total_interaction_count, 0) = 0 THEN 'INTERACTION'
+        WHEN e.ehub_sla = 1 AND COALESCE(b.is_sla_flag, 0) = 1 THEN '⚠ EHUB & BRONZE'
+        WHEN e.ehub_sla = 1 THEN '⚠ EHUB'
+        WHEN COALESCE(b.is_sla_flag, 0) = 1 THEN '⚠ BRONZE'
+        WHEN COALESCE(i.total_interaction_count, 0) = 0 THEN '🛠 INTERACTION'
     END AS breach_source
 FROM ehub_latest e
 LEFT JOIN bronze_latest b
@@ -94,120 +93,20 @@ WHERE
     OR COALESCE(b.is_sla_flag, 0) = 1
     OR COALESCE(i.total_interaction_count, 0) = 0
 ORDER BY e.message_type_link
+LIMIT 6
 """
 
-df = spark.sql(query)
-rows = [r.asDict() for r in df.collect()]
+rows = [r.asDict() for r in spark.sql(query).collect()]
 
-def truncate_text(value, max_len=28):
-    s = "" if value is None else str(value)
-    return s if len(s) <= max_len else s[:max_len - 3] + "..."
-
-def status_block(has_breach: bool):
-    if has_breach:
-        return [
-            {
-                "type": "Container",
-                "style": "attention",
-                "bleed": True,
-                "items": [
-                    {
-                        "type": "TextBlock",
-                        "text": "⚠️  SLA BREACH DETECTED",
-                        "weight": "Bolder",
-                        "size": "Large",
-                        "wrap": True
-                    },
-                    {
-                        "type": "TextBlock",
-                        "text": "Immediate review required for EHUB / Bronze / Interaction pipeline health.",
-                        "wrap": True,
-                        "spacing": "Small"
-                    }
-                ]
-            }
-        ]
-    return [
-        {
-            "type": "Container",
-            "style": "good",
-            "bleed": True,
-            "items": [
-                {
-                    "type": "TextBlock",
-                    "text": "✅  SYSTEM HEALTHY",
-                    "weight": "Bolder",
-                    "size": "Large",
-                    "wrap": True
-                },
-                {
-                    "type": "TextBlock",
-                    "text": "No SLA breach detected in the latest monitoring cycle.",
-                    "wrap": True,
-                    "spacing": "Small"
-                }
-            ]
-        }
-    ]
-
-def summary_block(rows):
+# Send only when breach exists
+if not rows:
+    print("No breach found. No Teams notification sent.")
+else:
+    interval_text = str(rows[0]["interval_end"])
     impacted = len(rows)
-    latest_interval = str(rows[0]["interval_end"]) if rows else str(
-        spark.sql("select current_timestamp() as ts").collect()[0]["ts"]
-    )
 
-    if rows:
-        source_counts = {}
-        for r in rows:
-            src = str(r.get("breach_source", "UNKNOWN"))
-            source_counts[src] = source_counts.get(src, 0) + 1
-        source_text = ", ".join([f"{k}: {v}" for k, v in source_counts.items()])
-    else:
-        source_text = "No impacted flows"
-
-    return {
-        "type": "Container",
-        "spacing": "Medium",
-        "items": [
-            {
-                "type": "TextBlock",
-                "text": "RADAR LIVE | Production Monitoring",
-                "weight": "Bolder",
-                "size": "Medium"
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {"title": "Environment", "value": "Production"},
-                    {"title": "Interval", "value": latest_interval},
-                    {"title": "Impacted Flows", "value": str(impacted)},
-                    {"title": "Affected Source", "value": source_text}
-                ]
-            }
-        ]
-    }
-
-def table_header():
-    return {
-        "type": "ColumnSet",
-        "separator": True,
-        "spacing": "Medium",
-        "columns": [
-            {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "wrap": True}]},
-            {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "EHUB", "weight": "Bolder", "horizontalAlignment": "Center"}]},
-            {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Bronze", "weight": "Bolder", "horizontalAlignment": "Center"}]},
-            {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Diff", "weight": "Bolder", "horizontalAlignment": "Center"}]},
-            {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Breach Source", "weight": "Bolder", "wrap": True}]}
-        ]
-    }
-
-def table_rows(rows, max_rows=8):
-    items = []
-    for r in rows[:max_rows]:
-        breach_source = str(r.get("breach_source", "UNKNOWN"))
-        source_icon = "⚠️" if breach_source != "INTERACTION" else "🛠️"
-
-        items.append({
+    def row_item(r):
+        return {
             "type": "ColumnSet",
             "separator": True,
             "spacing": "Small",
@@ -217,8 +116,9 @@ def table_rows(rows, max_rows=8):
                     "width": 3,
                     "items": [{
                         "type": "TextBlock",
-                        "text": truncate_text(r.get("message_type_link")),
-                        "wrap": True
+                        "text": str(r["message_type_link"]),
+                        "wrap": True,
+                        "size": "Small"
                     }]
                 },
                 {
@@ -226,8 +126,9 @@ def table_rows(rows, max_rows=8):
                     "width": 1,
                     "items": [{
                         "type": "TextBlock",
-                        "text": str(r.get("ehub_count", 0)),
-                        "horizontalAlignment": "Center"
+                        "text": str(r["ehub_count"]),
+                        "horizontalAlignment": "Center",
+                        "size": "Small"
                     }]
                 },
                 {
@@ -235,8 +136,9 @@ def table_rows(rows, max_rows=8):
                     "width": 1,
                     "items": [{
                         "type": "TextBlock",
-                        "text": str(r.get("bronze_count", 0)),
-                        "horizontalAlignment": "Center"
+                        "text": str(r["bronze_count"]),
+                        "horizontalAlignment": "Center",
+                        "size": "Small"
                     }]
                 },
                 {
@@ -244,8 +146,9 @@ def table_rows(rows, max_rows=8):
                     "width": 1,
                     "items": [{
                         "type": "TextBlock",
-                        "text": str(r.get("count_difference", 0)),
-                        "horizontalAlignment": "Center"
+                        "text": str(r["count_difference"]),
+                        "horizontalAlignment": "Center",
+                        "size": "Small"
                     }]
                 },
                 {
@@ -253,49 +156,68 @@ def table_rows(rows, max_rows=8):
                     "width": 2,
                     "items": [{
                         "type": "TextBlock",
-                        "text": f"{source_icon} {breach_source}",
-                        "wrap": True
+                        "text": str(r["breach_source"]),
+                        "wrap": True,
+                        "size": "Small"
                     }]
                 }
             ]
-        })
+        }
 
-    if len(rows) > max_rows:
-        items.append({
-            "type": "TextBlock",
-            "text": f"... and {len(rows) - max_rows} more impacted message types",
-            "isSubtle": True,
-            "spacing": "Small",
-            "wrap": True
-        })
-
-    return items
-
-def build_card(rows):
-    has_breach = len(rows) > 0
-
-    body = []
-    body.extend(status_block(has_breach))
-    body.append(summary_block(rows))
-
-    if has_breach:
-        body.append({
+    body = [
+        {
+            "type": "Container",
+            "style": "attention",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "⚠ SLA BREACH DETECTED",
+                    "weight": "Bolder",
+                    "size": "Medium",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Radar Live production monitoring has identified an SLA issue that needs immediate attention.",
+                    "wrap": True,
+                    "size": "Small",
+                    "spacing": "Small"
+                }
+            ]
+        },
+        {
+            "type": "FactSet",
+            "spacing": "Medium",
+            "facts": [
+                {"title": "Environment", "value": "Production"},
+                {"title": "Interval", "value": interval_text},
+                {"title": "Impacted", "value": str(impacted)},
+                {"title": "Action", "value": "Investigate dashboard and pipeline health"}
+            ]
+        },
+        {
             "type": "TextBlock",
             "text": "Impact Summary",
             "weight": "Bolder",
             "spacing": "Medium"
-        })
-        body.append(table_header())
-        body.extend(table_rows(rows, max_rows=8))
-    else:
-        body.append({
-            "type": "TextBlock",
-            "text": "All monitored message types are within SLA for the current cycle.",
-            "wrap": True,
-            "spacing": "Medium"
-        })
+        },
+        {
+            "type": "ColumnSet",
+            "separator": True,
+            "columns": [
+                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "EHUB", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Bronze", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Diff", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Source", "weight": "Bolder", "size": "Small"}]}
+            ]
+        }
+    ]
 
-    return {
+    for r in rows:
+        body.append(row_item(r))
+
+    payload = {
         "type": "message",
         "attachments": [
             {
@@ -303,7 +225,7 @@ def build_card(rows):
                 "content": {
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
-                    "version": "1.4",
+                    "version": "1.2",
                     "body": body,
                     "actions": [
                         {
@@ -317,15 +239,13 @@ def build_card(rows):
         ]
     }
 
-payload = build_card(rows)
+    response = requests.post(
+        WEBHOOK_URL,
+        headers={"Content-Type": "application/json"},
+        data=json.dumps(payload),
+        timeout=30
+    )
 
-response = requests.post(
-    WEBHOOK_URL,
-    headers={"Content-Type": "application/json"},
-    data=json.dumps(payload),
-    timeout=30
-)
-
-print("HTTP status:", response.status_code)
-print("Response text:", response.text)
-response.raise_for_status()
+    print("HTTP status:", response.status_code)
+    print("Response text:", response.text)
+    response.raise_for_status()
