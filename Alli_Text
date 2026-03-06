@@ -2,6 +2,7 @@ import json
 import requests
 
 WEBHOOK_URL = "YOUR_TEAMS_WEBHOOK_URL"
+DASHBOARD_URL = "https://YOUR-DATABRICKS-WORKSPACE/sql/dashboards/YOUR_DASHBOARD_ID"
 
 query = """
 WITH bounds AS (
@@ -97,176 +98,161 @@ WHERE
 df = spark.sql(query)
 rows = [r.asDict() for r in df.collect()]
 
-workspace_url = "https://<your-databricks-workspace-url>"
-dashboard_url = "https://<your-dashboard-url>"
+def build_metric_factset(row):
+    return {
+        "type": "FactSet",
+        "facts": [
+            {"title": "Interval", "value": str(row["interval_end"])},
+            {"title": "EHUB Count", "value": str(row["ehub_count"])},
+            {"title": "Bronze Count", "value": str(row["bronze_count"])},
+            {"title": "Difference", "value": str(row["count_difference"])},
+            {"title": "Source", "value": str(row["breach_source"])}
+        ]
+    }
 
-def metric_fact(title, value):
-    return {"title": title, "value": str(value)}
-
-def build_breach_container(r):
+def build_breach_container(row):
     return {
         "type": "Container",
-        "style": "emphasis",
-        "bleed": False,
-        "spacing": "Medium",
+        "style": "attention",
+        "bleed": True,
+        "separator": True,
         "items": [
             {
                 "type": "TextBlock",
-                "text": f"{r['message_type_link']}",
+                "text": f"⚠ {row['message_type_link']}",
                 "weight": "Bolder",
                 "size": "Medium",
                 "wrap": True
             },
+            build_metric_factset(row)
+        ]
+    }
+
+def build_healthy_container(run_ts):
+    return {
+        "type": "Container",
+        "style": "good",
+        "bleed": True,
+        "items": [
             {
                 "type": "TextBlock",
-                "text": f"Breach Source: {r['breach_source']}",
-                "color": "Attention",
+                "text": "✅ System Healthy",
                 "weight": "Bolder",
+                "size": "Large",
+                "wrap": True
+            },
+            {
+                "type": "TextBlock",
+                "text": "All monitored streams are within SLA for the latest run.",
                 "wrap": True,
                 "spacing": "Small"
             },
             {
                 "type": "FactSet",
                 "facts": [
-                    metric_fact("Interval", r["interval_end"]),
-                    metric_fact("EHUB Count", r["ehub_count"]),
-                    metric_fact("EHUB SLA", r["ehub_sla"]),
-                    metric_fact("Bronze Count", r["bronze_count"]),
-                    metric_fact("Bronze SLA", r["bronze_sla"]),
-                    metric_fact("Difference", r["count_difference"])
+                    {"title": "Checked At", "value": str(run_ts)},
+                    {"title": "Status", "value": "Operational"}
                 ]
             }
         ]
     }
 
-def build_card(rows):
-    breach_count = len(rows)
-    latest_interval = str(rows[0]["interval_end"]) if rows else "Latest run"
-    has_breach = breach_count > 0
-
-    status_text = "SLA BREACH DETECTED" if has_breach else "SYSTEM HEALTHY"
-    status_color = "Attention" if has_breach else "Good"
-    status_style = "attention" if has_breach else "good"
-    intro_text = (
-        "Immediate attention required. One or more monitored message types breached SLA in the latest run."
-        if has_breach else
-        "All monitored pipelines are operating within expected SLA for the latest run."
-    )
-
-    body = [
+def build_header(title_icon, title_text, subtitle, color):
+    return [
         {
             "type": "Container",
-            "style": "default",
             "items": [
                 {
                     "type": "TextBlock",
-                    "text": "RADAR LIVE",
-                    "weight": "Bolder",
-                    "size": "ExtraLarge",
-                    "wrap": True
-                },
-                {
-                    "type": "TextBlock",
-                    "text": "Automated SLA Monitoring Notification",
-                    "spacing": "None",
-                    "isSubtle": True,
-                    "wrap": True
-                }
-            ]
-        },
-        {
-            "type": "Container",
-            "style": status_style,
-            "bleed": True,
-            "items": [
-                {
-                    "type": "TextBlock",
-                    "text": status_text,
+                    "text": f"{title_icon} RADAR LIVE Monitoring",
                     "weight": "Bolder",
                     "size": "Large",
-                    "color": "Light",
                     "wrap": True
                 },
                 {
                     "type": "TextBlock",
-                    "text": intro_text,
-                    "color": "Light",
+                    "text": title_text,
+                    "weight": "Bolder",
+                    "size": "ExtraLarge",
+                    "color": color,
                     "wrap": True,
                     "spacing": "Small"
-                }
-            ]
-        },
-        {
-            "type": "Container",
-            "spacing": "Medium",
-            "items": [
-                {
-                    "type": "TextBlock",
-                    "text": "Run Summary",
-                    "weight": "Bolder",
-                    "size": "Medium"
                 },
                 {
-                    "type": "FactSet",
-                    "facts": [
-                        metric_fact("Environment", "RADAR LIVE"),
-                        metric_fact("Latest Interval", latest_interval),
-                        metric_fact("Breaches", breach_count),
-                        metric_fact("Status", status_text)
-                    ]
+                    "type": "TextBlock",
+                    "text": subtitle,
+                    "wrap": True,
+                    "spacing": "Small",
+                    "isSubtle": True
                 }
             ]
         }
     ]
 
-    if has_breach:
-        body.append({
-            "type": "TextBlock",
-            "text": "Impacted Message Types",
-            "weight": "Bolder",
-            "size": "Medium",
-            "spacing": "Medium"
-        })
+def build_card(rows):
+    run_ts = spark.sql("select current_timestamp() as ts").collect()[0]["ts"]
 
-        for r in rows[:5]:
-            body.append(build_breach_container(r))
+    if rows:
+        total_breaches = len(rows)
+        latest_interval = rows[0]["interval_end"]
 
-        if breach_count > 5:
-            body.append({
+        body = []
+        body.extend(build_header(
+            "⚠",
+            "SLA Breach Detected",
+            "Immediate attention required. Please review the impacted streams below.",
+            "Attention"
+        ))
+
+        body.append(
+            {
+                "type": "Container",
+                "style": "emphasis",
+                "items": [
+                    {
+                        "type": "FactSet",
+                        "facts": [
+                            {"title": "Environment", "value": "RADAR LIVE"},
+                            {"title": "Status", "value": "Breach"},
+                            {"title": "Latest Interval", "value": str(latest_interval)},
+                            {"title": "Impacted Types", "value": str(total_breaches)}
+                        ]
+                    }
+                ]
+            }
+        )
+
+        for row in rows[:5]:
+            body.append(build_breach_container(row))
+
+        if total_breaches > 5:
+            body.append(
+                {
+                    "type": "TextBlock",
+                    "text": f"⚙ Additional impacted message types not shown: {total_breaches - 5}",
+                    "wrap": True,
+                    "spacing": "Medium"
+                }
+            )
+
+        body.append(
+            {
                 "type": "TextBlock",
-                "text": f"...and {breach_count - 5} more impacted message type(s).",
-                "isSubtle": True,
+                "text": "🛠 Recommended action: Review dashboard, validate pipeline health, and investigate upstream/downstream flow delays.",
                 "wrap": True,
                 "spacing": "Medium"
-            })
+            }
+        )
 
     else:
-        body.append({
-            "type": "Container",
-            "style": "good",
-            "items": [
-                {
-                    "type": "TextBlock",
-                    "text": "No action required.",
-                    "weight": "Bolder",
-                    "color": "Good",
-                    "wrap": True
-                },
-                {
-                    "type": "TextBlock",
-                    "text": "Monitoring completed successfully with no SLA breach identified.",
-                    "wrap": True
-                }
-            ]
-        })
-
-    body.append({
-        "type": "TextBlock",
-        "text": "Generated automatically by Databricks scheduled monitoring.",
-        "isSubtle": True,
-        "spacing": "Medium",
-        "wrap": True
-    })
+        body = []
+        body.extend(build_header(
+            "✅",
+            "All Systems Operational",
+            "No SLA breaches detected for the latest monitoring cycle.",
+            "Good"
+        ))
+        body.append(build_healthy_container(run_ts))
 
     return {
         "type": "message",
@@ -281,13 +267,8 @@ def build_card(rows):
                     "actions": [
                         {
                             "type": "Action.OpenURL",
-                            "title": "Open Databricks Workspace",
-                            "url": workspace_url
-                        },
-                        {
-                            "type": "Action.OpenURL",
                             "title": "Open Monitoring Dashboard",
-                            "url": dashboard_url
+                            "url": DASHBOARD_URL
                         }
                     ]
                 }
