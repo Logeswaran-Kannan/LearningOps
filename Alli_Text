@@ -1,9 +1,28 @@
 import json
 import requests
+from pyspark.sql import functions as F
 
 WEBHOOK_URL = "YOUR_TEAMS_WEBHOOK_URL"
 DASHBOARD_URL = "YOUR_DATABRICKS_DASHBOARD_URL"
+STATE_TABLE = "core_bld.default.sla_alert_state"
+ALERT_NAME = "radar_live_sla_monitor"
 
+# =========================================================
+# 1. CREATE STATE TABLE IF NOT EXISTS
+# =========================================================
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {STATE_TABLE} (
+    alert_name STRING,
+    current_status STRING,
+    last_interval TIMESTAMP,
+    last_notified_at TIMESTAMP
+)
+USING DELTA
+""")
+
+# =========================================================
+# 2. BREACH QUERY
+# =========================================================
 query = """
 WITH bounds AS (
     SELECT date_trunc('day', current_timestamp()) AS day_start
@@ -97,76 +116,32 @@ ORDER BY e.message_type_link
 LIMIT 6
 """
 
-rows = [r.asDict() for r in spark.sql(query).collect()]
+breach_df = spark.sql(query)
+rows = [r.asDict() for r in breach_df.collect()]
 
-if not rows:
-    print("No breach found. No Teams notification sent.")
-else:
+current_status = "BREACH" if rows else "HEALTHY"
+current_interval = rows[0]["interval_end"] if rows else spark.sql("SELECT current_timestamp() ts").collect()[0]["ts"]
+
+# =========================================================
+# 3. READ PREVIOUS STATUS
+# =========================================================
+state_df = spark.table(STATE_TABLE).filter(F.col("alert_name") == ALERT_NAME)
+state_rows = state_df.collect()
+
+previous_status = None
+if state_rows:
+    previous_status = state_rows[0]["current_status"]
+
+# =========================================================
+# 4. BUILD TEAMS CARD
+# =========================================================
+def safe_text(value, max_len=24):
+    s = "" if value is None else str(value)
+    return s if len(s) <= max_len else s[:max_len - 3] + "..."
+
+def breach_card(rows):
     interval_text = str(rows[0]["interval_end"])
     impacted_count = len(rows)
-
-    def safe_text(value, max_len=26):
-        s = "" if value is None else str(value)
-        return s if len(s) <= max_len else s[:max_len - 3] + "..."
-
-    def make_row(r):
-        return {
-            "type": "ColumnSet",
-            "separator": True,
-            "spacing": "Small",
-            "columns": [
-                {
-                    "type": "Column",
-                    "width": 3,
-                    "items": [{
-                        "type": "TextBlock",
-                        "text": safe_text(r["message_type_link"]),
-                        "wrap": True,
-                        "size": "Small"
-                    }]
-                },
-                {
-                    "type": "Column",
-                    "width": 1,
-                    "items": [{
-                        "type": "TextBlock",
-                        "text": str(r["ehub_count"]),
-                        "horizontalAlignment": "Center",
-                        "size": "Small"
-                    }]
-                },
-                {
-                    "type": "Column",
-                    "width": 1,
-                    "items": [{
-                        "type": "TextBlock",
-                        "text": str(r["bronze_count"]),
-                        "horizontalAlignment": "Center",
-                        "size": "Small"
-                    }]
-                },
-                {
-                    "type": "Column",
-                    "width": 1,
-                    "items": [{
-                        "type": "TextBlock",
-                        "text": str(r["count_difference"]),
-                        "horizontalAlignment": "Center",
-                        "size": "Small"
-                    }]
-                },
-                {
-                    "type": "Column",
-                    "width": 2,
-                    "items": [{
-                        "type": "TextBlock",
-                        "text": str(r["breach_source"]),
-                        "wrap": True,
-                        "size": "Small"
-                    }]
-                }
-            ]
-        }
 
     body = [
         {
@@ -190,105 +165,50 @@ else:
             ]
         },
         {
-            "type": "Container",
+            "type": "FactSet",
             "spacing": "Medium",
-            "items": [
-                {
-                    "type": "TextBlock",
-                    "text": "Executive Summary",
-                    "weight": "Bolder",
-                    "size": "Medium"
-                },
-                {
-                    "type": "FactSet",
-                    "facts": [
-                        {"title": "Environment", "value": "Production"},
-                        {"title": "Interval", "value": interval_text},
-                        {"title": "Impacted Flows", "value": str(impacted_count)},
-                        {"title": "Severity", "value": "High"},
-                        {"title": "Recommended Action", "value": "Review pipeline health and reconcile affected flows"}
-                    ]
-                }
+            "facts": [
+                {"title": "Environment", "value": "Production"},
+                {"title": "Interval", "value": interval_text},
+                {"title": "Impacted Flows", "value": str(impacted_count)},
+                {"title": "Severity", "value": "High"},
+                {"title": "Dashboard", "value": DASHBOARD_URL}
             ]
         },
         {
-            "type": "Container",
-            "spacing": "Medium",
-            "items": [
-                {
-                    "type": "TextBlock",
-                    "text": "Impact Summary",
-                    "weight": "Bolder",
-                    "size": "Medium"
-                },
-                {
-                    "type": "ColumnSet",
-                    "separator": True,
-                    "columns": [
-                        {
-                            "type": "Column",
-                            "width": 3,
-                            "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "size": "Small"}]
-                        },
-                        {
-                            "type": "Column",
-                            "width": 1,
-                            "items": [{"type": "TextBlock", "text": "EHUB", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]
-                        },
-                        {
-                            "type": "Column",
-                            "width": 1,
-                            "items": [{"type": "TextBlock", "text": "Bronze", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]
-                        },
-                        {
-                            "type": "Column",
-                            "width": 1,
-                            "items": [{"type": "TextBlock", "text": "Diff", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]
-                        },
-                        {
-                            "type": "Column",
-                            "width": 2,
-                            "items": [{"type": "TextBlock", "text": "Source", "weight": "Bolder", "size": "Small"}]
-                        }
-                    ]
-                }
+            "type": "TextBlock",
+            "text": "Impact Summary",
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "ColumnSet",
+            "separator": True,
+            "columns": [
+                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "EHUB", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Bronze", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Diff", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Source", "weight": "Bolder", "size": "Small"}]}
             ]
         }
     ]
 
     for r in rows:
-        body.append(make_row(r))
-
-    body.extend([
-        {
-            "type": "Container",
-            "spacing": "Medium",
-            "items": [
-                {
-                    "type": "TextBlock",
-                    "text": "Reference",
-                    "weight": "Bolder",
-                    "size": "Medium"
-                },
-                {
-                    "type": "TextBlock",
-                    "text": f"Dashboard URL: {DASHBOARD_URL}",
-                    "wrap": True,
-                    "size": "Small",
-                    "isSubtle": True
-                }
+        body.append({
+            "type": "ColumnSet",
+            "separator": True,
+            "spacing": "Small",
+            "columns": [
+                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": safe_text(r["message_type_link"]), "wrap": True, "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": str(r["ehub_count"]), "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": str(r["bronze_count"]), "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": str(r["count_difference"]), "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": str(r["breach_source"]), "wrap": True, "size": "Small"}]}
             ]
-        },
-        {
-            "type": "TextBlock",
-            "text": "🛠 Please investigate the affected flow and validate upstream/downstream processing.",
-            "wrap": True,
-            "size": "Small",
-            "spacing": "Medium"
-        }
-    ])
+        })
 
-    payload = {
+    return {
         "type": "message",
         "attachments": [
             {
@@ -303,13 +223,89 @@ else:
         ]
     }
 
+def healthy_card(interval_value):
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.2",
+                    "body": [
+                        {
+                            "type": "Container",
+                            "style": "good",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "✅ RETURNED TO NORMAL",
+                                    "weight": "Bolder",
+                                    "size": "Large",
+                                    "wrap": True
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Radar Live monitoring confirms the affected flow has recovered and is back within SLA.",
+                                    "wrap": True,
+                                    "size": "Small",
+                                    "spacing": "Small"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "FactSet",
+                            "spacing": "Medium",
+                            "facts": [
+                                {"title": "Environment", "value": "Production"},
+                                {"title": "Recovered At", "value": str(interval_value)},
+                                {"title": "Status", "value": "Healthy"},
+                                {"title": "Dashboard", "value": DASHBOARD_URL}
+                            ]
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+# =========================================================
+# 5. SEND ONLY ON STATUS CHANGE
+# =========================================================
+payload = None
+
+if previous_status is None:
+    if current_status == "BREACH":
+        payload = breach_card(rows)
+elif previous_status == "HEALTHY" and current_status == "BREACH":
+    payload = breach_card(rows)
+elif previous_status == "BREACH" and current_status == "HEALTHY":
+    payload = healthy_card(current_interval)
+
+if payload:
     response = requests.post(
         WEBHOOK_URL,
         headers={"Content-Type": "application/json"},
         data=json.dumps(payload),
         timeout=30
     )
-
     print("HTTP status:", response.status_code)
     print("Response text:", response.text)
     response.raise_for_status()
+else:
+    print(f"No notification sent. Previous={previous_status}, Current={current_status}")
+
+# =========================================================
+# 6. UPSERT STATE
+# =========================================================
+spark.sql(f"DELETE FROM {STATE_TABLE} WHERE alert_name = '{ALERT_NAME}'")
+
+spark.createDataFrame(
+    [(ALERT_NAME, current_status, current_interval)],
+    ["alert_name", "current_status", "last_interval"]
+).withColumn(
+    "last_notified_at", F.current_timestamp()
+).write.mode("append").saveAsTable(STATE_TABLE)
+
+print(f"State updated: {current_status}")
