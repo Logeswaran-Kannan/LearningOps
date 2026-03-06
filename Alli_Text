@@ -22,8 +22,9 @@ interaction_intervals AS (
 latest_minus_1_interaction AS (
     SELECT interval_start AS interaction_interval
     FROM (
-        SELECT interval_start,
-               ROW_NUMBER() OVER (ORDER BY interval_start DESC) AS rn
+        SELECT
+            interval_start,
+            ROW_NUMBER() OVER (ORDER BY interval_start DESC) AS rn
         FROM interaction_intervals
     ) x
     WHERE rn = 2
@@ -98,14 +99,17 @@ LIMIT 6
 
 rows = [r.asDict() for r in spark.sql(query).collect()]
 
-# Send only when breach exists
 if not rows:
     print("No breach found. No Teams notification sent.")
 else:
     interval_text = str(rows[0]["interval_end"])
-    impacted = len(rows)
+    impacted_count = len(rows)
 
-    def row_item(r):
+    def safe_text(value, max_len=26):
+        s = "" if value is None else str(value)
+        return s if len(s) <= max_len else s[:max_len - 3] + "..."
+
+    def make_row(r):
         return {
             "type": "ColumnSet",
             "separator": True,
@@ -116,7 +120,7 @@ else:
                     "width": 3,
                     "items": [{
                         "type": "TextBlock",
-                        "text": str(r["message_type_link"]),
+                        "text": safe_text(r["message_type_link"]),
                         "wrap": True,
                         "size": "Small"
                     }]
@@ -173,12 +177,12 @@ else:
                     "type": "TextBlock",
                     "text": "⚠ SLA BREACH DETECTED",
                     "weight": "Bolder",
-                    "size": "Medium",
+                    "size": "Large",
                     "wrap": True
                 },
                 {
                     "type": "TextBlock",
-                    "text": "Radar Live production monitoring has identified an SLA issue that needs immediate attention.",
+                    "text": "Radar Live production monitoring has identified a pipeline health issue requiring immediate attention.",
                     "wrap": True,
                     "size": "Small",
                     "spacing": "Small"
@@ -186,36 +190,103 @@ else:
             ]
         },
         {
-            "type": "FactSet",
+            "type": "Container",
             "spacing": "Medium",
-            "facts": [
-                {"title": "Environment", "value": "Production"},
-                {"title": "Interval", "value": interval_text},
-                {"title": "Impacted", "value": str(impacted)},
-                {"title": "Action", "value": "Investigate dashboard and pipeline health"}
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "Executive Summary",
+                    "weight": "Bolder",
+                    "size": "Medium"
+                },
+                {
+                    "type": "FactSet",
+                    "facts": [
+                        {"title": "Environment", "value": "Production"},
+                        {"title": "Interval", "value": interval_text},
+                        {"title": "Impacted Flows", "value": str(impacted_count)},
+                        {"title": "Severity", "value": "High"},
+                        {"title": "Recommended Action", "value": "Review pipeline health and reconcile affected flows"}
+                    ]
+                }
             ]
         },
         {
-            "type": "TextBlock",
-            "text": "Impact Summary",
-            "weight": "Bolder",
-            "spacing": "Medium"
-        },
-        {
-            "type": "ColumnSet",
-            "separator": True,
-            "columns": [
-                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "size": "Small"}]},
-                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "EHUB", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
-                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Bronze", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
-                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Diff", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
-                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Source", "weight": "Bolder", "size": "Small"}]}
+            "type": "Container",
+            "spacing": "Medium",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "Impact Summary",
+                    "weight": "Bolder",
+                    "size": "Medium"
+                },
+                {
+                    "type": "ColumnSet",
+                    "separator": True,
+                    "columns": [
+                        {
+                            "type": "Column",
+                            "width": 3,
+                            "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "size": "Small"}]
+                        },
+                        {
+                            "type": "Column",
+                            "width": 1,
+                            "items": [{"type": "TextBlock", "text": "EHUB", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]
+                        },
+                        {
+                            "type": "Column",
+                            "width": 1,
+                            "items": [{"type": "TextBlock", "text": "Bronze", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]
+                        },
+                        {
+                            "type": "Column",
+                            "width": 1,
+                            "items": [{"type": "TextBlock", "text": "Diff", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]
+                        },
+                        {
+                            "type": "Column",
+                            "width": 2,
+                            "items": [{"type": "TextBlock", "text": "Source", "weight": "Bolder", "size": "Small"}]
+                        }
+                    ]
+                }
             ]
         }
     ]
 
     for r in rows:
-        body.append(row_item(r))
+        body.append(make_row(r))
+
+    body.extend([
+        {
+            "type": "Container",
+            "spacing": "Medium",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "Reference",
+                    "weight": "Bolder",
+                    "size": "Medium"
+                },
+                {
+                    "type": "TextBlock",
+                    "text": f"Dashboard URL: {DASHBOARD_URL}",
+                    "wrap": True,
+                    "size": "Small",
+                    "isSubtle": True
+                }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "🛠 Please investigate the affected flow and validate upstream/downstream processing.",
+            "wrap": True,
+            "size": "Small",
+            "spacing": "Medium"
+        }
+    ])
 
     payload = {
         "type": "message",
@@ -226,14 +297,7 @@ else:
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
                     "version": "1.2",
-                    "body": body,
-                    "actions": [
-                        {
-                            "type": "Action.OpenURL",
-                            "title": "Open Monitoring Dashboard",
-                            "url": DASHBOARD_URL
-                        }
-                    ]
+                    "body": body
                 }
             }
         ]
