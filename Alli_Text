@@ -1,6 +1,5 @@
 from pyspark.sql import functions as F
 from pyspark.sql import Window
-from delta.tables import DeltaTable
 
 # ============================================================
 # CONFIG
@@ -11,71 +10,14 @@ HIST_TBL = "core_bld.radar_live.reconciliation_history"
 DEBUG_TBL = "core_bld.radar_live.reconciliation_debug_record_level"
 DASHBOARD_TBL = "core_bld.radar_live.reconciliation_dashboard_daily"
 
-# refresh window:
-# recompute from min CSV reportDate in source and matching reverse dates in history
-# you can tighten this later if needed
-LOOKBACK_DAYS = 7
+# Optional retention window for dashboard/debug tables
+RETENTION_DAYS = 60
 
 # ============================================================
-# HELPERS
+# LOAD SOURCE DATA
 # ============================================================
-def table_exists(table_name: str) -> bool:
-    return spark.catalog.tableExists(table_name)
-
-def ensure_delta_table(df, table_name: str, partition_col: str = "reportDate"):
-    if not table_exists(table_name):
-        (
-            df.limit(0)
-            .write
-            .format("delta")
-            .mode("overwrite")
-            .partitionBy(partition_col)
-            .saveAsTable(table_name)
-        )
-
-def overwrite_partitions(df, table_name: str):
-    (
-        df.write
-        .format("delta")
-        .mode("overwrite")
-        .option("replaceWhere", build_replace_where(df, "reportDate"))
-        .saveAsTable(table_name)
-    )
-
-def build_replace_where(df, partition_col: str) -> str:
-    dates = [r[0] for r in df.select(partition_col).distinct().collect() if r[0] is not None]
-    if not dates:
-        # safe fallback; should not happen if df has data
-        return f"{partition_col} >= DATE('1900-01-01') AND {partition_col} < DATE('1900-01-02')"
-    min_dt = min(dates)
-    max_dt = max(dates)
-    return f"{partition_col} >= DATE('{min_dt}') AND {partition_col} <= DATE('{max_dt}')"
-
-# ============================================================
-# OPTIONAL WIDGET FOR MANUAL DEBUG DATE
-# leave blank for rolling lookback refresh
-# ============================================================
-dbutils.widgets.text("debug_report_date", "")
-debug_report_date = dbutils.widgets.get("debug_report_date").strip()
-
-# ============================================================
-# LOAD SOURCE
-# ============================================================
-csv_src = spark.table(CSV_TBL)
-hist_src = spark.table(HIST_TBL)
-
-# ============================================================
-# DETERMINE REFRESH WINDOW
-# ============================================================
-if debug_report_date:
-    refresh_start_date_expr = F.to_date(F.lit(debug_report_date))
-else:
-    refresh_start_date_expr = F.date_sub(F.current_date(), LOOKBACK_DAYS)
-
-# CSV filtered by requestDate
 csv_df = (
-    csv_src
-    .filter(F.col("requestDate") >= refresh_start_date_expr)
+    spark.table(CSV_TBL)
     .select(
         F.col("interactionId").cast("string").alias("csv_interactionId"),
         F.col("mqsQuoteId").cast("string").alias("csv_mqsQuoteId"),
@@ -88,14 +30,8 @@ csv_df = (
     )
 )
 
-# history filtered by possible involved dates
 hist_df = (
-    hist_src
-    .filter(
-        (F.to_date(F.col("requestTimestamp")) >= refresh_start_date_expr) |
-        (F.to_date(F.col("MQSTimestamp")) >= refresh_start_date_expr) |
-        (F.to_date(F.col("athenaTimestamp")) >= refresh_start_date_expr)
-    )
+    spark.table(HIST_TBL)
     .select(
         F.col("interactionId").cast("string").alias("hist_interactionId"),
         F.col("MQSQuoteId").cast("string").alias("hist_mqsQuoteId"),
@@ -111,14 +47,19 @@ hist_df = (
     )
 )
 
-# Cache reused sources
-csv_df = csv_df.cache()
-hist_df = hist_df.cache()
+# Optional pruning for performance if history is very large
+min_csv_date = csv_df.select(F.min("csv_requestDate").alias("min_dt")).collect()[0]["min_dt"]
+if min_csv_date is not None:
+    hist_df = hist_df.filter(
+        (F.to_date("hist_requestTimestamp") >= F.date_sub(F.lit(min_csv_date), 2)) |
+        (F.to_date("mqs_timestamp") >= F.date_sub(F.lit(min_csv_date), 2)) |
+        (F.to_date("athena_timestamp") >= F.date_sub(F.lit(min_csv_date), 2))
+    )
 
 # ============================================================
-# NON-POLARIS FLOW
-# CSV rows with mqsQuoteId NOT NULL
-# join key: interactionId + mqsQuoteId
+# NON-POLARIS
+# CSV MQSQUOTEID NOT NULL
+# Match by interactionId + mqsQuoteId
 # ============================================================
 csv_non_polaris = csv_df.filter(F.col("csv_mqsQuoteId").isNotNull())
 
@@ -135,7 +76,6 @@ hist_non_polaris_dedup = (
     .withColumn("rn", F.row_number().over(w_non_polaris))
     .filter(F.col("rn") == 1)
     .drop("rn")
-    .cache()
 )
 
 non_polaris_debug = (
@@ -147,6 +87,14 @@ non_polaris_debug = (
             F.col("c.csv_mqsQuoteId") == F.col("h.hist_mqsQuoteId"),
         ],
         how="left"
+    )
+    .withColumn(
+        "record_type",
+        F.lit("NON_POLARIS_CSV")
+    )
+    .withColumn(
+        "reportDate",
+        F.col("csv_requestDate")
     )
     .withColumn(
         "mqs_within_24h",
@@ -162,8 +110,6 @@ non_polaris_debug = (
             F.abs(F.unix_timestamp("athena_timestamp") - F.unix_timestamp("csv_requestTimestamp")) <= 86400
         ).otherwise(F.lit(False))
     )
-    .withColumn("record_type", F.lit("NON_POLARIS_CSV"))
-    .withColumn("reportDate", F.col("csv_requestDate"))
     .withColumn(
         "category",
         F.when(
@@ -223,11 +169,11 @@ non_polaris_debug = (
 )
 
 # ============================================================
-# POLARIS FLOW
-# CSV rows with mqsQuoteId NULL
-# match key: interactionId + transactionCode(process) to Athena
-# latest Athena record per interactionId + athena_process
-# reportDate = athena date if matched, else csv requestDate
+# POLARIS
+# CSV MQSQUOTEID NULL
+# Match to Athena by interactionId + process
+# Take latest Athena record to avoid duplicates
+# If Athena lands next day, report on Athena date
 # ============================================================
 csv_polaris = csv_df.filter(F.col("csv_mqsQuoteId").isNull())
 
@@ -244,7 +190,6 @@ hist_polaris_athena_dedup = (
     .withColumn("rn", F.row_number().over(w_polaris))
     .filter(F.col("rn") == 1)
     .drop("rn")
-    .cache()
 )
 
 polaris_debug = (
@@ -257,7 +202,10 @@ polaris_debug = (
         ],
         how="left"
     )
-    .withColumn("record_type", F.lit("POLARIS_CSV"))
+    .withColumn(
+        "record_type",
+        F.lit("POLARIS_CSV")
+    )
     .withColumn(
         "reportDate",
         F.when(F.col("athena_timestamp").isNotNull(), F.to_date("athena_timestamp"))
@@ -299,19 +247,23 @@ polaris_debug = (
 )
 
 # ============================================================
-# REVERSE FLOW
-# non-polaris only from history
-# exists in MQS/Athena but missing in CSV
-# reportDate from available system date
+# REVERSE RECONCILIATION
+# NON-POLARIS ONLY
+# Exists in MQS and/or Athena but missing in CSV
+# Report date from the system where it exists
 # ============================================================
 reverse_debug = (
     hist_non_polaris_dedup
     .filter(F.col("existsInCSV") == False)
-    .withColumn("record_type", F.lit("REVERSE_NON_POLARIS"))
+    .withColumn(
+        "record_type",
+        F.lit("REVERSE_NON_POLARIS")
+    )
     .withColumn(
         "reportDate",
         F.when(F.col("existsInMQS") == True, F.to_date("mqs_timestamp"))
          .when(F.col("existsInAthena") == True, F.to_date("athena_timestamp"))
+         .otherwise(F.lit(None).cast("date"))
     )
     .withColumn(
         "category",
@@ -365,63 +317,122 @@ reverse_debug = (
 )
 
 # ============================================================
-# FINAL DEBUG DATASET
+# BUILD DEBUG DATASET
 # ============================================================
 debug_df = (
     non_polaris_debug
     .unionByName(polaris_debug)
     .unionByName(reverse_debug)
     .filter(F.col("reportDate").isNotNull())
-    .cache()
 )
 
+# Optional retention filtering
+debug_df = debug_df.filter(F.col("reportDate") >= F.date_sub(F.current_date(), RETENTION_DAYS))
+
 # ============================================================
-# DASHBOARD AGGREGATION
+# WRITE DEBUG TABLE
+# ============================================================
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {DEBUG_TBL} (
+    reportDate DATE,
+    record_type STRING,
+    category STRING,
+    csv_interactionId STRING,
+    csv_mqsQuoteId STRING,
+    csv_requestDate DATE,
+    csv_requestTime TIMESTAMP,
+    csv_requestTimestamp TIMESTAMP,
+    csv_process STRING,
+    csv_transactionType STRING,
+    csv_product STRING,
+    hist_interactionId STRING,
+    hist_mqsQuoteId STRING,
+    hist_requestTimestamp TIMESTAMP,
+    mqs_timestamp TIMESTAMP,
+    athena_timestamp TIMESTAMP,
+    request_process STRING,
+    mqs_process STRING,
+    athena_process STRING,
+    existsInCSV BOOLEAN,
+    existsInMQS BOOLEAN,
+    existsInAthena BOOLEAN,
+    mqs_within_24h BOOLEAN,
+    athena_within_24h BOOLEAN
+)
+USING DELTA
+PARTITIONED BY (reportDate)
+""")
+
+# Overwrite only retained partitions to keep serverless behavior simple
+debug_df.write.mode("overwrite").format("delta").option("overwriteSchema", "true").saveAsTable(DEBUG_TBL)
+
+# ============================================================
+# BUILD DASHBOARD DAILY AGGREGATION
 # ============================================================
 dashboard_df = (
     debug_df
     .groupBy("reportDate")
     .agg(
+        F.sum(F.when(F.col("record_type") == "NON_POLARIS_CSV", 1).otherwise(0)).alias("total_non_polaris_csv"),
+        F.sum(F.when(F.col("record_type") == "POLARIS_CSV", 1).otherwise(0)).alias("total_polaris_csv"),
+
         F.sum(F.when(F.col("category") == "matched_in_24h", 1).otherwise(0)).alias("matched_in_24h"),
         F.sum(F.when(F.col("category") == "matched_outside_24h", 1).otherwise(0)).alias("matched_outside_24h"),
         F.sum(F.when(F.col("category") == "missing_in_both", 1).otherwise(0)).alias("missing_in_both"),
         F.sum(F.when(F.col("category") == "present_in_mqs_only", 1).otherwise(0)).alias("present_in_mqs_only"),
         F.sum(F.when(F.col("category") == "present_in_athena_only", 1).otherwise(0)).alias("present_in_athena_only"),
+
         F.sum(F.when(F.col("category") == "polaris_matched", 1).otherwise(0)).alias("polaris_matched"),
         F.sum(F.when(F.col("category") == "polaris_missing", 1).otherwise(0)).alias("polaris_missing"),
+
         F.sum(F.when(F.col("category") == "reverse_both_missing_csv", 1).otherwise(0)).alias("reverse_both_missing_csv"),
         F.sum(F.when(F.col("category") == "reverse_mqs_only", 1).otherwise(0)).alias("reverse_mqs_only"),
-        F.sum(F.when(F.col("category") == "reverse_athena_only", 1).otherwise(0)).alias("reverse_athena_only"),
-        F.sum(F.when(F.col("record_type") == "NON_POLARIS_CSV", 1).otherwise(0)).alias("total_non_polaris_csv"),
-        F.sum(F.when(F.col("record_type") == "POLARIS_CSV", 1).otherwise(0)).alias("total_polaris_csv"),
-        F.sum(F.when(F.col("record_type") == "REVERSE_NON_POLARIS", 1).otherwise(0)).alias("total_reverse_non_polaris")
+        F.sum(F.when(F.col("category") == "reverse_athena_only", 1).otherwise(0)).alias("reverse_athena_only")
     )
     .orderBy("reportDate")
 )
 
 # ============================================================
-# CREATE TABLES IF NOT EXISTS
+# WRITE DASHBOARD TABLE
 # ============================================================
-ensure_delta_table(debug_df, DEBUG_TBL, "reportDate")
-ensure_delta_table(dashboard_df, DASHBOARD_TBL, "reportDate")
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {DASHBOARD_TBL} (
+    reportDate DATE,
+    total_non_polaris_csv BIGINT,
+    total_polaris_csv BIGINT,
+    matched_in_24h BIGINT,
+    matched_outside_24h BIGINT,
+    missing_in_both BIGINT,
+    present_in_mqs_only BIGINT,
+    present_in_athena_only BIGINT,
+    polaris_matched BIGINT,
+    polaris_missing BIGINT,
+    reverse_both_missing_csv BIGINT,
+    reverse_mqs_only BIGINT,
+    reverse_athena_only BIGINT
+)
+USING DELTA
+PARTITIONED BY (reportDate)
+""")
+
+dashboard_df.write.mode("overwrite").format("delta").option("overwriteSchema", "true").saveAsTable(DASHBOARD_TBL)
 
 # ============================================================
-# OVERWRITE ONLY AFFECTED REPORTDATE PARTITIONS
+# OPTIONAL OPTIMIZATION
+# Safe to keep commented if permissions / runtime do not allow
 # ============================================================
-overwrite_partitions(debug_df, DEBUG_TBL)
-overwrite_partitions(dashboard_df, DASHBOARD_TBL)
+# spark.sql(f"OPTIMIZE {DEBUG_TBL} ZORDER BY (category, csv_interactionId, hist_interactionId)")
+# spark.sql(f"OPTIMIZE {DASHBOARD_TBL}")
 
-# ============================================================
-# OPTIONAL OPTIMIZE
-# ============================================================
-spark.sql(f"OPTIMIZE {DEBUG_TBL} ZORDER BY (reportDate, category, csv_interactionId, hist_interactionId)")
-spark.sql(f"OPTIMIZE {DASHBOARD_TBL} ZORDER BY (reportDate)")
+print(f"Debug table created/refreshed: {DEBUG_TBL}")
+print(f"Dashboard table created/refreshed: {DASHBOARD_TBL}")
 
-# ============================================================
-# DISPLAY
-# ============================================================
-print("Debug table refreshed:", DEBUG_TBL)
-print("Dashboard table refreshed:", DASHBOARD_TBL)
 
-display(debug_df.orderBy("reportDate", "record_type", "category"))
-display(dashboard_df)
+
+SELECT *
+FROM core_bld.radar_live.reconciliation_dashboard_daily
+ORDER BY reportDate
+
+
+SELECT *
+FROM core_bld.radar_live.reconciliation_debug_record_level
