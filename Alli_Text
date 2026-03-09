@@ -1,5 +1,4 @@
 %sql
-
 WITH csv_base AS (
     SELECT
         interactionId,
@@ -9,52 +8,22 @@ WITH csv_base AS (
         LPAD(CAST(transactionCode AS STRING), 2, '0') AS csv_process
     FROM core_bld.radar_live.reconciliation_csv_source
 ),
-
 hist_base AS (
     SELECT
         interactionId,
         MQSQuoteId,
-        requestTimestamp,
         MQSTimestamp,
         athenaTimestamp,
         LPAD(CAST(requestProcess AS STRING), 2, '0') AS requestProcess,
         LPAD(CAST(MQSProcess AS STRING), 2, '0') AS MQSProcess,
         LPAD(CAST(athenaProcess AS STRING), 2, '0') AS athenaProcess,
-        existsInCSV,
         existsInMQS,
         existsInAthena
     FROM core_bld.radar_live.reconciliation_history
 ),
-
-/* =====================================================
-   1. NON-POLARIS HISTORY DEDUP
-   ===================================================== */
-hist_non_polaris AS (
-    SELECT *
-    FROM (
-        SELECT
-            h.*,
-            ROW_NUMBER() OVER (
-                PARTITION BY
-                    h.interactionId,
-                    h.MQSQuoteId,
-                    COALESCE(h.requestProcess, 'NA'),
-                    COALESCE(h.MQSProcess, 'NA'),
-                    COALESCE(h.athenaProcess, 'NA')
-                ORDER BY COALESCE(h.athenaTimestamp, h.MQSTimestamp, h.requestTimestamp) DESC
-            ) AS rn
-        FROM hist_base h
-        WHERE h.MQSQuoteId IS NOT NULL
-    ) x
-    WHERE rn = 1
-),
-
-/* =====================================================
-   2. NON-POLARIS JOIN
-   ===================================================== */
-csv_non_polaris_joined AS (
+joined AS (
     SELECT
-        c.requestDate AS reportDate,
+        c.requestDate,
         c.interactionId,
         c.mqsQuoteId,
         c.csv_process,
@@ -67,6 +36,7 @@ csv_non_polaris_joined AS (
         h.existsInMQS,
         h.existsInAthena,
         GREATEST(h.MQSTimestamp, h.athenaTimestamp) AS completion_ts,
+        ROUND((UNIX_TIMESTAMP(GREATEST(h.MQSTimestamp, h.athenaTimestamp)) - UNIX_TIMESTAMP(c.requestTimestamp)) / 3600.0, 2) AS delay_hours,
         CASE
             WHEN h.interactionId IS NOT NULL
              AND c.csv_process = h.MQSProcess
@@ -75,179 +45,33 @@ csv_non_polaris_joined AS (
             THEN 1 ELSE 0
         END AS same_process_match
     FROM csv_base c
-    LEFT JOIN hist_non_polaris h
+    LEFT JOIN hist_base h
       ON c.mqsQuoteId = h.MQSQuoteId
      AND c.interactionId = h.interactionId
     WHERE c.mqsQuoteId IS NOT NULL
-),
-
-non_polaris_daily AS (
-    SELECT
-        reportDate,
-        COUNT(*) AS total_non_polaris,
-
-        COUNT_IF(
-            COALESCE(existsInMQS, false) = true
-            AND COALESCE(existsInAthena, false) = true
-            AND same_process_match = 1
-            AND completion_ts IS NOT NULL
-            AND UNIX_TIMESTAMP(completion_ts) - UNIX_TIMESTAMP(csv_ts) <= 86400
-            AND UNIX_TIMESTAMP(completion_ts) - UNIX_TIMESTAMP(csv_ts) >= 0
-        ) AS matched_in_24h,
-
-        COUNT_IF(
-            COALESCE(existsInMQS, false) = true
-            AND COALESCE(existsInAthena, false) = true
-            AND same_process_match = 1
-            AND completion_ts IS NOT NULL
-            AND UNIX_TIMESTAMP(completion_ts) - UNIX_TIMESTAMP(csv_ts) > 86400
-        ) AS matched_outside_24h,
-
-        COUNT_IF(
-            COALESCE(existsInMQS, false) = false
-            AND COALESCE(existsInAthena, false) = false
-        ) AS missing_in_both,
-
-        COUNT_IF(
-            COALESCE(existsInMQS, false) = true
-            AND COALESCE(existsInAthena, false) = false
-        ) AS present_mqs_only,
-
-        COUNT_IF(
-            COALESCE(existsInMQS, false) = false
-            AND COALESCE(existsInAthena, false) = true
-        ) AS present_athena_only,
-
-        COUNT_IF(
-            COALESCE(existsInMQS, false) = true
-            AND COALESCE(existsInAthena, false) = true
-            AND same_process_match = 0
-        ) AS different_process
-
-    FROM csv_non_polaris_joined
-    GROUP BY reportDate
-),
-
-/* =====================================================
-   3. POLARIS ATHENA DEDUP
-   ===================================================== */
-hist_polaris_athena AS (
-    SELECT *
-    FROM (
-        SELECT
-            h.interactionId,
-            h.athenaProcess,
-            h.athenaTimestamp,
-            ROW_NUMBER() OVER (
-                PARTITION BY h.interactionId, h.athenaProcess
-                ORDER BY h.athenaTimestamp DESC
-            ) AS rn
-        FROM hist_base h
-        WHERE h.existsInAthena = true
-    ) x
-    WHERE rn = 1
-),
-
-csv_polaris_joined AS (
-    SELECT
-        c.requestDate,
-        c.interactionId,
-        c.csv_process,
-        a.athenaTimestamp,
-        CASE WHEN a.interactionId IS NOT NULL THEN 1 ELSE 0 END AS athena_match_flag
-    FROM csv_base c
-    LEFT JOIN hist_polaris_athena a
-      ON c.interactionId = a.interactionId
-     AND c.csv_process = a.athenaProcess
-    WHERE c.mqsQuoteId IS NULL
-),
-
-polaris_daily AS (
-    SELECT
-        CASE
-            WHEN athena_match_flag = 1 THEN DATE(athenaTimestamp)
-            ELSE requestDate
-        END AS reportDate,
-        COUNT_IF(athena_match_flag = 1) AS polaris_matched,
-        COUNT_IF(athena_match_flag = 0) AS polaris_missing
-    FROM csv_polaris_joined
-    GROUP BY CASE
-        WHEN athena_match_flag = 1 THEN DATE(athenaTimestamp)
-        ELSE requestDate
-    END
-),
-
-/* =====================================================
-   4. REVERSE RECONCILIATION
-   ===================================================== */
-reverse_daily AS (
-    SELECT
-        CASE
-            WHEN COALESCE(existsInMQS, false) = true THEN DATE(MQSTimestamp)
-            WHEN COALESCE(existsInAthena, false) = true THEN DATE(athenaTimestamp)
-        END AS reportDate,
-
-        COUNT_IF(
-            MQSQuoteId IS NOT NULL
-            AND COALESCE(existsInCSV, false) = false
-            AND COALESCE(existsInMQS, false) = true
-            AND COALESCE(existsInAthena, false) = true
-        ) AS reverse_both_missing_csv,
-
-        COUNT_IF(
-            MQSQuoteId IS NOT NULL
-            AND COALESCE(existsInCSV, false) = false
-            AND COALESCE(existsInMQS, false) = true
-            AND COALESCE(existsInAthena, false) = false
-        ) AS reverse_mqs_only,
-
-        COUNT_IF(
-            MQSQuoteId IS NOT NULL
-            AND COALESCE(existsInCSV, false) = false
-            AND COALESCE(existsInMQS, false) = false
-            AND COALESCE(existsInAthena, false) = true
-        ) AS reverse_athena_only
-
-    FROM hist_base
-    WHERE MQSQuoteId IS NOT NULL
-      AND COALESCE(existsInCSV, false) = false
-      AND (
-            COALESCE(existsInMQS, false) = true
-         OR COALESCE(existsInAthena, false) = true
-      )
-    GROUP BY CASE
-        WHEN COALESCE(existsInMQS, false) = true THEN DATE(MQSTimestamp)
-        WHEN COALESCE(existsInAthena, false) = true THEN DATE(athenaTimestamp)
-    END
-),
-
-all_dates AS (
-    SELECT reportDate FROM non_polaris_daily
-    UNION
-    SELECT reportDate FROM polaris_daily
-    UNION
-    SELECT reportDate FROM reverse_daily
+      AND c.requestDate = DATE('2026-02-09')
 )
-
 SELECT
-    d.reportDate,
-    COALESCE(n.total_non_polaris, 0) AS total_non_polaris,
-    COALESCE(n.matched_in_24h, 0) AS matched_in_24h,
-    COALESCE(n.matched_outside_24h, 0) AS matched_outside_24h,
-    COALESCE(n.missing_in_both, 0) AS missing_in_both,
-    COALESCE(n.present_mqs_only, 0) AS present_mqs_only,
-    COALESCE(n.present_athena_only, 0) AS present_athena_only,
-    COALESCE(n.different_process, 0) AS different_process,
-    COALESCE(p.polaris_matched, 0) AS polaris_matched,
-    COALESCE(p.polaris_missing, 0) AS polaris_missing,
-    COALESCE(r.reverse_both_missing_csv, 0) AS reverse_both_missing_csv,
-    COALESCE(r.reverse_mqs_only, 0) AS reverse_mqs_only,
-    COALESCE(r.reverse_athena_only, 0) AS reverse_athena_only
-FROM all_dates d
-LEFT JOIN non_polaris_daily n
-    ON d.reportDate = n.reportDate
-LEFT JOIN polaris_daily p
-    ON d.reportDate = p.reportDate
-LEFT JOIN reverse_daily r
-    ON d.reportDate = r.reportDate
-ORDER BY d.reportDate;
+    *,
+    CASE
+        WHEN COALESCE(existsInMQS, false) = true
+         AND COALESCE(existsInAthena, false) = true
+         AND same_process_match = 1
+         AND completion_ts IS NOT NULL
+         AND UNIX_TIMESTAMP(completion_ts) - UNIX_TIMESTAMP(csv_ts) <= 86400
+         AND UNIX_TIMESTAMP(completion_ts) - UNIX_TIMESTAMP(csv_ts) >= 0
+        THEN 'matched_in_24h'
+        WHEN COALESCE(existsInMQS, false) = true
+         AND COALESCE(existsInAthena, false) = true
+         AND same_process_match = 1
+         AND completion_ts IS NOT NULL
+         AND UNIX_TIMESTAMP(completion_ts) - UNIX_TIMESTAMP(csv_ts) > 86400
+        THEN 'matched_outside_24h'
+        WHEN COALESCE(existsInMQS, false) = true
+         AND COALESCE(existsInAthena, false) = true
+         AND same_process_match = 0
+        THEN 'different_process'
+        ELSE 'other'
+    END AS debug_status
+FROM joined
+ORDER BY csv_ts, interactionId;
