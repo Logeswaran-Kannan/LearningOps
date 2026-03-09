@@ -1,223 +1,427 @@
-%sql
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+from delta.tables import DeltaTable
 
-WITH csv_base AS (
-    SELECT
-        interactionId,
-        mqsQuoteId,
-        requestDate,
-        requestTimestamp,
-        LPAD(CAST(transactionCode AS STRING),2,'0') AS csv_process
-    FROM core_bld.radar_live.reconciliation_csv_source
-),
+# ============================================================
+# CONFIG
+# ============================================================
+CSV_TBL = "core_bld.radar_live.reconciliation_csv_source"
+HIST_TBL = "core_bld.radar_live.reconciliation_history"
 
-hist_base AS (
-    SELECT
-        interactionId,
-        MQSQuoteId,
-        requestTimestamp,
-        MQSTimestamp,
-        athenaTimestamp,
-        LPAD(CAST(requestProcess AS STRING),2,'0') AS requestProcess,
-        LPAD(CAST(MQSProcess AS STRING),2,'0') AS MQSProcess,
-        LPAD(CAST(athenaProcess AS STRING),2,'0') AS athenaProcess,
-        existsInCSV,
-        existsInMQS,
-        existsInAthena
-    FROM core_bld.radar_live.reconciliation_history
-),
+DEBUG_TBL = "core_bld.radar_live.reconciliation_debug_record_level"
+DASHBOARD_TBL = "core_bld.radar_live.reconciliation_dashboard_daily"
 
-/* =====================================================
-   NON POLARIS CSV
-   ===================================================== */
+# refresh window:
+# recompute from min CSV reportDate in source and matching reverse dates in history
+# you can tighten this later if needed
+LOOKBACK_DAYS = 7
 
-csv_non_polaris AS (
-    SELECT
-        c.requestDate AS reportDate,
-        c.interactionId,
-        c.mqsQuoteId,
-        c.requestTimestamp AS csv_ts,
-        h.MQSTimestamp,
-        h.athenaTimestamp,
-        h.existsInMQS,
-        h.existsInAthena
-    FROM csv_base c
-    LEFT JOIN hist_base h
-      ON c.mqsQuoteId = h.MQSQuoteId
-     AND c.interactionId = h.interactionId
-    WHERE c.mqsQuoteId IS NOT NULL
-),
+# ============================================================
+# HELPERS
+# ============================================================
+def table_exists(table_name: str) -> bool:
+    return spark.catalog.tableExists(table_name)
 
-non_polaris_daily AS (
-
-SELECT
-    reportDate,
-
-    COUNT(*) AS total_non_polaris,
-
-    COUNT_IF(
-        existsInMQS = true
-        AND existsInAthena = true
-        AND ABS(UNIX_TIMESTAMP(MQSTimestamp) - UNIX_TIMESTAMP(csv_ts)) <= 86400
-        AND ABS(UNIX_TIMESTAMP(athenaTimestamp) - UNIX_TIMESTAMP(csv_ts)) <= 86400
-    ) AS matched_in_24h,
-
-    COUNT_IF(
-        existsInMQS = true
-        AND existsInAthena = true
-        AND (
-            ABS(UNIX_TIMESTAMP(MQSTimestamp) - UNIX_TIMESTAMP(csv_ts)) > 86400
-         OR ABS(UNIX_TIMESTAMP(athenaTimestamp) - UNIX_TIMESTAMP(csv_ts)) > 86400
+def ensure_delta_table(df, table_name: str, partition_col: str = "reportDate"):
+    if not table_exists(table_name):
+        (
+            df.limit(0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .partitionBy(partition_col)
+            .saveAsTable(table_name)
         )
-    ) AS matched_outside_24h,
 
-    COUNT_IF(
-        existsInMQS = false
-        AND existsInAthena = false
-    ) AS missing_in_both,
+def overwrite_partitions(df, table_name: str):
+    (
+        df.write
+        .format("delta")
+        .mode("overwrite")
+        .option("replaceWhere", build_replace_where(df, "reportDate"))
+        .saveAsTable(table_name)
+    )
 
-    COUNT_IF(
-        existsInMQS = true
-        AND existsInAthena = false
-    ) AS present_mqs_only,
+def build_replace_where(df, partition_col: str) -> str:
+    dates = [r[0] for r in df.select(partition_col).distinct().collect() if r[0] is not None]
+    if not dates:
+        # safe fallback; should not happen if df has data
+        return f"{partition_col} >= DATE('1900-01-01') AND {partition_col} < DATE('1900-01-02')"
+    min_dt = min(dates)
+    max_dt = max(dates)
+    return f"{partition_col} >= DATE('{min_dt}') AND {partition_col} <= DATE('{max_dt}')"
 
-    COUNT_IF(
-        existsInMQS = false
-        AND existsInAthena = true
-    ) AS present_athena_only
+# ============================================================
+# OPTIONAL WIDGET FOR MANUAL DEBUG DATE
+# leave blank for rolling lookback refresh
+# ============================================================
+dbutils.widgets.text("debug_report_date", "")
+debug_report_date = dbutils.widgets.get("debug_report_date").strip()
 
-FROM csv_non_polaris
-GROUP BY reportDate
-),
+# ============================================================
+# LOAD SOURCE
+# ============================================================
+csv_src = spark.table(CSV_TBL)
+hist_src = spark.table(HIST_TBL)
 
-/* =====================================================
-   POLARIS LOGIC
-   ===================================================== */
+# ============================================================
+# DETERMINE REFRESH WINDOW
+# ============================================================
+if debug_report_date:
+    refresh_start_date_expr = F.to_date(F.lit(debug_report_date))
+else:
+    refresh_start_date_expr = F.date_sub(F.current_date(), LOOKBACK_DAYS)
 
-hist_polaris AS (
-SELECT *
-FROM (
-    SELECT
-        interactionId,
-        athenaProcess,
-        athenaTimestamp,
-        ROW_NUMBER() OVER (
-            PARTITION BY interactionId, athenaProcess
-            ORDER BY athenaTimestamp DESC
-        ) AS rn
-    FROM hist_base
-    WHERE existsInAthena = true
-) x
-WHERE rn = 1
-),
-
-csv_polaris AS (
-SELECT
-    c.requestDate,
-    c.interactionId,
-    c.csv_process,
-    h.athenaTimestamp,
-    CASE WHEN h.interactionId IS NOT NULL THEN 1 ELSE 0 END AS match_flag
-FROM csv_base c
-LEFT JOIN hist_polaris h
-  ON c.interactionId = h.interactionId
- AND c.csv_process = h.athenaProcess
-WHERE c.mqsQuoteId IS NULL
-),
-
-polaris_daily AS (
-SELECT
-    CASE
-        WHEN match_flag = 1 THEN DATE(athenaTimestamp)
-        ELSE requestDate
-    END AS reportDate,
-
-    COUNT_IF(match_flag = 1) AS polaris_matched,
-    COUNT_IF(match_flag = 0) AS polaris_missing
-
-FROM csv_polaris
-GROUP BY
-CASE
-    WHEN match_flag = 1 THEN DATE(athenaTimestamp)
-    ELSE requestDate
-END
-),
-
-/* =====================================================
-   REVERSE RECONCILIATION
-   ===================================================== */
-
-reverse_daily AS (
-SELECT
-
-    CASE
-        WHEN existsInMQS = true THEN DATE(MQSTimestamp)
-        WHEN existsInAthena = true THEN DATE(athenaTimestamp)
-    END AS reportDate,
-
-    COUNT_IF(
-        existsInCSV = false
-        AND existsInMQS = true
-        AND existsInAthena = true
-    ) AS reverse_both_missing_csv,
-
-    COUNT_IF(
-        existsInCSV = false
-        AND existsInMQS = true
-        AND existsInAthena = false
-    ) AS reverse_mqs_only,
-
-    COUNT_IF(
-        existsInCSV = false
-        AND existsInMQS = false
-        AND existsInAthena = true
-    ) AS reverse_athena_only
-
-FROM hist_base
-WHERE MQSQuoteId IS NOT NULL
-AND existsInCSV = false
-GROUP BY
-CASE
-    WHEN existsInMQS = true THEN DATE(MQSTimestamp)
-    WHEN existsInAthena = true THEN DATE(athenaTimestamp)
-END
-),
-
-/* =====================================================
-   FINAL OUTPUT
-   ===================================================== */
-
-all_dates AS (
-SELECT reportDate FROM non_polaris_daily
-UNION
-SELECT reportDate FROM polaris_daily
-UNION
-SELECT reportDate FROM reverse_daily
+# CSV filtered by requestDate
+csv_df = (
+    csv_src
+    .filter(F.col("requestDate") >= refresh_start_date_expr)
+    .select(
+        F.col("interactionId").cast("string").alias("csv_interactionId"),
+        F.col("mqsQuoteId").cast("string").alias("csv_mqsQuoteId"),
+        F.col("requestDate").cast("date").alias("csv_requestDate"),
+        F.col("requestTime").cast("timestamp").alias("csv_requestTime"),
+        F.col("requestTimestamp").cast("timestamp").alias("csv_requestTimestamp"),
+        F.lpad(F.col("transactionCode").cast("string"), 2, "0").alias("csv_process"),
+        F.col("transactionType").cast("string").alias("csv_transactionType"),
+        F.col("product").cast("string").alias("csv_product")
+    )
 )
 
-SELECT
-    d.reportDate,
+# history filtered by possible involved dates
+hist_df = (
+    hist_src
+    .filter(
+        (F.to_date(F.col("requestTimestamp")) >= refresh_start_date_expr) |
+        (F.to_date(F.col("MQSTimestamp")) >= refresh_start_date_expr) |
+        (F.to_date(F.col("athenaTimestamp")) >= refresh_start_date_expr)
+    )
+    .select(
+        F.col("interactionId").cast("string").alias("hist_interactionId"),
+        F.col("MQSQuoteId").cast("string").alias("hist_mqsQuoteId"),
+        F.col("requestTimestamp").cast("timestamp").alias("hist_requestTimestamp"),
+        F.col("MQSTimestamp").cast("timestamp").alias("mqs_timestamp"),
+        F.col("athenaTimestamp").cast("timestamp").alias("athena_timestamp"),
+        F.lpad(F.col("requestProcess").cast("string"), 2, "0").alias("request_process"),
+        F.lpad(F.col("MQSProcess").cast("string"), 2, "0").alias("mqs_process"),
+        F.lpad(F.col("athenaProcess").cast("string"), 2, "0").alias("athena_process"),
+        F.col("existsInCSV").cast("boolean").alias("existsInCSV"),
+        F.col("existsInMQS").cast("boolean").alias("existsInMQS"),
+        F.col("existsInAthena").cast("boolean").alias("existsInAthena")
+    )
+)
 
-    COALESCE(n.total_non_polaris,0) AS total_non_polaris,
+# Cache reused sources
+csv_df = csv_df.cache()
+hist_df = hist_df.cache()
 
-    COALESCE(n.matched_in_24h,0) AS matched_in_24h,
-    COALESCE(n.matched_outside_24h,0) AS matched_outside_24h,
+# ============================================================
+# NON-POLARIS FLOW
+# CSV rows with mqsQuoteId NOT NULL
+# join key: interactionId + mqsQuoteId
+# ============================================================
+csv_non_polaris = csv_df.filter(F.col("csv_mqsQuoteId").isNotNull())
 
-    COALESCE(n.missing_in_both,0) AS missing_in_both,
-    COALESCE(n.present_mqs_only,0) AS present_mqs_only,
-    COALESCE(n.present_athena_only,0) AS present_athena_only,
+hist_non_polaris = hist_df.filter(F.col("hist_mqsQuoteId").isNotNull())
 
-    COALESCE(p.polaris_matched,0) AS polaris_matched,
-    COALESCE(p.polaris_missing,0) AS polaris_missing,
+w_non_polaris = Window.partitionBy(
+    "hist_interactionId", "hist_mqsQuoteId"
+).orderBy(
+    F.coalesce("athena_timestamp", "mqs_timestamp", "hist_requestTimestamp").desc()
+)
 
-    COALESCE(r.reverse_both_missing_csv,0) AS reverse_both_missing_csv,
-    COALESCE(r.reverse_mqs_only,0) AS reverse_mqs_only,
-    COALESCE(r.reverse_athena_only,0) AS reverse_athena_only
+hist_non_polaris_dedup = (
+    hist_non_polaris
+    .withColumn("rn", F.row_number().over(w_non_polaris))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+    .cache()
+)
 
-FROM all_dates d
-LEFT JOIN non_polaris_daily n
-  ON d.reportDate = n.reportDate
-LEFT JOIN polaris_daily p
-  ON d.reportDate = p.reportDate
-LEFT JOIN reverse_daily r
-  ON d.reportDate = r.reportDate
-ORDER BY reportDate;
+non_polaris_debug = (
+    csv_non_polaris.alias("c")
+    .join(
+        hist_non_polaris_dedup.alias("h"),
+        on=[
+            F.col("c.csv_interactionId") == F.col("h.hist_interactionId"),
+            F.col("c.csv_mqsQuoteId") == F.col("h.hist_mqsQuoteId"),
+        ],
+        how="left"
+    )
+    .withColumn(
+        "mqs_within_24h",
+        F.when(
+            F.col("mqs_timestamp").isNotNull(),
+            F.abs(F.unix_timestamp("mqs_timestamp") - F.unix_timestamp("csv_requestTimestamp")) <= 86400
+        ).otherwise(F.lit(False))
+    )
+    .withColumn(
+        "athena_within_24h",
+        F.when(
+            F.col("athena_timestamp").isNotNull(),
+            F.abs(F.unix_timestamp("athena_timestamp") - F.unix_timestamp("csv_requestTimestamp")) <= 86400
+        ).otherwise(F.lit(False))
+    )
+    .withColumn("record_type", F.lit("NON_POLARIS_CSV"))
+    .withColumn("reportDate", F.col("csv_requestDate"))
+    .withColumn(
+        "category",
+        F.when(
+            (F.col("existsInMQS") == True) &
+            (F.col("existsInAthena") == True) &
+            (F.col("mqs_within_24h") == True) &
+            (F.col("athena_within_24h") == True),
+            F.lit("matched_in_24h")
+        ).when(
+            (F.col("existsInMQS") == True) &
+            (F.col("existsInAthena") == True) &
+            (
+                (F.col("mqs_within_24h") == False) |
+                (F.col("athena_within_24h") == False)
+            ),
+            F.lit("matched_outside_24h")
+        ).when(
+            (F.coalesce(F.col("existsInMQS"), F.lit(False)) == False) &
+            (F.coalesce(F.col("existsInAthena"), F.lit(False)) == False),
+            F.lit("missing_in_both")
+        ).when(
+            (F.col("existsInMQS") == True) &
+            (F.coalesce(F.col("existsInAthena"), F.lit(False)) == False),
+            F.lit("present_in_mqs_only")
+        ).when(
+            (F.coalesce(F.col("existsInMQS"), F.lit(False)) == False) &
+            (F.col("existsInAthena") == True),
+            F.lit("present_in_athena_only")
+        ).otherwise(F.lit("unclassified_non_polaris"))
+    )
+    .select(
+        "reportDate",
+        "record_type",
+        "category",
+        "csv_interactionId",
+        "csv_mqsQuoteId",
+        "csv_requestDate",
+        "csv_requestTime",
+        "csv_requestTimestamp",
+        "csv_process",
+        "csv_transactionType",
+        "csv_product",
+        "hist_interactionId",
+        "hist_mqsQuoteId",
+        "hist_requestTimestamp",
+        "mqs_timestamp",
+        "athena_timestamp",
+        "request_process",
+        "mqs_process",
+        "athena_process",
+        "existsInCSV",
+        "existsInMQS",
+        "existsInAthena",
+        "mqs_within_24h",
+        "athena_within_24h"
+    )
+)
+
+# ============================================================
+# POLARIS FLOW
+# CSV rows with mqsQuoteId NULL
+# match key: interactionId + transactionCode(process) to Athena
+# latest Athena record per interactionId + athena_process
+# reportDate = athena date if matched, else csv requestDate
+# ============================================================
+csv_polaris = csv_df.filter(F.col("csv_mqsQuoteId").isNull())
+
+hist_polaris_athena = hist_df.filter(F.col("existsInAthena") == True)
+
+w_polaris = Window.partitionBy(
+    "hist_interactionId", "athena_process"
+).orderBy(
+    F.col("athena_timestamp").desc()
+)
+
+hist_polaris_athena_dedup = (
+    hist_polaris_athena
+    .withColumn("rn", F.row_number().over(w_polaris))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+    .cache()
+)
+
+polaris_debug = (
+    csv_polaris.alias("c")
+    .join(
+        hist_polaris_athena_dedup.alias("h"),
+        on=[
+            F.col("c.csv_interactionId") == F.col("h.hist_interactionId"),
+            F.col("c.csv_process") == F.col("h.athena_process"),
+        ],
+        how="left"
+    )
+    .withColumn("record_type", F.lit("POLARIS_CSV"))
+    .withColumn(
+        "reportDate",
+        F.when(F.col("athena_timestamp").isNotNull(), F.to_date("athena_timestamp"))
+         .otherwise(F.col("csv_requestDate"))
+    )
+    .withColumn(
+        "category",
+        F.when(F.col("athena_timestamp").isNotNull(), F.lit("polaris_matched"))
+         .otherwise(F.lit("polaris_missing"))
+    )
+    .withColumn("mqs_within_24h", F.lit(None).cast("boolean"))
+    .withColumn("athena_within_24h", F.lit(None).cast("boolean"))
+    .select(
+        "reportDate",
+        "record_type",
+        "category",
+        "csv_interactionId",
+        "csv_mqsQuoteId",
+        "csv_requestDate",
+        "csv_requestTime",
+        "csv_requestTimestamp",
+        "csv_process",
+        "csv_transactionType",
+        "csv_product",
+        "hist_interactionId",
+        "hist_mqsQuoteId",
+        "hist_requestTimestamp",
+        "mqs_timestamp",
+        "athena_timestamp",
+        "request_process",
+        "mqs_process",
+        "athena_process",
+        "existsInCSV",
+        "existsInMQS",
+        "existsInAthena",
+        "mqs_within_24h",
+        "athena_within_24h"
+    )
+)
+
+# ============================================================
+# REVERSE FLOW
+# non-polaris only from history
+# exists in MQS/Athena but missing in CSV
+# reportDate from available system date
+# ============================================================
+reverse_debug = (
+    hist_non_polaris_dedup
+    .filter(F.col("existsInCSV") == False)
+    .withColumn("record_type", F.lit("REVERSE_NON_POLARIS"))
+    .withColumn(
+        "reportDate",
+        F.when(F.col("existsInMQS") == True, F.to_date("mqs_timestamp"))
+         .when(F.col("existsInAthena") == True, F.to_date("athena_timestamp"))
+    )
+    .withColumn(
+        "category",
+        F.when(
+            (F.col("existsInMQS") == True) & (F.col("existsInAthena") == True),
+            F.lit("reverse_both_missing_csv")
+        ).when(
+            (F.col("existsInMQS") == True) & (F.coalesce(F.col("existsInAthena"), F.lit(False)) == False),
+            F.lit("reverse_mqs_only")
+        ).when(
+            (F.coalesce(F.col("existsInMQS"), F.lit(False)) == False) & (F.col("existsInAthena") == True),
+            F.lit("reverse_athena_only")
+        ).otherwise(F.lit("unclassified_reverse"))
+    )
+    .withColumn("csv_interactionId", F.lit(None).cast("string"))
+    .withColumn("csv_mqsQuoteId", F.lit(None).cast("string"))
+    .withColumn("csv_requestDate", F.lit(None).cast("date"))
+    .withColumn("csv_requestTime", F.lit(None).cast("timestamp"))
+    .withColumn("csv_requestTimestamp", F.lit(None).cast("timestamp"))
+    .withColumn("csv_process", F.lit(None).cast("string"))
+    .withColumn("csv_transactionType", F.lit(None).cast("string"))
+    .withColumn("csv_product", F.lit(None).cast("string"))
+    .withColumn("mqs_within_24h", F.lit(None).cast("boolean"))
+    .withColumn("athena_within_24h", F.lit(None).cast("boolean"))
+    .select(
+        "reportDate",
+        "record_type",
+        "category",
+        "csv_interactionId",
+        "csv_mqsQuoteId",
+        "csv_requestDate",
+        "csv_requestTime",
+        "csv_requestTimestamp",
+        "csv_process",
+        "csv_transactionType",
+        "csv_product",
+        "hist_interactionId",
+        "hist_mqsQuoteId",
+        "hist_requestTimestamp",
+        "mqs_timestamp",
+        "athena_timestamp",
+        "request_process",
+        "mqs_process",
+        "athena_process",
+        "existsInCSV",
+        "existsInMQS",
+        "existsInAthena",
+        "mqs_within_24h",
+        "athena_within_24h"
+    )
+)
+
+# ============================================================
+# FINAL DEBUG DATASET
+# ============================================================
+debug_df = (
+    non_polaris_debug
+    .unionByName(polaris_debug)
+    .unionByName(reverse_debug)
+    .filter(F.col("reportDate").isNotNull())
+    .cache()
+)
+
+# ============================================================
+# DASHBOARD AGGREGATION
+# ============================================================
+dashboard_df = (
+    debug_df
+    .groupBy("reportDate")
+    .agg(
+        F.sum(F.when(F.col("category") == "matched_in_24h", 1).otherwise(0)).alias("matched_in_24h"),
+        F.sum(F.when(F.col("category") == "matched_outside_24h", 1).otherwise(0)).alias("matched_outside_24h"),
+        F.sum(F.when(F.col("category") == "missing_in_both", 1).otherwise(0)).alias("missing_in_both"),
+        F.sum(F.when(F.col("category") == "present_in_mqs_only", 1).otherwise(0)).alias("present_in_mqs_only"),
+        F.sum(F.when(F.col("category") == "present_in_athena_only", 1).otherwise(0)).alias("present_in_athena_only"),
+        F.sum(F.when(F.col("category") == "polaris_matched", 1).otherwise(0)).alias("polaris_matched"),
+        F.sum(F.when(F.col("category") == "polaris_missing", 1).otherwise(0)).alias("polaris_missing"),
+        F.sum(F.when(F.col("category") == "reverse_both_missing_csv", 1).otherwise(0)).alias("reverse_both_missing_csv"),
+        F.sum(F.when(F.col("category") == "reverse_mqs_only", 1).otherwise(0)).alias("reverse_mqs_only"),
+        F.sum(F.when(F.col("category") == "reverse_athena_only", 1).otherwise(0)).alias("reverse_athena_only"),
+        F.sum(F.when(F.col("record_type") == "NON_POLARIS_CSV", 1).otherwise(0)).alias("total_non_polaris_csv"),
+        F.sum(F.when(F.col("record_type") == "POLARIS_CSV", 1).otherwise(0)).alias("total_polaris_csv"),
+        F.sum(F.when(F.col("record_type") == "REVERSE_NON_POLARIS", 1).otherwise(0)).alias("total_reverse_non_polaris")
+    )
+    .orderBy("reportDate")
+)
+
+# ============================================================
+# CREATE TABLES IF NOT EXISTS
+# ============================================================
+ensure_delta_table(debug_df, DEBUG_TBL, "reportDate")
+ensure_delta_table(dashboard_df, DASHBOARD_TBL, "reportDate")
+
+# ============================================================
+# OVERWRITE ONLY AFFECTED REPORTDATE PARTITIONS
+# ============================================================
+overwrite_partitions(debug_df, DEBUG_TBL)
+overwrite_partitions(dashboard_df, DASHBOARD_TBL)
+
+# ============================================================
+# OPTIONAL OPTIMIZE
+# ============================================================
+spark.sql(f"OPTIMIZE {DEBUG_TBL} ZORDER BY (reportDate, category, csv_interactionId, hist_interactionId)")
+spark.sql(f"OPTIMIZE {DASHBOARD_TBL} ZORDER BY (reportDate)")
+
+# ============================================================
+# DISPLAY
+# ============================================================
+print("Debug table refreshed:", DEBUG_TBL)
+print("Dashboard table refreshed:", DASHBOARD_TBL)
+
+display(debug_df.orderBy("reportDate", "record_type", "category"))
+display(dashboard_df)
