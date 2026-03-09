@@ -1,45 +1,28 @@
 %sql
-WITH csv_daily AS (
-    SELECT
-        requestDate AS reportDate,
-        COUNT(*) AS total_csv_records,
-        COUNT_IF(mqsQuoteId IS NULL) AS csv_quote_null
-    FROM core_bld.radar_live.reconciliation_csv_source
-    GROUP BY requestDate
-),
-
-hist_base AS (
+WITH hist_base AS (
     SELECT
         interactionId,
         MQSQuoteId,
         requestTimestamp,
         athenaTimestamp,
         MQSTimestamp,
+        DATE(requestTimestamp) AS requestDate,
+        DATE(athenaTimestamp) AS athenaDate,
+        DATE(MQSTimestamp) AS mqsDate,
         LPAD(CAST(requestProcess AS STRING), 2, '0') AS requestProcess,
         LPAD(CAST(athenaProcess AS STRING), 2, '0') AS athenaProcess,
         LPAD(CAST(MQSProcess AS STRING), 2, '0') AS MQSProcess,
         existsInCSV,
         existsInAthena,
         existsInMQS,
-        allMatching
+        allMatching,
+        loadDate,
+        updatedDate
     FROM core_bld.radar_live.reconciliation_history
 ),
 
-/* Deduplicate history at event level */
 hist_dedup AS (
-    SELECT
-        interactionId,
-        MQSQuoteId,
-        requestTimestamp,
-        athenaTimestamp,
-        MQSTimestamp,
-        requestProcess,
-        athenaProcess,
-        MQSProcess,
-        existsInCSV,
-        existsInAthena,
-        existsInMQS,
-        allMatching
+    SELECT *
     FROM (
         SELECT
             h.*,
@@ -50,7 +33,7 @@ hist_dedup AS (
                     COALESCE(h.requestProcess, 'NA'),
                     COALESCE(h.MQSProcess, 'NA'),
                     COALESCE(h.athenaProcess, 'NA'),
-                    COALESCE(DATE(h.requestTimestamp), DATE(h.MQSTimestamp), DATE(h.athenaTimestamp))
+                    COALESCE(h.requestDate, h.mqsDate, h.athenaDate)
                 ORDER BY COALESCE(h.athenaTimestamp, h.MQSTimestamp, h.requestTimestamp) DESC
             ) AS rn
         FROM hist_base h
@@ -58,120 +41,82 @@ hist_dedup AS (
     WHERE rn = 1
 ),
 
-recon_daily AS (
+classified AS (
     SELECT
-        DATE(requestTimestamp) AS reportDate,
+        interactionId,
+        MQSQuoteId,
+        requestTimestamp,
+        athenaTimestamp,
+        MQSTimestamp,
+        requestDate,
+        athenaDate,
+        mqsDate,
+        requestProcess,
+        athenaProcess,
+        MQSProcess,
+        existsInCSV,
+        existsInAthena,
+        existsInMQS,
+        allMatching,
+        loadDate,
+        updatedDate,
 
-        COUNT_IF(
-            existsInCSV = true
-            AND existsInMQS = true
-            AND existsInAthena = true
-            AND requestProcess = MQSProcess
-            AND requestProcess = athenaProcess
-            AND DATE(athenaTimestamp) = DATE(requestTimestamp)
-        ) AS matched_in_window,
+        CASE
+            WHEN existsInCSV = true
+             AND existsInMQS = true
+             AND existsInAthena = true
+             AND requestProcess = MQSProcess
+             AND requestProcess = athenaProcess
+             AND athenaDate = requestDate
+            THEN 'matched_in_window'
 
-        COUNT_IF(
-            existsInCSV = true
-            AND existsInMQS = true
-            AND existsInAthena = true
-            AND requestProcess = MQSProcess
-            AND requestProcess = athenaProcess
-            AND DATE(athenaTimestamp) > DATE(requestTimestamp)
-        ) AS matched_backdated,
+            WHEN existsInCSV = true
+             AND existsInMQS = true
+             AND existsInAthena = true
+             AND requestProcess = MQSProcess
+             AND requestProcess = athenaProcess
+             AND athenaDate > requestDate
+            THEN 'matched_backdated'
 
-        COUNT_IF(
-            existsInCSV = true
-            AND existsInMQS = true
-            AND existsInAthena = true
-            AND requestProcess = MQSProcess
-            AND requestProcess = athenaProcess
-        ) AS matched_over_all,
+            WHEN existsInCSV = true
+             AND existsInMQS = true
+             AND existsInAthena = true
+             AND (
+                    requestProcess <> MQSProcess
+                 OR requestProcess <> athenaProcess
+                 OR MQSProcess <> athenaProcess
+             )
+            THEN 'different_process'
 
-        COUNT_IF(
-            existsInCSV = true
-            AND existsInMQS = true
-            AND (existsInAthena = false OR existsInAthena IS NULL)
-        ) AS mqs_only,
+            WHEN existsInCSV = true
+             AND existsInMQS = true
+             AND (existsInAthena = false OR existsInAthena IS NULL)
+            THEN 'mqs_only'
 
-        COUNT_IF(
-            existsInCSV = true
-            AND (existsInMQS = false OR existsInMQS IS NULL)
-            AND existsInAthena = true
-        ) AS athena_only,
+            WHEN existsInCSV = true
+             AND (existsInMQS = false OR existsInMQS IS NULL)
+             AND existsInAthena = true
+            THEN 'athena_only'
 
-        COUNT_IF(
-            existsInCSV = true
-            AND (existsInMQS = false OR existsInMQS IS NULL)
-            AND (existsInAthena = false OR existsInAthena IS NULL)
-        ) AS missing,
+            WHEN existsInCSV = true
+             AND (existsInMQS = false OR existsInMQS IS NULL)
+             AND (existsInAthena = false OR existsInAthena IS NULL)
+            THEN 'missing'
 
-        COUNT_IF(
-            existsInCSV = true
-            AND MQSQuoteId IS NULL
-            AND existsInAthena = true
-        ) AS csv_quote_null_athena_hit,
+            WHEN existsInCSV = false
+             AND existsInMQS = true
+            THEN 'reverse_recon_mqs'
 
-        COUNT_IF(
-            existsInCSV = true
-            AND MQSQuoteId IS NULL
-            AND (existsInAthena = false OR existsInAthena IS NULL)
-        ) AS csv_quote_null_athena_miss
+            WHEN existsInCSV = false
+             AND existsInAthena = true
+            THEN 'reverse_recon_athena'
+
+            ELSE 'unclassified'
+        END AS recon_status
 
     FROM hist_dedup
-    WHERE requestTimestamp IS NOT NULL
-    GROUP BY DATE(requestTimestamp)
-),
-
-reverse_mqs_daily AS (
-    SELECT
-        DATE(MQSTimestamp) AS reportDate,
-        COUNT(*) AS reverse_recon_mqs
-    FROM hist_dedup
-    WHERE existsInCSV = false
-      AND existsInMQS = true
-      AND MQSTimestamp IS NOT NULL
-    GROUP BY DATE(MQSTimestamp)
-),
-
-reverse_athena_daily AS (
-    SELECT
-        DATE(athenaTimestamp) AS reportDate,
-        COUNT(*) AS reverse_recon_athena
-    FROM hist_dedup
-    WHERE existsInCSV = false
-      AND existsInAthena = true
-      AND athenaTimestamp IS NOT NULL
-    GROUP BY DATE(athenaTimestamp)
-),
-
-reverse_daily AS (
-    SELECT
-        COALESCE(m.reportDate, a.reportDate) AS reportDate,
-        COALESCE(m.reverse_recon_mqs, 0) AS reverse_recon_mqs,
-        COALESCE(a.reverse_recon_athena, 0) AS reverse_recon_athena
-    FROM reverse_mqs_daily m
-    FULL OUTER JOIN reverse_athena_daily a
-        ON m.reportDate = a.reportDate
 )
 
-SELECT
-    COALESCE(c.reportDate, r.reportDate, v.reportDate) AS reportDate,
-    COALESCE(c.total_csv_records, 0) AS total_csv_records,
-    COALESCE(c.csv_quote_null, 0) AS csv_quote_null,
-    COALESCE(v.matched_in_window, 0) AS matched_in_window,
-    COALESCE(v.matched_backdated, 0) AS matched_backdated,
-    COALESCE(v.matched_over_all, 0) AS matched_over_all,
-    COALESCE(v.mqs_only, 0) AS mqs_only,
-    COALESCE(v.athena_only, 0) AS athena_only,
-    COALESCE(v.missing, 0) AS missing,
-    COALESCE(v.csv_quote_null_athena_hit, 0) AS csv_quote_null_athena_hit,
-    COALESCE(v.csv_quote_null_athena_miss, 0) AS csv_quote_null_athena_miss,
-    COALESCE(r.reverse_recon_mqs, 0) AS reverse_recon_mqs,
-    COALESCE(r.reverse_recon_athena, 0) AS reverse_recon_athena
-FROM csv_daily c
-FULL OUTER JOIN recon_daily v
-    ON c.reportDate = v.reportDate
-FULL OUTER JOIN reverse_daily r
-    ON COALESCE(c.reportDate, v.reportDate) = r.reportDate
-ORDER BY reportDate;
+SELECT *
+FROM classified
+ORDER BY requestDate, interactionId, requestProcess, MQSProcess, athenaProcess;
