@@ -1,120 +1,223 @@
 %sql
 
-WITH hist_base AS (
+WITH csv_base AS (
+    SELECT
+        interactionId,
+        mqsQuoteId,
+        requestDate,
+        requestTimestamp,
+        LPAD(CAST(transactionCode AS STRING),2,'0') AS csv_process
+    FROM core_bld.radar_live.reconciliation_csv_source
+),
+
+hist_base AS (
     SELECT
         interactionId,
         MQSQuoteId,
-
         requestTimestamp,
-        athenaTimestamp,
         MQSTimestamp,
-
-        DATE(requestTimestamp) AS requestDate,
-        DATE(athenaTimestamp) AS athenaDate,
-        DATE(MQSTimestamp) AS mqsDate,
-
+        athenaTimestamp,
         LPAD(CAST(requestProcess AS STRING),2,'0') AS requestProcess,
-        LPAD(CAST(athenaProcess AS STRING),2,'0') AS athenaProcess,
         LPAD(CAST(MQSProcess AS STRING),2,'0') AS MQSProcess,
-
+        LPAD(CAST(athenaProcess AS STRING),2,'0') AS athenaProcess,
         existsInCSV,
-        existsInAthena,
         existsInMQS,
-        allMatching
-
+        existsInAthena
     FROM core_bld.radar_live.reconciliation_history
 ),
 
-hist_filtered AS (
-    SELECT *
-    FROM hist_base
-    WHERE requestDate = DATE('2026-02-09')
+/* =====================================================
+   NON POLARIS CSV
+   ===================================================== */
+
+csv_non_polaris AS (
+    SELECT
+        c.requestDate AS reportDate,
+        c.interactionId,
+        c.mqsQuoteId,
+        c.requestTimestamp AS csv_ts,
+        h.MQSTimestamp,
+        h.athenaTimestamp,
+        h.existsInMQS,
+        h.existsInAthena
+    FROM csv_base c
+    LEFT JOIN hist_base h
+      ON c.mqsQuoteId = h.MQSQuoteId
+     AND c.interactionId = h.interactionId
+    WHERE c.mqsQuoteId IS NOT NULL
 ),
 
-classified AS (
+non_polaris_daily AS (
 
 SELECT
+    reportDate,
 
-    interactionId,
-    MQSQuoteId,
+    COUNT(*) AS total_non_polaris,
 
-    requestTimestamp,
-    MQSTimestamp,
-    athenaTimestamp,
+    COUNT_IF(
+        existsInMQS = true
+        AND existsInAthena = true
+        AND ABS(UNIX_TIMESTAMP(MQSTimestamp) - UNIX_TIMESTAMP(csv_ts)) <= 86400
+        AND ABS(UNIX_TIMESTAMP(athenaTimestamp) - UNIX_TIMESTAMP(csv_ts)) <= 86400
+    ) AS matched_in_24h,
 
-    requestProcess,
-    MQSProcess,
-    athenaProcess,
+    COUNT_IF(
+        existsInMQS = true
+        AND existsInAthena = true
+        AND (
+            ABS(UNIX_TIMESTAMP(MQSTimestamp) - UNIX_TIMESTAMP(csv_ts)) > 86400
+         OR ABS(UNIX_TIMESTAMP(athenaTimestamp) - UNIX_TIMESTAMP(csv_ts)) > 86400
+        )
+    ) AS matched_outside_24h,
 
-    existsInCSV,
-    existsInMQS,
-    existsInAthena,
+    COUNT_IF(
+        existsInMQS = false
+        AND existsInAthena = false
+    ) AS missing_in_both,
 
-    requestDate,
-    mqsDate,
-    athenaDate,
+    COUNT_IF(
+        existsInMQS = true
+        AND existsInAthena = false
+    ) AS present_mqs_only,
+
+    COUNT_IF(
+        existsInMQS = false
+        AND existsInAthena = true
+    ) AS present_athena_only
+
+FROM csv_non_polaris
+GROUP BY reportDate
+),
+
+/* =====================================================
+   POLARIS LOGIC
+   ===================================================== */
+
+hist_polaris AS (
+SELECT *
+FROM (
+    SELECT
+        interactionId,
+        athenaProcess,
+        athenaTimestamp,
+        ROW_NUMBER() OVER (
+            PARTITION BY interactionId, athenaProcess
+            ORDER BY athenaTimestamp DESC
+        ) AS rn
+    FROM hist_base
+    WHERE existsInAthena = true
+) x
+WHERE rn = 1
+),
+
+csv_polaris AS (
+SELECT
+    c.requestDate,
+    c.interactionId,
+    c.csv_process,
+    h.athenaTimestamp,
+    CASE WHEN h.interactionId IS NOT NULL THEN 1 ELSE 0 END AS match_flag
+FROM csv_base c
+LEFT JOIN hist_polaris h
+  ON c.interactionId = h.interactionId
+ AND c.csv_process = h.athenaProcess
+WHERE c.mqsQuoteId IS NULL
+),
+
+polaris_daily AS (
+SELECT
+    CASE
+        WHEN match_flag = 1 THEN DATE(athenaTimestamp)
+        ELSE requestDate
+    END AS reportDate,
+
+    COUNT_IF(match_flag = 1) AS polaris_matched,
+    COUNT_IF(match_flag = 0) AS polaris_missing
+
+FROM csv_polaris
+GROUP BY
+CASE
+    WHEN match_flag = 1 THEN DATE(athenaTimestamp)
+    ELSE requestDate
+END
+),
+
+/* =====================================================
+   REVERSE RECONCILIATION
+   ===================================================== */
+
+reverse_daily AS (
+SELECT
 
     CASE
+        WHEN existsInMQS = true THEN DATE(MQSTimestamp)
+        WHEN existsInAthena = true THEN DATE(athenaTimestamp)
+    END AS reportDate,
 
-        WHEN existsInCSV = true
-         AND existsInMQS = true
-         AND existsInAthena = true
-         AND requestProcess = MQSProcess
-         AND requestProcess = athenaProcess
-         AND athenaDate = requestDate
-        THEN 'matched_in_window'
+    COUNT_IF(
+        existsInCSV = false
+        AND existsInMQS = true
+        AND existsInAthena = true
+    ) AS reverse_both_missing_csv,
 
-        WHEN existsInCSV = true
-         AND existsInMQS = true
-         AND existsInAthena = true
-         AND requestProcess = MQSProcess
-         AND requestProcess = athenaProcess
-         AND athenaDate > requestDate
-        THEN 'matched_backdated'
+    COUNT_IF(
+        existsInCSV = false
+        AND existsInMQS = true
+        AND existsInAthena = false
+    ) AS reverse_mqs_only,
 
-        WHEN existsInCSV = true
-         AND existsInMQS = true
-         AND existsInAthena = true
-         AND (
-                requestProcess <> MQSProcess
-             OR requestProcess <> athenaProcess
-             OR MQSProcess <> athenaProcess
-            )
-        THEN 'different_process'
+    COUNT_IF(
+        existsInCSV = false
+        AND existsInMQS = false
+        AND existsInAthena = true
+    ) AS reverse_athena_only
 
-        WHEN existsInCSV = true
-         AND existsInMQS = true
-         AND (existsInAthena = false OR existsInAthena IS NULL)
-        THEN 'mqs_only'
+FROM hist_base
+WHERE MQSQuoteId IS NOT NULL
+AND existsInCSV = false
+GROUP BY
+CASE
+    WHEN existsInMQS = true THEN DATE(MQSTimestamp)
+    WHEN existsInAthena = true THEN DATE(athenaTimestamp)
+END
+),
 
-        WHEN existsInCSV = true
-         AND (existsInMQS = false OR existsInMQS IS NULL)
-         AND existsInAthena = true
-        THEN 'athena_only'
+/* =====================================================
+   FINAL OUTPUT
+   ===================================================== */
 
-        WHEN existsInCSV = true
-         AND (existsInMQS = false OR existsInMQS IS NULL)
-         AND (existsInAthena = false OR existsInAthena IS NULL)
-        THEN 'missing'
-
-        WHEN existsInCSV = false
-         AND existsInMQS = true
-        THEN 'reverse_recon_mqs'
-
-        WHEN existsInCSV = false
-         AND existsInAthena = true
-        THEN 'reverse_recon_athena'
-
-        ELSE 'unclassified'
-
-    END AS recon_status
-
-FROM hist_filtered
+all_dates AS (
+SELECT reportDate FROM non_polaris_daily
+UNION
+SELECT reportDate FROM polaris_daily
+UNION
+SELECT reportDate FROM reverse_daily
 )
 
-SELECT *
-FROM classified
-ORDER BY
-requestTimestamp,
-interactionId,
-requestProcess;
+SELECT
+    d.reportDate,
+
+    COALESCE(n.total_non_polaris,0) AS total_non_polaris,
+
+    COALESCE(n.matched_in_24h,0) AS matched_in_24h,
+    COALESCE(n.matched_outside_24h,0) AS matched_outside_24h,
+
+    COALESCE(n.missing_in_both,0) AS missing_in_both,
+    COALESCE(n.present_mqs_only,0) AS present_mqs_only,
+    COALESCE(n.present_athena_only,0) AS present_athena_only,
+
+    COALESCE(p.polaris_matched,0) AS polaris_matched,
+    COALESCE(p.polaris_missing,0) AS polaris_missing,
+
+    COALESCE(r.reverse_both_missing_csv,0) AS reverse_both_missing_csv,
+    COALESCE(r.reverse_mqs_only,0) AS reverse_mqs_only,
+    COALESCE(r.reverse_athena_only,0) AS reverse_athena_only
+
+FROM all_dates d
+LEFT JOIN non_polaris_daily n
+  ON d.reportDate = n.reportDate
+LEFT JOIN polaris_daily p
+  ON d.reportDate = p.reportDate
+LEFT JOIN reverse_daily r
+  ON d.reportDate = r.reportDate
+ORDER BY reportDate;
