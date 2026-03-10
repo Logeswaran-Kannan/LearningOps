@@ -1,7 +1,1 @@
-Hi Glen,
-
-Just to check my understanding — in the current setup the streams expect append-only data, so if records are deleted directly from the Delta tables it could potentially cause issues for downstream streaming jobs (such as restart or failure).
-
-The change you mentioned using the Databricks Runtime 17.3 functionality will allow deletions to be handled safely without breaking the streams.
-
-Is my understanding correct?
+Hi Glen, just checking if my understanding is correct. My plan in lower env is to load some test records through the stream, then delete a few of them from the Delta table to see how the downstream pipeline behaves. If the new runtime/DLT change works as expected, the stream should continue processing and the deletes should be handled without breaking the pipeline.
