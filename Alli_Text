@@ -1,1 +1,90 @@
-Got it, that makes sense. So the idea would be to apply the deletes on the streaming tables and the Silver Data Vault tables since they’re the source, and then verify that the materialized views reflect the deletion correctly. Happy to take your guidance on which specific tables we should use for the test.
+%sql
+WITH csv_base AS (
+    SELECT
+        interactionId,
+        mqsQuoteId,
+        requestDate,
+        requestTimestamp AS csv_ts,
+        LPAD(CAST(transactionCode AS STRING), 2, '0') AS csv_process
+    FROM core_bld.radar_live.reconciliation_csv_source
+    WHERE requestDate = DATE('2026-02-09')
+      AND mqsQuoteId IS NOT NULL
+),
+
+hist_norm AS (
+    SELECT
+        interactionId,
+        MQSQuoteId,
+        COALESCE(
+            LPAD(CAST(requestProcess AS STRING), 2, '0'),
+            LPAD(CAST(MQSProcess AS STRING), 2, '0'),
+            LPAD(CAST(athenaProcess AS STRING), 2, '0')
+        ) AS process_key,
+        MQSTimestamp,
+        athenaTimestamp,
+        COALESCE(existsInMQS, false) AS existsInMQS,
+        COALESCE(existsInAthena, false) AS existsInAthena
+    FROM core_bld.radar_live.reconciliation_history
+    WHERE MQSQuoteId IS NOT NULL
+),
+
+row_level_match AS (
+    SELECT
+        c.requestDate,
+        c.interactionId,
+        c.mqsQuoteId,
+        c.csv_process,
+        c.csv_ts,
+
+        MIN(CASE
+                WHEN h.process_key = c.csv_process
+                 AND h.existsInMQS = true
+                 AND h.MQSTimestamp >= c.csv_ts
+                THEN h.MQSTimestamp
+            END) AS selected_mqs_ts,
+
+        MIN(CASE
+                WHEN h.process_key = c.csv_process
+                 AND h.existsInAthena = true
+                 AND h.athenaTimestamp >= c.csv_ts
+                THEN h.athenaTimestamp
+            END) AS selected_athena_ts
+
+    FROM csv_base c
+    LEFT JOIN hist_norm h
+      ON c.interactionId = h.interactionId
+     AND c.mqsQuoteId = h.MQSQuoteId
+    GROUP BY
+        c.requestDate,
+        c.interactionId,
+        c.mqsQuoteId,
+        c.csv_process,
+        c.csv_ts
+)
+
+SELECT
+    *,
+    GREATEST(selected_mqs_ts, selected_athena_ts) AS completion_ts,
+    ROUND(
+        (UNIX_TIMESTAMP(GREATEST(selected_mqs_ts, selected_athena_ts)) - UNIX_TIMESTAMP(csv_ts)) / 3600.0,
+        2
+    ) AS delay_hours,
+    CASE
+        WHEN selected_mqs_ts IS NOT NULL
+         AND selected_athena_ts IS NOT NULL
+         AND UNIX_TIMESTAMP(GREATEST(selected_mqs_ts, selected_athena_ts)) - UNIX_TIMESTAMP(csv_ts) <= 86400
+        THEN 'matched_in_24h'
+        WHEN selected_mqs_ts IS NOT NULL
+         AND selected_athena_ts IS NOT NULL
+         AND UNIX_TIMESTAMP(GREATEST(selected_mqs_ts, selected_athena_ts)) - UNIX_TIMESTAMP(csv_ts) > 86400
+        THEN 'matched_outside_24h'
+        WHEN selected_mqs_ts IS NOT NULL
+         AND selected_athena_ts IS NULL
+        THEN 'present_mqs_only'
+        WHEN selected_mqs_ts IS NULL
+         AND selected_athena_ts IS NOT NULL
+        THEN 'present_athena_only'
+        ELSE 'missing_in_both'
+    END AS debug_status
+FROM row_level_match
+ORDER BY csv_ts, interactionId;
