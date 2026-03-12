@@ -1,70 +1,280 @@
-WITH mqs_9feb AS (
-    SELECT
-        headers['MQSQuoteId']                                       AS mqs_quote_id,
-        headers['externalID']                                       AS external_id,
-        coalesce(
-            headers['transactionType'],
-            get_json_object(payload, '$.control.transactionType'),
-            get_json_object(payload, '$.transactionType'),
-            'UNKNOWN'
-        )                                                           AS transaction_type,
-        min(cast(enqueuedTime as timestamp))                        AS first_mqs_enqueued_ts,
-        max(CASE
-            WHEN lower(payload) LIKE '%"provider":"mylicence"%'
-              OR lower(payload) LIKE '%"provider":"mylicense"%'
-              OR lower(payload) LIKE '%"provider":"dvla"%'
-            THEN 1 ELSE 0 END)                                      AS has_mylicense_dvla
-    FROM core.mqs_athn_mtr.ehubstream
-    WHERE headers['messageType'] = 'afp-quote-request'
-      AND headers['MQSQuoteId'] IS NOT NULL
-      AND date(cast(enqueuedTime as timestamp)) = '2026-02-09'
-    GROUP BY
-        headers['MQSQuoteId'],
-        headers['externalID'],
-        coalesce(
-            headers['transactionType'],
-            get_json_object(payload, '$.control.transactionType'),
-            get_json_object(payload, '$.transactionType'),
-            'UNKNOWN'
-        )
-),
-athena_match AS (
-    SELECT
-        get_json_object(payload, '$.interaction.mqsQuoteId')        AS mqs_quote_id,
-        min(cast(coalesce(TimeEnqueued, wrtTimestamp, get_json_object(payload, '$.timestamp')) as timestamp))
-                                                                    AS first_athena_ts,
-        min(CASE
-            WHEN upper(get_json_object(payload, '$.interaction.status')) = 'AGREEMENT'
-            THEN cast(coalesce(TimeEnqueued, wrtTimestamp, get_json_object(payload, '$.timestamp')) as timestamp)
-        END)                                                        AS first_agreement_ts,
-        max(CASE
-            WHEN upper(get_json_object(payload, '$.interaction.status')) = 'AGREEMENT'
-            THEN 1 ELSE 0
-        END)                                                        AS is_converted_in_athena
-    FROM core.flow.ehubstream
-    WHERE get_json_object(payload, '$.interaction.mqsQuoteId') IS NOT NULL
-    GROUP BY get_json_object(payload, '$.interaction.mqsQuoteId')
-)
+-- ============================================================
+-- DEBUG SETUP
+-- Purpose:
+-- Single debug view for MQS quotes enqueued on 9th Feb
+-- with Athena records from 30th Jan onward
+-- Retention window temporarily set as 30 days
+-- Optional MQSQuoteId filter supported
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 1. PARAMETERS
+-- Change filter_mqs_quote_id to a real value when needed.
+-- Keep NULL to see all quotes for 9th Feb.
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW debug_params AS
 SELECT
+    date('2026-02-09') AS debug_mqs_day,
+    date('2026-01-30') AS athena_from_day,
+    30                 AS retention_days,
+    cast(NULL as string) AS filter_mqs_quote_id;
+    -- Example:
+    -- 'MQS-694de6ab-678a-4a40-9fd8-ef0d3fda09dd' AS filter_mqs_quote_id
+
+
+-- ------------------------------------------------------------
+-- 2. MQS BASE FOR DEBUG DAY
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW vw_debug_mqs_base AS
+SELECT
+    headers['MQSQuoteId']                                      AS mqs_quote_id,
+    headers['externalID']                                      AS external_id,
+    headers['messageType']                                     AS mqs_message_type,
+
+    upper(get_json_object(payload, '$.control.transactionType')) AS mqs_transaction_type,
+
+    headers['quoteDate']                                       AS mqs_header_quote_date,
+    get_json_object(payload, '$.control.todaysDate')           AS mqs_payload_todays_date,
+    get_json_object(payload, '$.control.currentTime')          AS mqs_payload_current_time,
+
+    cast(enqueuedTime as timestamp)                            AS mqs_enqueued_ts,
+    cast(eHubQueuedDatestamp as timestamp)                     AS mqs_ehub_ts,
+    cast(eHubQueuedDatestamp as date)                          AS mqs_ehub_date,
+
+    CASE
+      WHEN lower(payload) LIKE '%"provider":"mylicence"%'
+        OR lower(payload) LIKE '%"provider":"mylicense"%'
+        OR lower(payload) LIKE '%"provider":"dvla"%'
+      THEN 1 ELSE 0
+    END                                                        AS has_mylicense_dvla,
+
+    payload                                                    AS mqs_payload,
+    headers                                                    AS mqs_headers
+FROM core.mqs_athn_mtr.ehubstream
+CROSS JOIN debug_params p
+WHERE headers['messageType'] = 'mqs-quote-request'
+  AND headers['MQSQuoteId'] IS NOT NULL
+  AND date(cast(enqueuedTime as timestamp)) = p.debug_mqs_day
+  AND (p.filter_mqs_quote_id IS NULL OR headers['MQSQuoteId'] = p.filter_mqs_quote_id);
+
+
+-- ------------------------------------------------------------
+-- 3. MQS QUOTE-LEVEL SUMMARY
+-- First enqueued timestamp is the retention anchor
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW vw_debug_mqs_quote_level AS
+SELECT
+    mqs_quote_id,
+    max(external_id)                    AS external_id,
+    max(mqs_message_type)               AS mqs_message_type,
+    max(mqs_transaction_type)           AS mqs_transaction_type,
+    min(coalesce(mqs_enqueued_ts, mqs_ehub_ts)) AS first_mqs_enqueued_ts,
+    max(coalesce(mqs_enqueued_ts, mqs_ehub_ts)) AS last_mqs_enqueued_ts,
+    max(mqs_header_quote_date)          AS mqs_header_quote_date,
+    max(mqs_payload_todays_date)        AS mqs_payload_todays_date,
+    max(mqs_payload_current_time)       AS mqs_payload_current_time,
+    max(has_mylicense_dvla)             AS has_mylicense_dvla,
+    count(*)                            AS mqs_record_count,
+    max(mqs_payload)                    AS sample_mqs_payload
+FROM vw_debug_mqs_base
+GROUP BY mqs_quote_id;
+
+
+-- ------------------------------------------------------------
+-- 4. ATHENA BASE
+-- Restrict to data from 30th Jan onward only
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW vw_debug_athena_base AS
+SELECT
+    get_json_object(payload, '$.interaction.mqsQuoteId')       AS mqs_quote_id,
+    get_json_object(payload, '$.interaction.id')               AS athena_interaction_id,
+    upper(get_json_object(payload, '$.interaction.status'))    AS athena_status,
+    upper(get_json_object(payload, '$.interaction.process'))   AS athena_process,
+    get_json_object(payload, '$.eventType')                    AS athena_event_type,
+
+    get_json_object(payload, '$.interaction.quoteId')          AS athena_quote_id,
+    get_json_object(payload, '$.interaction.policyNumber')     AS athena_policy_number,
+    get_json_object(payload, '$.interaction.agreementNumber')  AS athena_agreement_number,
+
+    cast(get_json_object(payload, '$.timestamp') as timestamp) AS athena_payload_ts,
+    cast(wrtTimestamp as timestamp)                            AS athena_wrt_ts,
+    cast(TimeEnqueued as timestamp)                            AS athena_enqueued_ts,
+    cast(eHubQueuedDatestamp as timestamp)                     AS athena_ehub_ts,
+    cast(eHubQueuedDatestamp as date)                          AS athena_ehub_date,
+
+    payload                                                    AS athena_payload
+FROM core.flow.ehubstream
+CROSS JOIN debug_params p
+WHERE get_json_object(payload, '$.interaction.mqsQuoteId') IS NOT NULL
+  AND cast(eHubQueuedDatestamp as date) >= p.athena_from_day
+  AND (
+        p.filter_mqs_quote_id IS NULL
+        OR get_json_object(payload, '$.interaction.mqsQuoteId') = p.filter_mqs_quote_id
+      );
+
+
+-- ------------------------------------------------------------
+-- 5. ATHENA RECORDS ONLY FOR MQS QUOTES OF DEBUG DAY
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW vw_debug_athena_for_mqs_day AS
+SELECT a.*
+FROM vw_debug_athena_base a
+INNER JOIN (
+    SELECT DISTINCT mqs_quote_id
+    FROM vw_debug_mqs_quote_level
+) m
+    ON a.mqs_quote_id = m.mqs_quote_id;
+
+
+-- ------------------------------------------------------------
+-- 6. ATHENA QUOTE-LEVEL SUMMARY
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW vw_debug_athena_quote_level AS
+SELECT
+    mqs_quote_id,
+
+    min(coalesce(athena_enqueued_ts, athena_wrt_ts, athena_payload_ts, athena_ehub_ts))
+        AS first_athena_seen_ts,
+
+    max(coalesce(athena_enqueued_ts, athena_wrt_ts, athena_payload_ts, athena_ehub_ts))
+        AS last_athena_seen_ts,
+
+    min(
+        CASE
+          WHEN athena_status = 'AGREEMENT'
+          THEN coalesce(athena_enqueued_ts, athena_wrt_ts, athena_payload_ts, athena_ehub_ts)
+        END
+    ) AS first_agreement_ts,
+
+    max(CASE WHEN athena_status = 'AGREEMENT' THEN 1 ELSE 0 END) AS is_converted_in_athena,
+
+    count(*) AS athena_record_count,
+
+    concat_ws(', ', sort_array(collect_set(athena_status)))     AS athena_status_list,
+    concat_ws(', ', sort_array(collect_set(athena_process)))    AS athena_process_list,
+    concat_ws(', ', sort_array(collect_set(athena_event_type))) AS athena_event_type_list,
+
+    max(athena_interaction_id)   AS sample_athena_interaction_id,
+    max(athena_quote_id)         AS sample_athena_quote_id,
+    max(athena_policy_number)    AS sample_athena_policy_number,
+    max(athena_agreement_number) AS sample_athena_agreement_number,
+    max(athena_payload)          AS sample_athena_payload
+FROM vw_debug_athena_for_mqs_day
+GROUP BY mqs_quote_id;
+
+
+-- ------------------------------------------------------------
+-- 7. SINGLE BEST DEBUG VIEW
+-- One row per MQS quote
+-- Gives key fields from both MQS and Athena
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW vw_debug_feb9_single_view AS
+SELECT
+    p.debug_mqs_day,
+    p.athena_from_day,
+    p.retention_days,
+
     m.mqs_quote_id,
     m.external_id,
-    upper(m.transaction_type)                                       AS transaction_type,
+    m.mqs_message_type,
+    m.mqs_transaction_type,
+
     m.first_mqs_enqueued_ts,
-    a.first_athena_ts,
-    a.first_agreement_ts,
-    coalesce(a.is_converted_in_athena, 0)                           AS is_converted_in_athena,
-    datediff(current_date(), date(m.first_mqs_enqueued_ts))         AS age_days,
+    m.last_mqs_enqueued_ts,
+    date(m.first_mqs_enqueued_ts) AS mqs_created_day,
+
+    m.mqs_header_quote_date,
+    m.mqs_payload_todays_date,
+    m.mqs_payload_current_time,
+
+    m.mqs_record_count,
     m.has_mylicense_dvla,
+
+    a.first_athena_seen_ts,
+    a.last_athena_seen_ts,
+    a.first_agreement_ts,
+    coalesce(a.is_converted_in_athena, 0) AS is_converted_in_athena,
+    coalesce(a.athena_record_count, 0)    AS athena_record_count,
+
+    a.athena_status_list,
+    a.athena_process_list,
+    a.athena_event_type_list,
+
+    a.sample_athena_interaction_id,
+    a.sample_athena_quote_id,
+    a.sample_athena_policy_number,
+    a.sample_athena_agreement_number,
+
+    datediff(current_date(), date(m.first_mqs_enqueued_ts)) AS age_days,
+
     CASE
-        WHEN coalesce(a.is_converted_in_athena, 0) = 0
-         AND datediff(current_date(), date(m.first_mqs_enqueued_ts)) > 60
-         AND m.has_mylicense_dvla = 1
-        THEN 'DELETE_MYLICENSE_PART'
-        WHEN coalesce(a.is_converted_in_athena, 0) = 1
+      WHEN coalesce(a.is_converted_in_athena, 0) = 1
         THEN 'KEEP_CONVERTED'
-        ELSE 'KEEP_NOT_YET_60'
-    END                                                             AS retention_action
-FROM mqs_9feb m
-LEFT JOIN athena_match a
+      WHEN coalesce(a.is_converted_in_athena, 0) = 0
+           AND datediff(current_date(), date(m.first_mqs_enqueued_ts)) > p.retention_days
+           AND m.has_mylicense_dvla = 1
+        THEN 'DELETE_MYLICENSE_PART'
+      WHEN coalesce(a.is_converted_in_athena, 0) = 0
+           AND datediff(current_date(), date(m.first_mqs_enqueued_ts)) > p.retention_days
+           AND m.has_mylicense_dvla = 0
+        THEN 'OVER_30_NO_MYLICENSE'
+      ELSE 'KEEP_NOT_YET_30'
+    END AS debug_retention_action,
+
+    m.sample_mqs_payload,
+    a.sample_athena_payload
+FROM vw_debug_mqs_quote_level m
+LEFT JOIN vw_debug_athena_quote_level a
     ON m.mqs_quote_id = a.mqs_quote_id
-ORDER BY m.first_mqs_enqueued_ts;
+CROSS JOIN debug_params p;
+
+
+-- ------------------------------------------------------------
+-- 8. OPTIONAL DETAIL VIEW
+-- One row per Athena event for each MQS quote
+-- Useful when a case has multiple Athena statuses
+-- ------------------------------------------------------------
+CREATE OR REPLACE TEMP VIEW vw_debug_feb9_event_level AS
+SELECT
+    m.mqs_quote_id,
+    mq.external_id,
+    mq.mqs_transaction_type,
+    mq.first_mqs_enqueued_ts,
+    mq.mqs_header_quote_date,
+    mq.mqs_payload_todays_date,
+    mq.mqs_payload_current_time,
+    mq.has_mylicense_dvla,
+
+    a.athena_interaction_id,
+    a.athena_status,
+    a.athena_process,
+    a.athena_event_type,
+    a.athena_quote_id,
+    a.athena_policy_number,
+    a.athena_agreement_number,
+    a.athena_payload_ts,
+    a.athena_wrt_ts,
+    a.athena_enqueued_ts,
+    a.athena_ehub_ts,
+    a.athena_payload
+FROM (SELECT DISTINCT mqs_quote_id FROM vw_debug_mqs_quote_level) m
+LEFT JOIN vw_debug_athena_for_mqs_day a
+    ON m.mqs_quote_id = a.mqs_quote_id
+LEFT JOIN vw_debug_feb9_single_view mq
+    ON m.mqs_quote_id = mq.mqs_quote_id;
+
+
+-- ------------------------------------------------------------
+-- 9. OUTPUTS
+-- Main single debug view
+-- ------------------------------------------------------------
+SELECT *
+FROM vw_debug_feb9_single_view
+ORDER BY first_mqs_enqueued_ts, mqs_quote_id;
+
+-- ------------------------------------------------------------
+-- Optional event-level trace
+-- ------------------------------------------------------------
+SELECT *
+FROM vw_debug_feb9_event_level
+ORDER BY mqs_quote_id, athena_enqueued_ts, athena_payload_ts;
