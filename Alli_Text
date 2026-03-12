@@ -1,90 +1,70 @@
-%sql
-WITH csv_base AS (
+WITH mqs_9feb AS (
     SELECT
-        interactionId,
-        mqsQuoteId,
-        requestDate,
-        requestTimestamp AS csv_ts,
-        LPAD(CAST(transactionCode AS STRING), 2, '0') AS csv_process
-    FROM core_bld.radar_live.reconciliation_csv_source
-    WHERE requestDate = DATE('2026-02-09')
-      AND mqsQuoteId IS NOT NULL
-),
-
-hist_norm AS (
-    SELECT
-        interactionId,
-        MQSQuoteId,
-        COALESCE(
-            LPAD(CAST(requestProcess AS STRING), 2, '0'),
-            LPAD(CAST(MQSProcess AS STRING), 2, '0'),
-            LPAD(CAST(athenaProcess AS STRING), 2, '0')
-        ) AS process_key,
-        MQSTimestamp,
-        athenaTimestamp,
-        COALESCE(existsInMQS, false) AS existsInMQS,
-        COALESCE(existsInAthena, false) AS existsInAthena
-    FROM core_bld.radar_live.reconciliation_history
-    WHERE MQSQuoteId IS NOT NULL
-),
-
-row_level_match AS (
-    SELECT
-        c.requestDate,
-        c.interactionId,
-        c.mqsQuoteId,
-        c.csv_process,
-        c.csv_ts,
-
-        MIN(CASE
-                WHEN h.process_key = c.csv_process
-                 AND h.existsInMQS = true
-                 AND h.MQSTimestamp >= c.csv_ts
-                THEN h.MQSTimestamp
-            END) AS selected_mqs_ts,
-
-        MIN(CASE
-                WHEN h.process_key = c.csv_process
-                 AND h.existsInAthena = true
-                 AND h.athenaTimestamp >= c.csv_ts
-                THEN h.athenaTimestamp
-            END) AS selected_athena_ts
-
-    FROM csv_base c
-    LEFT JOIN hist_norm h
-      ON c.interactionId = h.interactionId
-     AND c.mqsQuoteId = h.MQSQuoteId
+        headers['MQSQuoteId']                                       AS mqs_quote_id,
+        headers['externalID']                                       AS external_id,
+        coalesce(
+            headers['transactionType'],
+            get_json_object(payload, '$.control.transactionType'),
+            get_json_object(payload, '$.transactionType'),
+            'UNKNOWN'
+        )                                                           AS transaction_type,
+        min(cast(enqueuedTime as timestamp))                        AS first_mqs_enqueued_ts,
+        max(CASE
+            WHEN lower(payload) LIKE '%"provider":"mylicence"%'
+              OR lower(payload) LIKE '%"provider":"mylicense"%'
+              OR lower(payload) LIKE '%"provider":"dvla"%'
+            THEN 1 ELSE 0 END)                                      AS has_mylicense_dvla
+    FROM core.mqs_athn_mtr.ehubstream
+    WHERE headers['messageType'] = 'afp-quote-request'
+      AND headers['MQSQuoteId'] IS NOT NULL
+      AND date(cast(enqueuedTime as timestamp)) = '2026-02-09'
     GROUP BY
-        c.requestDate,
-        c.interactionId,
-        c.mqsQuoteId,
-        c.csv_process,
-        c.csv_ts
+        headers['MQSQuoteId'],
+        headers['externalID'],
+        coalesce(
+            headers['transactionType'],
+            get_json_object(payload, '$.control.transactionType'),
+            get_json_object(payload, '$.transactionType'),
+            'UNKNOWN'
+        )
+),
+athena_match AS (
+    SELECT
+        get_json_object(payload, '$.interaction.mqsQuoteId')        AS mqs_quote_id,
+        min(cast(coalesce(TimeEnqueued, wrtTimestamp, get_json_object(payload, '$.timestamp')) as timestamp))
+                                                                    AS first_athena_ts,
+        min(CASE
+            WHEN upper(get_json_object(payload, '$.interaction.status')) = 'AGREEMENT'
+            THEN cast(coalesce(TimeEnqueued, wrtTimestamp, get_json_object(payload, '$.timestamp')) as timestamp)
+        END)                                                        AS first_agreement_ts,
+        max(CASE
+            WHEN upper(get_json_object(payload, '$.interaction.status')) = 'AGREEMENT'
+            THEN 1 ELSE 0
+        END)                                                        AS is_converted_in_athena
+    FROM core.flow.ehubstream
+    WHERE get_json_object(payload, '$.interaction.mqsQuoteId') IS NOT NULL
+    GROUP BY get_json_object(payload, '$.interaction.mqsQuoteId')
 )
-
 SELECT
-    *,
-    GREATEST(selected_mqs_ts, selected_athena_ts) AS completion_ts,
-    ROUND(
-        (UNIX_TIMESTAMP(GREATEST(selected_mqs_ts, selected_athena_ts)) - UNIX_TIMESTAMP(csv_ts)) / 3600.0,
-        2
-    ) AS delay_hours,
+    m.mqs_quote_id,
+    m.external_id,
+    upper(m.transaction_type)                                       AS transaction_type,
+    m.first_mqs_enqueued_ts,
+    a.first_athena_ts,
+    a.first_agreement_ts,
+    coalesce(a.is_converted_in_athena, 0)                           AS is_converted_in_athena,
+    datediff(current_date(), date(m.first_mqs_enqueued_ts))         AS age_days,
+    m.has_mylicense_dvla,
     CASE
-        WHEN selected_mqs_ts IS NOT NULL
-         AND selected_athena_ts IS NOT NULL
-         AND UNIX_TIMESTAMP(GREATEST(selected_mqs_ts, selected_athena_ts)) - UNIX_TIMESTAMP(csv_ts) <= 86400
-        THEN 'matched_in_24h'
-        WHEN selected_mqs_ts IS NOT NULL
-         AND selected_athena_ts IS NOT NULL
-         AND UNIX_TIMESTAMP(GREATEST(selected_mqs_ts, selected_athena_ts)) - UNIX_TIMESTAMP(csv_ts) > 86400
-        THEN 'matched_outside_24h'
-        WHEN selected_mqs_ts IS NOT NULL
-         AND selected_athena_ts IS NULL
-        THEN 'present_mqs_only'
-        WHEN selected_mqs_ts IS NULL
-         AND selected_athena_ts IS NOT NULL
-        THEN 'present_athena_only'
-        ELSE 'missing_in_both'
-    END AS debug_status
-FROM row_level_match
-ORDER BY csv_ts, interactionId;
+        WHEN coalesce(a.is_converted_in_athena, 0) = 0
+         AND datediff(current_date(), date(m.first_mqs_enqueued_ts)) > 60
+         AND m.has_mylicense_dvla = 1
+        THEN 'DELETE_MYLICENSE_PART'
+        WHEN coalesce(a.is_converted_in_athena, 0) = 1
+        THEN 'KEEP_CONVERTED'
+        ELSE 'KEEP_NOT_YET_60'
+    END                                                             AS retention_action
+FROM mqs_9feb m
+LEFT JOIN athena_match a
+    ON m.mqs_quote_id = a.mqs_quote_id
+ORDER BY m.first_mqs_enqueued_ts;
