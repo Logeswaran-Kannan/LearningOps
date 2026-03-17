@@ -1,200 +1,153 @@
-# Databricks / PySpark
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
+CREATE OR REPLACE TABLE core_bld.default.DataRetentionAnalysis_system_test AS
 
-# =========================================================
-# PARAMETERS
-# =========================================================
-DEBUG_DAY = "2026-02-09"          # MQS enqueued day to inspect
-ATHENA_FROM_DATE = "2026-01-30"   # Restrict Athena scan from this date
-RETENTION_DAYS = 30               # Temporary retention rule for debug
+WITH mqs AS (
+    SELECT
+        headers['MQSQuoteId'] AS mqsQuoteId,
+        headers['externalID'] AS externalID,
+        headers['quoteDate'] AS quoteDate,
+        get_json_object(payload, '$.control.transactionType') AS transactionType,
+        get_json_object(payload, '$.control.todayDate') || ' ' ||
+        get_json_object(payload, '$.control.currentTime') AS quoteRequestDate,
+        enqueuedTime,
+        ethuQueuedDateStamp,
+        payload,
+        headers,
 
-# Keep empty list [] to inspect all MQS quotes for the day
-FILTER_MQS_QUOTE_IDS = [
-    # "MQS-694de6ab-678a-4a40-9fd8-ef0d3fda09dd"
-]
+        CASE
+            WHEN array_contains(
+                transform(
+                    from_json(
+                        get_json_object(payload, '$.mteEnrichments'),
+                        'array<struct<provider:string>>'
+                    ),
+                    x -> x.provider
+                ),
+                'mylicence'
+            ) THEN 'present'
+            ELSE 'not_present'
+        END AS provider_status,
 
-# =========================================================
-# 1. MQS BASE - ONLY THE DAY YOU WANT TO DEBUG
-# messageType corrected to mqs-quote-request
-# transactionType from payload.control.transactionType
-# =========================================================
-mqs_raw = (
-    spark.table("core.mqs_athn_mtr.ehubstream")
-    .filter(F.col("headers")["MQSQuoteId"].isNotNull())
-    .filter(F.col("headers")["messageType"] == F.lit("mqs-quote-request"))
-    .withColumn("mqsQuoteId", F.col("headers")["MQSQuoteId"])
-    .withColumn("externalID", F.col("headers")["externalID"])
-    .withColumn("messageType", F.col("headers")["messageType"])
-    .withColumn("transactionType", F.upper(F.get_json_object(F.col("payload"), "$.control.transactionType")))
-    .withColumn("quoteDate_header", F.col("headers")["quoteDate"])
-    .withColumn("todaysDate_payload", F.get_json_object(F.col("payload"), "$.control.todaysDate"))
-    .withColumn("currentTime_payload", F.get_json_object(F.col("payload"), "$.control.currentTime"))
-    .withColumn("mqs_enqueued_ts", F.to_timestamp("enqueuedTime"))
-    .withColumn("mqs_ehub_ts", F.to_timestamp("eHubQueuedDatestamp"))
-    .withColumn(
-        "has_mylicense_dvla",
-        F.when(
-            F.lower(F.col("payload")).contains('"provider":"mylicence"') |
-            F.lower(F.col("payload")).contains('"provider":"mylicense"') |
-            F.lower(F.col("payload")).contains('"provider":"dvla"'),
-            F.lit(1)
-        ).otherwise(F.lit(0))
-    )
-    .filter(F.to_date("mqs_enqueued_ts") == F.lit(DEBUG_DAY))
+        CASE
+            WHEN year(headers['quoteDate']) < year(ethuQueuedDateStamp) THEN 'invaliddateissue'
+            ELSE 'validate'
+        END AS quoteDate_status
+
+    FROM core_bld.mqs_ethu_utr_dvla_test.ethubstream
+    WHERE CAST(ethuQueuedDateStamp AS DATE) = '2026-02-09'
+      AND headers['messageType'] = 'mqs-quote-request'
+      -- AND headers['MQSQuoteId'] = 'MQS-f4295fe3-34a6-4211-9c2e-8b782818803a'
+),
+
+athn1 AS (
+    SELECT
+        mqsQuoteId,
+        interactionId,
+        status,
+        eventType,
+        process,
+        agreementNumber,
+        timeStamp,
+        rateDate,
+        quoteDate,
+        originalQuoteDate,
+        inceptionDate,
+        writeTimestamp,
+        ethuQueuedDateStamp,
+        TimeEnqueued,
+        process_code,
+        updatedOn
+    FROM core_bld.default.athena_base_table_update
+    -- WHERE mqsQuoteId = 'MQS-f4295fe3-34a6-4211-9c2e-8b782818803a'
+),
+
+athn_dedup AS (
+    SELECT
+        mqsQuoteId,
+        interactionId,
+        status,
+        eventType,
+        process,
+        agreementNumber,
+        timeStamp,
+        rateDate,
+        quoteDate,
+        originalQuoteDate,
+        inceptionDate,
+        writeTimestamp,
+        ethuQueuedDateStamp,
+        TimeEnqueued,
+        process_code,
+        updatedOn
+    FROM (
+        SELECT
+            a.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY a.mqsQuoteId, a.interactionId, a.process_code
+                ORDER BY a.TimeEnqueued ASC
+            ) AS rn
+        FROM athn1 a
+    ) x
+    WHERE rn = 1
+),
+
+athn_status AS (
+    SELECT
+        mqsQuoteId,
+        MAX(CASE WHEN status = 'AGREEMENT' THEN 1 ELSE 0 END) AS has_agreement
+    FROM core_bld.default.athena_base_table_update
+    GROUP BY mqsQuoteId
 )
 
-if FILTER_MQS_QUOTE_IDS:
-    mqs_raw = mqs_raw.filter(F.col("mqsQuoteId").isin(FILTER_MQS_QUOTE_IDS))
+SELECT
+    mqs.*,
+    s.mqsQuoteId AS soldAthenaMqsQuoteId,
+    s.has_agreement,
+    a.mqsQuoteId AS quoteAthenaMqsQuoteId,
+    a.process_code AS athenaProcessCode,
+    a.interactionId AS athenaInteractionId,
 
-# =========================================================
-# 2. MQS QUOTE-LEVEL ANCHOR
-# first MQS enqueued ts = retention anchor
-# =========================================================
-mqs_quote_level = (
-    mqs_raw
-    .groupBy("mqsQuoteId")
-    .agg(
-        F.min(F.coalesce(F.col("mqs_enqueued_ts"), F.col("mqs_ehub_ts"))).alias("first_mqs_enqueued_ts"),
-        F.max(F.coalesce(F.col("mqs_enqueued_ts"), F.col("mqs_ehub_ts"))).alias("last_mqs_enqueued_ts"),
-        F.max("externalID").alias("externalID"),
-        F.max("messageType").alias("mqs_messageType"),
-        F.max("transactionType").alias("transactionType"),
-        F.max("quoteDate_header").alias("quoteDate_header"),
-        F.max("todaysDate_payload").alias("todaysDate_payload"),
-        F.max("currentTime_payload").alias("currentTime_payload"),
-        F.max("has_mylicense_dvla").alias("has_mylicense_dvla"),
-        F.max("payload").alias("mqs_payload")
-    )
-)
+    CASE
+        WHEN s.has_agreement = 1 THEN 'converted_quote'
 
-# =========================================================
-# 3. REDUCE ATHENA READ
-# Only fetch Athena from 30th Jan onward
-# and only for MQSQuoteIds found in the debug MQS slice
-# =========================================================
-debug_quote_ids = mqs_quote_level.select("mqsQuoteId").distinct()
+        WHEN s.has_agreement = 0
+             AND a.mqsQuoteId IS NOT NULL THEN
+            CASE
+                WHEN mqs.quoteDate_status = 'validate' THEN
+                    CASE
+                        WHEN datediff(current_date(), mqs.quoteDate) > 30
+                            THEN 'unconverted_quote_delete_dvla'
+                        ELSE 'unconverted_quote_in_retention_period'
+                    END
 
-athena_raw = (
-    spark.table("core.flow.ehubstream")
-    .filter(F.to_date("eHubQueuedDatestamp") >= F.lit(ATHENA_FROM_DATE))
-    .withColumn("mqsQuoteId", F.get_json_object(F.col("payload"), "$.interaction.mqsQuoteId"))
-    .filter(F.col("mqsQuoteId").isNotNull())
-    .join(debug_quote_ids, on="mqsQuoteId", how="inner")
-    .withColumn("interactionId", F.get_json_object(F.col("payload"), "$.interaction.id"))
-    .withColumn("interactionStatus", F.upper(F.get_json_object(F.col("payload"), "$.interaction.status")))
-    .withColumn("interactionProcess", F.upper(F.get_json_object(F.col("payload"), "$.interaction.process")))
-    .withColumn("eventType", F.get_json_object(F.col("payload"), "$.eventType"))
-    .withColumn("agreementNumber", F.get_json_object(F.col("payload"), "$.interactionMessage.agreementNumber"))
-    .withColumn("athena_timestamp_payload", F.to_timestamp(F.get_json_object(F.col("payload"), "$.timestamp")))
-    .withColumn("athena_wrt_ts", F.to_timestamp("wrtTimestamp"))
-    .withColumn("athena_enqueued_ts", F.to_timestamp("TimeEnqueued"))
-    .withColumn("athena_ehub_ts", F.to_timestamp("eHubQueuedDatestamp"))
-    .withColumn(
-        "athena_best_ts",
-        F.coalesce(
-            F.col("athena_enqueued_ts"),
-            F.col("athena_wrt_ts"),
-            F.col("athena_timestamp_payload"),
-            F.col("athena_ehub_ts")
-        )
-    )
-)
+                WHEN mqs.quoteDate_status = 'invaliddateissue' THEN
+                    CASE
+                        WHEN datediff(current_date(), a.updatedOn) > 30
+                            THEN 'unconverted_quote_delete_dvla_athenabased'
+                        ELSE 'unconverted_quote_in_retention_period_athenabased'
+                    END
 
-# =========================================================
-# 4. ATHENA QUOTE-LEVEL FLAGS
-# =========================================================
-athena_quote_level = (
-    athena_raw
-    .groupBy("mqsQuoteId")
-    .agg(
-        F.min("athena_best_ts").alias("first_athena_ts"),
-        F.max("athena_best_ts").alias("last_athena_ts"),
-        F.min(F.when(F.col("interactionStatus") == "AGREEMENT", F.col("athena_best_ts"))).alias("first_agreement_ts"),
-        F.max(F.when(F.col("interactionStatus") == "AGREEMENT", F.lit(1)).otherwise(F.lit(0))).alias("is_converted_in_athena"),
-        F.count("*").alias("athena_record_count")
-    )
-)
+                ELSE 'undecided'
+            END
 
-# =========================================================
-# 5. SINGLE DEBUG VIEW
-# One row per MQS quote x Athena record
-# so you can inspect everything in one table
-# =========================================================
-debug_view = (
-    mqs_quote_level.alias("m")
-    .join(athena_quote_level.alias("aq"), on="mqsQuoteId", how="left")
-    .join(athena_raw.alias("a"), on="mqsQuoteId", how="left")
-    .withColumn("debug_day", F.lit(DEBUG_DAY))
-    .withColumn("retention_days", F.lit(RETENTION_DAYS))
-    .withColumn("age_days", F.datediff(F.current_date(), F.to_date("first_mqs_enqueued_ts")))
-    .withColumn(
-        "retention_action",
-        F.when(F.coalesce(F.col("is_converted_in_athena"), F.lit(0)) == 1, F.lit("KEEP_CONVERTED"))
-         .when(
-             (F.coalesce(F.col("is_converted_in_athena"), F.lit(0)) == 0) &
-             (F.col("age_days") > F.lit(RETENTION_DAYS)) &
-             (F.col("has_mylicense_dvla") == 1),
-             F.lit("DELETE_MYLICENSE_PART")
-         )
-         .when(
-             (F.coalesce(F.col("is_converted_in_athena"), F.lit(0)) == 0) &
-             (F.col("age_days") > F.lit(RETENTION_DAYS)),
-             F.lit("UNCONVERTED_OVER_RETENTION")
-         )
-         .otherwise(F.lit("KEEP_NOT_YET_RETENTION"))
-    )
-    .select(
-        # control
-        "debug_day",
-        "retention_days",
-        "mqsQuoteId",
+        WHEN s.has_agreement IS NULL THEN
+            CASE
+                WHEN mqs.quoteDate_status = 'validate' THEN
+                    CASE
+                        WHEN datediff(current_date(), mqs.quoteDate) > 30
+                            THEN 'unconverted_quote_delete_dvla_no_athena_match'
+                        ELSE 'unconverted_quote_in_retention_period_no_athena_match'
+                    END
+                ELSE 'undecided'
+            END
 
-        # MQS quote-level
-        "externalID",
-        "mqs_messageType",
-        "transactionType",
-        "first_mqs_enqueued_ts",
-        "last_mqs_enqueued_ts",
-        "quoteDate_header",
-        "todaysDate_payload",
-        "currentTime_payload",
-        "has_mylicense_dvla",
+        ELSE 'undecided'
+    END AS retention_status
 
-        # derived
-        "age_days",
-        "first_athena_ts",
-        "last_athena_ts",
-        "first_agreement_ts",
-        "is_converted_in_athena",
-        "athena_record_count",
-        "retention_action",
-
-        # Athena raw row-level
-        "interactionId",
-        "interactionStatus",
-        "interactionProcess",
-        "eventType",
-        "agreementNumber",
-        "athena_timestamp_payload",
-        "athena_wrt_ts",
-        "athena_enqueued_ts",
-        "athena_ehub_ts",
-        "athena_best_ts",
-
-        # payloads at end for inspection
-        "mqs_payload",
-        F.col("a.payload").alias("athena_payload")
-    )
-    .orderBy("mqsQuoteId", "athena_best_ts")
-)
-
-# =========================================================
-# 6. REGISTER TEMP VIEW
-# =========================================================
-debug_view.createOrReplaceTempView("vw_retention_debug_feb9")
-
-# =========================================================
-# 7. DISPLAY
-# =========================================================
-display(debug_view)
+FROM mqs
+LEFT JOIN athn_status s
+    ON mqs.mqsQuoteId = s.mqsQuoteId
+LEFT JOIN athn_dedup a
+    ON mqs.externalID = a.interactionId
+   AND mqs.transactionType = a.process_code
+   AND mqs.mqsQuoteId = a.mqsQuoteId
+;
