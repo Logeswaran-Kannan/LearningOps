@@ -1,153 +1,136 @@
-CREATE OR REPLACE TABLE core_bld.default.DataRetentionAnalysis_system_test AS
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
-WITH mqs AS (
-    SELECT
-        headers['MQSQuoteId'] AS mqsQuoteId,
-        headers['externalID'] AS externalID,
-        headers['quoteDate'] AS quoteDate,
-        get_json_object(payload, '$.control.transactionType') AS transactionType,
-        get_json_object(payload, '$.control.todayDate') || ' ' ||
-        get_json_object(payload, '$.control.currentTime') AS quoteRequestDate,
-        enqueuedTime,
-        ethuQueuedDateStamp,
-        payload,
-        headers,
+# -----------------------------
+# 1. Read source tables
+# -----------------------------
+mqs = spark.table("core_bld.default.dataretentionmqs")
 
-        CASE
-            WHEN array_contains(
-                transform(
-                    from_json(
-                        get_json_object(payload, '$.mteEnrichments'),
-                        'array<struct<provider:string>>'
-                    ),
-                    x -> x.provider
-                ),
-                'mylicence'
-            ) THEN 'present'
-            ELSE 'not_present'
-        END AS provider_status,
-
-        CASE
-            WHEN year(headers['quoteDate']) < year(ethuQueuedDateStamp) THEN 'invaliddateissue'
-            ELSE 'validate'
-        END AS quoteDate_status
-
-    FROM core_bld.mqs_ethu_utr_dvla_test.ethubstream
-    WHERE CAST(ethuQueuedDateStamp AS DATE) = '2026-02-09'
-      AND headers['messageType'] = 'mqs-quote-request'
-      -- AND headers['MQSQuoteId'] = 'MQS-f4295fe3-34a6-4211-9c2e-8b782818803a'
-),
-
-athn1 AS (
-    SELECT
-        mqsQuoteId,
-        interactionId,
-        status,
-        eventType,
-        process,
-        agreementNumber,
-        timeStamp,
-        rateDate,
-        quoteDate,
-        originalQuoteDate,
-        inceptionDate,
-        writeTimestamp,
-        ethuQueuedDateStamp,
-        TimeEnqueued,
-        process_code,
-        updatedOn
-    FROM core_bld.default.athena_base_table_update
-    -- WHERE mqsQuoteId = 'MQS-f4295fe3-34a6-4211-9c2e-8b782818803a'
-),
-
-athn_dedup AS (
-    SELECT
-        mqsQuoteId,
-        interactionId,
-        status,
-        eventType,
-        process,
-        agreementNumber,
-        timeStamp,
-        rateDate,
-        quoteDate,
-        originalQuoteDate,
-        inceptionDate,
-        writeTimestamp,
-        ethuQueuedDateStamp,
-        TimeEnqueued,
-        process_code,
-        updatedOn
-    FROM (
-        SELECT
-            a.*,
-            ROW_NUMBER() OVER (
-                PARTITION BY a.mqsQuoteId, a.interactionId, a.process_code
-                ORDER BY a.TimeEnqueued ASC
-            ) AS rn
-        FROM athn1 a
-    ) x
-    WHERE rn = 1
-),
-
-athn_status AS (
-    SELECT
-        mqsQuoteId,
-        MAX(CASE WHEN status = 'AGREEMENT' THEN 1 ELSE 0 END) AS has_agreement
-    FROM core_bld.default.athena_base_table_update
-    GROUP BY mqsQuoteId
+athn1 = spark.table("core_bld.default.athena_base_table_update").select(
+    "mqsQuoteId",
+    "interactionId",
+    "status",
+    "eventType",
+    "process",
+    "agreementNumber",
+    "timeStamp",
+    "rateDate",
+    "quoteDate",
+    "originalQuoteDate",
+    "inceptionDate",
+    "writeTimestamp",
+    "ethuQueuedDateStamp",
+    "TimeEnqueued",
+    "process_code",
+    "createdOn",
+    "updatedOn"
 )
 
-SELECT
-    mqs.*,
-    s.mqsQuoteId AS soldAthenaMqsQuoteId,
-    s.has_agreement,
-    a.mqsQuoteId AS quoteAthenaMqsQuoteId,
-    a.process_code AS athenaProcessCode,
-    a.interactionId AS athenaInteractionId,
+# -----------------------------
+# 2. Athena dedup
+#    first record based on TimeEnqueued
+# -----------------------------
+athn_window = Window.partitionBy(
+    "mqsQuoteId", "interactionId", "process_code"
+).orderBy(F.col("TimeEnqueued").asc())
 
-    CASE
-        WHEN s.has_agreement = 1 THEN 'converted_quote'
+athn_dedup = (
+    athn1
+    .withColumn("rn", F.row_number().over(athn_window))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+)
 
-        WHEN s.has_agreement = 0
-             AND a.mqsQuoteId IS NOT NULL THEN
-            CASE
-                WHEN mqs.quoteDate_status = 'validate' THEN
-                    CASE
-                        WHEN datediff(current_date(), mqs.quoteDate) > 30
-                            THEN 'unconverted_quote_delete_dvla'
-                        ELSE 'unconverted_quote_in_retention_period'
-                    END
+# -----------------------------
+# 3. Athena agreement status
+# -----------------------------
+athn_status = (
+    spark.table("core_bld.default.athena_base_table_update")
+    .groupBy("mqsQuoteId")
+    .agg(
+        F.max(
+            F.when(F.col("status") == "AGREEMENT", F.lit(1)).otherwise(F.lit(0))
+        ).alias("has_agreement")
+    )
+)
 
-                WHEN mqs.quoteDate_status = 'invaliddateissue' THEN
-                    CASE
-                        WHEN datediff(current_date(), a.updatedOn) > 30
-                            THEN 'unconverted_quote_delete_dvla_athenabased'
-                        ELSE 'unconverted_quote_in_retention_period_athenabased'
-                    END
+# -----------------------------
+# 4. Joins
+# -----------------------------
+df = (
+    mqs.alias("mqs")
+    .join(
+        athn_status.alias("s"),
+        F.col("mqs.mqsQuoteId") == F.col("s.mqsQuoteId"),
+        "left"
+    )
+    .join(
+        athn_dedup.alias("a"),
+        (
+            (F.col("mqs.externalID") == F.col("a.interactionId")) &
+            (F.col("mqs.transactionType") == F.col("a.process_code")) &
+            (F.col("mqs.mqsQuoteId") == F.col("a.mqsQuoteId"))
+        ),
+        "left"
+    )
+)
 
-                ELSE 'undecided'
-            END
+# -----------------------------
+# 5. Retention status logic
+#    exact logic kept as in SQL
+# -----------------------------
+retention_status_expr = (
+    F.when(F.col("s.has_agreement") == 1, F.lit("converted_quote"))
 
-        WHEN s.has_agreement IS NULL THEN
-            CASE
-                WHEN mqs.quoteDate_status = 'validate' THEN
-                    CASE
-                        WHEN datediff(current_date(), mqs.quoteDate) > 30
-                            THEN 'unconverted_quote_delete_dvla_no_athena_match'
-                        ELSE 'unconverted_quote_in_retention_period_no_athena_match'
-                    END
-                ELSE 'undecided'
-            END
+    .when(
+        (F.col("s.has_agreement") == 0) & (F.col("a.mqsQuoteId").isNotNull()),
+        F.when(
+            F.col("mqs.quoteDate_status") == "validdate",
+            F.when(
+                F.datediff(F.current_date(), F.to_date(F.col("mqs.quoteDate"))) > 30,
+                F.lit("unconverted_quote_delete_dvla")
+            ).otherwise(F.lit("unconverted_quote_in_retention_period"))
+        ).when(
+            F.col("mqs.quoteDate_status") == "invaliddateissue",
+            F.when(
+                F.datediff(F.current_date(), F.to_date(F.col("a.createdOn"))) > 30,
+                F.lit("unconverted_quote_delete_dvla_athenabased")
+            ).otherwise(F.lit("unconverted_quote_in_retention_period_athenabased"))
+        ).otherwise(F.lit("undecided"))
+    )
 
-        ELSE 'undecided'
-    END AS retention_status
+    .when(
+        F.col("s.has_agreement").isNull(),
+        F.when(
+            F.col("mqs.quoteDate_status") == "validdate",
+            F.when(
+                F.datediff(F.current_date(), F.to_date(F.col("mqs.quoteDate"))) > 30,
+                F.lit("unconverted_quote_delete_dvla_no_athena_match")
+            ).otherwise(F.lit("unconverted_quote_in_retention_period_no_athena_match"))
+        ).otherwise(F.lit("undecided"))
+    )
 
-FROM mqs
-LEFT JOIN athn_status s
-    ON mqs.mqsQuoteId = s.mqsQuoteId
-LEFT JOIN athn_dedup a
-    ON mqs.externalID = a.interactionId
-   AND mqs.transactionType = a.process_code
-   AND mqs.mqsQuoteId = a.mqsQuoteId
-;
+    .otherwise(F.lit("undecided"))
+)
+
+# -----------------------------
+# 6. Final select
+# -----------------------------
+final_df = df.select(
+    F.col("mqs.*"),
+    F.col("s.mqsQuoteId").alias("soldAthenaMqsQuoteId"),
+    F.col("s.has_agreement"),
+    F.col("a.mqsQuoteId").alias("quoteAthenaMqsQuoteId"),
+    F.col("a.process_code").alias("athenaProcessCode"),
+    F.col("a.interactionId").alias("athenaInteractionId"),
+    F.col("a.createdOn").alias("athenaCreatedOn"),
+    F.col("a.updatedOn").alias("athenaUpdatedOn"),
+    retention_status_expr.alias("retention_status")
+)
+
+# -----------------------------
+# 7. Save as table
+# -----------------------------
+final_df.write.mode("overwrite").saveAsTable(
+    "core_bld.default.DataRetentionAnalysis_system_test"
+)
