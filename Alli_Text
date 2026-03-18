@@ -1,67 +1,55 @@
-**🔍 Data Retention Logic Validation – Technical Summary (9th Feb Analysis)**
+Data Retention Logic Validation – Technical Summary (9th Feb Analysis)
 
----
+1. Overview
 
-### **1. Overview**
+From a technical analysis perspective, the MQS and Athena data for 9th February was reviewed to validate the current data retention logic, specifically around DVLA (myLicence) handling. The analysis highlights a mix of confirmed defects, working scenarios, and areas requiring clarification before finalising the implementation.
 
-From a technical analysis perspective, the MQS and Athena data for **9th February** was reviewed to validate the current data retention logic, specifically around DVLA (myLicence) handling. The analysis highlights a mix of confirmed defects, working scenarios, and areas requiring clarification before finalising the implementation.
+2. Agreement / Sold Scenarios
 
----
+2.1 Defect – DVLA Deletion Despite Agreement
+The current logic incorrectly deletes DVLA data even when a valid Agreement transaction exists in Athena for the same MQSQuoteId. This is not expected and requires a code fix.
 
-### **2. Agreement / Sold Scenarios**
+2.2 Defect – MQS Payload Deletion
+It is also observed that the retention logic removes parts of the quote-request message from MQS EventHub, in addition to DVLA data. This behaviour is unintended and needs correction.
 
-**2.1 Defect – DVLA Deletion Despite Agreement**
-The current logic incorrectly deletes DVLA data even when a valid **Agreement transaction exists in Athena** for the same MQSQuoteId. This is not expected and requires a code fix.
-
-**2.2 Defect – MQS Payload Deletion**
-It is also observed that the retention logic removes parts of the **quote-request message from MQS EventHub**, in addition to DVLA data. This behaviour is unintended and needs correction.
-
-**2.3 Business Clarification – Policy Cancellation (MTC)**
+2.3 Business Clarification – Policy Cancellation (MTC)
 For policies that were previously bound but later cancelled in Athena (MTC), it is unclear whether DVLA data should be retained or deleted.
 
-**2.4 Business Clarification – MTA on Active NB**
-In cases where an NB policy is active but an associated **MTA quote is not converted**, confirmation is required on whether DVLA data should be deleted for such quotes.
+2.4 Business Clarification – MTA on Active NB
+In cases where an NB policy is active but an associated MTA quote is not converted, confirmation is required on whether DVLA data should be deleted for such quotes.
 
-**2.5 Technical Edge Case – Late Athena Events**
+2.5 Technical Edge Case – Late Athena Events
 There is a risk scenario where a quote is converted close to the end of the retention window (day 59/60), but Athena sends the Agreement event late. This could lead to premature DVLA deletion and needs a defined handling approach.
 
----
+3. Unconverted MQS Quotes (With Interaction Match)
 
-### **3. Unconverted MQS Quotes (With Interaction Match)**
+3.1 NB Flow – Working as Expected
+For New Business scenarios, the transaction date is correctly derived from quoteDate / todayDate in MQS, and the retention window is calculated based on the first transaction per MQSQuoteId, InteractionId, and Process. If no Agreement is found within the window, deletion eligibility is correctly identified.
 
-**3.1 NB Flow – Working as Expected**
-For New Business scenarios, the transaction date is correctly derived from **quoteDate / todayDate in MQS**, and the retention window is calculated based on the first transaction per MQSQuoteId, InteractionId, and Process. If no Agreement is found within the window, deletion eligibility is correctly identified.
+3.2 MTA / MTC / Renewal – Date Issue & Proposed Approach
+For MTA, MTC, and Renewal flows, the MQS-provided dates are not reliable. The proposed technical approach is to join MQS with Athena interaction data and use createdOn as the transaction date. This is intended as a temporary solution until the upstream fix is delivered (April) and requires confirmation from the Rafls team.
 
-**3.2 MTA / MTC / Renewal – Date Issue & Proposed Approach**
-For MTA, MTC, and Renewal flows, the MQS-provided dates are not reliable. The proposed technical approach is to **join MQS with Athena interaction data** and use **createdOn as the transaction date**. This is intended as a temporary solution until the upstream fix is delivered (April) and requires confirmation from the Rafls team.
-
----
-
-### **4. Unconverted MQS Quotes (Without Interaction Match)**
+4. Unconverted MQS Quotes (Without Interaction Match)
 
 These cases involve MQSQuoteIds present in MQS but missing in Athena interaction data. From a technical standpoint, this is likely due to issues in the MQS-to-Athena flow and needs validation from Rafls or may be addressed as part of Athena data clean-up.
 
-**Proposed Approach**
-For such scenarios, it is proposed to use **MQS ingestion timestamps (ethuQueuedDateStamp / TimeEnqueued)** as the transaction date to apply retention logic. This approach should be documented and reviewed before implementation.
+Proposed Approach
+For such scenarios, it is proposed to use MQS ingestion timestamps (ethuQueuedDateStamp / TimeEnqueued) as the transaction date to apply retention logic. This approach should be documented and reviewed before implementation.
 
----
+5. createdOn vs updatedOn (Technical Observation)
 
-### **5. createdOn vs updatedOn (Technical Observation)**
+Based on the analysis of the 9th February dataset, there is no difference observed between createdOn and updatedOn for retention purposes. Following the discussion with Rafls, createdOn will be used as the standard transaction date going forward.
 
-Based on the analysis of the **9th February dataset**, there is no difference observed between **createdOn and updatedOn** for retention purposes. Following the discussion with Rafls, **createdOn will be used as the standard transaction date** going forward.
-
----
-
-### **6. Summary**
+6. Summary
 
 From a technical perspective, the analysis confirms that:
 
-* There are **defects in Agreement handling and MQS payload deletion**
-* **NB flow logic is working as expected**
-* A **temporary solution using createdOn** is proposed for MTA/MTC/Renewal scenarios
-* A **fallback approach using MQS timestamps** is proposed for missing interaction cases
-* Multiple **business and technical clarifications** are required before finalising the retention logic
+There are defects in Agreement handling and MQS payload deletion
 
----
+NB flow logic is working as expected
 
-Happy to walk through this if needed.
+A temporary solution using createdOn is proposed for MTA/MTC/Renewal scenarios
+
+A fallback approach using MQS timestamps is proposed for missing interaction cases
+
+Multiple business and technical clarifications are required before finalising the retention logic
