@@ -1,21 +1,49 @@
-Hi [Boss Name],
+Subject: Findings on Effective Date Usage for DVLA Retention Logic
 
-Following our discussion, we’ve looked at suitable dates in May for the Bournemouth get-together.
+Hi,
 
-Considering the UK bank holidays (5 May and 25 May) and the likelihood of extended weekends/annual leave around those periods, it would be best to avoid those weeks.
+As part of the testing and analysis, I wanted to share an important finding regarding the use of Policy Effective Date for retention and DVLA data derivation.
 
-Rajesh can propose the following dates:
+While using Effective Date works well for New Business scenarios, we’ve identified issues for MTA and Renewal cases:
 
-Preferred options:
+For MTA, the Policy Effective Date reflects the current policy term, not the quote effective date.
+For Renewals, it reflects the previous policy term, again not the actual quote effective date.
 
-Wednesday, 13 May
-Thursday, 14 May
-Wednesday, 20 May
+Additionally, the quote effective date is not available in the quote-request message, which limits our ability to rely on it directly.
 
-Alternate options:
+Based on this, we conclude that:
+➡️ Policy Effective Date is not suitable for DVLA data derivation in MTA and Renewal scenarios, as the requirement is to align with the quote effective date, not the policy term.
 
-Tuesday, 12 May
-Tuesday, 19 May
-Thursday, 21 May
+Alternative Approach განხ
 
-These dates are mid-week and fall outside the bank holiday periods, so should work better for overall availability.
+Following Nate’s suggestion, we evaluated using timeEnqueued as the transaction date for quotes.
+
+Key observations from the analysis:
+
+~99% of quotes show strong alignment between timeEnqueued (MQS) and CreatedOn (Interaction)
+~0.40% of quotes are not present in the Interaction flow
+~0.60% (primarily Renewal cases) show differences between timeEnqueued and CreatedOn
+The maximum observed difference is ~31 days
+
+In these renewal scenarios, it appears that:
+
+The quote is created earlier (as per Athena / Interaction CreatedOn)
+However, MQS only emits the event later (closer to policy agreement)
+
+This indicates a source-system behaviour gap, where earlier quote activity is not reflected in MQS until a later stage.
+
+Interpretation
+
+For the identified edge cases, it is reasonable to consider CreatedOn as the transaction date, as it better represents when the quote was actually initiated (even if MQS receives it later).
+
+Recommendation / Next Steps
+Use timeEnqueued as the primary transaction date
+Apply retention as:
+➡️ timeEnqueued + 30 days (aligned with quote validity)
+For edge cases (mainly renewals), further clarification is required from the source system on:
+Why there is up to 31 days delay in MQS event generation
+Whether this behaviour is expected
+Final decision required on:
+➡️ Whether retention should be 30 days or 31 days, considering the observed variance
+
+Please let me know if you’d like us to deep dive further into the renewal behaviour or validate additional scenarios.
