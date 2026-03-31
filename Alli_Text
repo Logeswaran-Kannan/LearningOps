@@ -37,13 +37,14 @@ PREFIX_MAPPING = {
 # ============================================================
 now = datetime.now()
 start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-end_time = start_time + timedelta(hours=23, minutes=59, seconds=59)
+end_time = start_time + timedelta(days=1)
 
 start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
 end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
 # ============================================================
 # GENERATE RUN ID
+# Keep as Python int, but always cast to BIGINT in SQL
 # ============================================================
 run_id_value = uuid.uuid4().int >> 96
 
@@ -80,12 +81,10 @@ def quote_sql_string(value: str) -> str:
 # ============================================================
 # LOAD TABLE LIST
 # ============================================================
-exclusion_df = spark.read.table(EXCLUSION_TABLE)
-
 table_list = [
     row["tablename"]
     for row in (
-        exclusion_df
+        spark.read.table(EXCLUSION_TABLE)
         .filter(col("excludeIndicator") == "Y")
         .select("tablename")
         .distinct()
@@ -98,7 +97,8 @@ if not table_list:
 
 # ============================================================
 # PREPARE TABLE METADATA ONCE
-# Avoid repeated schema lookups while building SQL
+# Performance optimization:
+# avoid repeated tableExists / schema reads during SQL building
 # ============================================================
 table_meta = {}
 
@@ -121,8 +121,8 @@ for db in DBS:
 # ============================================================
 # BUILD UNION SQL PER DB
 # Logic:
-# - missing table -> NULL count, table_exists_flag='N'
-# - table exists + load date column exists -> today's filtered count
+# - missing table -> NULL count
+# - table exists + load date column exists -> today filtered count
 # - table exists + load date column missing -> full count
 # ============================================================
 def build_union_count_sql(db: str, base_tables: list[str], run_id: int) -> str:
@@ -138,7 +138,7 @@ def build_union_count_sql(db: str, base_tables: list[str], run_id: int) -> str:
         if not exists:
             sql_parts.append(f"""
                 SELECT
-                    {run_id} AS run_id,
+                    CAST({run_id} AS BIGINT) AS run_id,
                     '{safe_base_table}' AS table_name,
                     CAST(NULL AS BIGINT) AS {db}_count,
                     'N' AS {db}_table_exists,
@@ -148,22 +148,22 @@ def build_union_count_sql(db: str, base_tables: list[str], run_id: int) -> str:
         elif has_load_date:
             sql_parts.append(f"""
                 SELECT
-                    {run_id} AS run_id,
+                    CAST({run_id} AS BIGINT) AS run_id,
                     '{safe_base_table}' AS table_name,
-                    COUNT(1) AS {db}_count,
+                    CAST(COUNT(1) AS BIGINT) AS {db}_count,
                     'Y' AS {db}_table_exists,
                     'Y' AS {db}_date_filter_applied
                 FROM {full_table_name}
                 WHERE {LOAD_DATE_COLUMN} >= TIMESTAMP('{start_time_str}')
-                  AND {LOAD_DATE_COLUMN} <= TIMESTAMP('{end_time_str}')
+                  AND {LOAD_DATE_COLUMN} < TIMESTAMP('{end_time_str}')
             """.strip())
 
         else:
             sql_parts.append(f"""
                 SELECT
-                    {run_id} AS run_id,
+                    CAST({run_id} AS BIGINT) AS run_id,
                     '{safe_base_table}' AS table_name,
-                    COUNT(1) AS {db}_count,
+                    CAST(COUNT(1) AS BIGINT) AS {db}_count,
                     'Y' AS {db}_table_exists,
                     'N' AS {db}_date_filter_applied
                 FROM {full_table_name}
@@ -172,7 +172,9 @@ def build_union_count_sql(db: str, base_tables: list[str], run_id: int) -> str:
     return "\nUNION ALL\n".join(sql_parts)
 
 # ============================================================
-# EXECUTE COUNTS
+# EXECUTE ONE QUERY PER DB
+# Performance optimization:
+# 3 main Spark SQL executions instead of nested per-table counts
 # ============================================================
 count_dfs = []
 
@@ -188,6 +190,18 @@ for next_df in count_dfs[1:]:
     final_df = final_df.join(next_df, ["run_id", "table_name"], "outer")
 
 # ============================================================
+# FORCE SCHEMA ALIGNMENT BEFORE ANY WRITE
+# Important for Delta strict schema enforcement
+# ============================================================
+final_df = (
+    final_df
+    .withColumn("run_id", col("run_id").cast("bigint"))
+    .withColumn("ods_stg_copy_count", col("ods_stg_copy_count").cast("bigint"))
+    .withColumn("ods_count", col("ods_count").cast("bigint"))
+    .withColumn("ods_views_count", col("ods_views_count").cast("bigint"))
+)
+
+# ============================================================
 # ADD AUDIT COLUMNS
 # ============================================================
 final_df = (
@@ -199,10 +213,6 @@ final_df = (
 
 # ============================================================
 # STATUS / COMMENT LOGIC
-# Note:
-# - NULL count means table does not exist
-# - 0 means table exists but no rows matched
-# - if date filter missing, count may be full-table count
 # ============================================================
 stg = coalesce(col("ods_stg_copy_count"), lit(0))
 ods = coalesce(col("ods_count"), lit(0))
@@ -320,7 +330,7 @@ WHERE run_date < DATE('{retention_cutoff}')
 """)
 
 # ============================================================
-# RESET TODAY'S PREVIOUS LATEST
+# RESET TODAY'S PREVIOUS LATEST BATCH
 # ============================================================
 spark.sql(f"""
 UPDATE {OUTPUT_TABLE}
@@ -328,6 +338,18 @@ SET is_latest = 'N'
 WHERE run_date = current_date()
   AND is_latest = 'Y'
 """)
+
+# ============================================================
+# FINAL CAST ALIGNMENT BEFORE WRITE
+# extra safety against schema mismatch
+# ============================================================
+final_df = (
+    final_df
+    .withColumn("run_id", col("run_id").cast("bigint"))
+    .withColumn("ods_stg_copy_count", col("ods_stg_copy_count").cast("bigint"))
+    .withColumn("ods_count", col("ods_count").cast("bigint"))
+    .withColumn("ods_views_count", col("ods_views_count").cast("bigint"))
+)
 
 # ============================================================
 # WRITE CURRENT RUN
