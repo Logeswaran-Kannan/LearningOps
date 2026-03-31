@@ -1,49 +1,287 @@
-Subject: Findings on Effective Date Usage for DVLA Retention Logic
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col,
+    lit,
+    when,
+    coalesce,
+    current_timestamp,
+    current_date,
+    sum as spark_sum
+)
+from datetime import datetime, timedelta
+import uuid
 
-Hi,
+# ============================================================
+# SPARK SESSION
+# ============================================================
+spark = SparkSession.builder.appName("CountCheckValidationOptimized").getOrCreate()
 
-As part of the testing and analysis, I wanted to share an important finding regarding the use of Policy Effective Date for retention and DVLA data derivation.
+# ============================================================
+# CONFIG
+# ============================================================
+CATALOG_NAME = "core"
+EXCLUSION_TABLE = "core_bld.default.exclusion_list"
+OUTPUT_TABLE = "core_bld.default.dw_audit_table_count_check"
 
-While using Effective Date works well for New Business scenarios, we’ve identified issues for MTA and Renewal cases:
+DBS = ["ods_stg_copy", "ods", "ods_views"]
+LOAD_DATE_COLUMN = "AZURE_LOAD_DATE"
 
-For MTA, the Policy Effective Date reflects the current policy term, not the quote effective date.
-For Renewals, it reflects the previous policy term, again not the actual quote effective date.
+PREFIX_MAPPING = {
+    "policycenter_": "vw_policycenter_current_",
+    "billingcenter_": "vw_billingcenter_current_",
+    "claimcenter_": "vw_claimcenter_current_"
+}
 
-Additionally, the quote effective date is not available in the quote-request message, which limits our ability to rely on it directly.
+RETENTION_DAYS = 7
 
-Based on this, we conclude that:
-➡️ Policy Effective Date is not suitable for DVLA data derivation in MTA and Renewal scenarios, as the requirement is to align with the quote effective date, not the policy term.
+# ============================================================
+# TIME RANGE FOR TODAY
+# ============================================================
+now = datetime.now()
+start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+end_time = start_time + timedelta(hours=23, minutes=59, seconds=59)
 
-Alternative Approach განხ
+start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
-Following Nate’s suggestion, we evaluated using timeEnqueued as the transaction date for quotes.
+# ============================================================
+# GENERATE RUN ID
+# ============================================================
+run_id_value = uuid.uuid4().int >> 96
 
-Key observations from the analysis:
+# ============================================================
+# HELPERS
+# ============================================================
+def get_view_table_name(base_name: str) -> str:
+    for prefix, view_prefix in PREFIX_MAPPING.items():
+        if base_name.startswith(prefix):
+            return base_name.replace(prefix, view_prefix, 1)
+    return base_name
 
-~99% of quotes show strong alignment between timeEnqueued (MQS) and CreatedOn (Interaction)
-~0.40% of quotes are not present in the Interaction flow
-~0.60% (primarily Renewal cases) show differences between timeEnqueued and CreatedOn
-The maximum observed difference is ~31 days
+def get_actual_table_name(db: str, base_name: str) -> str:
+    return get_view_table_name(base_name) if db == "ods_views" else base_name
 
-In these renewal scenarios, it appears that:
+def get_full_table_name(db: str, table_name: str) -> str:
+    return f"{CATALOG_NAME}.{db}.{table_name}"
 
-The quote is created earlier (as per Athena / Interaction CreatedOn)
-However, MQS only emits the event later (closer to policy agreement)
+def build_union_count_sql(db: str, base_tables: list[str], run_id: int) -> str:
+    """
+    Build one UNION ALL SQL statement per DB.
+    Existing tables return today's count.
+    Missing tables return NULL count.
+    """
+    sql_parts = []
 
-This indicates a source-system behaviour gap, where earlier quote activity is not reflected in MQS until a later stage.
+    for base_table in base_tables:
+        actual_table = get_actual_table_name(db, base_table)
+        full_table_name = get_full_table_name(db, actual_table)
 
-Interpretation
+        if spark.catalog.tableExists(full_table_name):
+            sql_parts.append(f"""
+                SELECT
+                    {run_id} AS run_id,
+                    '{base_table}' AS table_name,
+                    COUNT(1) AS {db}_count
+                FROM {full_table_name}
+                WHERE {LOAD_DATE_COLUMN} >= TIMESTAMP('{start_time_str}')
+                  AND {LOAD_DATE_COLUMN} <= TIMESTAMP('{end_time_str}')
+            """.strip())
+        else:
+            sql_parts.append(f"""
+                SELECT
+                    {run_id} AS run_id,
+                    '{base_table}' AS table_name,
+                    CAST(NULL AS BIGINT) AS {db}_count
+            """.strip())
 
-For the identified edge cases, it is reasonable to consider CreatedOn as the transaction date, as it better represents when the quote was actually initiated (even if MQS receives it later).
+    return "\nUNION ALL\n".join(sql_parts)
 
-Recommendation / Next Steps
-Use timeEnqueued as the primary transaction date
-Apply retention as:
-➡️ timeEnqueued + 30 days (aligned with quote validity)
-For edge cases (mainly renewals), further clarification is required from the source system on:
-Why there is up to 31 days delay in MQS event generation
-Whether this behaviour is expected
-Final decision required on:
-➡️ Whether retention should be 30 days or 31 days, considering the observed variance
+# ============================================================
+# LOAD TABLE LIST
+# ============================================================
+exclusion_df = spark.read.table(EXCLUSION_TABLE)
 
-Please let me know if you’d like us to deep dive further into the renewal behaviour or validate additional scenarios.
+table_list = [
+    row["tablename"]
+    for row in (
+        exclusion_df
+        .filter(col("excludeIndicator") == "Y")
+        .select("tablename")
+        .distinct()
+        .collect()
+    )
+]
+
+if not table_list:
+    raise Exception("No tables found in exclusion list where excludeIndicator = 'Y'")
+
+# ============================================================
+# BUILD COUNT DATAFRAMES
+# ============================================================
+count_dfs = []
+
+for db in DBS:
+    sql_text = build_union_count_sql(db, table_list, run_id_value)
+    count_dfs.append(spark.sql(sql_text))
+
+# ============================================================
+# MERGE COUNTS
+# ============================================================
+final_df = count_dfs[0]
+for next_df in count_dfs[1:]:
+    final_df = final_df.join(next_df, ["run_id", "table_name"], "outer")
+
+# ============================================================
+# ADD AUDIT COLUMNS
+# ============================================================
+final_df = (
+    final_df
+    .withColumn("timestamp", current_timestamp())
+    .withColumn("run_date", current_date())
+    .withColumn("is_latest", lit("Y"))
+)
+
+# ============================================================
+# STATUS / COMMENT LOGIC
+# ============================================================
+stg = coalesce(col("ods_stg_copy_count"), lit(0))
+ods = coalesce(col("ods_count"), lit(0))
+vw  = coalesce(col("ods_views_count"), lit(0))
+
+final_df = (
+    final_df
+    .withColumn(
+        "status",
+        when(
+            col("ods_stg_copy_count").isNull() &
+            col("ods_count").isNull() &
+            col("ods_views_count").isNull(),
+            lit("TABLE_NOT_CREATED")
+        )
+        .when(
+            (stg == 0) & (ods == 0) & (vw == 0),
+            lit("DATA_NOT_LOADED")
+        )
+        .when(
+            col("ods_stg_copy_count").isNull() &
+            ((ods > 0) | (vw > 0)),
+            lit("STAGE_COPY_LOAD_ISSUE")
+        )
+        .when(
+            (stg > 0) & (ods == 0) & (vw == 0),
+            lit("ODS_LOAD_ISSUE")
+        )
+        .when(
+            (stg > 0) & (ods > 0) & (vw == 0),
+            lit("ODS_VIEWS_LOAD_ISSUE")
+        )
+        .when(
+            (stg > 0) & (ods > 0) & (vw > 0) & ((stg != ods) | (ods != vw)),
+            lit("COUNT_MISMATCH")
+        )
+        .when(
+            (stg > 0) & (ods > 0) & (vw > 0) & (stg == ods) & (ods == vw),
+            lit("ALL_MATCHED")
+        )
+        .otherwise(lit("CHECK_REQUIRED"))
+    )
+    .withColumn(
+        "comment",
+        when(col("status") == "TABLE_NOT_CREATED", lit("Table is not available in any compared layer"))
+        .when(col("status") == "DATA_NOT_LOADED", lit("No data loaded today in any layer"))
+        .when(col("status") == "STAGE_COPY_LOAD_ISSUE", lit("Stage copy table missing but downstream has data"))
+        .when(col("status") == "ODS_LOAD_ISSUE", lit("Data present in stage copy but not loaded to ODS"))
+        .when(col("status") == "ODS_VIEWS_LOAD_ISSUE", lit("Data present in ODS but not available in ODS views"))
+        .when(col("status") == "COUNT_MISMATCH", lit("Counts are present in all layers but do not match"))
+        .when(col("status") == "ALL_MATCHED", lit("Counts match across all compared layers"))
+        .otherwise(lit("Unexpected pattern; requires investigation"))
+    )
+)
+
+# ============================================================
+# CREATE OUTPUT TABLE IF NOT EXISTS
+# ============================================================
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (
+    run_id BIGINT,
+    table_name STRING,
+    ods_stg_copy_count BIGINT,
+    ods_count BIGINT,
+    ods_views_count BIGINT,
+    timestamp TIMESTAMP,
+    run_date DATE,
+    is_latest STRING,
+    status STRING,
+    comment STRING
+)
+USING DELTA
+""")
+
+# ============================================================
+# ADD COLUMNS IF TABLE EXISTS WITH OLD SCHEMA
+# ============================================================
+existing_cols = {field.name.lower() for field in spark.table(OUTPUT_TABLE).schema.fields}
+
+if "run_date" not in existing_cols:
+    spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS (run_date DATE)")
+
+if "is_latest" not in existing_cols:
+    spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS (is_latest STRING)")
+
+if "status" not in existing_cols:
+    spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS (status STRING)")
+
+# ============================================================
+# CLEANUP OLD DATA
+# ============================================================
+retention_cutoff = (datetime.now() - timedelta(days=RETENTION_DAYS)).strftime("%Y-%m-%d")
+
+spark.sql(f"""
+DELETE FROM {OUTPUT_TABLE}
+WHERE run_date < DATE('{retention_cutoff}')
+""")
+
+# ============================================================
+# RESET TODAY'S PREVIOUS LATEST BATCH
+# ============================================================
+spark.sql(f"""
+UPDATE {OUTPUT_TABLE}
+SET is_latest = 'N'
+WHERE run_date = current_date()
+  AND is_latest = 'Y'
+""")
+
+# ============================================================
+# WRITE NEW RUN
+# ============================================================
+(
+    final_df
+    .select(
+        "run_id",
+        "table_name",
+        "ods_stg_copy_count",
+        "ods_count",
+        "ods_views_count",
+        "timestamp",
+        "run_date",
+        "is_latest",
+        "status",
+        "comment"
+    )
+    .write
+    .format("delta")
+    .mode("append")
+    .saveAsTable(OUTPUT_TABLE)
+)
+
+# ============================================================
+# OPTIONAL SUMMARY FOR NOTEBOOK OUTPUT
+# ============================================================
+summary_df = (
+    final_df.groupBy("status")
+    .count()
+    .orderBy("status")
+)
+
+display(final_df.orderBy("table_name"))
+display(summary_df)
