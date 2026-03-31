@@ -5,8 +5,7 @@ from pyspark.sql.functions import (
     when,
     coalesce,
     current_timestamp,
-    current_date,
-    sum as spark_sum
+    current_date
 )
 from datetime import datetime, timedelta
 import uuid
@@ -25,14 +24,13 @@ OUTPUT_TABLE = "core_bld.default.dw_audit_table_count_check"
 
 DBS = ["ods_stg_copy", "ods", "ods_views"]
 LOAD_DATE_COLUMN = "AZURE_LOAD_DATE"
+RETENTION_DAYS = 7
 
 PREFIX_MAPPING = {
     "policycenter_": "vw_policycenter_current_",
     "billingcenter_": "vw_billingcenter_current_",
     "claimcenter_": "vw_claimcenter_current_"
 }
-
-RETENTION_DAYS = 7
 
 # ============================================================
 # TIME RANGE FOR TODAY
@@ -64,37 +62,20 @@ def get_actual_table_name(db: str, base_name: str) -> str:
 def get_full_table_name(db: str, table_name: str) -> str:
     return f"{CATALOG_NAME}.{db}.{table_name}"
 
-def build_union_count_sql(db: str, base_tables: list[str], run_id: int) -> str:
-    """
-    Build one UNION ALL SQL statement per DB.
-    Existing tables return today's count.
-    Missing tables return NULL count.
-    """
-    sql_parts = []
+def table_exists(full_table_name: str) -> bool:
+    try:
+        return spark.catalog.tableExists(full_table_name)
+    except Exception:
+        return False
 
-    for base_table in base_tables:
-        actual_table = get_actual_table_name(db, base_table)
-        full_table_name = get_full_table_name(db, actual_table)
+def get_table_columns(full_table_name: str) -> set:
+    try:
+        return {c.lower() for c in spark.table(full_table_name).columns}
+    except Exception:
+        return set()
 
-        if spark.catalog.tableExists(full_table_name):
-            sql_parts.append(f"""
-                SELECT
-                    {run_id} AS run_id,
-                    '{base_table}' AS table_name,
-                    COUNT(1) AS {db}_count
-                FROM {full_table_name}
-                WHERE {LOAD_DATE_COLUMN} >= TIMESTAMP('{start_time_str}')
-                  AND {LOAD_DATE_COLUMN} <= TIMESTAMP('{end_time_str}')
-            """.strip())
-        else:
-            sql_parts.append(f"""
-                SELECT
-                    {run_id} AS run_id,
-                    '{base_table}' AS table_name,
-                    CAST(NULL AS BIGINT) AS {db}_count
-            """.strip())
-
-    return "\nUNION ALL\n".join(sql_parts)
+def quote_sql_string(value: str) -> str:
+    return value.replace("'", "''")
 
 # ============================================================
 # LOAD TABLE LIST
@@ -116,7 +97,82 @@ if not table_list:
     raise Exception("No tables found in exclusion list where excludeIndicator = 'Y'")
 
 # ============================================================
-# BUILD COUNT DATAFRAMES
+# PREPARE TABLE METADATA ONCE
+# Avoid repeated schema lookups while building SQL
+# ============================================================
+table_meta = {}
+
+for db in DBS:
+    for base_table in table_list:
+        actual_table = get_actual_table_name(db, base_table)
+        full_table_name = get_full_table_name(db, actual_table)
+
+        exists = table_exists(full_table_name)
+        columns = get_table_columns(full_table_name) if exists else set()
+        has_load_date = LOAD_DATE_COLUMN.lower() in columns
+
+        table_meta[(db, base_table)] = {
+            "actual_table": actual_table,
+            "full_table_name": full_table_name,
+            "exists": exists,
+            "has_load_date": has_load_date
+        }
+
+# ============================================================
+# BUILD UNION SQL PER DB
+# Logic:
+# - missing table -> NULL count, table_exists_flag='N'
+# - table exists + load date column exists -> today's filtered count
+# - table exists + load date column missing -> full count
+# ============================================================
+def build_union_count_sql(db: str, base_tables: list[str], run_id: int) -> str:
+    sql_parts = []
+
+    for base_table in base_tables:
+        meta = table_meta[(db, base_table)]
+        full_table_name = meta["full_table_name"]
+        exists = meta["exists"]
+        has_load_date = meta["has_load_date"]
+        safe_base_table = quote_sql_string(base_table)
+
+        if not exists:
+            sql_parts.append(f"""
+                SELECT
+                    {run_id} AS run_id,
+                    '{safe_base_table}' AS table_name,
+                    CAST(NULL AS BIGINT) AS {db}_count,
+                    'N' AS {db}_table_exists,
+                    'N' AS {db}_date_filter_applied
+            """.strip())
+
+        elif has_load_date:
+            sql_parts.append(f"""
+                SELECT
+                    {run_id} AS run_id,
+                    '{safe_base_table}' AS table_name,
+                    COUNT(1) AS {db}_count,
+                    'Y' AS {db}_table_exists,
+                    'Y' AS {db}_date_filter_applied
+                FROM {full_table_name}
+                WHERE {LOAD_DATE_COLUMN} >= TIMESTAMP('{start_time_str}')
+                  AND {LOAD_DATE_COLUMN} <= TIMESTAMP('{end_time_str}')
+            """.strip())
+
+        else:
+            sql_parts.append(f"""
+                SELECT
+                    {run_id} AS run_id,
+                    '{safe_base_table}' AS table_name,
+                    COUNT(1) AS {db}_count,
+                    'Y' AS {db}_table_exists,
+                    'N' AS {db}_date_filter_applied
+                FROM {full_table_name}
+            """.strip())
+
+    return "\nUNION ALL\n".join(sql_parts)
+
+# ============================================================
+# EXECUTE COUNTS
 # ============================================================
 count_dfs = []
 
@@ -125,7 +181,7 @@ for db in DBS:
     count_dfs.append(spark.sql(sql_text))
 
 # ============================================================
-# MERGE COUNTS
+# JOIN RESULTS
 # ============================================================
 final_df = count_dfs[0]
 for next_df in count_dfs[1:]:
@@ -143,44 +199,52 @@ final_df = (
 
 # ============================================================
 # STATUS / COMMENT LOGIC
+# Note:
+# - NULL count means table does not exist
+# - 0 means table exists but no rows matched
+# - if date filter missing, count may be full-table count
 # ============================================================
 stg = coalesce(col("ods_stg_copy_count"), lit(0))
 ods = coalesce(col("ods_count"), lit(0))
-vw  = coalesce(col("ods_views_count"), lit(0))
+vw = coalesce(col("ods_views_count"), lit(0))
+
+stg_exists = col("ods_stg_copy_table_exists") == lit("Y")
+ods_exists = col("ods_table_exists") == lit("Y")
+vw_exists = col("ods_views_table_exists") == lit("Y")
+
+all_exist = stg_exists & ods_exists & vw_exists
+all_missing = (~stg_exists) & (~ods_exists) & (~vw_exists)
 
 final_df = (
     final_df
     .withColumn(
         "status",
         when(
-            col("ods_stg_copy_count").isNull() &
-            col("ods_count").isNull() &
-            col("ods_views_count").isNull(),
+            all_missing,
             lit("TABLE_NOT_CREATED")
         )
         .when(
-            (stg == 0) & (ods == 0) & (vw == 0),
+            all_exist & (stg == 0) & (ods == 0) & (vw == 0),
             lit("DATA_NOT_LOADED")
         )
         .when(
-            col("ods_stg_copy_count").isNull() &
-            ((ods > 0) | (vw > 0)),
+            (~stg_exists) & (ods_exists | vw_exists),
             lit("STAGE_COPY_LOAD_ISSUE")
         )
         .when(
-            (stg > 0) & (ods == 0) & (vw == 0),
+            stg_exists & (stg > 0) & ods_exists & (ods == 0) & vw_exists & (vw == 0),
             lit("ODS_LOAD_ISSUE")
         )
         .when(
-            (stg > 0) & (ods > 0) & (vw == 0),
+            stg_exists & (stg > 0) & ods_exists & (ods > 0) & vw_exists & (vw == 0),
             lit("ODS_VIEWS_LOAD_ISSUE")
         )
         .when(
-            (stg > 0) & (ods > 0) & (vw > 0) & ((stg != ods) | (ods != vw)),
+            all_exist & (stg > 0) & (ods > 0) & (vw > 0) & ((stg != ods) | (ods != vw)),
             lit("COUNT_MISMATCH")
         )
         .when(
-            (stg > 0) & (ods > 0) & (vw > 0) & (stg == ods) & (ods == vw),
+            all_exist & (stg > 0) & (ods > 0) & (vw > 0) & (stg == ods) & (ods == vw),
             lit("ALL_MATCHED")
         )
         .otherwise(lit("CHECK_REQUIRED"))
@@ -188,13 +252,13 @@ final_df = (
     .withColumn(
         "comment",
         when(col("status") == "TABLE_NOT_CREATED", lit("Table is not available in any compared layer"))
-        .when(col("status") == "DATA_NOT_LOADED", lit("No data loaded today in any layer"))
-        .when(col("status") == "STAGE_COPY_LOAD_ISSUE", lit("Stage copy table missing but downstream has data"))
-        .when(col("status") == "ODS_LOAD_ISSUE", lit("Data present in stage copy but not loaded to ODS"))
+        .when(col("status") == "DATA_NOT_LOADED", lit("No data loaded for today across the compared layers"))
+        .when(col("status") == "STAGE_COPY_LOAD_ISSUE", lit("Stage copy table is missing while downstream layer exists"))
+        .when(col("status") == "ODS_LOAD_ISSUE", lit("Data present in stage copy but not loaded to ODS and views"))
         .when(col("status") == "ODS_VIEWS_LOAD_ISSUE", lit("Data present in ODS but not available in ODS views"))
         .when(col("status") == "COUNT_MISMATCH", lit("Counts are present in all layers but do not match"))
         .when(col("status") == "ALL_MATCHED", lit("Counts match across all compared layers"))
-        .otherwise(lit("Unexpected pattern; requires investigation"))
+        .otherwise(lit("Pattern not fully covered by rule logic; check table manually"))
     )
 )
 
@@ -208,6 +272,12 @@ CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (
     ods_stg_copy_count BIGINT,
     ods_count BIGINT,
     ods_views_count BIGINT,
+    ods_stg_copy_table_exists STRING,
+    ods_table_exists STRING,
+    ods_views_table_exists STRING,
+    ods_stg_copy_date_filter_applied STRING,
+    ods_date_filter_applied STRING,
+    ods_views_date_filter_applied STRING,
     timestamp TIMESTAMP,
     run_date DATE,
     is_latest STRING,
@@ -218,21 +288,29 @@ USING DELTA
 """)
 
 # ============================================================
-# ADD COLUMNS IF TABLE EXISTS WITH OLD SCHEMA
+# SCHEMA SAFETY FOR EXISTING TABLE
 # ============================================================
 existing_cols = {field.name.lower() for field in spark.table(OUTPUT_TABLE).schema.fields}
 
-if "run_date" not in existing_cols:
-    spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS (run_date DATE)")
+required_additions = [
+    ("run_date", "DATE"),
+    ("is_latest", "STRING"),
+    ("status", "STRING"),
+    ("comment", "STRING"),
+    ("ods_stg_copy_table_exists", "STRING"),
+    ("ods_table_exists", "STRING"),
+    ("ods_views_table_exists", "STRING"),
+    ("ods_stg_copy_date_filter_applied", "STRING"),
+    ("ods_date_filter_applied", "STRING"),
+    ("ods_views_date_filter_applied", "STRING")
+]
 
-if "is_latest" not in existing_cols:
-    spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS (is_latest STRING)")
-
-if "status" not in existing_cols:
-    spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS (status STRING)")
+for col_name, col_type in required_additions:
+    if col_name.lower() not in existing_cols:
+        spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS ({col_name} {col_type})")
 
 # ============================================================
-# CLEANUP OLD DATA
+# DELETE OLD DATA
 # ============================================================
 retention_cutoff = (datetime.now() - timedelta(days=RETENTION_DAYS)).strftime("%Y-%m-%d")
 
@@ -242,7 +320,7 @@ WHERE run_date < DATE('{retention_cutoff}')
 """)
 
 # ============================================================
-# RESET TODAY'S PREVIOUS LATEST BATCH
+# RESET TODAY'S PREVIOUS LATEST
 # ============================================================
 spark.sql(f"""
 UPDATE {OUTPUT_TABLE}
@@ -252,7 +330,7 @@ WHERE run_date = current_date()
 """)
 
 # ============================================================
-# WRITE NEW RUN
+# WRITE CURRENT RUN
 # ============================================================
 (
     final_df
@@ -262,6 +340,12 @@ WHERE run_date = current_date()
         "ods_stg_copy_count",
         "ods_count",
         "ods_views_count",
+        "ods_stg_copy_table_exists",
+        "ods_table_exists",
+        "ods_views_table_exists",
+        "ods_stg_copy_date_filter_applied",
+        "ods_date_filter_applied",
+        "ods_views_date_filter_applied",
         "timestamp",
         "run_date",
         "is_latest",
@@ -275,13 +359,9 @@ WHERE run_date = current_date()
 )
 
 # ============================================================
-# OPTIONAL SUMMARY FOR NOTEBOOK OUTPUT
+# OPTIONAL NOTEBOOK OUTPUT
 # ============================================================
-summary_df = (
-    final_df.groupBy("status")
-    .count()
-    .orderBy("status")
-)
+summary_df = final_df.groupBy("status").count().orderBy("status")
 
 display(final_df.orderBy("table_name"))
 display(summary_df)
