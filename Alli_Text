@@ -1,1 +1,303 @@
-0 0 0/4 ? * MON-FRI
+from pyspark.sql import SparkSession, Row
+from pyspark.sql.types import (
+    StructType, StructField, StringType, LongType, DateType, TimestampType
+)
+from pyspark.sql.functions import col, lit, current_timestamp, current_date
+from datetime import datetime, timedelta
+import uuid
+
+spark = SparkSession.builder.appName("CountCheckValidationLean").getOrCreate()
+
+# ============================================================
+# CONFIG
+# ============================================================
+CATALOG_NAME = "core"
+EXCLUSION_TABLE = "core_bld.default.exclusion_list"
+OUTPUT_TABLE = "core_bld.default.dw_audit_table_count_check"
+
+DBS = ["ods_stg_copy", "ods", "ods_views"]
+LOAD_DATE_COLUMN = "AZURE_LOAD_DATE"
+RETENTION_DAYS = 7
+
+PREFIX_MAPPING = {
+    "policycenter_": "vw_policycenter_current_",
+    "billingcenter_": "vw_billingcenter_current_",
+    "claimcenter_": "vw_claimcenter_current_"
+}
+
+# ============================================================
+# TIME RANGE FOR TODAY
+# ============================================================
+now = datetime.now()
+start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+end_time = start_time + timedelta(days=1)
+
+# ============================================================
+# RUN ID
+# ============================================================
+run_id_value = int(uuid.uuid4().int >> 96)
+
+# ============================================================
+# HELPERS
+# ============================================================
+def get_view_table_name(base_name: str) -> str:
+    for prefix, mapped_prefix in PREFIX_MAPPING.items():
+        if base_name.startswith(prefix):
+            return base_name.replace(prefix, mapped_prefix, 1)
+    return base_name
+
+def get_actual_table_name(db: str, base_name: str) -> str:
+    return get_view_table_name(base_name) if db == "ods_views" else base_name
+
+def get_full_table_name(db: str, table_name: str) -> str:
+    return f"{CATALOG_NAME}.{db}.{table_name}"
+
+# ============================================================
+# LOAD TABLE LIST
+# ============================================================
+table_list = [
+    r["tablename"]
+    for r in (
+        spark.read.table(EXCLUSION_TABLE)
+        .filter(col("excludeIndicator") == "Y")
+        .select("tablename")
+        .distinct()
+        .collect()
+    )
+]
+
+if not table_list:
+    raise Exception("No tables found in exclusion list where excludeIndicator = 'Y'")
+
+# ============================================================
+# COUNT LOGIC
+# Keep old functional behavior:
+# - try table read
+# - try AZURE_LOAD_DATE filter
+# - if filter fails, fallback to full count
+# - if table read fails, count = None
+# ============================================================
+results = []
+
+for base_table in table_list:
+    row_data = {
+        "run_id": run_id_value,
+        "table_name": base_table,
+        "ods_stg_copy_count": None,
+        "ods_count": None,
+        "ods_views_count": None,
+        "ods_stg_copy_table_exists": "N",
+        "ods_table_exists": "N",
+        "ods_views_table_exists": "N",
+        "ods_stg_copy_date_filter_applied": "N",
+        "ods_date_filter_applied": "N",
+        "ods_views_date_filter_applied": "N"
+    }
+
+    for db in DBS:
+        actual_table = get_actual_table_name(db, base_table)
+        full_table_name = get_full_table_name(db, actual_table)
+
+        count_col = f"{db}_count"
+        exists_col = f"{db}_table_exists"
+        filter_col = f"{db}_date_filter_applied"
+
+        try:
+            df = spark.read.table(full_table_name)
+            row_data[exists_col] = "Y"
+
+            try:
+                count_val = df.filter(
+                    (col(LOAD_DATE_COLUMN) >= lit(start_time)) &
+                    (col(LOAD_DATE_COLUMN) < lit(end_time))
+                ).count()
+                row_data[count_col] = int(count_val)
+                row_data[filter_col] = "Y"
+            except Exception:
+                # Fallback when AZURE_LOAD_DATE is not present or not usable
+                count_val = df.count()
+                row_data[count_col] = int(count_val)
+                row_data[filter_col] = "N"
+
+        except Exception:
+            row_data[count_col] = None
+            row_data[exists_col] = "N"
+            row_data[filter_col] = "N"
+
+    # ========================================================
+    # STATUS / COMMENT LOGIC
+    # ========================================================
+    stg = row_data["ods_stg_copy_count"] if row_data["ods_stg_copy_count"] is not None else 0
+    ods = row_data["ods_count"] if row_data["ods_count"] is not None else 0
+    vw = row_data["ods_views_count"] if row_data["ods_views_count"] is not None else 0
+
+    stg_exists = row_data["ods_stg_copy_table_exists"] == "Y"
+    ods_exists = row_data["ods_table_exists"] == "Y"
+    vw_exists = row_data["ods_views_table_exists"] == "Y"
+
+    all_exist = stg_exists and ods_exists and vw_exists
+    all_missing = (not stg_exists) and (not ods_exists) and (not vw_exists)
+
+    if all_missing:
+        status = "TABLE_NOT_CREATED"
+        comment = "Table is not available in any compared layer"
+    elif all_exist and stg == 0 and ods == 0 and vw == 0:
+        status = "DATA_NOT_LOADED"
+        comment = "No data loaded for today across the compared layers"
+    elif (not stg_exists) and (ods_exists or vw_exists):
+        status = "STAGE_COPY_LOAD_ISSUE"
+        comment = "Stage copy table is missing while downstream layer exists"
+    elif stg_exists and stg > 0 and ods_exists and ods == 0 and vw_exists and vw == 0:
+        status = "ODS_LOAD_ISSUE"
+        comment = "Data present in stage copy but not loaded to ODS and views"
+    elif stg_exists and stg > 0 and ods_exists and ods > 0 and vw_exists and vw == 0:
+        status = "ODS_VIEWS_LOAD_ISSUE"
+        comment = "Data present in ODS but not available in ODS views"
+    elif all_exist and stg > 0 and ods > 0 and vw > 0 and ((stg != ods) or (ods != vw)):
+        status = "COUNT_MISMATCH"
+        comment = "Counts are present in all layers but do not match"
+    elif all_exist and stg > 0 and ods > 0 and vw > 0 and stg == ods == vw:
+        status = "ALL_MATCHED"
+        comment = "Counts match across all compared layers"
+    else:
+        status = "CHECK_REQUIRED"
+        comment = "Pattern not fully covered by rule logic; check table manually"
+
+    row_data["status"] = status
+    row_data["comment"] = comment
+
+    results.append(Row(**row_data))
+
+# ============================================================
+# RESULT DATAFRAME
+# ============================================================
+schema = StructType([
+    StructField("run_id", LongType(), False),
+    StructField("table_name", StringType(), True),
+    StructField("ods_stg_copy_count", LongType(), True),
+    StructField("ods_count", LongType(), True),
+    StructField("ods_views_count", LongType(), True),
+    StructField("ods_stg_copy_table_exists", StringType(), True),
+    StructField("ods_table_exists", StringType(), True),
+    StructField("ods_views_table_exists", StringType(), True),
+    StructField("ods_stg_copy_date_filter_applied", StringType(), True),
+    StructField("ods_date_filter_applied", StringType(), True),
+    StructField("ods_views_date_filter_applied", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("comment", StringType(), True)
+])
+
+final_df = spark.createDataFrame(results, schema=schema)
+
+final_df = (
+    final_df
+    .withColumn("timestamp", current_timestamp())
+    .withColumn("run_date", current_date())
+    .withColumn("is_latest", lit("Y"))
+    .withColumn("run_id", col("run_id").cast("bigint"))
+    .withColumn("ods_stg_copy_count", col("ods_stg_copy_count").cast("bigint"))
+    .withColumn("ods_count", col("ods_count").cast("bigint"))
+    .withColumn("ods_views_count", col("ods_views_count").cast("bigint"))
+)
+
+# ============================================================
+# CREATE OUTPUT TABLE IF NOT EXISTS
+# ============================================================
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (
+    run_id BIGINT,
+    table_name STRING,
+    ods_stg_copy_count BIGINT,
+    ods_count BIGINT,
+    ods_views_count BIGINT,
+    ods_stg_copy_table_exists STRING,
+    ods_table_exists STRING,
+    ods_views_table_exists STRING,
+    ods_stg_copy_date_filter_applied STRING,
+    ods_date_filter_applied STRING,
+    ods_views_date_filter_applied STRING,
+    timestamp TIMESTAMP,
+    run_date DATE,
+    is_latest STRING,
+    status STRING,
+    comment STRING
+)
+USING DELTA
+""")
+
+# ============================================================
+# SCHEMA SAFETY FOR EXISTING TABLE
+# ============================================================
+existing_cols = {field.name.lower() for field in spark.table(OUTPUT_TABLE).schema.fields}
+
+required_additions = [
+    ("run_date", "DATE"),
+    ("is_latest", "STRING"),
+    ("status", "STRING"),
+    ("comment", "STRING"),
+    ("ods_stg_copy_table_exists", "STRING"),
+    ("ods_table_exists", "STRING"),
+    ("ods_views_table_exists", "STRING"),
+    ("ods_stg_copy_date_filter_applied", "STRING"),
+    ("ods_date_filter_applied", "STRING"),
+    ("ods_views_date_filter_applied", "STRING")
+]
+
+for col_name, col_type in required_additions:
+    if col_name.lower() not in existing_cols:
+        spark.sql(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMNS ({col_name} {col_type})")
+
+# ============================================================
+# DELETE OLD DATA
+# ============================================================
+retention_cutoff = (datetime.now() - timedelta(days=RETENTION_DAYS)).strftime("%Y-%m-%d")
+
+spark.sql(f"""
+DELETE FROM {OUTPUT_TABLE}
+WHERE run_date < DATE('{retention_cutoff}')
+""")
+
+# ============================================================
+# RESET TODAY'S PREVIOUS LATEST BATCH
+# ============================================================
+spark.sql(f"""
+UPDATE {OUTPUT_TABLE}
+SET is_latest = 'N'
+WHERE run_date = current_date()
+  AND is_latest = 'Y'
+""")
+
+# ============================================================
+# WRITE CURRENT RUN
+# ============================================================
+(
+    final_df
+    .select(
+        "run_id",
+        "table_name",
+        "ods_stg_copy_count",
+        "ods_count",
+        "ods_views_count",
+        "ods_stg_copy_table_exists",
+        "ods_table_exists",
+        "ods_views_table_exists",
+        "ods_stg_copy_date_filter_applied",
+        "ods_date_filter_applied",
+        "ods_views_date_filter_applied",
+        "timestamp",
+        "run_date",
+        "is_latest",
+        "status",
+        "comment"
+    )
+    .write
+    .format("delta")
+    .mode("append")
+    .saveAsTable(OUTPUT_TABLE)
+)
+
+# ============================================================
+# MINIMAL JOB OUTPUT
+# Avoid display() for scheduled runs
+# ============================================================
+print(f"Run completed successfully. run_id={run_id_value}, tables_processed={len(table_list)}")
