@@ -1,3 +1,18 @@
-0 0 5-20 * * ?
+Thanks for the suggestions — I’ve reviewed the points and here’s the plan from my side:
 
-0 0 20,22,0,2,4 * * ?
+1. Photon acceleration
+We can disable Photon by switching the cluster runtime to a standard (non-Photon) runtime. Given the current workload is primarily ETL and not heavily compute-intensive SQL, this should not impact performance significantly and will help reduce cost.
+
+2. Autoscaling configuration
+Agreed on enabling autoscaling. I will configure the cluster with a minimum of 1 worker and a maximum of 8 workers so that compute scales based on demand and avoids idle cost.
+
+3. Dashboard refresh frequency (30 mins)
+Currently, the refresh runs every 30 minutes. Since this uses the BICOE endpoint, I agree this may lead to unnecessary compute usage.
+As a next step, I propose:
+
+Moving to a controlled schedule (hourly during business hours and reduced frequency overnight), and
+Implementing time-based logic within the job to avoid unnecessary runs, given the current scheduling limitation of a single cron per job.
+
+This should help optimise cost while still maintaining sufficient visibility for monitoring.
+
+Photon acceleration has been disabled, the cluster is configured with autoscaling (min 1, max 8) to optimise compute usage, and the dashboard refresh has been separated into a dedicated job running hourly between 4 AM and 8 PM with overnight refresh stopped to reduce cost.
