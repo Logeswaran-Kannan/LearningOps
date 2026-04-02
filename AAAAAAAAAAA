@@ -1,5 +1,516 @@
-final_recon.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable("final_recon.recon_indicator_row_level")
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, lit, current_timestamp, current_date,
+    concat_ws, coalesce, sha2
+)
+from datetime import datetime
+import uuid
+import time
+
+spark = SparkSession.builder.appName("ODS_DDL_Change_Audit_InfoSchema_ServerlessSafe").getOrCreate()
+
+# ============================================================
+# CONFIG
+# ============================================================
+CATALOG_NAME = "core"
+
+BASELINE_TABLE = "core_bld.default.dw_schema_baseline"
+CHANGE_TABLE = "core_bld.default.dw_schema_change_audit"
+
+USE_EXCLUSION_LIST = False
+EXCLUSION_TABLE = "core_bld.default.exclusion_list"
+
+PREFIX_MAPPING = {
+    "policycenter_": "vw_policycenter_current_",
+    "billingcenter_": "vw_billingcenter_current_",
+    "claimcenter_": "vw_claimcenter_current_"
+}
+
+run_id_value = int(uuid.uuid4().int >> 96)
+
+# ============================================================
+# LOGGING
+# ============================================================
+job_start = time.time()
+
+def log(msg: str):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] {msg}")
+
+def log_step(step_name: str, start_time: float):
+    elapsed = time.time() - start_time
+    log(f"{step_name} completed in {elapsed:.2f} sec")
+
+log(f"Run started. run_id={run_id_value}")
+
+# ============================================================
+# HELPERS
+# ============================================================
+def get_view_table_name(base_name: str) -> str:
+    for prefix, mapped_prefix in PREFIX_MAPPING.items():
+        if base_name.startswith(prefix):
+            return base_name.replace(prefix, mapped_prefix, 1)
+    return base_name
+
+def normalize_table_name_expr(table_col: str) -> str:
+    return f"""
+    CASE
+        WHEN {table_col} LIKE 'vw_policycenter_current_%'
+            THEN regexp_replace({table_col}, '^vw_policycenter_current_', 'policycenter_')
+        WHEN {table_col} LIKE 'vw_billingcenter_current_%'
+            THEN regexp_replace({table_col}, '^vw_billingcenter_current_', 'billingcenter_')
+        WHEN {table_col} LIKE 'vw_claimcenter_current_%'
+            THEN regexp_replace({table_col}, '^vw_claimcenter_current_', 'claimcenter_')
+        ELSE {table_col}
+    END
+    """
+
+# ============================================================
+# CREATE TARGET TABLES
+# ============================================================
+t0 = time.time()
+log("Ensuring target Delta tables exist")
+
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {BASELINE_TABLE} (
+    db_name STRING,
+    table_name STRING,
+    actual_table_name STRING,
+    column_name STRING,
+    data_type STRING,
+    is_nullable STRING,
+    ordinal_position INT,
+    baseline_created_ts TIMESTAMP
+)
+USING DELTA
+""")
+
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {CHANGE_TABLE} (
+    change_key STRING,
+    run_id BIGINT,
+    run_date DATE,
+    is_latest STRING,
+    db_name STRING,
+    table_name STRING,
+    actual_table_name STRING,
+    change_type STRING,
+    column_name STRING,
+    old_data_type STRING,
+    new_data_type STRING,
+    old_is_nullable STRING,
+    new_is_nullable STRING,
+    old_ordinal_position INT,
+    new_ordinal_position INT,
+    change_comment STRING,
+    first_detected_date DATE,
+    last_detected_date DATE,
+    resolved_date DATE,
+    is_still_open STRING,
+    created_ts TIMESTAMP,
+    last_seen_ts TIMESTAMP
+)
+USING DELTA
+""")
+
+log_step("Target table check", t0)
+
+# ============================================================
+# BUILD FILTERS
+# ============================================================
+t0 = time.time()
+log("Preparing optional table filters")
+
+if USE_EXCLUSION_LIST:
+    base_table_list = [
+        r["tablename"]
+        for r in (
+            spark.read.table(EXCLUSION_TABLE)
+            .filter(col("excludeIndicator") == "Y")
+            .select("tablename")
+            .distinct()
+            .collect()
+        )
+    ]
+
+    if not base_table_list:
+        raise Exception("No tables found in exclusion list where excludeIndicator = 'Y'")
+
+    allowed_ods = "', '".join([t.replace("'", "''") for t in base_table_list])
+    allowed_views = "', '".join([get_view_table_name(t).replace("'", "''") for t in base_table_list])
+
+    ods_filter = f"table_name IN ('{allowed_ods}')"
+    views_filter = f"table_name IN ('{allowed_views}')"
+else:
+    ods_filter = "1=1"
+    views_filter = "1=1"
+
+log_step("Filter preparation", t0)
+
+# ============================================================
+# READ CURRENT SNAPSHOT FROM INFORMATION_SCHEMA
+# ============================================================
+t0 = time.time()
+log("Reading current schema snapshot from information_schema.columns")
+
+ods_sql = f"""
+SELECT
+    table_schema AS db_name,
+    table_name AS table_name,
+    table_name AS actual_table_name,
+    column_name,
+    full_data_type AS data_type,
+    CASE WHEN is_nullable = 'YES' THEN 'Y' ELSE 'N' END AS is_nullable,
+    CAST(ordinal_position AS INT) AS ordinal_position
+FROM {CATALOG_NAME}.information_schema.columns
+WHERE table_schema = 'ods'
+  AND {ods_filter}
+"""
+
+ods_views_sql = f"""
+SELECT
+    table_schema AS db_name,
+    {normalize_table_name_expr('table_name')} AS table_name,
+    table_name AS actual_table_name,
+    column_name,
+    full_data_type AS data_type,
+    CASE WHEN is_nullable = 'YES' THEN 'Y' ELSE 'N' END AS is_nullable,
+    CAST(ordinal_position AS INT) AS ordinal_position
+FROM {CATALOG_NAME}.information_schema.columns
+WHERE table_schema = 'ods_views'
+  AND {views_filter}
+"""
+
+current_df = spark.sql(ods_sql).unionByName(spark.sql(ods_views_sql))
+
+current_count = current_df.count()
+log(f"Current schema rows collected: {current_count}")
+
+if current_count == 0:
+    raise Exception("No schema metadata found in information_schema.columns for ods / ods_views")
+
+log_step("Current schema read", t0)
+
+# ============================================================
+# CHECK BASELINE
+# ============================================================
+t0 = time.time()
+log("Checking baseline existence")
+
+baseline_count = spark.table(BASELINE_TABLE).count()
+baseline_exists = baseline_count > 0
+
+log(f"Baseline row count: {baseline_count}")
+log_step("Baseline existence check", t0)
+
+# ============================================================
+# FIRST RUN -> CREATE FIXED BASELINE ONLY
+# ============================================================
+if not baseline_exists:
+    t0 = time.time()
+    log("No baseline found. Creating original fixed baseline")
+
+    baseline_insert_df = current_df.withColumn("baseline_created_ts", current_timestamp())
+
+    (
+        baseline_insert_df
+        .select(
+            "db_name",
+            "table_name",
+            "actual_table_name",
+            "column_name",
+            "data_type",
+            "is_nullable",
+            "ordinal_position",
+            "baseline_created_ts"
+        )
+        .write
+        .format("delta")
+        .mode("append")
+        .saveAsTable(BASELINE_TABLE)
+    )
+
+    inserted_count = baseline_insert_df.count()
+    log(f"Baseline created successfully. inserted_rows={inserted_count}")
+    log_step("Baseline creation", t0)
+
+else:
+    # ========================================================
+    # LOAD BASELINE
+    # ========================================================
+    t0 = time.time()
+    log("Loading baseline for comparison")
+    baseline_df = spark.table(BASELINE_TABLE)
+    log_step("Baseline load", t0)
+
+    # ========================================================
+    # COMPARE CURRENT VS FIXED BASELINE
+    # ========================================================
+    t0 = time.time()
+    log("Comparing current schema against fixed original baseline")
+
+    base = baseline_df.alias("base")
+    curr = current_df.alias("curr")
+
+    join_cond = [
+        col("base.db_name") == col("curr.db_name"),
+        col("base.table_name") == col("curr.table_name"),
+        col("base.column_name") == col("curr.column_name")
+    ]
+
+    added_df = (
+        curr.join(base, join_cond, "left_anti")
+        .select(
+            col("curr.db_name").alias("db_name"),
+            col("curr.table_name").alias("table_name"),
+            col("curr.actual_table_name").alias("actual_table_name"),
+            lit("COLUMN_ADDED").alias("change_type"),
+            col("curr.column_name").alias("column_name"),
+            lit(None).cast("string").alias("old_data_type"),
+            col("curr.data_type").alias("new_data_type"),
+            lit(None).cast("string").alias("old_is_nullable"),
+            col("curr.is_nullable").alias("new_is_nullable"),
+            lit(None).cast("int").alias("old_ordinal_position"),
+            col("curr.ordinal_position").alias("new_ordinal_position"),
+            lit("Column exists in current structure but not in original baseline").alias("change_comment")
+        )
+    )
+
+    removed_df = (
+        base.join(curr, join_cond, "left_anti")
+        .select(
+            col("base.db_name").alias("db_name"),
+            col("base.table_name").alias("table_name"),
+            col("base.actual_table_name").alias("actual_table_name"),
+            lit("COLUMN_REMOVED").alias("change_type"),
+            col("base.column_name").alias("column_name"),
+            col("base.data_type").alias("old_data_type"),
+            lit(None).cast("string").alias("new_data_type"),
+            col("base.is_nullable").alias("old_is_nullable"),
+            lit(None).cast("string").alias("new_is_nullable"),
+            col("base.ordinal_position").alias("old_ordinal_position"),
+            lit(None).cast("int").alias("new_ordinal_position"),
+            lit("Column exists in original baseline but not in current structure").alias("change_comment")
+        )
+    )
+
+    matched_df = base.join(curr, join_cond, "inner")
+
+    datatype_changed_df = (
+        matched_df
+        .filter(col("base.data_type") != col("curr.data_type"))
+        .select(
+            col("base.db_name").alias("db_name"),
+            col("base.table_name").alias("table_name"),
+            col("curr.actual_table_name").alias("actual_table_name"),
+            lit("DATA_TYPE_CHANGED").alias("change_type"),
+            col("base.column_name").alias("column_name"),
+            col("base.data_type").alias("old_data_type"),
+            col("curr.data_type").alias("new_data_type"),
+            col("base.is_nullable").alias("old_is_nullable"),
+            col("curr.is_nullable").alias("new_is_nullable"),
+            col("base.ordinal_position").alias("old_ordinal_position"),
+            col("curr.ordinal_position").alias("new_ordinal_position"),
+            lit("Column datatype changed from original baseline").alias("change_comment")
+        )
+    )
+
+    nullable_changed_df = (
+        matched_df
+        .filter(col("base.is_nullable") != col("curr.is_nullable"))
+        .select(
+            col("base.db_name").alias("db_name"),
+            col("base.table_name").alias("table_name"),
+            col("curr.actual_table_name").alias("actual_table_name"),
+            lit("NULLABILITY_CHANGED").alias("change_type"),
+            col("base.column_name").alias("column_name"),
+            col("base.data_type").alias("old_data_type"),
+            col("curr.data_type").alias("new_data_type"),
+            col("base.is_nullable").alias("old_is_nullable"),
+            col("curr.is_nullable").alias("new_is_nullable"),
+            col("base.ordinal_position").alias("old_ordinal_position"),
+            col("curr.ordinal_position").alias("new_ordinal_position"),
+            lit("Column nullability changed from original baseline").alias("change_comment")
+        )
+    )
+
+    ordinal_changed_df = (
+        matched_df
+        .filter(col("base.ordinal_position") != col("curr.ordinal_position"))
+        .select(
+            col("base.db_name").alias("db_name"),
+            col("base.table_name").alias("table_name"),
+            col("curr.actual_table_name").alias("actual_table_name"),
+            lit("ORDINAL_POSITION_CHANGED").alias("change_type"),
+            col("base.column_name").alias("column_name"),
+            col("base.data_type").alias("old_data_type"),
+            col("curr.data_type").alias("new_data_type"),
+            col("base.is_nullable").alias("old_is_nullable"),
+            col("curr.is_nullable").alias("new_is_nullable"),
+            col("base.ordinal_position").alias("old_ordinal_position"),
+            col("curr.ordinal_position").alias("new_ordinal_position"),
+            lit("Column position changed from original baseline").alias("change_comment")
+        )
+    )
+
+    current_changes_df = (
+        added_df
+        .unionByName(removed_df)
+        .unionByName(datatype_changed_df)
+        .unionByName(nullable_changed_df)
+        .unionByName(ordinal_changed_df)
+        .withColumn(
+            "change_key",
+            sha2(
+                concat_ws(
+                    "||",
+                    coalesce(col("db_name"), lit("")),
+                    coalesce(col("table_name"), lit("")),
+                    coalesce(col("change_type"), lit("")),
+                    coalesce(col("column_name"), lit("")),
+                    coalesce(col("old_data_type"), lit("")),
+                    coalesce(col("new_data_type"), lit("")),
+                    coalesce(col("old_is_nullable"), lit("")),
+                    coalesce(col("new_is_nullable"), lit("")),
+                    coalesce(col("old_ordinal_position").cast("string"), lit("")),
+                    coalesce(col("new_ordinal_position").cast("string"), lit(""))
+                ),
+                256
+            )
+        )
+    )
+
+    current_change_count = current_changes_df.count()
+    log(f"Detected current change rows: {current_change_count}")
+    log_step("Schema comparison", t0)
+
+    # ========================================================
+    # RESET TODAY'S PREVIOUS LATEST
+    # ========================================================
+    t0 = time.time()
+    log("Resetting today's previous latest rows")
+
+    spark.sql(f"""
+    UPDATE {CHANGE_TABLE}
+    SET is_latest = 'N'
+    WHERE run_date = current_date()
+      AND is_latest = 'Y'
+    """)
+
+    log_step("Latest reset", t0)
+
+    if current_change_count > 0:
+        # ----------------------------------------------------
+        # STAGE CURRENT CHANGES AS TEMP VIEW
+        # ----------------------------------------------------
+        t0 = time.time()
+        log("Creating temp view for current changes")
+        current_changes_df.createOrReplaceTempView("tmp_current_changes")
+        log_step("Temp view creation", t0)
+
+        # ----------------------------------------------------
+        # UPDATE EXISTING CHANGES
+        # ----------------------------------------------------
+        t0 = time.time()
+        log("Updating existing change records seen again in this run")
+
+        spark.sql(f"""
+        MERGE INTO {CHANGE_TABLE} tgt
+        USING tmp_current_changes src
+        ON tgt.change_key = src.change_key
+        WHEN MATCHED THEN UPDATE SET
+            tgt.run_id = CAST({run_id_value} AS BIGINT),
+            tgt.run_date = current_date(),
+            tgt.is_latest = 'Y',
+            tgt.actual_table_name = src.actual_table_name,
+            tgt.change_comment = src.change_comment,
+            tgt.last_detected_date = current_date(),
+            tgt.last_seen_ts = current_timestamp(),
+            tgt.is_still_open = 'Y',
+            tgt.resolved_date = NULL
+        """)
+
+        log_step("Existing change update", t0)
+
+        # ----------------------------------------------------
+        # INSERT NEW CHANGES
+        # ----------------------------------------------------
+        t0 = time.time()
+        log("Inserting newly detected change records")
+
+        spark.sql(f"""
+        INSERT INTO {CHANGE_TABLE}
+        SELECT
+            src.change_key,
+            CAST({run_id_value} AS BIGINT) AS run_id,
+            current_date() AS run_date,
+            'Y' AS is_latest,
+            src.db_name,
+            src.table_name,
+            src.actual_table_name,
+            src.change_type,
+            src.column_name,
+            src.old_data_type,
+            src.new_data_type,
+            src.old_is_nullable,
+            src.new_is_nullable,
+            src.old_ordinal_position,
+            src.new_ordinal_position,
+            src.change_comment,
+            current_date() AS first_detected_date,
+            current_date() AS last_detected_date,
+            CAST(NULL AS DATE) AS resolved_date,
+            'Y' AS is_still_open,
+            current_timestamp() AS created_ts,
+            current_timestamp() AS last_seen_ts
+        FROM tmp_current_changes src
+        LEFT ANTI JOIN {CHANGE_TABLE} tgt
+            ON src.change_key = tgt.change_key
+        """)
+
+        log_step("New change insert", t0)
+
+        # ----------------------------------------------------
+        # CLOSE RESOLVED CHANGES
+        # ----------------------------------------------------
+        t0 = time.time()
+        log("Closing previously open changes not present in this run")
+
+        spark.sql(f"""
+        UPDATE {CHANGE_TABLE}
+        SET is_still_open = 'N',
+            resolved_date = current_date(),
+            is_latest = 'N',
+            last_seen_ts = current_timestamp()
+        WHERE is_still_open = 'Y'
+          AND change_key NOT IN (SELECT change_key FROM tmp_current_changes)
+        """)
+
+        log_step("Resolved change close", t0)
+
+        log(f"Run completed successfully. run_id={run_id_value}, active_changes={current_change_count}")
+
+    else:
+        # ----------------------------------------------------
+        # NO CURRENT CHANGES -> CLOSE OPEN CHANGES
+        # ----------------------------------------------------
+        t0 = time.time()
+        log("No current changes found. Closing any open change records")
+
+        spark.sql(f"""
+        UPDATE {CHANGE_TABLE}
+        SET is_still_open = 'N',
+            resolved_date = current_date(),
+            is_latest = 'N',
+            last_seen_ts = current_timestamp()
+        WHERE is_still_open = 'Y'
+        """)
+
+        log_step("Open change close", t0)
+        log(f"Run completed successfully. run_id={run_id_value}, no schema changes found")
+
+# ============================================================
+# FINAL RUNTIME
+# ============================================================
+total_elapsed = time.time() - job_start
+log(f"Total run time: {total_elapsed:.2f} sec")
