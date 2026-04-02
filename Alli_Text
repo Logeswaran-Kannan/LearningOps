@@ -7,13 +7,12 @@ from datetime import datetime
 import uuid
 import time
 
-spark = SparkSession.builder.appName("ODS_DDL_Change_Audit_InfoSchema").getOrCreate()
+spark = SparkSession.builder.appName("ODS_DDL_Change_Audit_InfoSchema_ServerlessSafe").getOrCreate()
 
 # ============================================================
 # CONFIG
 # ============================================================
 CATALOG_NAME = "core"
-SOURCE_SCHEMAS = ["ods", "ods_views"]
 
 BASELINE_TABLE = "core_bld.default.dw_schema_baseline"
 CHANGE_TABLE = "core_bld.default.dw_schema_change_audit"
@@ -30,16 +29,16 @@ PREFIX_MAPPING = {
 run_id_value = int(uuid.uuid4().int >> 96)
 
 # ============================================================
-# LOGGING HELPERS
+# LOGGING
 # ============================================================
-_job_start = time.time()
+job_start = time.time()
 
 def log(msg: str):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] {msg}")
 
-def log_step(step_name: str, start_ts: float):
-    elapsed = time.time() - start_ts
+def log_step(step_name: str, start_time: float):
+    elapsed = time.time() - start_time
     log(f"{step_name} completed in {elapsed:.2f} sec")
 
 log(f"Run started. run_id={run_id_value}")
@@ -70,7 +69,7 @@ def normalize_table_name_expr(table_col: str) -> str:
 # CREATE TARGET TABLES
 # ============================================================
 t0 = time.time()
-log("Ensuring baseline and change tables exist")
+log("Ensuring target Delta tables exist")
 
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {BASELINE_TABLE} (
@@ -114,13 +113,13 @@ CREATE TABLE IF NOT EXISTS {CHANGE_TABLE} (
 USING DELTA
 """)
 
-log_step("Table creation check", t0)
+log_step("Target table check", t0)
 
 # ============================================================
 # BUILD FILTERS
 # ============================================================
 t0 = time.time()
-log("Preparing schema filters")
+log("Preparing optional table filters")
 
 if USE_EXCLUSION_LIST:
     base_table_list = [
@@ -149,7 +148,7 @@ else:
 log_step("Filter preparation", t0)
 
 # ============================================================
-# READ CURRENT STRUCTURE FROM INFORMATION_SCHEMA
+# READ CURRENT SNAPSHOT FROM INFORMATION_SCHEMA
 # ============================================================
 t0 = time.time()
 log("Reading current schema snapshot from information_schema.columns")
@@ -182,7 +181,7 @@ WHERE table_schema = 'ods_views'
   AND {views_filter}
 """
 
-current_df = spark.sql(ods_sql).unionByName(spark.sql(ods_views_sql)).cache()
+current_df = spark.sql(ods_sql).unionByName(spark.sql(ods_views_sql))
 
 current_count = current_df.count()
 log(f"Current schema rows collected: {current_count}")
@@ -196,17 +195,16 @@ log_step("Current schema read", t0)
 # CHECK BASELINE
 # ============================================================
 t0 = time.time()
-log("Checking whether baseline already exists")
+log("Checking baseline existence")
 
-baseline_df = spark.table(BASELINE_TABLE).cache()
-baseline_count = baseline_df.count()
+baseline_count = spark.table(BASELINE_TABLE).count()
 baseline_exists = baseline_count > 0
 
 log(f"Baseline row count: {baseline_count}")
-log_step("Baseline check", t0)
+log_step("Baseline existence check", t0)
 
 # ============================================================
-# FIRST RUN: CREATE FIXED BASELINE ONLY
+# FIRST RUN -> CREATE FIXED BASELINE ONLY
 # ============================================================
 if not baseline_exists:
     t0 = time.time()
@@ -237,6 +235,14 @@ if not baseline_exists:
     log_step("Baseline creation", t0)
 
 else:
+    # ========================================================
+    # LOAD BASELINE
+    # ========================================================
+    t0 = time.time()
+    log("Loading baseline for comparison")
+    baseline_df = spark.table(BASELINE_TABLE)
+    log_step("Baseline load", t0)
+
     # ========================================================
     # COMPARE CURRENT VS FIXED BASELINE
     # ========================================================
@@ -372,18 +378,17 @@ else:
                 256
             )
         )
-        .cache()
     )
 
     current_change_count = current_changes_df.count()
-    log(f"Current detected change rows: {current_change_count}")
+    log(f"Detected current change rows: {current_change_count}")
     log_step("Schema comparison", t0)
 
     # ========================================================
     # RESET TODAY'S PREVIOUS LATEST
     # ========================================================
     t0 = time.time()
-    log("Resetting previous latest indicator for today")
+    log("Resetting today's previous latest rows")
 
     spark.sql(f"""
     UPDATE {CHANGE_TABLE}
@@ -392,20 +397,22 @@ else:
       AND is_latest = 'Y'
     """)
 
-    log_step("Latest flag reset", t0)
+    log_step("Latest reset", t0)
 
     if current_change_count > 0:
-        # create temp view once
+        # ----------------------------------------------------
+        # STAGE CURRENT CHANGES AS TEMP VIEW
+        # ----------------------------------------------------
         t0 = time.time()
-        log("Staging current changes")
+        log("Creating temp view for current changes")
         current_changes_df.createOrReplaceTempView("tmp_current_changes")
         log_step("Temp view creation", t0)
 
         # ----------------------------------------------------
-        # UPDATE EXISTING CHANGES SEEN AGAIN
+        # UPDATE EXISTING CHANGES
         # ----------------------------------------------------
         t0 = time.time()
-        log("Updating existing open/history changes seen in this run")
+        log("Updating existing change records seen again in this run")
 
         spark.sql(f"""
         MERGE INTO {CHANGE_TABLE} tgt
@@ -426,10 +433,10 @@ else:
         log_step("Existing change update", t0)
 
         # ----------------------------------------------------
-        # INSERT BRAND NEW CHANGES
+        # INSERT NEW CHANGES
         # ----------------------------------------------------
         t0 = time.time()
-        log("Inserting newly detected changes")
+        log("Inserting newly detected change records")
 
         spark.sql(f"""
         INSERT INTO {CHANGE_TABLE}
@@ -479,14 +486,16 @@ else:
           AND change_key NOT IN (SELECT change_key FROM tmp_current_changes)
         """)
 
-        log_step("Resolved change close-out", t0)
+        log_step("Resolved change close", t0)
 
         log(f"Run completed successfully. run_id={run_id_value}, active_changes={current_change_count}")
 
     else:
-        # No changes found now: close all previously open changes
+        # ----------------------------------------------------
+        # NO CURRENT CHANGES -> CLOSE OPEN CHANGES
+        # ----------------------------------------------------
         t0 = time.time()
-        log("No current changes found. Closing any previously open changes")
+        log("No current changes found. Closing any open change records")
 
         spark.sql(f"""
         UPDATE {CHANGE_TABLE}
@@ -497,11 +506,11 @@ else:
         WHERE is_still_open = 'Y'
         """)
 
-        log_step("Close open changes", t0)
+        log_step("Open change close", t0)
         log(f"Run completed successfully. run_id={run_id_value}, no schema changes found")
 
 # ============================================================
 # FINAL RUNTIME
 # ============================================================
-total_elapsed = time.time() - _job_start
+total_elapsed = time.time() - job_start
 log(f"Total run time: {total_elapsed:.2f} sec")
