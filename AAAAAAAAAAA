@@ -1,131 +1,18 @@
-WITH csv_src AS (
-    SELECT
-        interactionId,
-        mqsQuoteId,
-        requestDate,
-        requestTime,
-        requestTimestamp,
-        transactionType,
-        transactionCode,
-        product
+WITH csv_q AS (
+    SELECT DISTINCT trim(mqsQuoteId) AS mqsQuoteId
     FROM core_bld.radar_live.reconciliation_csv_source
     WHERE mqsQuoteId IS NOT NULL
 ),
-
-mqs_src AS (
-    SELECT
-        headers['MQSQuoteId'] AS mqsQuoteId,
-        headers['externalID'] AS externalID,
-        headers['quoteDate'] AS quoteDate,
-        enqueuedTime,
-        eHubQueuedDatestamp,
-
-        get_json_object(payload, '$.control.transactionType') AS transactionType_raw,
-
-        CASE
-            WHEN upper(get_json_object(payload, '$.control.transactionType')) LIKE 'NB%' THEN '02'
-            WHEN upper(get_json_object(payload, '$.control.transactionType')) = 'RENEWAL' THEN '08'
-            ELSE '30'
-        END AS transactionCode,
-
-        get_json_object(payload, '$.control.todaysDate') AS todaysDate,
-        get_json_object(payload, '$.control.currentTime') AS currentTime,
-
-        get_json_object(payload, '$.coreRisk.policy.policy_EffectiveStartDate') AS policy_EffectiveStartDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_EffectiveStartTime') AS policy_EffectiveStartTime,
-        get_json_object(payload, '$.coreRisk.policy.policy_Event_Date') AS policy_Event_Date,
-        get_json_object(payload, '$.coreRisk.policy.policy_ExpiryDate') AS policy_ExpiryDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_InceptionDate') AS policy_InceptionDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_InitialRateDate') AS policy_InitialRateDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_PolicyNo') AS policy_PolicyNo,
-
-        CASE
-            WHEN year(headers['quoteDate']) < year(eHubQueuedDatestamp) THEN 'invalidDatesince'
-            ELSE 'validDate'
-        END AS quote_status
+mqs_q AS (
+    SELECT DISTINCT trim(headers['MQSQuoteId']) AS mqsQuoteId
     FROM core.mqs_athn_mtr.ehubstream
-    WHERE CAST(eHubQueuedDatestamp AS DATE) > '2026-01-30'
-      AND headers['messageType'] = 'mqs-quote-request'
+    WHERE headers['messageType'] = 'mqs-quote-request'
       AND headers['MQSQuoteId'] IS NOT NULL
-      AND headers['externalID'] IS NOT NULL
-      AND enqueuedTime IS NOT NULL
-),
-
-matched AS (
-    SELECT
-        c.interactionId,
-        c.mqsQuoteId,
-        c.requestDate,
-        c.requestTime,
-        c.requestTimestamp,
-        c.transactionType     AS csv_transactionType,
-        c.transactionCode     AS csv_transactionCode,
-        c.product,
-
-        m.externalID,
-        m.quoteDate,
-        m.enqueuedTime,
-        m.eHubQueuedDatestamp,
-        m.transactionType_raw AS mqs_transactionType,
-        m.transactionCode     AS mqs_transactionCode,
-        m.quote_status,
-
-        /* signed difference */
-        datediff(to_date(m.enqueuedTime), to_date(c.requestTimestamp)) AS diff_days,
-
-        round(
-            (unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp)) / 3600.0,
-            2
-        ) AS diff_hours,
-
-        round(
-            (unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp)) / 60.0,
-            2
-        ) AS diff_minutes,
-
-        /* absolute difference */
-        abs(datediff(to_date(m.enqueuedTime), to_date(c.requestTimestamp))) AS abs_diff_days,
-
-        round(
-            abs(unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp)) / 3600.0,
-            2
-        ) AS abs_diff_hours,
-
-        row_number() OVER (
-            PARTITION BY
-                c.interactionId,
-                c.mqsQuoteId,
-                c.requestTimestamp,
-                c.transactionCode
-            ORDER BY abs(unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp))
-        ) AS rn
-    FROM csv_src c
-    INNER JOIN mqs_src m
-        ON c.interactionId    = m.externalID
-       AND c.mqsQuoteId       = m.mqsQuoteId
-       AND c.transactionCode  = m.transactionCode
 )
-
 SELECT
-    interactionId,
-    mqsQuoteId,
-    requestDate,
-    requestTime,
-    requestTimestamp,
-    csv_transactionType,
-    csv_transactionCode,
-    externalID,
-    quoteDate,
-    enqueuedTime,
-    eHubQueuedDatestamp,
-    mqs_transactionType,
-    mqs_transactionCode,
-    quote_status,
-    diff_days,
-    diff_hours,
-    diff_minutes,
-    abs_diff_days,
-    abs_diff_hours
-FROM matched
-WHERE rn = 1
-ORDER BY abs_diff_hours DESC;
+    count(*) AS csv_distinct_quoteids,
+    sum(CASE WHEN m.mqsQuoteId IS NOT NULL THEN 1 ELSE 0 END) AS found_in_mqs,
+    sum(CASE WHEN m.mqsQuoteId IS NULL THEN 1 ELSE 0 END) AS not_found_in_mqs
+FROM csv_q c
+LEFT JOIN mqs_q m
+    ON upper(c.mqsQuoteId) = upper(m.mqsQuoteId);
