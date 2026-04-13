@@ -1,121 +1,342 @@
-WITH csv_src AS (
-    SELECT
-        interactionId,
-        mqsQuoteId,
-        requestDate,
-        requestTime,
-        requestTimestamp,
-        transactionType,
-        transactionCode,
-        product
-    FROM core_bld.radar_live.reconciliation_csv_source
-    WHERE mqsQuoteId IS NOT NULL
-),
+from pyspark.sql import functions as F
+from pyspark.sql import Window
 
-mqs_src AS (
-    SELECT
-        headers['MQSQuoteId'] AS mqsQuoteId,
-        headers['externalID'] AS externalID,
-        headers['quoteDate'] AS quoteDate,
-        enqueuedTime,
-        eHubQueuedDatestamp,
+# ============================================================
+# CONFIG
+# ============================================================
 
-        get_json_object(payload, '$.control.transactionType') AS transactionCode,
+CSV_TABLE = "core_bld.radar_live.reconciliation_csv_source"
+MQS_TABLE = "core.mqs_athn_mtr.ehubstream"
 
-        get_json_object(payload, '$.control.todaysDate') AS todaysDate,
-        get_json_object(payload, '$.control.currentTime') AS currentTime,
+FORWARD_OUT_TABLE = "core_bld.radar_live.recon_mqs_forward_detail"
+REVERSE_OUT_TABLE = "core_bld.radar_live.recon_mqs_reverse_detail"
 
-        get_json_object(payload, '$.coreRisk.policy.policy_EffectiveStartDate') AS policy_EffectiveStartDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_EffectiveStartTime') AS policy_EffectiveStartTime,
-        get_json_object(payload, '$.coreRisk.policy.policy_Event_Date') AS policy_Event_Date,
-        get_json_object(payload, '$.coreRisk.policy.policy_ExpiryDate') AS policy_ExpiryDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_InceptionDate') AS policy_InceptionDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_InitialRateDate') AS policy_InitialRateDate,
-        get_json_object(payload, '$.coreRisk.policy.policy_PolicyNo') AS policy_PolicyNo,
+# Optional run date filter for source CSV.
+# Set to None to process all available rows.
+RUN_REQUEST_DATE = None   # example: "2026-02-09"
 
-        CASE
-            WHEN year(headers['quoteDate']) < year(eHubQueuedDatestamp) THEN 'invalidDatesince'
-            ELSE 'validDate'
-        END AS quote_status
-    FROM core.mqs_athn_mtr.ehubstream
-    WHERE CAST(eHubQueuedDatestamp AS DATE) > '2026-01-30'
-      AND headers['messageType'] = 'mqs-quote-request'
-      AND headers['MQSQuoteId'] IS NOT NULL
-      AND headers['externalID'] IS NOT NULL
-      AND enqueuedTime IS NOT NULL
-),
+# MQS scan window around CSV requestTimestamp
+SCAN_DAYS_BEFORE = 15
+SCAN_DAYS_AFTER = 15
 
-matched AS (
-    SELECT
-        c.interactionId,
-        c.mqsQuoteId,
-        c.requestDate,
-        c.requestTime,
-        c.requestTimestamp,
-        c.transactionType     AS csv_transactionType,
-        c.transactionCode     AS csv_transactionCode,
-        c.product,
 
-        m.externalID,
-        m.quoteDate,
-        m.enqueuedTime,
-        m.eHubQueuedDatestamp,
-        m.transactionCode     AS mqs_transactionCode,
-        m.quote_status,
+# ============================================================
+# HELPERS
+# ============================================================
 
-        datediff(to_date(m.enqueuedTime), to_date(c.requestTimestamp)) AS diff_days,
+def load_csv_source(run_request_date: str = None):
+    """
+    Load and standardize CSV source data.
+    Assumes requestTimestamp already exists in the source table.
+    """
+    df = spark.table(CSV_TABLE).select(
+        F.col("interactionId").cast("string").alias("interactionId"),
+        F.col("mqsQuoteId").cast("string").alias("mqsQuoteId"),
+        F.to_timestamp("requestTimestamp").alias("requestTimestamp"),
+        F.col("requestDate").alias("requestDate"),
+        F.col("requestTime").alias("requestTime"),
+        F.col("transactionType").cast("string").alias("csv_transactionType"),
+        F.col("transactionCode").cast("string").alias("transactionCode"),
+        F.col("product").cast("string").alias("product")
+    )
 
-        round(
-            (unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp)) / 3600.0,
-            2
-        ) AS diff_hours,
+    df = df.filter(
+        F.col("interactionId").isNotNull() &
+        F.col("mqsQuoteId").isNotNull() &
+        F.col("requestTimestamp").isNotNull() &
+        F.col("transactionCode").isNotNull()
+    )
 
-        round(
-            (unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp)) / 60.0,
-            2
-        ) AS diff_minutes,
+    if run_request_date:
+        df = df.filter(F.col("requestDate") == F.lit(run_request_date))
 
-        abs(datediff(to_date(m.enqueuedTime), to_date(c.requestTimestamp))) AS abs_diff_days,
+    return df
 
-        round(
-            abs(unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp)) / 3600.0,
-            2
-        ) AS abs_diff_hours,
 
-        row_number() OVER (
-            PARTITION BY
-                c.interactionId,
-                c.mqsQuoteId,
-                c.requestTimestamp,
-                c.transactionCode
-            ORDER BY abs(unix_timestamp(m.enqueuedTime) - unix_timestamp(c.requestTimestamp))
-        ) AS rn
-    FROM csv_src c
-    INNER JOIN mqs_src m
-        ON c.interactionId   = m.externalID
-       AND c.mqsQuoteId      = m.mqsQuoteId
-       AND c.transactionCode = m.transactionCode
+def get_csv_time_bounds(csv_df):
+    """
+    Get min/max requestTimestamp from CSV so MQS read can be reduced.
+    """
+    bounds = csv_df.select(
+        F.min("requestTimestamp").alias("min_ts"),
+        F.max("requestTimestamp").alias("max_ts")
+    ).collect()[0]
+
+    if bounds["min_ts"] is None or bounds["max_ts"] is None:
+        raise ValueError("CSV source has no valid requestTimestamp rows to process.")
+
+    return bounds["min_ts"], bounds["max_ts"]
+
+
+def load_mqs_source(min_ts, max_ts):
+    """
+    Load MQS source reduced to the required date range only.
+    transactionType in MQS is already assumed to be in code format: 02 / 08 / 30.
+    """
+    min_scan_ts_expr = F.lit(min_ts).cast("timestamp") - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS")
+    max_scan_ts_expr = F.lit(max_ts).cast("timestamp") + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
+
+    df = (
+        spark.table(MQS_TABLE)
+        .filter(F.col("headers")["messageType"] == F.lit("mqs-quote-request"))
+        .select(
+            F.col("headers")["MQSQuoteId"].cast("string").alias("mqsQuoteId"),
+            F.col("headers")["externalID"].cast("string").alias("externalID"),
+            F.to_timestamp("enqueuedTime").alias("enqueuedTime"),
+            F.to_timestamp("eHubQueuedDatestamp").alias("eHubQueuedDatestamp"),
+            F.get_json_object("payload", "$.control.transactionType").cast("string").alias("transactionCode"),
+            F.col("headers")["quoteDate"].cast("string").alias("quoteDate")
+        )
+        .filter(
+            F.col("mqsQuoteId").isNotNull() &
+            F.col("externalID").isNotNull() &
+            F.col("enqueuedTime").isNotNull() &
+            F.col("transactionCode").isNotNull()
+        )
+        .filter(
+            (F.col("enqueuedTime") >= min_scan_ts_expr) &
+            (F.col("enqueuedTime") <= max_scan_ts_expr)
+        )
+    )
+
+    return df
+
+
+def add_quote_status(mqs_df):
+    return mqs_df.withColumn(
+        "quote_status",
+        F.when(
+            F.year(F.to_date("quoteDate")) < F.year("eHubQueuedDatestamp"),
+            F.lit("invalidDatesince")
+        ).otherwise(F.lit("validDate"))
+    )
+
+
+def calculate_time_diff(df, left_ts_col: str, right_ts_col: str):
+    """
+    Calculates signed and absolute timestamp differences.
+    right - left
+    """
+    return (
+        df.withColumn(
+            "diff_days",
+            F.datediff(F.to_date(F.col(right_ts_col)), F.to_date(F.col(left_ts_col)))
+        )
+        .withColumn(
+            "diff_hours",
+            F.round(
+                (F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / F.lit(3600.0),
+                2
+            )
+        )
+        .withColumn(
+            "diff_minutes",
+            F.round(
+                (F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / F.lit(60.0),
+                2
+            )
+        )
+        .withColumn(
+            "abs_diff_hours",
+            F.round(
+                F.abs(F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / F.lit(3600.0),
+                2
+            )
+        )
+    )
+
+
+# ============================================================
+# FORWARD RECONCILIATION
+# CSV -> MQS
+# ============================================================
+
+def build_forward_reconciliation(csv_df, mqs_df):
+    """
+    For each CSV row, find the nearest MQS match within +/- 15 days.
+    Join keys:
+      interactionId = externalID
+      mqsQuoteId    = mqsQuoteId
+      transactionCode = transactionCode
+    """
+    join_condition = (
+        (csv_df["interactionId"] == mqs_df["externalID"]) &
+        (csv_df["mqsQuoteId"] == mqs_df["mqsQuoteId"]) &
+        (csv_df["transactionCode"] == mqs_df["transactionCode"]) &
+        (
+            mqs_df["enqueuedTime"].between(
+                csv_df["requestTimestamp"] - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS"),
+                csv_df["requestTimestamp"] + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
+            )
+        )
+    )
+
+    joined = (
+        csv_df.alias("c")
+        .join(mqs_df.alias("m"), join_condition, "left")
+        .select(
+            F.col("c.interactionId"),
+            F.col("c.mqsQuoteId"),
+            F.col("c.requestDate"),
+            F.col("c.requestTime"),
+            F.col("c.requestTimestamp"),
+            F.col("c.csv_transactionType"),
+            F.col("c.transactionCode").alias("csv_transactionCode"),
+            F.col("c.product"),
+
+            F.col("m.externalID"),
+            F.col("m.enqueuedTime"),
+            F.col("m.eHubQueuedDatestamp"),
+            F.col("m.transactionCode").alias("mqs_transactionCode"),
+            F.col("m.quoteDate"),
+            F.col("m.quote_status")
+        )
+    )
+
+    joined = calculate_time_diff(joined, "requestTimestamp", "enqueuedTime")
+
+    # Pick nearest MQS event per CSV row
+    w = Window.partitionBy(
+        "interactionId", "mqsQuoteId", "requestTimestamp", "csv_transactionCode"
+    ).orderBy(
+        F.when(F.col("enqueuedTime").isNull(), F.lit(1)).otherwise(F.lit(0)),
+        F.abs(F.unix_timestamp("enqueuedTime") - F.unix_timestamp("requestTimestamp"))
+    )
+
+    result = (
+        joined.withColumn("rn", F.row_number().over(w))
+        .filter(F.col("rn") == 1)
+        .drop("rn")
+        .withColumn(
+            "match_flag",
+            F.when(F.col("enqueuedTime").isNotNull(), F.lit("Y")).otherwise(F.lit("N"))
+        )
+        .withColumn(
+            "reconciliation_direction",
+            F.lit("FORWARD")
+        )
+        .withColumn(
+            "run_ts",
+            F.current_timestamp()
+        )
+    )
+
+    return result
+
+
+# ============================================================
+# REVERSE RECONCILIATION
+# MQS -> CSV
+# ============================================================
+
+def build_reverse_reconciliation(csv_df, mqs_df):
+    """
+    For each MQS row, find the nearest CSV match within +/- 15 days.
+    Join keys:
+      externalID = interactionId
+      mqsQuoteId = mqsQuoteId
+      transactionCode = transactionCode
+    """
+    join_condition = (
+        (mqs_df["externalID"] == csv_df["interactionId"]) &
+        (mqs_df["mqsQuoteId"] == csv_df["mqsQuoteId"]) &
+        (mqs_df["transactionCode"] == csv_df["transactionCode"]) &
+        (
+            csv_df["requestTimestamp"].between(
+                mqs_df["enqueuedTime"] - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS"),
+                mqs_df["enqueuedTime"] + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
+            )
+        )
+    )
+
+    joined = (
+        mqs_df.alias("m")
+        .join(csv_df.alias("c"), join_condition, "left")
+        .select(
+            F.col("m.externalID"),
+            F.col("m.mqsQuoteId"),
+            F.col("m.enqueuedTime"),
+            F.col("m.eHubQueuedDatestamp"),
+            F.col("m.transactionCode").alias("mqs_transactionCode"),
+            F.col("m.quoteDate"),
+            F.col("m.quote_status"),
+
+            F.col("c.interactionId"),
+            F.col("c.requestDate"),
+            F.col("c.requestTime"),
+            F.col("c.requestTimestamp"),
+            F.col("c.csv_transactionType"),
+            F.col("c.transactionCode").alias("csv_transactionCode"),
+            F.col("c.product")
+        )
+    )
+
+    joined = calculate_time_diff(joined, "enqueuedTime", "requestTimestamp")
+
+    # Pick nearest CSV event per MQS row
+    w = Window.partitionBy(
+        "externalID", "mqsQuoteId", "enqueuedTime", "mqs_transactionCode"
+    ).orderBy(
+        F.when(F.col("requestTimestamp").isNull(), F.lit(1)).otherwise(F.lit(0)),
+        F.abs(F.unix_timestamp("requestTimestamp") - F.unix_timestamp("enqueuedTime"))
+    )
+
+    result = (
+        joined.withColumn("rn", F.row_number().over(w))
+        .filter(F.col("rn") == 1)
+        .drop("rn")
+        .withColumn(
+            "reverse_match_flag",
+            F.when(F.col("requestTimestamp").isNotNull(), F.lit("Y")).otherwise(F.lit("N"))
+        )
+        .withColumn(
+            "reverse_status",
+            F.when(F.col("requestTimestamp").isNotNull(), F.lit("MATCHED"))
+             .otherwise(F.lit("MISSING_IN_CSV"))
+        )
+        .withColumn(
+            "reconciliation_direction",
+            F.lit("REVERSE")
+        )
+        .withColumn(
+            "run_ts",
+            F.current_timestamp()
+        )
+    )
+
+    return result
+
+
+# ============================================================
+# MAIN RUN
+# ============================================================
+
+csv_df = load_csv_source(RUN_REQUEST_DATE).cache()
+
+min_ts, max_ts = get_csv_time_bounds(csv_df)
+
+mqs_df = load_mqs_source(min_ts, max_ts)
+mqs_df = add_quote_status(mqs_df).cache()
+
+forward_df = build_forward_reconciliation(csv_df, mqs_df)
+reverse_df = build_reverse_reconciliation(csv_df, mqs_df)
+
+# Write outputs
+(
+    forward_df.write
+    .format("delta")
+    .mode("overwrite")
+    .saveAsTable(FORWARD_OUT_TABLE)
 )
 
-SELECT
-    interactionId,
-    mqsQuoteId,
-    requestDate,
-    requestTime,
-    requestTimestamp,
-    csv_transactionType,
-    csv_transactionCode,
-    externalID,
-    quoteDate,
-    enqueuedTime,
-    eHubQueuedDatestamp,
-    mqs_transactionCode,
-    quote_status,
-    diff_days,
-    diff_hours,
-    diff_minutes,
-    abs_diff_days,
-    abs_diff_hours
-FROM matched
-WHERE rn = 1
-ORDER BY abs_diff_hours DESC;
+(
+    reverse_df.write
+    .format("delta")
+    .mode("overwrite")
+    .saveAsTable(REVERSE_OUT_TABLE)
+)
+
+print("Forward reconciliation rows :", forward_df.count())
+print("Reverse reconciliation rows :", reverse_df.count())
+print(f"Forward output table        : {FORWARD_OUT_TABLE}")
+print(f"Reverse output table        : {REVERSE_OUT_TABLE}")
