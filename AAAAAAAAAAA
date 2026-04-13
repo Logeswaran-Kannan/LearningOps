@@ -1,10 +1,6 @@
 from pyspark.sql import functions as F
 from pyspark.sql import Window
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 CSV_TABLE = "core_bld.radar_live.reconciliation_csv_source"
 MQS_TABLE = "core.mqs_athn_mtr.ehubstream"
 TARGET_TABLE = "core_bld.radar_live.recon_mqs_detail"
@@ -13,10 +9,6 @@ RUN_REQUEST_DATE = None   # example: "2026-02-09"
 SCAN_DAYS_BEFORE = 15
 SCAN_DAYS_AFTER = 15
 
-
-# ============================================================
-# LOAD CSV
-# ============================================================
 
 def load_csv_source(run_request_date=None):
     df = (
@@ -45,10 +37,6 @@ def load_csv_source(run_request_date=None):
     return df
 
 
-# ============================================================
-# CSV RANGE
-# ============================================================
-
 def get_csv_time_bounds(csv_df):
     row = (
         csv_df.select(
@@ -64,15 +52,8 @@ def get_csv_time_bounds(csv_df):
     return row["min_ts"], row["max_ts"]
 
 
-# ============================================================
-# LOAD MQS
-# ============================================================
-
 def load_mqs_source(min_ts, max_ts):
-    min_scan_ts = min_ts
-    max_scan_ts = max_ts
-
-    df = (
+    return (
         spark.table(MQS_TABLE)
         .filter(F.col("headers")["messageType"] == "mqs-quote-request")
         .select(
@@ -91,8 +72,8 @@ def load_mqs_source(min_ts, max_ts):
         )
         .filter(
             F.col("enqueuedTime").between(
-                F.lit(min_scan_ts).cast("timestamp") - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS"),
-                F.lit(max_scan_ts).cast("timestamp") + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
+                F.lit(min_ts).cast("timestamp") - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS"),
+                F.lit(max_ts).cast("timestamp") + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
             )
         )
         .withColumn(
@@ -104,12 +85,6 @@ def load_mqs_source(min_ts, max_ts):
         )
     )
 
-    return df
-
-
-# ============================================================
-# COMMON DIFF CALCULATION
-# ============================================================
 
 def calculate_time_diff(df, left_ts_col, right_ts_col):
     return (
@@ -152,11 +127,6 @@ def calculate_time_diff(df, left_ts_col, right_ts_col):
         )
     )
 
-
-# ============================================================
-# FORWARD RECONCILIATION
-# CSV -> MQS
-# ============================================================
 
 def build_forward_reconciliation(csv_df, mqs_df):
     join_condition = (
@@ -221,11 +191,6 @@ def build_forward_reconciliation(csv_df, mqs_df):
     )
 
 
-# ============================================================
-# REVERSE RECONCILIATION
-# MQS -> CSV
-# ============================================================
-
 def build_reverse_reconciliation(csv_df, mqs_df):
     join_condition = (
         (mqs_df["externalID"] == csv_df["interactionId"]) &
@@ -289,15 +254,10 @@ def build_reverse_reconciliation(csv_df, mqs_df):
     )
 
 
-# ============================================================
-# MAIN
-# ============================================================
-
-csv_df = load_csv_source(RUN_REQUEST_DATE).cache()
-
+csv_df = load_csv_source(RUN_REQUEST_DATE)
 min_ts, max_ts = get_csv_time_bounds(csv_df)
 
-mqs_df = load_mqs_source(min_ts, max_ts).cache()
+mqs_df = load_mqs_source(min_ts, max_ts)
 
 forward_df = build_forward_reconciliation(csv_df, mqs_df)
 reverse_df = build_reverse_reconciliation(csv_df, mqs_df)
@@ -311,7 +271,4 @@ final_df = forward_df.unionByName(reverse_df)
     .saveAsTable(TARGET_TABLE)
 )
 
-print(f"Target table written: {TARGET_TABLE}")
-print(f"Forward rows       : {forward_df.count()}")
-print(f"Reverse rows       : {reverse_df.count()}")
-print(f"Total rows         : {final_df.count()}")
+print(f"Target table written successfully: {TARGET_TABLE}")
