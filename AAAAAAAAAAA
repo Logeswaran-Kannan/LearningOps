@@ -1,8 +1,8 @@
 # Databricks PySpark job
 # DVLA Payload Deletion Monitor
-# Tables covered:
+# Covers:
 #   1. ehubstream
-#   2. dlt_raw_enrichment
+#   2. dlt_raw_enrichments
 #   3. dlt_rating_request_v2
 
 from pyspark.sql import functions as F
@@ -15,22 +15,16 @@ from functools import reduce
 
 DIM_TABLE = "curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions"
 
-# Target payload tables
 EHUBSTREAM_TABLE = "core.mqs_athn_mtr.ehubstream"
-DLT_RAW_ENRICHMENT_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichment"
+DLT_RAW_ENRICHMENTS_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichments"
 DLT_RATING_REQUEST_V2_TABLE = "core.mqs_athn_mtr.dlt_rating_request_v2"
 
-# Output tables
 ELIGIBLE_SNAPSHOT_TABLE = "core_bld.radar_live.dvla_delete_eligible_quotes_daily"
 DETAIL_TABLE = "core_bld.radar_live.dvla_payload_monitor_detail"
 SUMMARY_TABLE = "core_bld.radar_live.dvla_payload_monitor_summary_daily"
 
-# Operational settings
 LOOKBACK_DAYS = 180
 ELIGIBILITY_DAYS = 60
-RUN_DATE_SQL = "current_date()"
-
-# Business exclusion
 EXCLUDED_JOURNEY = "Athena Motor Sale"
 
 # =========================================================
@@ -38,15 +32,10 @@ EXCLUDED_JOURNEY = "Athena Motor Sale"
 # =========================================================
 
 def delete_run_partition(table_name: str) -> None:
-    """
-    Remove current run_date partition before re-inserting.
-    Keeps the run idempotent for daily reruns.
-    """
     spark.sql(f"""
         DELETE FROM {table_name}
-        WHERE run_date = {RUN_DATE_SQL}
+        WHERE run_date = current_date()
     """)
-
 
 def safe_union(dfs: list[DataFrame]) -> DataFrame:
     valid_dfs = [df for df in dfs if df is not None]
@@ -54,20 +43,12 @@ def safe_union(dfs: list[DataFrame]) -> DataFrame:
         raise ValueError("No DataFrames provided for union")
     return reduce(lambda x, y: x.unionByName(y, allowMissingColumns=True), valid_dfs)
 
-
 # =========================================================
 # STEP 1 - ELIGIBLE QUOTES
 # =========================================================
 
 def get_eligible_quotes() -> DataFrame:
-    """
-    Driving set from dim table.
-    Quote is eligible when:
-      - MQS_QUOTE_ID is not null
-      - latest journey is not Athena Motor Sale
-      - DWH_DATA_DTS is older than 60 days
-    """
-    df = (
+    return (
         spark.table(DIM_TABLE)
         .select(
             F.col("MQS_QUOTE_ID").alias("mqs_quote_id"),
@@ -84,8 +65,6 @@ def get_eligible_quotes() -> DataFrame:
         .withColumn("eligible_flag", F.lit(1))
         .dropDuplicates(["mqs_quote_id"])
     )
-    return df
-
 
 def write_eligible_snapshot(df: DataFrame) -> None:
     delete_run_partition(ELIGIBLE_SNAPSHOT_TABLE)
@@ -105,18 +84,12 @@ def write_eligible_snapshot(df: DataFrame) -> None:
         .saveAsTable(ELIGIBLE_SNAPSHOT_TABLE)
     )
 
-
 # =========================================================
-# STEP 2 - TABLE SPECIFIC DVLA PRESENCE CHECKS
+# STEP 2 - TABLE SPECIFIC DVLA CHECKS
 # =========================================================
 
 def get_ehubstream_base() -> DataFrame:
-    """
-    ehubstream contains both:
-      - mqs-quote-request
-      - rating-request
-    """
-    df = (
+    base_df = (
         spark.table(EHUBSTREAM_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
@@ -139,11 +112,12 @@ def get_ehubstream_base() -> DataFrame:
         lambda x: x["provider"]
     )
 
-    df = (
-        df.withColumn(
+    return (
+        base_df
+        .withColumn(
             "provider_status_quote_request",
             F.when(
-                F.col("message_type") == F.lit("mqs-quote-request"),
+                F.col("message_type") == "mqs-quote-request",
                 F.when(F.array_contains(provider_array, "mylicence"), F.lit("present"))
                  .otherwise(F.lit("not_present"))
             )
@@ -151,7 +125,7 @@ def get_ehubstream_base() -> DataFrame:
         .withColumn(
             "provider_status_rating_request",
             F.when(
-                F.col("message_type") == F.lit("rating-request"),
+                F.col("message_type") == "rating-request",
                 F.when(
                     F.get_json_object("payload", "$.root.ratingRequestMessage[0].myLicence[0].dln").isNotNull(),
                     F.lit("present")
@@ -175,16 +149,9 @@ def get_ehubstream_base() -> DataFrame:
         )
     )
 
-    return df
-
-
-def get_dlt_raw_enrichment_base() -> DataFrame:
-    """
-    Same deletion idea as mqs-quote-request.
-    Adjust column names if this table does not use the same structure.
-    """
-    df = (
-        spark.table(DLT_RAW_ENRICHMENT_TABLE)
+def get_dlt_raw_enrichments_base() -> DataFrame:
+    base_df = (
+        spark.table(DLT_RAW_ENRICHMENTS_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
             F.col("headers")["externalID"].alias("external_id"),
@@ -205,13 +172,14 @@ def get_dlt_raw_enrichment_base() -> DataFrame:
         lambda x: x["provider"]
     )
 
-    df = (
-        df.withColumn(
+    return (
+        base_df
+        .withColumn(
             "dvla_status",
             F.when(F.array_contains(provider_array, "mylicence"), F.lit("present"))
              .otherwise(F.lit("not_present"))
         )
-        .withColumn("table_name", F.lit("dlt_raw_enrichment"))
+        .withColumn("table_name", F.lit("dlt_raw_enrichments"))
         .select(
             "table_name",
             "mqs_quote_id",
@@ -223,15 +191,8 @@ def get_dlt_raw_enrichment_base() -> DataFrame:
         )
     )
 
-    return df
-
-
 def get_dlt_rating_request_v2_base() -> DataFrame:
-    """
-    Same deletion idea as rating-request.
-    Adjust column names if this table structure is slightly different.
-    """
-    df = (
+    base_df = (
         spark.table(DLT_RATING_REQUEST_V2_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
@@ -245,8 +206,9 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
     )
 
-    df = (
-        df.withColumn(
+    return (
+        base_df
+        .withColumn(
             "dvla_status",
             F.when(
                 F.get_json_object("payload", "$.root.ratingRequestMessage[0].myLicence[0].dln").isNotNull(),
@@ -265,30 +227,14 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
         )
     )
 
-    return df
-
-
 # =========================================================
 # STEP 3 - CLASSIFICATION
 # =========================================================
 
 def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_name: str) -> DataFrame:
-    """
-    Standard monitoring detail:
-      - ELIGIBLE_DELETED
-      - ELIGIBLE_RETAINED
-      - NOT_FOUND_IN_TARGET
-      - ORPHAN_PRESENT
-      - ORPHAN_NOT_PRESENT
-    """
-
     eligible_side = (
         eligible_df.alias("e")
-        .join(
-            target_df.alias("t"),
-            on="mqs_quote_id",
-            how="left"
-        )
+        .join(target_df.alias("t"), on="mqs_quote_id", how="left")
         .select(
             F.col("e.run_date"),
             F.lit(table_name).alias("table_name"),
@@ -314,11 +260,7 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
 
     orphan_side = (
         target_df.alias("t")
-        .join(
-            eligible_df.alias("e"),
-            on="mqs_quote_id",
-            how="leftanti"
-        )
+        .join(eligible_df.alias("e"), on="mqs_quote_id", how="leftanti")
         .select(
             F.current_date().alias("run_date"),
             F.lit(table_name).alias("table_name"),
@@ -343,12 +285,13 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
 
     final_df = safe_union([eligible_side, orphan_side])
 
-    # In case a quote appears multiple times in target, keep latest event only
-    window_cols = ["run_date", "table_name", "mqs_quote_id", "message_type", "monitor_status"]
-    final_df = final_df.dropDuplicates(window_cols)
-
-    return final_df
-
+    return final_df.dropDuplicates([
+        "run_date",
+        "table_name",
+        "mqs_quote_id",
+        "message_type",
+        "monitor_status"
+    ])
 
 def write_detail(df: DataFrame) -> None:
     delete_run_partition(DETAIL_TABLE)
@@ -358,13 +301,12 @@ def write_detail(df: DataFrame) -> None:
         .saveAsTable(DETAIL_TABLE)
     )
 
-
 # =========================================================
-# STEP 4 - SUMMARY FOR DASHBOARD
+# STEP 4 - SUMMARY
 # =========================================================
 
 def build_summary(detail_df: DataFrame) -> DataFrame:
-    df = (
+    return (
         detail_df.groupBy("run_date", "table_name", "message_type")
         .agg(
             F.countDistinct(F.when(F.col("eligible_flag") == 1, F.col("mqs_quote_id"))).alias("eligible_quotes"),
@@ -388,8 +330,6 @@ def build_summary(detail_df: DataFrame) -> DataFrame:
         )
         .withColumn("created_ts", F.current_timestamp())
     )
-    return df
-
 
 def write_summary(df: DataFrame) -> None:
     delete_run_partition(SUMMARY_TABLE)
@@ -399,46 +339,38 @@ def write_summary(df: DataFrame) -> None:
         .saveAsTable(SUMMARY_TABLE)
     )
 
-
 # =========================================================
 # MAIN
 # =========================================================
 
 def main():
-    spark.conf.set("spark.databricks.optimizer.dynamicPartitionPruning", "true")
     spark.conf.set("spark.sql.adaptive.enabled", "true")
 
-    # 1. Eligible quotes
     eligible_df = get_eligible_quotes().cache()
     write_eligible_snapshot(eligible_df)
 
-    # 2. Target tables
     ehub_df = get_ehubstream_base()
-    raw_enrichment_df = get_dlt_raw_enrichment_base()
+    raw_enrichments_df = get_dlt_raw_enrichments_base()
     rating_v2_df = get_dlt_rating_request_v2_base()
 
-    # 3. Detail build
     ehub_detail = build_monitor_detail(eligible_df, ehub_df, "ehubstream")
-    raw_enrichment_detail = build_monitor_detail(eligible_df, raw_enrichment_df, "dlt_raw_enrichment")
+    raw_enrichments_detail = build_monitor_detail(eligible_df, raw_enrichments_df, "dlt_raw_enrichments")
     rating_v2_detail = build_monitor_detail(eligible_df, rating_v2_df, "dlt_rating_request_v2")
 
     detail_df = safe_union([
         ehub_detail,
-        raw_enrichment_detail,
+        raw_enrichments_detail,
         rating_v2_detail
     ])
 
     write_detail(detail_df)
 
-    # 4. Summary build
     summary_df = build_summary(detail_df)
     write_summary(summary_df)
 
-    # 5. Optional quick log
     print("DVLA payload deletion monitor completed successfully")
     print(f"Eligible quotes count: {eligible_df.count()}")
     print(f"Detail rows count: {detail_df.count()}")
     print(f"Summary rows count: {summary_df.count()}")
-
 
 main()
