@@ -1,6 +1,9 @@
 # Databricks PySpark job
 # DVLA Payload Deletion Monitor
-# Output schema changed to core_bld.default
+# Covers:
+#   1. ehubstream
+#   2. dlt_raw_enrichments
+#   3. dlt_rating_request_v2
 
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
@@ -10,13 +13,13 @@ from functools import reduce
 # CONFIG
 # =========================================================
 
-# ---- SOURCE TABLES: update these if your environment uses different names ----
+# ---- SOURCE TABLES: change only here if names differ in your workspace ----
 DIM_TABLE = "curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions"
 EHUBSTREAM_TABLE = "core.mqs_athn_mtr.ehubstream"
 DLT_RAW_ENRICHMENTS_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichments"
 DLT_RATING_REQUEST_V2_TABLE = "core.mqs_athn_mtr.dlt_rating_request_v2"
 
-# ---- OUTPUT TABLES: changed to core_bld.default ----
+# ---- OUTPUT TABLES ----
 ELIGIBLE_SNAPSHOT_TABLE = "core_bld.default.dvla_delete_eligible_quotes_daily"
 DETAIL_TABLE = "core_bld.default.dvla_payload_monitor_detail"
 SUMMARY_TABLE = "core_bld.default.dvla_payload_monitor_summary_daily"
@@ -171,9 +174,11 @@ def get_ehubstream_base() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
     )
 
+    payload_json = F.to_json(F.col("payload"))
+
     provider_array = F.transform(
         F.from_json(
-            F.get_json_object("payload", "$.rawEnrichments"),
+            F.get_json_object(payload_json, "$.rawEnrichments"),
             "array<struct<provider:string>>"
         ),
         lambda x: x["provider"]
@@ -194,7 +199,10 @@ def get_ehubstream_base() -> DataFrame:
             F.when(
                 F.col("message_type") == "rating-request",
                 F.when(
-                    F.get_json_object("payload", "$.root.ratingRequestMessage[0].myLicence[0].dln").isNotNull(),
+                    F.get_json_object(
+                        payload_json,
+                        "$.root.ratingRequestMessage[0].myLicence[0].dln"
+                    ).isNotNull(),
                     F.lit("present")
                 ).otherwise(F.lit("not_present"))
             )
@@ -231,9 +239,11 @@ def get_dlt_raw_enrichments_base() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
     )
 
+    payload_json = F.to_json(F.col("payload"))
+
     provider_array = F.transform(
         F.from_json(
-            F.get_json_object("payload", "$.rawEnrichments"),
+            F.get_json_object(payload_json, "$.rawEnrichments"),
             "array<struct<provider:string>>"
         ),
         lambda x: x["provider"]
@@ -273,12 +283,17 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
     )
 
+    payload_json = F.to_json(F.col("payload"))
+
     return (
         base_df
         .withColumn(
             "dvla_status",
             F.when(
-                F.get_json_object("payload", "$.root.ratingRequestMessage[0].myLicence[0].dln").isNotNull(),
+                F.get_json_object(
+                    payload_json,
+                    "$.root.ratingRequestMessage[0].myLicence[0].dln"
+                ).isNotNull(),
                 F.lit("present")
             ).otherwise(F.lit("not_present"))
         )
