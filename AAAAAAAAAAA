@@ -1,9 +1,6 @@
 # Databricks PySpark job
 # DVLA Payload Deletion Monitor
-# Covers:
-#   1. ehubstream
-#   2. dlt_raw_enrichments
-#   3. dlt_rating_request_v2
+# Output schema changed to core_bld.default
 
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
@@ -13,15 +10,16 @@ from functools import reduce
 # CONFIG
 # =========================================================
 
+# ---- SOURCE TABLES: update these if your environment uses different names ----
 DIM_TABLE = "curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions"
-
 EHUBSTREAM_TABLE = "core.mqs_athn_mtr.ehubstream"
 DLT_RAW_ENRICHMENTS_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichments"
 DLT_RATING_REQUEST_V2_TABLE = "core.mqs_athn_mtr.dlt_rating_request_v2"
 
-ELIGIBLE_SNAPSHOT_TABLE = "core_bld.radar_live.dvla_delete_eligible_quotes_daily"
-DETAIL_TABLE = "core_bld.radar_live.dvla_payload_monitor_detail"
-SUMMARY_TABLE = "core_bld.radar_live.dvla_payload_monitor_summary_daily"
+# ---- OUTPUT TABLES: changed to core_bld.default ----
+ELIGIBLE_SNAPSHOT_TABLE = "core_bld.default.dvla_delete_eligible_quotes_daily"
+DETAIL_TABLE = "core_bld.default.dvla_payload_monitor_detail"
+SUMMARY_TABLE = "core_bld.default.dvla_payload_monitor_summary_daily"
 
 LOOKBACK_DAYS = 180
 ELIGIBILITY_DAYS = 60
@@ -31,17 +29,80 @@ EXCLUDED_JOURNEY = "Athena Motor Sale"
 # HELPERS
 # =========================================================
 
+def safe_union(dfs: list[DataFrame]) -> DataFrame:
+    valid_dfs = [df for df in dfs if df is not None]
+    if not valid_dfs:
+        raise ValueError("No DataFrames provided for union")
+    return reduce(lambda x, y: x.unionByName(y, allowMissingColumns=True), valid_dfs)
+
 def delete_run_partition(table_name: str) -> None:
     spark.sql(f"""
         DELETE FROM {table_name}
         WHERE run_date = current_date()
     """)
 
-def safe_union(dfs: list[DataFrame]) -> DataFrame:
-    valid_dfs = [df for df in dfs if df is not None]
-    if not valid_dfs:
-        raise ValueError("No DataFrames provided for union")
-    return reduce(lambda x, y: x.unionByName(y, allowMissingColumns=True), valid_dfs)
+# =========================================================
+# TARGET TABLE CREATION
+# =========================================================
+
+def create_target_tables_if_not_exist() -> None:
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {ELIGIBLE_SNAPSHOT_TABLE} (
+            run_date DATE,
+            mqs_quote_id STRING,
+            quote_ref STRING,
+            dwh_date DATE,
+            dwh_create_dts TIMESTAMP,
+            latest_quote_journey_desc STRING,
+            days_from_dwh INT,
+            eligible_flag INT
+        )
+        USING DELTA
+        PARTITIONED BY (run_date)
+    """)
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {DETAIL_TABLE} (
+            run_date DATE,
+            table_name STRING,
+            message_type STRING,
+            mqs_quote_id STRING,
+            quote_ref STRING,
+            dwh_date DATE,
+            dwh_create_dts TIMESTAMP,
+            latest_quote_journey_desc STRING,
+            days_from_dwh INT,
+            eligible_flag INT,
+            external_id STRING,
+            event_ts TIMESTAMP,
+            event_date TIMESTAMP,
+            dvla_status STRING,
+            monitor_status STRING,
+            checked_ts TIMESTAMP
+        )
+        USING DELTA
+        PARTITIONED BY (run_date)
+    """)
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {SUMMARY_TABLE} (
+            run_date DATE,
+            table_name STRING,
+            message_type STRING,
+            eligible_quotes BIGINT,
+            deleted_quotes BIGINT,
+            retained_quotes BIGINT,
+            not_found_in_target_quotes BIGINT,
+            orphan_present_quotes BIGINT,
+            orphan_not_present_quotes BIGINT,
+            max_days_from_dwh INT,
+            avg_days_from_dwh DOUBLE,
+            deletion_pct DECIMAL(10,2),
+            created_ts TIMESTAMP
+        )
+        USING DELTA
+        PARTITIONED BY (run_date)
+    """)
 
 # =========================================================
 # STEP 1 - ELIGIBLE QUOTES
@@ -82,6 +143,12 @@ def write_eligible_snapshot(df: DataFrame) -> None:
         .write
         .mode("append")
         .saveAsTable(ELIGIBLE_SNAPSHOT_TABLE)
+    )
+
+def read_today_eligible_snapshot() -> DataFrame:
+    return (
+        spark.table(ELIGIBLE_SNAPSHOT_TABLE)
+        .filter(F.col("run_date") == F.current_date())
     )
 
 # =========================================================
@@ -283,9 +350,7 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
         )
     )
 
-    final_df = safe_union([eligible_side, orphan_side])
-
-    return final_df.dropDuplicates([
+    return safe_union([eligible_side, orphan_side]).dropDuplicates([
         "run_date",
         "table_name",
         "mqs_quote_id",
@@ -344,16 +409,20 @@ def write_summary(df: DataFrame) -> None:
 # =========================================================
 
 def main():
+    create_target_tables_if_not_exist()
+
     eligible_df = get_eligible_quotes()
     write_eligible_snapshot(eligible_df)
+
+    eligible_today_df = read_today_eligible_snapshot()
 
     ehub_df = get_ehubstream_base()
     raw_enrichments_df = get_dlt_raw_enrichments_base()
     rating_v2_df = get_dlt_rating_request_v2_base()
 
-    ehub_detail = build_monitor_detail(eligible_df, ehub_df, "ehubstream")
-    raw_enrichments_detail = build_monitor_detail(eligible_df, raw_enrichments_df, "dlt_raw_enrichments")
-    rating_v2_detail = build_monitor_detail(eligible_df, rating_v2_df, "dlt_rating_request_v2")
+    ehub_detail = build_monitor_detail(eligible_today_df, ehub_df, "ehubstream")
+    raw_enrichments_detail = build_monitor_detail(eligible_today_df, raw_enrichments_df, "dlt_raw_enrichments")
+    rating_v2_detail = build_monitor_detail(eligible_today_df, rating_v2_df, "dlt_rating_request_v2")
 
     detail_df = safe_union([
         ehub_detail,
@@ -367,3 +436,5 @@ def main():
     write_summary(summary_df)
 
     print("DVLA payload deletion monitor completed successfully")
+
+main()
