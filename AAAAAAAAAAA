@@ -1,3 +1,6 @@
+DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_detail;
+DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_summary_daily;
+
 # Databricks PySpark job
 # DVLA Payload Deletion Monitor
 # Covers:
@@ -116,7 +119,7 @@ def get_eligible_quotes() -> DataFrame:
             F.col("MQS_QUOTE_ID").alias("mqs_quote_id"),
             F.col("QUOTE_REF").alias("quote_ref"),
             F.to_date("DWH_DATA_DTS").alias("dwh_date"),
-            F.col("DWH_CREATE_DTS").alias("dwh_create_dts"),
+            F.col("DWH_CREATE_DTS").cast("timestamp").alias("dwh_create_dts"),
             F.col("LATEST_QUOTE_JOURNEY_DESC").alias("latest_quote_journey_desc")
         )
         .filter(F.col("mqs_quote_id").isNotNull())
@@ -130,8 +133,13 @@ def get_eligible_quotes() -> DataFrame:
 
 def write_eligible_snapshot(df: DataFrame) -> None:
     delete_run_partition(ELIGIBLE_SNAPSHOT_TABLE)
+
+    final_df = (
+        df.withColumn("dwh_create_dts", F.col("dwh_create_dts").cast("timestamp"))
+    )
+
     (
-        df.select(
+        final_df.select(
             "run_date",
             "mqs_quote_id",
             "quote_ref",
@@ -164,8 +172,8 @@ def get_ehubstream_base() -> DataFrame:
             F.col("headers")["externalID"].alias("external_id"),
             F.col("headers")["messageType"].alias("message_type"),
             F.col("payload"),
-            F.col("enqueuedTime").alias("event_ts"),
-            F.col("eHubQueuedDatestamp").alias("event_date")
+            F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
+            F.col("eHubQueuedDatestamp").cast("timestamp").alias("event_date")
         )
         .filter(F.col("message_type").isin("mqs-quote-request", "rating-request"))
         .filter(F.to_date("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
@@ -230,8 +238,8 @@ def get_dlt_raw_enrichments_base() -> DataFrame:
             F.col("headers")["externalID"].alias("external_id"),
             F.lit("mqs-quote-request").alias("message_type"),
             F.col("payload"),
-            F.col("enqueuedTime").alias("event_ts"),
-            F.col("eHubQueuedDatestamp").alias("event_date")
+            F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
+            F.col("eHubQueuedDatestamp").cast("timestamp").alias("event_date")
         )
         .filter(F.to_date("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
         .filter(F.col("mqs_quote_id").isNotNull())
@@ -274,8 +282,8 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
             F.col("headers")["externalID"].alias("external_id"),
             F.lit("rating-request").alias("message_type"),
             F.col("payload"),
-            F.col("enqueuedTime").alias("event_ts"),
-            F.col("eHubQueuedDatestamp").alias("event_date")
+            F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
+            F.col("eHubQueuedDatestamp").cast("timestamp").alias("event_date")
         )
         .filter(F.to_date("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
         .filter(F.col("mqs_quote_id").isNotNull())
@@ -327,8 +335,8 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
             F.col("e.days_from_dwh"),
             F.col("e.eligible_flag"),
             F.col("t.external_id"),
-            F.col("t.event_ts"),
-            F.col("t.event_date"),
+            F.col("t.event_ts").cast("timestamp").alias("event_ts"),
+            F.col("t.event_date").cast("timestamp").alias("event_date"),
             F.col("t.dvla_status"),
             F.when(F.col("t.mqs_quote_id").isNull(), F.lit("NOT_FOUND_IN_TARGET"))
              .when(F.col("t.dvla_status") == "present", F.lit("ELIGIBLE_RETAINED"))
@@ -353,8 +361,8 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
             F.lit(None).cast("int").alias("days_from_dwh"),
             F.lit(0).alias("eligible_flag"),
             F.col("t.external_id"),
-            F.col("t.event_ts"),
-            F.col("t.event_date"),
+            F.col("t.event_ts").cast("timestamp").alias("event_ts"),
+            F.col("t.event_date").cast("timestamp").alias("event_date"),
             F.col("t.dvla_status"),
             F.when(F.col("t.dvla_status") == "present", F.lit("ORPHAN_PRESENT"))
              .when(F.col("t.dvla_status") == "not_present", F.lit("ORPHAN_NOT_PRESENT"))
@@ -373,8 +381,16 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
 
 def write_detail(df: DataFrame) -> None:
     delete_run_partition(DETAIL_TABLE)
+
+    final_df = (
+        df.withColumn("dwh_create_dts", F.col("dwh_create_dts").cast("timestamp"))
+          .withColumn("event_ts", F.col("event_ts").cast("timestamp"))
+          .withColumn("event_date", F.col("event_date").cast("timestamp"))
+          .withColumn("checked_ts", F.col("checked_ts").cast("timestamp"))
+    )
+
     (
-        df.write
+        final_df.write
         .mode("append")
         .saveAsTable(DETAIL_TABLE)
     )
@@ -406,13 +422,16 @@ def build_summary(detail_df: DataFrame) -> DataFrame:
                 2
             )
         )
-        .withColumn("created_ts", F.current_timestamp())
+        .withColumn("created_ts", F.current_timestamp().cast("timestamp"))
     )
 
 def write_summary(df: DataFrame) -> None:
     delete_run_partition(SUMMARY_TABLE)
+
+    final_df = df.withColumn("created_ts", F.col("created_ts").cast("timestamp"))
+
     (
-        df.write
+        final_df.write
         .mode("append")
         .saveAsTable(SUMMARY_TABLE)
     )
