@@ -1,6 +1,3 @@
-DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_detail;
-DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_summary_daily;
-
 # Databricks PySpark job
 # DVLA Payload Deletion Monitor
 # Covers:
@@ -11,6 +8,8 @@ DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_summary_daily;
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
 from functools import reduce
+import time
+from datetime import datetime
 
 # =========================================================
 # CONFIG
@@ -28,6 +27,36 @@ SUMMARY_TABLE = "core_bld.default.dvla_payload_monitor_summary_daily"
 LOOKBACK_DAYS = 180
 ELIGIBILITY_DAYS = 60
 EXCLUDED_JOURNEY = "Athena Motor Sale"
+
+# Set to True only if you want row counts in logs.
+# Note: count() triggers Spark jobs, so it adds runtime.
+ENABLE_COUNTS_IN_LOG = True
+
+# =========================================================
+# TIMING / LOGGING
+# =========================================================
+
+JOB_START = time.perf_counter()
+
+def log_line(message: str) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total_elapsed = round(time.perf_counter() - JOB_START, 2)
+    print(f"[{now}] {message} | total_elapsed_sec={total_elapsed}")
+
+def log_step_start(step_name: str) -> float:
+    log_line(f"START: {step_name}")
+    return time.perf_counter()
+
+def log_step_end(step_name: str, step_start: float) -> None:
+    step_elapsed = round(time.perf_counter() - step_start, 2)
+    total_elapsed = round(time.perf_counter() - JOB_START, 2)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] END: {step_name} | step_elapsed_sec={step_elapsed} | total_elapsed_sec={total_elapsed}")
+
+def log_df_count(df: DataFrame, label: str) -> None:
+    if ENABLE_COUNTS_IN_LOG:
+        cnt = df.count()
+        log_line(f"{label} row_count={cnt}")
 
 # =========================================================
 # HELPERS
@@ -77,10 +106,11 @@ def create_target_tables_if_not_exist() -> None:
             latest_quote_journey_desc STRING,
             days_from_dwh INT,
             eligible_flag INT,
-            external_id STRING,
+            target_row_count BIGINT,
+            present_row_count BIGINT,
+            not_present_row_count BIGINT,
             event_ts TIMESTAMP,
             event_date TIMESTAMP,
-            dvla_status STRING,
             monitor_status STRING,
             checked_ts TIMESTAMP
         )
@@ -94,8 +124,9 @@ def create_target_tables_if_not_exist() -> None:
             table_name STRING,
             message_type STRING,
             eligible_quotes BIGINT,
-            deleted_quotes BIGINT,
-            retained_quotes BIGINT,
+            deleted_all_quotes BIGINT,
+            retained_all_quotes BIGINT,
+            partial_deletion_quotes BIGINT,
             not_found_in_target_quotes BIGINT,
             orphan_present_quotes BIGINT,
             orphan_not_present_quotes BIGINT,
@@ -134,9 +165,7 @@ def get_eligible_quotes() -> DataFrame:
 def write_eligible_snapshot(df: DataFrame) -> None:
     delete_run_partition(ELIGIBLE_SNAPSHOT_TABLE)
 
-    final_df = (
-        df.withColumn("dwh_create_dts", F.col("dwh_create_dts").cast("timestamp"))
-    )
+    final_df = df.withColumn("dwh_create_dts", F.col("dwh_create_dts").cast("timestamp"))
 
     (
         final_df.select(
@@ -169,7 +198,6 @@ def get_ehubstream_base() -> DataFrame:
         spark.table(EHUBSTREAM_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
-            F.col("headers")["externalID"].alias("external_id"),
             F.col("headers")["messageType"].alias("message_type"),
             F.col("payload"),
             F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
@@ -190,19 +218,15 @@ def get_ehubstream_base() -> DataFrame:
         lambda x: x["provider"]
     )
 
-    return (
+    final_df = (
         base_df
         .withColumn(
-            "provider_status_quote_request",
+            "dvla_status",
             F.when(
                 F.col("message_type") == "mqs-quote-request",
                 F.when(F.array_contains(provider_array, "mylicence"), F.lit("present"))
                  .otherwise(F.lit("not_present"))
-            )
-        )
-        .withColumn(
-            "provider_status_rating_request",
-            F.when(
+            ).when(
                 F.col("message_type") == "rating-request",
                 F.when(
                     F.get_json_object(
@@ -213,16 +237,10 @@ def get_ehubstream_base() -> DataFrame:
                 ).otherwise(F.lit("not_present"))
             )
         )
-        .withColumn(
-            "dvla_status",
-            F.when(F.col("message_type") == "mqs-quote-request", F.col("provider_status_quote_request"))
-             .when(F.col("message_type") == "rating-request", F.col("provider_status_rating_request"))
-        )
         .withColumn("table_name", F.lit("ehubstream"))
         .select(
             "table_name",
             "mqs_quote_id",
-            "external_id",
             "message_type",
             "event_ts",
             "event_date",
@@ -230,12 +248,13 @@ def get_ehubstream_base() -> DataFrame:
         )
     )
 
+    return final_df
+
 def get_dlt_raw_enrichments_base() -> DataFrame:
     base_df = (
         spark.table(DLT_RAW_ENRICHMENTS_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
-            F.col("headers")["externalID"].alias("external_id"),
             F.lit("mqs-quote-request").alias("message_type"),
             F.col("payload"),
             F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
@@ -255,7 +274,7 @@ def get_dlt_raw_enrichments_base() -> DataFrame:
         lambda x: x["provider"]
     )
 
-    return (
+    final_df = (
         base_df
         .withColumn(
             "dvla_status",
@@ -266,7 +285,6 @@ def get_dlt_raw_enrichments_base() -> DataFrame:
         .select(
             "table_name",
             "mqs_quote_id",
-            "external_id",
             "message_type",
             "event_ts",
             "event_date",
@@ -274,12 +292,13 @@ def get_dlt_raw_enrichments_base() -> DataFrame:
         )
     )
 
+    return final_df
+
 def get_dlt_rating_request_v2_base() -> DataFrame:
     base_df = (
         spark.table(DLT_RATING_REQUEST_V2_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
-            F.col("headers")["externalID"].alias("external_id"),
             F.lit("rating-request").alias("message_type"),
             F.col("payload"),
             F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
@@ -291,7 +310,7 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
 
     payload_json = F.col("payload").cast("string")
 
-    return (
+    final_df = (
         base_df
         .withColumn(
             "dvla_status",
@@ -307,7 +326,6 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
         .select(
             "table_name",
             "mqs_quote_id",
-            "external_id",
             "message_type",
             "event_ts",
             "event_date",
@@ -315,14 +333,27 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
         )
     )
 
+    return final_df
+
 # =========================================================
-# STEP 3 - CLASSIFICATION
+# STEP 3 - AGGREGATED CLASSIFICATION
 # =========================================================
 
-def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_name: str) -> DataFrame:
+def build_monitor_detail_aggregated(eligible_df: DataFrame, target_df: DataFrame, table_name: str) -> DataFrame:
+    target_agg = (
+        target_df.groupBy("mqs_quote_id", "message_type")
+        .agg(
+            F.count("*").alias("target_row_count"),
+            F.sum(F.when(F.col("dvla_status") == "present", 1).otherwise(0)).alias("present_row_count"),
+            F.sum(F.when(F.col("dvla_status") == "not_present", 1).otherwise(0)).alias("not_present_row_count"),
+            F.max(F.col("event_ts").cast("timestamp")).alias("event_ts"),
+            F.max(F.col("event_date").cast("timestamp")).alias("event_date")
+        )
+    )
+
     eligible_side = (
         eligible_df.alias("e")
-        .join(target_df.alias("t"), on="mqs_quote_id", how="left")
+        .join(target_agg.alias("t"), on="mqs_quote_id", how="left")
         .select(
             F.col("e.run_date"),
             F.lit(table_name).alias("table_name"),
@@ -330,24 +361,26 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
             F.col("e.mqs_quote_id"),
             F.col("e.quote_ref"),
             F.col("e.dwh_date"),
-            F.col("e.dwh_create_dts"),
+            F.col("e.dwh_create_dts").cast("timestamp").alias("dwh_create_dts"),
             F.col("e.latest_quote_journey_desc"),
             F.col("e.days_from_dwh"),
             F.col("e.eligible_flag"),
-            F.col("t.external_id"),
+            F.col("t.target_row_count"),
+            F.col("t.present_row_count"),
+            F.col("t.not_present_row_count"),
             F.col("t.event_ts").cast("timestamp").alias("event_ts"),
             F.col("t.event_date").cast("timestamp").alias("event_date"),
-            F.col("t.dvla_status"),
-            F.when(F.col("t.mqs_quote_id").isNull(), F.lit("NOT_FOUND_IN_TARGET"))
-             .when(F.col("t.dvla_status") == "present", F.lit("ELIGIBLE_RETAINED"))
-             .when(F.col("t.dvla_status") == "not_present", F.lit("ELIGIBLE_DELETED"))
+            F.when(F.col("t.target_row_count").isNull(), F.lit("NOT_FOUND_IN_TARGET"))
+             .when((F.col("t.present_row_count") == 0) & (F.col("t.not_present_row_count") > 0), F.lit("ELIGIBLE_DELETED_ALL"))
+             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") == 0), F.lit("ELIGIBLE_RETAINED_ALL"))
+             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") > 0), F.lit("ELIGIBLE_PARTIAL_DELETION"))
              .otherwise(F.lit("UNKNOWN")).alias("monitor_status"),
-            F.current_timestamp().alias("checked_ts")
+            F.current_timestamp().cast("timestamp").alias("checked_ts")
         )
     )
 
     orphan_side = (
-        target_df.alias("t")
+        target_agg.alias("t")
         .join(eligible_df.alias("e"), on="mqs_quote_id", how="leftanti")
         .select(
             F.current_date().alias("run_date"),
@@ -360,28 +393,20 @@ def build_monitor_detail(eligible_df: DataFrame, target_df: DataFrame, table_nam
             F.lit(None).cast("string").alias("latest_quote_journey_desc"),
             F.lit(None).cast("int").alias("days_from_dwh"),
             F.lit(0).alias("eligible_flag"),
-            F.col("t.external_id"),
+            F.col("t.target_row_count"),
+            F.col("t.present_row_count"),
+            F.col("t.not_present_row_count"),
             F.col("t.event_ts").cast("timestamp").alias("event_ts"),
             F.col("t.event_date").cast("timestamp").alias("event_date"),
-            F.col("t.dvla_status"),
-            F.when(F.col("t.dvla_status") == "present", F.lit("ORPHAN_PRESENT"))
-             .when(F.col("t.dvla_status") == "not_present", F.lit("ORPHAN_NOT_PRESENT"))
-             .otherwise(F.lit("UNKNOWN")).alias("monitor_status"),
-            F.current_timestamp().alias("checked_ts")
+            F.when(F.col("t.present_row_count") > 0, F.lit("ORPHAN_PRESENT"))
+             .otherwise(F.lit("ORPHAN_NOT_PRESENT")).alias("monitor_status"),
+            F.current_timestamp().cast("timestamp").alias("checked_ts")
         )
     )
 
-    return safe_union([eligible_side, orphan_side]).dropDuplicates([
-        "run_date",
-        "table_name",
-        "mqs_quote_id",
-        "message_type",
-        "monitor_status"
-    ])
+    return safe_union([eligible_side, orphan_side])
 
-def write_detail(df: DataFrame) -> None:
-    delete_run_partition(DETAIL_TABLE)
-
+def write_detail_append(df: DataFrame) -> None:
     final_df = (
         df.withColumn("dwh_create_dts", F.col("dwh_create_dts").cast("timestamp"))
           .withColumn("event_ts", F.col("event_ts").cast("timestamp"))
@@ -404,8 +429,9 @@ def build_summary(detail_df: DataFrame) -> DataFrame:
         detail_df.groupBy("run_date", "table_name", "message_type")
         .agg(
             F.countDistinct(F.when(F.col("eligible_flag") == 1, F.col("mqs_quote_id"))).alias("eligible_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_DELETED", F.col("mqs_quote_id"))).alias("deleted_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_RETAINED", F.col("mqs_quote_id"))).alias("retained_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_DELETED_ALL", F.col("mqs_quote_id"))).alias("deleted_all_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_RETAINED_ALL", F.col("mqs_quote_id"))).alias("retained_all_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_PARTIAL_DELETION", F.col("mqs_quote_id"))).alias("partial_deletion_quotes"),
             F.countDistinct(F.when(F.col("monitor_status") == "NOT_FOUND_IN_TARGET", F.col("mqs_quote_id"))).alias("not_found_in_target_quotes"),
             F.countDistinct(F.when(F.col("monitor_status") == "ORPHAN_PRESENT", F.col("mqs_quote_id"))).alias("orphan_present_quotes"),
             F.countDistinct(F.when(F.col("monitor_status") == "ORPHAN_NOT_PRESENT", F.col("mqs_quote_id"))).alias("orphan_not_present_quotes"),
@@ -417,7 +443,7 @@ def build_summary(detail_df: DataFrame) -> DataFrame:
             F.round(
                 F.when(
                     F.col("eligible_quotes") > 0,
-                    (F.col("deleted_quotes") * F.lit(100.0)) / F.col("eligible_quotes")
+                    (F.col("deleted_all_quotes") * F.lit(100.0)) / F.col("eligible_quotes")
                 ),
                 2
             )
@@ -425,9 +451,7 @@ def build_summary(detail_df: DataFrame) -> DataFrame:
         .withColumn("created_ts", F.current_timestamp().cast("timestamp"))
     )
 
-def write_summary(df: DataFrame) -> None:
-    delete_run_partition(SUMMARY_TABLE)
-
+def write_summary_append(df: DataFrame) -> None:
     final_df = df.withColumn("created_ts", F.col("created_ts").cast("timestamp"))
 
     (
@@ -441,32 +465,82 @@ def write_summary(df: DataFrame) -> None:
 # =========================================================
 
 def main():
+    s = log_step_start("Create target tables if not exist")
     create_target_tables_if_not_exist()
+    log_step_end("Create target tables if not exist", s)
 
+    s = log_step_start("Build eligible quotes")
     eligible_df = get_eligible_quotes()
+    log_df_count(eligible_df, "eligible_df")
     write_eligible_snapshot(eligible_df)
+    log_step_end("Build eligible quotes", s)
 
+    s = log_step_start("Read today's eligible snapshot")
     eligible_today_df = read_today_eligible_snapshot()
+    log_df_count(eligible_today_df, "eligible_today_df")
+    log_step_end("Read today's eligible snapshot", s)
 
+    s = log_step_start("Delete today's detail and summary partitions")
+    delete_run_partition(DETAIL_TABLE)
+    delete_run_partition(SUMMARY_TABLE)
+    log_step_end("Delete today's detail and summary partitions", s)
+
+    # ---------------- EHUBSTREAM ----------------
+    s = log_step_start("Process ehubstream")
     ehub_df = get_ehubstream_base()
+    log_df_count(ehub_df, "ehubstream_source_df")
+
+    ehub_detail = build_monitor_detail_aggregated(eligible_today_df, ehub_df, "ehubstream")
+    log_df_count(ehub_detail, "ehubstream_detail_df")
+
+    write_detail_append(ehub_detail)
+    log_step_end("Process ehubstream", s)
+
+    # ---------------- DLT RAW ENRICHMENTS ----------------
+    s = log_step_start("Process dlt_raw_enrichments")
     raw_enrichments_df = get_dlt_raw_enrichments_base()
+    log_df_count(raw_enrichments_df, "dlt_raw_enrichments_source_df")
+
+    raw_enrichments_detail = build_monitor_detail_aggregated(
+        eligible_today_df,
+        raw_enrichments_df,
+        "dlt_raw_enrichments"
+    )
+    log_df_count(raw_enrichments_detail, "dlt_raw_enrichments_detail_df")
+
+    write_detail_append(raw_enrichments_detail)
+    log_step_end("Process dlt_raw_enrichments", s)
+
+    # ---------------- DLT RATING REQUEST V2 ----------------
+    s = log_step_start("Process dlt_rating_request_v2")
     rating_v2_df = get_dlt_rating_request_v2_base()
+    log_df_count(rating_v2_df, "dlt_rating_request_v2_source_df")
 
-    ehub_detail = build_monitor_detail(eligible_today_df, ehub_df, "ehubstream")
-    raw_enrichments_detail = build_monitor_detail(eligible_today_df, raw_enrichments_df, "dlt_raw_enrichments")
-    rating_v2_detail = build_monitor_detail(eligible_today_df, rating_v2_df, "dlt_rating_request_v2")
+    rating_v2_detail = build_monitor_detail_aggregated(
+        eligible_today_df,
+        rating_v2_df,
+        "dlt_rating_request_v2"
+    )
+    log_df_count(rating_v2_detail, "dlt_rating_request_v2_detail_df")
 
-    detail_df = safe_union([
-        ehub_detail,
-        raw_enrichments_detail,
-        rating_v2_detail
-    ])
+    write_detail_append(rating_v2_detail)
+    log_step_end("Process dlt_rating_request_v2", s)
 
-    write_detail(detail_df)
+    # ---------------- SUMMARY ----------------
+    s = log_step_start("Build and write summary")
+    detail_today_df = (
+        spark.table(DETAIL_TABLE)
+        .filter(F.col("run_date") == F.current_date())
+    )
+    log_df_count(detail_today_df, "detail_today_df")
 
-    summary_df = build_summary(detail_df)
-    write_summary(summary_df)
+    summary_df = build_summary(detail_today_df)
+    log_df_count(summary_df, "summary_df")
 
-    print("DVLA payload deletion monitor completed successfully")
+    write_summary_append(summary_df)
+    log_step_end("Build and write summary", s)
+
+    total_elapsed = round(time.perf_counter() - JOB_START, 2)
+    log_line(f"JOB COMPLETED SUCCESSFULLY | total_elapsed_sec={total_elapsed}")
 
 main()
