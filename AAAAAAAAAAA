@@ -344,9 +344,7 @@ def write_summary(df: DataFrame) -> None:
 # =========================================================
 
 def main():
-    spark.conf.set("spark.sql.adaptive.enabled", "true")
-
-    eligible_df = get_eligible_quotes().cache()
+    eligible_df = get_eligible_quotes()
     write_eligible_snapshot(eligible_df)
 
     ehub_df = get_ehubstream_base()
@@ -369,8 +367,3 @@ def main():
     write_summary(summary_df)
 
     print("DVLA payload deletion monitor completed successfully")
-    print(f"Eligible quotes count: {eligible_df.count()}")
-    print(f"Detail rows count: {detail_df.count()}")
-    print(f"Summary rows count: {summary_df.count()}")
-
-main()
