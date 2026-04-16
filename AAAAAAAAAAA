@@ -13,13 +13,11 @@ from functools import reduce
 # CONFIG
 # =========================================================
 
-# ---- SOURCE TABLES: change only here if names differ in your workspace ----
 DIM_TABLE = "curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions"
 EHUBSTREAM_TABLE = "core.mqs_athn_mtr.ehubstream"
 DLT_RAW_ENRICHMENTS_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichments"
 DLT_RATING_REQUEST_V2_TABLE = "core.mqs_athn_mtr.dlt_rating_request_v2"
 
-# ---- OUTPUT TABLES ----
 ELIGIBLE_SNAPSHOT_TABLE = "core_bld.default.dvla_delete_eligible_quotes_daily"
 DETAIL_TABLE = "core_bld.default.dvla_payload_monitor_detail"
 SUMMARY_TABLE = "core_bld.default.dvla_payload_monitor_summary_daily"
@@ -174,7 +172,7 @@ def get_ehubstream_base() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
     )
 
-    payload_json = F.to_json(F.col("payload"))
+    payload_json = F.col("payload").cast("string")
 
     provider_array = F.transform(
         F.from_json(
@@ -239,7 +237,7 @@ def get_dlt_raw_enrichments_base() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
     )
 
-    payload_json = F.to_json(F.col("payload"))
+    payload_json = F.col("payload").cast("string")
 
     provider_array = F.transform(
         F.from_json(
@@ -283,7 +281,7 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
     )
 
-    payload_json = F.to_json(F.col("payload"))
+    payload_json = F.col("payload").cast("string")
 
     return (
         base_df
