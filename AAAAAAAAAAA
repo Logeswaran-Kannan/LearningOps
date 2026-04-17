@@ -10,11 +10,14 @@ from datetime import datetime
 # =========================================================
 
 DIM_TABLE = "curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions"
+
 EHUBSTREAM_TABLE = "core.mqs_athn_mtr.ehubstream"
 DLT_RAW_ENRICHMENTS_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichments"
 DLT_RATING_REQUEST_V2_TABLE = "core.mqs_athn_mtr.dlt_rating_request_v2"
+MQS_MYLICENCE_TABLE = "core.mqs_athn_mtr.mqs_mylicence"
 
-KPI_TABLE = "core_bld.default.dvla_payload_monitor_kpi_daily"
+MYLICENCE_SNAPSHOT_TABLE = "core_bld.default.mqs_mylicence_snapshot_daily"
+KPI_TABLE = "core_bld.default.dvla_deletion_kpi_daily"
 
 LOOKBACK_DAYS = 180
 ELIGIBILITY_DAYS = 60
@@ -36,27 +39,53 @@ def log_step_start(step_name: str) -> float:
     return time.perf_counter()
 
 def log_step_end(step_name: str, step_start: float) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     step_elapsed = round(time.perf_counter() - step_start, 2)
     total_elapsed = round(time.perf_counter() - JOB_START, 2)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] END: {step_name} | step_elapsed_sec={step_elapsed} | total_elapsed_sec={total_elapsed}")
 
 # =========================================================
-# TARGET TABLE
+# HELPERS
 # =========================================================
 
-def create_target_table_if_not_exists() -> None:
+def safe_union(dfs: list[DataFrame]) -> DataFrame:
+    valid = [df for df in dfs if df is not None]
+    if not valid:
+        raise ValueError("No DataFrames provided for union")
+    return reduce(lambda x, y: x.unionByName(y, allowMissingColumns=True), valid)
+
+def delete_today_partition(table_name: str) -> None:
+    spark.sql(f"""
+        DELETE FROM {table_name}
+        WHERE run_date = current_date()
+    """)
+
+# =========================================================
+# TARGET TABLES
+# =========================================================
+
+def create_target_tables_if_not_exist() -> None:
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {MYLICENCE_SNAPSHOT_TABLE} (
+            snapshot_date DATE,
+            mqs_quote_id STRING,
+            ehubqueueddatestamp DATE
+        )
+        USING DELTA
+        PARTITIONED BY (snapshot_date)
+    """)
+
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {KPI_TABLE} (
             run_date DATE,
             enqueued_date DATE,
             table_name STRING,
+            deletion_type STRING,
             message_type STRING,
             eligible_quotes BIGINT,
             deleted_quotes BIGINT,
             retained_quotes BIGINT,
             partial_deletion_quotes BIGINT,
-            not_found_in_target_quotes BIGINT,
             deletion_pct DOUBLE,
             created_ts TIMESTAMP
         )
@@ -64,14 +93,8 @@ def create_target_table_if_not_exists() -> None:
         PARTITIONED BY (run_date)
     """)
 
-def delete_today_partition() -> None:
-    spark.sql(f"""
-        DELETE FROM {KPI_TABLE}
-        WHERE run_date = current_date()
-    """)
-
 # =========================================================
-# ELIGIBLE QUOTES
+# ELIGIBLE QUOTES FROM DIM
 # =========================================================
 
 def get_eligible_quotes() -> DataFrame:
@@ -100,11 +123,11 @@ def get_eligible_quotes() -> DataFrame:
     )
 
 # =========================================================
-# SOURCE TABLE PREP
+# PAYLOAD-LEVEL SOURCE PREP
 # =========================================================
 
 def get_ehubstream_base() -> DataFrame:
-    base_df = (
+    df = (
         spark.table(EHUBSTREAM_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
@@ -128,31 +151,26 @@ def get_ehubstream_base() -> DataFrame:
     )
 
     return (
-        base_df
-        .withColumn(
+        df.withColumn(
             "dvla_status",
             F.when(
                 F.col("message_type") == "mqs-quote-request",
-                F.when(F.array_contains(provider_array, "mylicence"), F.lit("present"))
-                 .otherwise(F.lit("not_present"))
+                F.when(F.array_contains(provider_array, "mylicence"), "present").otherwise("not_present")
             ).when(
                 F.col("message_type") == "rating-request",
                 F.when(
-                    F.get_json_object(
-                        payload_json,
-                        "$.root.ratingRequestMessage[0].myLicence[0].dln"
-                    ).isNotNull(),
-                    F.lit("present")
-                ).otherwise(F.lit("not_present"))
+                    F.get_json_object(payload_json, "$.root.ratingRequestMessage[0].myLicence[0].dln").isNotNull(),
+                    "present"
+                ).otherwise("not_present")
             )
         )
         .withColumn("enqueued_date", F.to_date("event_ts"))
         .withColumn("table_name", F.lit("ehubstream"))
-        .select("table_name", "mqs_quote_id", "message_type", "event_ts", "enqueued_date", "dvla_status")
+        .select("table_name", "mqs_quote_id", "message_type", "enqueued_date", "dvla_status")
     )
 
 def get_dlt_raw_enrichments_base() -> DataFrame:
-    base_df = (
+    df = (
         spark.table(DLT_RAW_ENRICHMENTS_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
@@ -175,19 +193,17 @@ def get_dlt_raw_enrichments_base() -> DataFrame:
     )
 
     return (
-        base_df
-        .withColumn(
+        df.withColumn(
             "dvla_status",
-            F.when(F.array_contains(provider_array, "mylicence"), F.lit("present"))
-             .otherwise(F.lit("not_present"))
+            F.when(F.array_contains(provider_array, "mylicence"), "present").otherwise("not_present")
         )
         .withColumn("enqueued_date", F.to_date("event_ts"))
         .withColumn("table_name", F.lit("dlt_raw_enrichments"))
-        .select("table_name", "mqs_quote_id", "message_type", "event_ts", "enqueued_date", "dvla_status")
+        .select("table_name", "mqs_quote_id", "message_type", "enqueued_date", "dvla_status")
     )
 
 def get_dlt_rating_request_v2_base() -> DataFrame:
-    base_df = (
+    df = (
         spark.table(DLT_RATING_REQUEST_V2_TABLE)
         .select(
             F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
@@ -202,27 +218,23 @@ def get_dlt_rating_request_v2_base() -> DataFrame:
     payload_json = F.col("payload").cast("string")
 
     return (
-        base_df
-        .withColumn(
+        df.withColumn(
             "dvla_status",
             F.when(
-                F.get_json_object(
-                    payload_json,
-                    "$.root.ratingRequestMessage[0].myLicence[0].dln"
-                ).isNotNull(),
-                F.lit("present")
-            ).otherwise(F.lit("not_present"))
+                F.get_json_object(payload_json, "$.root.ratingRequestMessage[0].myLicence[0].dln").isNotNull(),
+                "present"
+            ).otherwise("not_present")
         )
         .withColumn("enqueued_date", F.to_date("event_ts"))
         .withColumn("table_name", F.lit("dlt_rating_request_v2"))
-        .select("table_name", "mqs_quote_id", "message_type", "event_ts", "enqueued_date", "dvla_status")
+        .select("table_name", "mqs_quote_id", "message_type", "enqueued_date", "dvla_status")
     )
 
 # =========================================================
-# KPI BUILD
+# PAYLOAD-LEVEL KPI
 # =========================================================
 
-def build_table_kpi(eligible_df: DataFrame, target_df: DataFrame, table_name: str) -> DataFrame:
+def build_payload_kpi(eligible_df: DataFrame, target_df: DataFrame) -> DataFrame:
     target_agg = (
         target_df.groupBy("table_name", "enqueued_date", "message_type", "mqs_quote_id")
         .agg(
@@ -238,26 +250,26 @@ def build_table_kpi(eligible_df: DataFrame, target_df: DataFrame, table_name: st
             F.current_date().alias("run_date"),
             F.col("t.enqueued_date"),
             F.col("t.table_name"),
+            F.lit("payload").alias("deletion_type"),
             F.col("t.message_type"),
             F.col("t.mqs_quote_id"),
-            F.when(F.col("e.mqs_quote_id").isNotNull(), F.lit(1)).otherwise(F.lit(0)).alias("eligible_flag"),
-            F.when(F.col("e.mqs_quote_id").isNull(), F.lit("NOT_ELIGIBLE"))
-             .when((F.col("t.present_row_count") == 0) & (F.col("t.not_present_row_count") > 0), F.lit("DELETED"))
-             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") == 0), F.lit("RETAINED"))
-             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") > 0), F.lit("PARTIAL"))
-             .otherwise(F.lit("UNKNOWN")).alias("monitor_status")
+            F.when(F.col("e.mqs_quote_id").isNotNull(), 1).otherwise(0).alias("eligible_flag"),
+            F.when(F.col("e.mqs_quote_id").isNull(), "NOT_ELIGIBLE")
+             .when((F.col("t.present_row_count") == 0) & (F.col("t.not_present_row_count") > 0), "DELETED")
+             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") == 0), "RETAINED")
+             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") > 0), "PARTIAL")
+             .otherwise("UNKNOWN").alias("monitor_status")
         )
     )
 
     return (
         classified
-        .groupBy("run_date", "enqueued_date", "table_name", "message_type")
+        .groupBy("run_date", "enqueued_date", "table_name", "deletion_type", "message_type")
         .agg(
             F.countDistinct(F.when(F.col("eligible_flag") == 1, F.col("mqs_quote_id"))).alias("eligible_quotes"),
             F.countDistinct(F.when(F.col("monitor_status") == "DELETED", F.col("mqs_quote_id"))).alias("deleted_quotes"),
             F.countDistinct(F.when(F.col("monitor_status") == "RETAINED", F.col("mqs_quote_id"))).alias("retained_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "PARTIAL", F.col("mqs_quote_id"))).alias("partial_deletion_quotes"),
-            F.countDistinct(F.when((F.col("eligible_flag") == 1) & (F.col("monitor_status") == "UNKNOWN"), F.col("mqs_quote_id"))).alias("not_found_in_target_quotes")
+            F.countDistinct(F.when(F.col("monitor_status") == "PARTIAL", F.col("mqs_quote_id"))).alias("partial_deletion_quotes")
         )
         .withColumn(
             "deletion_pct",
@@ -272,13 +284,138 @@ def build_table_kpi(eligible_df: DataFrame, target_df: DataFrame, table_name: st
         .withColumn("created_ts", F.current_timestamp().cast("timestamp"))
     )
 
+# =========================================================
+# ROW-LEVEL SNAPSHOT FOR MQS_MYLICENCE
+# =========================================================
+
+def snapshot_mqs_mylicence_daily() -> None:
+    delete_sql = f"""
+        DELETE FROM {MYLICENCE_SNAPSHOT_TABLE}
+        WHERE snapshot_date = current_date()
+    """
+    spark.sql(delete_sql)
+
+    snapshot_df = (
+        spark.table(MQS_MYLICENCE_TABLE)
+        .select(
+            F.current_date().alias("snapshot_date"),
+            F.col("MQSQuoteId").alias("mqs_quote_id"),
+            F.col("EHUBQUEUEDDATESTAMP").cast("date").alias("ehubqueueddatestamp")
+        )
+        .filter(F.col("mqs_quote_id").isNotNull())
+        .filter(F.col("ehubqueueddatestamp").isNotNull())
+    )
+
+    (
+        snapshot_df.write
+        .mode("append")
+        .saveAsTable(MYLICENCE_SNAPSHOT_TABLE)
+    )
+
+def get_latest_mylicence_snapshot() -> DataFrame:
+    latest_snapshot_date = (
+        spark.table(MYLICENCE_SNAPSHOT_TABLE)
+        .agg(F.max("snapshot_date").alias("snapshot_date"))
+        .collect()[0]["snapshot_date"]
+    )
+
+    return (
+        spark.table(MYLICENCE_SNAPSHOT_TABLE)
+        .filter(F.col("snapshot_date") == F.lit(latest_snapshot_date))
+        .select(
+            "snapshot_date",
+            "mqs_quote_id",
+            F.col("ehubqueueddatestamp").alias("enqueued_date")
+        )
+    )
+
+def get_live_mylicence_keys() -> DataFrame:
+    return (
+        spark.table(MQS_MYLICENCE_TABLE)
+        .select(F.col("MQSQuoteId").alias("mqs_quote_id"))
+        .filter(F.col("mqs_quote_id").isNotNull())
+        .dropDuplicates(["mqs_quote_id"])
+    )
+
+# =========================================================
+# ROW-LEVEL KPI FOR MQS_MYLICENCE
+# =========================================================
+
+def build_mylicence_row_level_kpi(eligible_df: DataFrame) -> DataFrame:
+    snapshot_df = get_latest_mylicence_snapshot()
+    live_df = get_live_mylicence_keys()
+
+    eligible_snapshot = (
+        snapshot_df.alias("s")
+        .join(eligible_df.alias("e"), on="mqs_quote_id", how="inner")
+        .select(
+            F.current_date().alias("run_date"),
+            F.col("s.enqueued_date"),
+            F.lit("mqs_mylicence").alias("table_name"),
+            F.lit("row").alias("deletion_type"),
+            F.lit("row-level").alias("message_type"),
+            F.col("s.mqs_quote_id")
+        )
+    )
+
+    classified = (
+        eligible_snapshot.alias("s")
+        .join(live_df.alias("l"), on="mqs_quote_id", how="left")
+        .select(
+            "run_date",
+            "enqueued_date",
+            "table_name",
+            "deletion_type",
+            "message_type",
+            F.col("s.mqs_quote_id"),
+            F.when(F.col("l.mqs_quote_id").isNull(), "DELETED").otherwise("RETAINED").alias("monitor_status")
+        )
+    )
+
+    return (
+        classified
+        .groupBy("run_date", "enqueued_date", "table_name", "deletion_type", "message_type")
+        .agg(
+            F.countDistinct("mqs_quote_id").alias("eligible_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "DELETED", F.col("mqs_quote_id"))).alias("deleted_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "RETAINED", F.col("mqs_quote_id"))).alias("retained_quotes")
+        )
+        .withColumn("partial_deletion_quotes", F.lit(0).cast("bigint"))
+        .withColumn(
+            "deletion_pct",
+            F.round(
+                F.when(
+                    F.col("eligible_quotes") > 0,
+                    (F.col("deleted_quotes") * F.lit(100.0)) / F.col("eligible_quotes")
+                ).otherwise(F.lit(None).cast("double")),
+                2
+            ).cast("double")
+        )
+        .withColumn("created_ts", F.current_timestamp().cast("timestamp"))
+    )
+
+# =========================================================
+# KPI WRITE
+# =========================================================
+
 def write_kpi(df: DataFrame) -> None:
     (
-        df.withColumn("created_ts", F.col("created_ts").cast("timestamp"))
-          .withColumn("deletion_pct", F.col("deletion_pct").cast("double"))
-          .write
-          .mode("append")
-          .saveAsTable(KPI_TABLE)
+        df.select(
+            "run_date",
+            "enqueued_date",
+            "table_name",
+            "deletion_type",
+            "message_type",
+            "eligible_quotes",
+            "deleted_quotes",
+            "retained_quotes",
+            "partial_deletion_quotes",
+            "deletion_pct",
+            "created_ts"
+        )
+        .write
+        .mode("append")
+        .saveAsTable(KPI_TABLE)
     )
 
 # =========================================================
@@ -286,32 +423,41 @@ def write_kpi(df: DataFrame) -> None:
 # =========================================================
 
 def main():
-    s = log_step_start("Create KPI table")
-    create_target_table_if_not_exists()
-    log_step_end("Create KPI table", s)
+    s = log_step_start("Create target tables")
+    create_target_tables_if_not_exist()
+    log_step_end("Create target tables", s)
 
     s = log_step_start("Delete today's KPI partition")
-    delete_today_partition()
+    delete_today_partition(KPI_TABLE)
     log_step_end("Delete today's KPI partition", s)
 
-    s = log_step_start("Build eligible quotes")
+    s = log_step_start("Build eligible quotes from dim")
     eligible_df = get_eligible_quotes()
-    log_step_end("Build eligible quotes", s)
+    log_step_end("Build eligible quotes from dim", s)
 
-    s = log_step_start("Build ehubstream KPI")
-    ehub_kpi = build_table_kpi(eligible_df, get_ehubstream_base(), "ehubstream")
+    s = log_step_start("Take daily snapshot of mqs_mylicence")
+    snapshot_mqs_mylicence_daily()
+    log_step_end("Take daily snapshot of mqs_mylicence", s)
+
+    s = log_step_start("Build payload KPI - ehubstream")
+    ehub_kpi = build_payload_kpi(eligible_df, get_ehubstream_base())
     write_kpi(ehub_kpi)
-    log_step_end("Build ehubstream KPI", s)
+    log_step_end("Build payload KPI - ehubstream", s)
 
-    s = log_step_start("Build dlt_raw_enrichments KPI")
-    raw_kpi = build_table_kpi(eligible_df, get_dlt_raw_enrichments_base(), "dlt_raw_enrichments")
+    s = log_step_start("Build payload KPI - dlt_raw_enrichments")
+    raw_kpi = build_payload_kpi(eligible_df, get_dlt_raw_enrichments_base())
     write_kpi(raw_kpi)
-    log_step_end("Build dlt_raw_enrichments KPI", s)
+    log_step_end("Build payload KPI - dlt_raw_enrichments", s)
 
-    s = log_step_start("Build dlt_rating_request_v2 KPI")
-    rating_kpi = build_table_kpi(eligible_df, get_dlt_rating_request_v2_base(), "dlt_rating_request_v2")
+    s = log_step_start("Build payload KPI - dlt_rating_request_v2")
+    rating_kpi = build_payload_kpi(eligible_df, get_dlt_rating_request_v2_base())
     write_kpi(rating_kpi)
-    log_step_end("Build dlt_rating_request_v2 KPI", s)
+    log_step_end("Build payload KPI - dlt_rating_request_v2", s)
+
+    s = log_step_start("Build row-level KPI - mqs_mylicence")
+    mylicence_kpi = build_mylicence_row_level_kpi(eligible_df)
+    write_kpi(mylicence_kpi)
+    log_step_end("Build row-level KPI - mqs_mylicence", s)
 
     log_line("JOB COMPLETED SUCCESSFULLY")
 
