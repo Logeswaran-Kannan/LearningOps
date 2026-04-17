@@ -1,17 +1,12 @@
+DROP TABLE IF EXISTS core_bld.default.dvla_delete_eligible_quotes_daily;
+DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_detail;
+DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_summary_daily;
+
+
 # Databricks PySpark job
 # DVLA Payload Deletion Monitor
-# Covers:
-#   1. ehubstream
-#   2. dlt_raw_enrichments
-#   3. dlt_rating_request_v2
-#
-# Detail table stores EXCEPTIONS ONLY:
-#   - ELIGIBLE_RETAINED_ALL
-#   - ELIGIBLE_PARTIAL_DELETION
-#   - NOT_FOUND_IN_TARGET
-#   - ORPHAN_PRESENT
-#
-# Summary table stores FULL KPI population.
+# Detail table stores exceptions only
+# Summary table stores full KPI population
 
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
@@ -132,7 +127,7 @@ def create_target_tables_if_not_exist() -> None:
             orphan_not_present_quotes BIGINT,
             max_days_from_dwh INT,
             avg_days_from_dwh DOUBLE,
-            deletion_pct DECIMAL(10,2),
+            deletion_pct DOUBLE,
             created_ts TIMESTAMP
         )
         USING DELTA
@@ -156,12 +151,10 @@ def get_eligible_quotes() -> DataFrame:
         .filter(F.col("mqs_quote_id").isNotNull())
         .filter(F.coalesce(F.col("latest_quote_journey_desc"), F.lit("")) != F.lit(EXCLUDED_JOURNEY))
         .filter(F.col("dwh_date").isNotNull())
-        # day 60 not eligible, day 61+ eligible
         .filter(F.col("dwh_date") < F.date_sub(F.current_date(), ELIGIBILITY_DAYS))
         .withColumn("days_from_dwh", F.datediff(F.current_date(), F.col("dwh_date")))
     )
 
-    # Keep latest dim row per quote id
     w = Window.partitionBy("mqs_quote_id").orderBy(F.col("dwh_create_dts").desc_nulls_last())
 
     return (
@@ -455,19 +448,20 @@ def build_summary(detail_df: DataFrame) -> DataFrame:
         )
         .withColumn(
             "deletion_pct",
-            F.round(
-                F.when(
-                    F.col("eligible_quotes") > 0,
-                    (F.col("deleted_all_quotes") * F.lit(100.0)) / F.col("eligible_quotes")
-                ),
-                2
-            )
+            F.when(
+                F.col("eligible_quotes") > 0,
+                (F.col("deleted_all_quotes") * F.lit(100.0)) / F.col("eligible_quotes")
+            ).otherwise(F.lit(None).cast("double"))
         )
+        .withColumn("deletion_pct", F.round(F.col("deletion_pct"), 2).cast("double"))
         .withColumn("created_ts", F.current_timestamp().cast("timestamp"))
     )
 
 def write_summary_append(df: DataFrame) -> None:
-    final_df = df.withColumn("created_ts", F.col("created_ts").cast("timestamp"))
+    final_df = (
+        df.withColumn("deletion_pct", F.col("deletion_pct").cast("double"))
+          .withColumn("created_ts", F.col("created_ts").cast("timestamp"))
+    )
 
     (
         final_df.write
@@ -498,7 +492,6 @@ def main():
     delete_run_partition(SUMMARY_TABLE)
     log_step_end("Delete today's detail and summary partitions", s)
 
-    # EHUBSTREAM
     s = log_step_start("Process ehubstream")
     ehub_df = get_ehubstream_base()
     ehub_detail_full = build_monitor_detail_aggregated(eligible_today_df, ehub_df, "ehubstream")
@@ -506,7 +499,6 @@ def main():
     write_detail_append(ehub_detail_exceptions)
     log_step_end("Process ehubstream", s)
 
-    # DLT RAW ENRICHMENTS
     s = log_step_start("Process dlt_raw_enrichments")
     raw_enrichments_df = get_dlt_raw_enrichments_base()
     raw_enrichments_detail_full = build_monitor_detail_aggregated(
@@ -518,7 +510,6 @@ def main():
     write_detail_append(raw_enrichments_detail_exceptions)
     log_step_end("Process dlt_raw_enrichments", s)
 
-    # DLT RATING REQUEST V2
     s = log_step_start("Process dlt_rating_request_v2")
     rating_v2_df = get_dlt_rating_request_v2_base()
     rating_v2_detail_full = build_monitor_detail_aggregated(
@@ -530,7 +521,6 @@ def main():
     write_detail_append(rating_v2_detail_exceptions)
     log_step_end("Process dlt_rating_request_v2", s)
 
-    # SUMMARY
     s = log_step_start("Build and write summary")
     all_detail_full = safe_union([
         ehub_detail_full,
