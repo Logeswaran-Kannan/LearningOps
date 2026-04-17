@@ -1,32 +1,82 @@
-SELECT
-    enqueued_date,
-    table_name,
-    deletion_type,
-    message_type,
-    total_count,
-    eligible_quotes,
-    deleted_quotes,
-    retained_quotes,
-    partial_deletion_quotes,
-    orphan_count,
-    dvla_present_count,
-    deletion_pct,
-    (eligible_quotes - deleted_quotes) AS deletion_gap,
-    ROUND(
-        100.0 * (retained_quotes + partial_deletion_quotes) / NULLIF(eligible_quotes, 0),
-        2
-    ) AS retention_failure_pct,
-    ROUND(
-        100.0 * orphan_count / NULLIF(total_count, 0),
-        2
-    ) AS orphan_pct,
-    ROUND(
-        100.0 * dvla_present_count / NULLIF(total_count, 0),
-        2
-    ) AS dvla_present_pct,
-    ROUND(
-        100.0 * eligible_quotes / NULLIF(total_count, 0),
-        2
-    ) AS eligible_share_pct
-FROM core_bld.default.dvla_deletion_kpi_daily
-ORDER BY enqueued_date DESC, table_name, message_type;
+def build_payload_kpi(eligible_df: DataFrame, target_df: DataFrame) -> DataFrame:
+    target_agg = (
+        target_df.groupBy("table_name", "enqueued_date", "message_type", "mqs_quote_id")
+        .agg(
+            F.sum(F.when(F.col("dvla_status") == "present", 1).otherwise(0)).alias("present_row_count"),
+            F.sum(F.when(F.col("dvla_status") == "not_present", 1).otherwise(0)).alias("not_present_row_count")
+        )
+    )
+
+    classified = (
+        target_agg.alias("t")
+        .join(eligible_df.alias("e"), on="mqs_quote_id", how="left")
+        .select(
+            F.current_date().alias("run_date"),
+            F.col("t.enqueued_date"),
+            F.col("t.table_name"),
+            F.lit("payload").alias("deletion_type"),
+            F.col("t.message_type"),
+            F.col("t.mqs_quote_id"),
+            F.col("t.present_row_count"),
+            F.col("t.not_present_row_count"),
+            F.when(F.col("e.mqs_quote_id").isNotNull(), 1).otherwise(0).alias("eligible_flag"),
+
+            F.when(
+                (
+                    (
+                        (F.col("t.table_name") == "ehubstream") &
+                        (F.col("t.message_type") == "rating-request")
+                    ) |
+                    (F.col("t.table_name") == "dlt_rating_request_v2")
+                ) &
+                F.col("e.mqs_quote_id").isNull() &
+                (F.col("t.present_row_count") > 0),
+                F.lit("ORPHAN")
+            )
+            .when(
+                F.col("e.mqs_quote_id").isNotNull() &
+                (F.col("t.present_row_count") == 0) &
+                (F.col("t.not_present_row_count") > 0),
+                F.lit("DELETED")
+            )
+            .when(
+                F.col("e.mqs_quote_id").isNotNull() &
+                (F.col("t.present_row_count") > 0) &
+                (F.col("t.not_present_row_count") == 0),
+                F.lit("RETAINED")
+            )
+            .when(
+                F.col("e.mqs_quote_id").isNotNull() &
+                (F.col("t.present_row_count") > 0) &
+                (F.col("t.not_present_row_count") > 0),
+                F.lit("PARTIAL")
+            )
+            .otherwise(F.lit("OUT_OF_SCOPE"))
+            .alias("monitor_status")
+        )
+    )
+
+    return (
+        classified
+        .groupBy("run_date", "enqueued_date", "table_name", "deletion_type", "message_type")
+        .agg(
+            F.countDistinct("mqs_quote_id").alias("total_count"),
+            F.countDistinct(F.when(F.col("eligible_flag") == 1, F.col("mqs_quote_id"))).alias("eligible_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "DELETED", F.col("mqs_quote_id"))).alias("deleted_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "RETAINED", F.col("mqs_quote_id"))).alias("retained_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "PARTIAL", F.col("mqs_quote_id"))).alias("partial_deletion_quotes"),
+            F.countDistinct(F.when(F.col("monitor_status") == "ORPHAN", F.col("mqs_quote_id"))).alias("orphan_count"),
+            F.countDistinct(F.when(F.col("present_row_count") > 0, F.col("mqs_quote_id"))).alias("dvla_present_count")
+        )
+        .withColumn(
+            "deletion_pct",
+            F.round(
+                F.when(
+                    F.col("eligible_quotes") > 0,
+                    (F.col("deleted_quotes") * F.lit(100.0)) / F.col("eligible_quotes")
+                ).otherwise(F.lit(None).cast("double")),
+                2
+            ).cast("double")
+        )
+        .withColumn("created_ts", F.current_timestamp().cast("timestamp"))
+    )
