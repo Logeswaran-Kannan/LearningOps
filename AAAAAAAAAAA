@@ -1,537 +1,200 @@
-DROP TABLE IF EXISTS core_bld.default.dvla_delete_eligible_quotes_daily;
-DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_detail;
-DROP TABLE IF EXISTS core_bld.default.dvla_payload_monitor_summary_daily;
+Dashboard SQLs
+A. Headline KPI cards for latest run
+WITH latest_run AS (
+  SELECT MAX(run_date) AS run_date
+  FROM core_bld.default.dvla_payload_monitor_summary_daily
+)
+SELECT
+    s.run_date,
+    SUM(s.eligible_quotes)               AS eligible_quotes,
+    SUM(s.deleted_all_quotes)            AS deleted_all_quotes,
+    SUM(s.retained_all_quotes)           AS retained_all_quotes,
+    SUM(s.partial_deletion_quotes)       AS partial_deletion_quotes,
+    SUM(s.not_found_in_target_quotes)    AS not_found_in_target_quotes,
+    SUM(s.orphan_present_quotes)         AS orphan_present_quotes,
+    ROUND(
+        100.0 * SUM(s.deleted_all_quotes) / NULLIF(SUM(s.eligible_quotes), 0),
+        2
+    ) AS deletion_pct
+FROM core_bld.default.dvla_payload_monitor_summary_daily s
+JOIN latest_run l
+  ON s.run_date = l.run_date
+GROUP BY s.run_date;
+B. Table-wise KPI comparison for latest run
+WITH latest_run AS (
+  SELECT MAX(run_date) AS run_date
+  FROM core_bld.default.dvla_payload_monitor_summary_daily
+)
+SELECT
+    s.run_date,
+    s.table_name,
+    s.message_type,
+    s.eligible_quotes,
+    s.deleted_all_quotes,
+    s.retained_all_quotes,
+    s.partial_deletion_quotes,
+    s.not_found_in_target_quotes,
+    s.orphan_present_quotes,
+    s.orphan_not_present_quotes,
+    s.deletion_pct
+FROM core_bld.default.dvla_payload_monitor_summary_daily s
+JOIN latest_run l
+  ON s.run_date = l.run_date
+ORDER BY s.table_name, s.message_type;
+C. Daily trend by table
+SELECT
+    run_date,
+    table_name,
+    SUM(eligible_quotes)            AS eligible_quotes,
+    SUM(deleted_all_quotes)         AS deleted_all_quotes,
+    SUM(retained_all_quotes)        AS retained_all_quotes,
+    SUM(partial_deletion_quotes)    AS partial_deletion_quotes,
+    SUM(not_found_in_target_quotes) AS not_found_in_target_quotes,
+    SUM(orphan_present_quotes)      AS orphan_present_quotes,
+    ROUND(
+        100.0 * SUM(deleted_all_quotes) / NULLIF(SUM(eligible_quotes), 0),
+        2
+    ) AS deletion_pct
+FROM core_bld.default.dvla_payload_monitor_summary_daily
+GROUP BY run_date, table_name
+ORDER BY run_date, table_name;
 
+Use this for a line chart.
 
-# Databricks PySpark job
-# DVLA Payload Deletion Monitor
-# Detail table stores exceptions only
-# Summary table stores full KPI population
+D. Overall daily trend
+SELECT
+    run_date,
+    SUM(eligible_quotes)            AS eligible_quotes,
+    SUM(deleted_all_quotes)         AS deleted_all_quotes,
+    SUM(retained_all_quotes)        AS retained_all_quotes,
+    SUM(partial_deletion_quotes)    AS partial_deletion_quotes,
+    SUM(not_found_in_target_quotes) AS not_found_in_target_quotes,
+    SUM(orphan_present_quotes)      AS orphan_present_quotes,
+    ROUND(
+        100.0 * SUM(deleted_all_quotes) / NULLIF(SUM(eligible_quotes), 0),
+        2
+    ) AS deletion_pct
+FROM core_bld.default.dvla_payload_monitor_summary_daily
+GROUP BY run_date
+ORDER BY run_date;
+E. Latest run exception detail
 
-from pyspark.sql import functions as F
-from pyspark.sql import DataFrame
-from pyspark.sql.window import Window
-from functools import reduce
-import time
-from datetime import datetime
+This is the main drilldown grid.
 
-# =========================================================
-# CONFIG
-# =========================================================
+WITH latest_run AS (
+  SELECT MAX(run_date) AS run_date
+  FROM core_bld.default.dvla_payload_monitor_detail
+)
+SELECT
+    d.run_date,
+    d.table_name,
+    d.message_type,
+    d.mqs_quote_id,
+    d.quote_ref,
+    d.days_from_dwh,
+    d.target_row_count,
+    d.present_row_count,
+    d.not_present_row_count,
+    d.monitor_status,
+    d.event_ts,
+    d.event_date,
+    d.checked_ts
+FROM core_bld.default.dvla_payload_monitor_detail d
+JOIN latest_run l
+  ON d.run_date = l.run_date
+ORDER BY
+    d.table_name,
+    d.monitor_status,
+    d.days_from_dwh DESC,
+    d.mqs_quote_id;
+F. Exception count by table and status
+WITH latest_run AS (
+  SELECT MAX(run_date) AS run_date
+  FROM core_bld.default.dvla_payload_monitor_detail
+)
+SELECT
+    d.run_date,
+    d.table_name,
+    d.message_type,
+    d.monitor_status,
+    COUNT(*) AS exception_count
+FROM core_bld.default.dvla_payload_monitor_detail d
+JOIN latest_run l
+  ON d.run_date = l.run_date
+GROUP BY
+    d.run_date,
+    d.table_name,
+    d.message_type,
+    d.monitor_status
+ORDER BY
+    d.table_name,
+    d.message_type,
+    d.monitor_status;
 
-DIM_TABLE = "curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions"
-EHUBSTREAM_TABLE = "core.mqs_athn_mtr.ehubstream"
-DLT_RAW_ENRICHMENTS_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichments"
-DLT_RATING_REQUEST_V2_TABLE = "core.mqs_athn_mtr.dlt_rating_request_v2"
+This is good for stacked bars.
 
-ELIGIBLE_SNAPSHOT_TABLE = "core_bld.default.dvla_delete_eligible_quotes_daily"
-DETAIL_TABLE = "core_bld.default.dvla_payload_monitor_detail"
-SUMMARY_TABLE = "core_bld.default.dvla_payload_monitor_summary_daily"
-
-LOOKBACK_DAYS = 180
-ELIGIBILITY_DAYS = 60
-EXCLUDED_JOURNEY = "Athena Motor Sale"
-
-# =========================================================
-# TIMING / LOGGING
-# =========================================================
-
-JOB_START = time.perf_counter()
-
-def log_line(message: str) -> None:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    total_elapsed = round(time.perf_counter() - JOB_START, 2)
-    print(f"[{now}] {message} | total_elapsed_sec={total_elapsed}")
-
-def log_step_start(step_name: str) -> float:
-    log_line(f"START: {step_name}")
-    return time.perf_counter()
-
-def log_step_end(step_name: str, step_start: float) -> None:
-    step_elapsed = round(time.perf_counter() - step_start, 2)
-    total_elapsed = round(time.perf_counter() - JOB_START, 2)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] END: {step_name} | step_elapsed_sec={step_elapsed} | total_elapsed_sec={total_elapsed}")
-
-# =========================================================
-# HELPERS
-# =========================================================
-
-def safe_union(dfs: list[DataFrame]) -> DataFrame:
-    valid_dfs = [df for df in dfs if df is not None]
-    if not valid_dfs:
-        raise ValueError("No DataFrames provided for union")
-    return reduce(lambda x, y: x.unionByName(y, allowMissingColumns=True), valid_dfs)
-
-def delete_run_partition(table_name: str) -> None:
-    spark.sql(f"""
-        DELETE FROM {table_name}
-        WHERE run_date = current_date()
-    """)
-
-# =========================================================
-# TARGET TABLE CREATION
-# =========================================================
-
-def create_target_tables_if_not_exist() -> None:
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {ELIGIBLE_SNAPSHOT_TABLE} (
-            run_date DATE,
-            mqs_quote_id STRING,
-            quote_ref STRING,
-            dwh_date DATE,
-            dwh_create_dts TIMESTAMP,
-            latest_quote_journey_desc STRING,
-            days_from_dwh INT,
-            eligible_flag INT
-        )
-        USING DELTA
-        PARTITIONED BY (run_date)
-    """)
-
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {DETAIL_TABLE} (
-            run_date DATE,
-            table_name STRING,
-            message_type STRING,
-            mqs_quote_id STRING,
-            quote_ref STRING,
-            dwh_date DATE,
-            dwh_create_dts TIMESTAMP,
-            latest_quote_journey_desc STRING,
-            days_from_dwh INT,
-            eligible_flag INT,
-            target_row_count BIGINT,
-            present_row_count BIGINT,
-            not_present_row_count BIGINT,
-            event_ts TIMESTAMP,
-            event_date TIMESTAMP,
-            monitor_status STRING,
-            checked_ts TIMESTAMP
-        )
-        USING DELTA
-        PARTITIONED BY (run_date)
-    """)
-
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {SUMMARY_TABLE} (
-            run_date DATE,
-            table_name STRING,
-            message_type STRING,
-            eligible_quotes BIGINT,
-            deleted_all_quotes BIGINT,
-            retained_all_quotes BIGINT,
-            partial_deletion_quotes BIGINT,
-            not_found_in_target_quotes BIGINT,
-            orphan_present_quotes BIGINT,
-            orphan_not_present_quotes BIGINT,
-            max_days_from_dwh INT,
-            avg_days_from_dwh DOUBLE,
-            deletion_pct DOUBLE,
-            created_ts TIMESTAMP
-        )
-        USING DELTA
-        PARTITIONED BY (run_date)
-    """)
-
-# =========================================================
-# STEP 1 - ELIGIBLE QUOTES
-# =========================================================
-
-def get_eligible_quotes() -> DataFrame:
-    base_df = (
-        spark.table(DIM_TABLE)
-        .select(
-            F.col("MQS_QUOTE_ID").alias("mqs_quote_id"),
-            F.col("QUOTE_REF").alias("quote_ref"),
-            F.to_date("DWH_DATA_DTS").alias("dwh_date"),
-            F.col("DWH_CREATE_DTS").cast("timestamp").alias("dwh_create_dts"),
-            F.col("LATEST_QUOTE_JOURNEY_DESC").alias("latest_quote_journey_desc")
-        )
-        .filter(F.col("mqs_quote_id").isNotNull())
-        .filter(F.coalesce(F.col("latest_quote_journey_desc"), F.lit("")) != F.lit(EXCLUDED_JOURNEY))
-        .filter(F.col("dwh_date").isNotNull())
-        .filter(F.col("dwh_date") < F.date_sub(F.current_date(), ELIGIBILITY_DAYS))
-        .withColumn("days_from_dwh", F.datediff(F.current_date(), F.col("dwh_date")))
-    )
-
-    w = Window.partitionBy("mqs_quote_id").orderBy(F.col("dwh_create_dts").desc_nulls_last())
-
-    return (
-        base_df
-        .withColumn("rn", F.row_number().over(w))
-        .filter(F.col("rn") == 1)
-        .drop("rn")
-        .withColumn("run_date", F.current_date())
-        .withColumn("eligible_flag", F.lit(1))
-    )
-
-def write_eligible_snapshot(df: DataFrame) -> None:
-    delete_run_partition(ELIGIBLE_SNAPSHOT_TABLE)
-
-    final_df = df.withColumn("dwh_create_dts", F.col("dwh_create_dts").cast("timestamp"))
-
-    (
-        final_df.select(
-            "run_date",
-            "mqs_quote_id",
-            "quote_ref",
-            "dwh_date",
-            "dwh_create_dts",
-            "latest_quote_journey_desc",
-            "days_from_dwh",
-            "eligible_flag"
-        )
-        .write
-        .mode("append")
-        .saveAsTable(ELIGIBLE_SNAPSHOT_TABLE)
-    )
-
-def read_today_eligible_snapshot() -> DataFrame:
-    return (
-        spark.table(ELIGIBLE_SNAPSHOT_TABLE)
-        .filter(F.col("run_date") == F.current_date())
-    )
-
-# =========================================================
-# STEP 2 - TABLE SPECIFIC DVLA CHECKS
-# =========================================================
-
-def get_ehubstream_base() -> DataFrame:
-    base_df = (
-        spark.table(EHUBSTREAM_TABLE)
-        .select(
-            F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
-            F.col("headers")["messageType"].alias("message_type"),
-            F.col("payload"),
-            F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
-            F.col("eHubQueuedDatestamp").cast("timestamp").alias("event_date")
-        )
-        .filter(F.col("message_type").isin("mqs-quote-request", "rating-request"))
-        .filter(F.to_date("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
-        .filter(F.col("mqs_quote_id").isNotNull())
-    )
-
-    payload_json = F.col("payload").cast("string")
-
-    provider_array = F.transform(
-        F.from_json(
-            F.get_json_object(payload_json, "$.rawEnrichments"),
-            "array<struct<provider:string>>"
-        ),
-        lambda x: x["provider"]
-    )
-
-    return (
-        base_df
-        .withColumn(
-            "dvla_status",
-            F.when(
-                F.col("message_type") == "mqs-quote-request",
-                F.when(F.array_contains(provider_array, "mylicence"), F.lit("present"))
-                 .otherwise(F.lit("not_present"))
-            ).when(
-                F.col("message_type") == "rating-request",
-                F.when(
-                    F.get_json_object(
-                        payload_json,
-                        "$.root.ratingRequestMessage[0].myLicence[0].dln"
-                    ).isNotNull(),
-                    F.lit("present")
-                ).otherwise(F.lit("not_present"))
-            )
-        )
-        .withColumn("table_name", F.lit("ehubstream"))
-        .select(
-            "table_name",
-            "mqs_quote_id",
-            "message_type",
-            "event_ts",
-            "event_date",
-            "dvla_status"
-        )
-    )
-
-def get_dlt_raw_enrichments_base() -> DataFrame:
-    base_df = (
-        spark.table(DLT_RAW_ENRICHMENTS_TABLE)
-        .select(
-            F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
-            F.lit("mqs-quote-request").alias("message_type"),
-            F.col("payload"),
-            F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
-            F.col("eHubQueuedDatestamp").cast("timestamp").alias("event_date")
-        )
-        .filter(F.to_date("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
-        .filter(F.col("mqs_quote_id").isNotNull())
-    )
-
-    payload_json = F.col("payload").cast("string")
-
-    provider_array = F.transform(
-        F.from_json(
-            F.get_json_object(payload_json, "$.rawEnrichments"),
-            "array<struct<provider:string>>"
-        ),
-        lambda x: x["provider"]
-    )
-
-    return (
-        base_df
-        .withColumn(
-            "dvla_status",
-            F.when(F.array_contains(provider_array, "mylicence"), F.lit("present"))
-             .otherwise(F.lit("not_present"))
-        )
-        .withColumn("table_name", F.lit("dlt_raw_enrichments"))
-        .select(
-            "table_name",
-            "mqs_quote_id",
-            "message_type",
-            "event_ts",
-            "event_date",
-            "dvla_status"
-        )
-    )
-
-def get_dlt_rating_request_v2_base() -> DataFrame:
-    base_df = (
-        spark.table(DLT_RATING_REQUEST_V2_TABLE)
-        .select(
-            F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
-            F.lit("rating-request").alias("message_type"),
-            F.col("payload"),
-            F.col("enqueuedTime").cast("timestamp").alias("event_ts"),
-            F.col("eHubQueuedDatestamp").cast("timestamp").alias("event_date")
-        )
-        .filter(F.to_date("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
-        .filter(F.col("mqs_quote_id").isNotNull())
-    )
-
-    payload_json = F.col("payload").cast("string")
-
-    return (
-        base_df
-        .withColumn(
-            "dvla_status",
-            F.when(
-                F.get_json_object(
-                    payload_json,
-                    "$.root.ratingRequestMessage[0].myLicence[0].dln"
-                ).isNotNull(),
-                F.lit("present")
-            ).otherwise(F.lit("not_present"))
-        )
-        .withColumn("table_name", F.lit("dlt_rating_request_v2"))
-        .select(
-            "table_name",
-            "mqs_quote_id",
-            "message_type",
-            "event_ts",
-            "event_date",
-            "dvla_status"
-        )
-    )
-
-# =========================================================
-# STEP 3 - AGGREGATED CLASSIFICATION
-# =========================================================
-
-def build_monitor_detail_aggregated(eligible_df: DataFrame, target_df: DataFrame, table_name: str) -> DataFrame:
-    target_agg = (
-        target_df.groupBy("mqs_quote_id", "message_type")
-        .agg(
-            F.count("*").alias("target_row_count"),
-            F.sum(F.when(F.col("dvla_status") == "present", 1).otherwise(0)).alias("present_row_count"),
-            F.sum(F.when(F.col("dvla_status") == "not_present", 1).otherwise(0)).alias("not_present_row_count"),
-            F.max(F.col("event_ts").cast("timestamp")).alias("event_ts"),
-            F.max(F.col("event_date").cast("timestamp")).alias("event_date")
-        )
-    )
-
-    eligible_side = (
-        eligible_df.alias("e")
-        .join(target_agg.alias("t"), on="mqs_quote_id", how="left")
-        .select(
-            F.col("e.run_date"),
-            F.lit(table_name).alias("table_name"),
-            F.col("t.message_type"),
-            F.col("e.mqs_quote_id"),
-            F.col("e.quote_ref"),
-            F.col("e.dwh_date"),
-            F.col("e.dwh_create_dts").cast("timestamp").alias("dwh_create_dts"),
-            F.col("e.latest_quote_journey_desc"),
-            F.col("e.days_from_dwh"),
-            F.col("e.eligible_flag"),
-            F.col("t.target_row_count"),
-            F.col("t.present_row_count"),
-            F.col("t.not_present_row_count"),
-            F.col("t.event_ts").cast("timestamp").alias("event_ts"),
-            F.col("t.event_date").cast("timestamp").alias("event_date"),
-            F.when(F.col("t.target_row_count").isNull(), F.lit("NOT_FOUND_IN_TARGET"))
-             .when((F.col("t.present_row_count") == 0) & (F.col("t.not_present_row_count") > 0), F.lit("ELIGIBLE_DELETED_ALL"))
-             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") == 0), F.lit("ELIGIBLE_RETAINED_ALL"))
-             .when((F.col("t.present_row_count") > 0) & (F.col("t.not_present_row_count") > 0), F.lit("ELIGIBLE_PARTIAL_DELETION"))
-             .otherwise(F.lit("UNKNOWN")).alias("monitor_status"),
-            F.current_timestamp().cast("timestamp").alias("checked_ts")
-        )
-    )
-
-    orphan_side = (
-        target_agg.alias("t")
-        .join(eligible_df.alias("e"), on="mqs_quote_id", how="leftanti")
-        .select(
-            F.current_date().alias("run_date"),
-            F.lit(table_name).alias("table_name"),
-            F.col("t.message_type"),
-            F.col("t.mqs_quote_id"),
-            F.lit(None).cast("string").alias("quote_ref"),
-            F.lit(None).cast("date").alias("dwh_date"),
-            F.lit(None).cast("timestamp").alias("dwh_create_dts"),
-            F.lit(None).cast("string").alias("latest_quote_journey_desc"),
-            F.lit(None).cast("int").alias("days_from_dwh"),
-            F.lit(0).alias("eligible_flag"),
-            F.col("t.target_row_count"),
-            F.col("t.present_row_count"),
-            F.col("t.not_present_row_count"),
-            F.col("t.event_ts").cast("timestamp").alias("event_ts"),
-            F.col("t.event_date").cast("timestamp").alias("event_date"),
-            F.when(F.col("t.present_row_count") > 0, F.lit("ORPHAN_PRESENT"))
-             .otherwise(F.lit("ORPHAN_NOT_PRESENT")).alias("monitor_status"),
-            F.current_timestamp().cast("timestamp").alias("checked_ts")
-        )
-    )
-
-    return safe_union([eligible_side, orphan_side])
-
-def filter_exception_detail(df: DataFrame) -> DataFrame:
-    return df.filter(
-        F.col("monitor_status").isin(
-            "ELIGIBLE_RETAINED_ALL",
-            "ELIGIBLE_PARTIAL_DELETION",
-            "NOT_FOUND_IN_TARGET",
-            "ORPHAN_PRESENT"
-        )
-    )
-
-def write_detail_append(df: DataFrame) -> None:
-    final_df = (
-        df.withColumn("dwh_create_dts", F.col("dwh_create_dts").cast("timestamp"))
-          .withColumn("event_ts", F.col("event_ts").cast("timestamp"))
-          .withColumn("event_date", F.col("event_date").cast("timestamp"))
-          .withColumn("checked_ts", F.col("checked_ts").cast("timestamp"))
-    )
-
-    (
-        final_df.write
-        .mode("append")
-        .saveAsTable(DETAIL_TABLE)
-    )
-
-# =========================================================
-# STEP 4 - SUMMARY
-# =========================================================
-
-def build_summary(detail_df: DataFrame) -> DataFrame:
-    return (
-        detail_df.groupBy("run_date", "table_name", "message_type")
-        .agg(
-            F.countDistinct(F.when(F.col("eligible_flag") == 1, F.col("mqs_quote_id"))).alias("eligible_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_DELETED_ALL", F.col("mqs_quote_id"))).alias("deleted_all_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_RETAINED_ALL", F.col("mqs_quote_id"))).alias("retained_all_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "ELIGIBLE_PARTIAL_DELETION", F.col("mqs_quote_id"))).alias("partial_deletion_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "NOT_FOUND_IN_TARGET", F.col("mqs_quote_id"))).alias("not_found_in_target_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "ORPHAN_PRESENT", F.col("mqs_quote_id"))).alias("orphan_present_quotes"),
-            F.countDistinct(F.when(F.col("monitor_status") == "ORPHAN_NOT_PRESENT", F.col("mqs_quote_id"))).alias("orphan_not_present_quotes"),
-            F.max("days_from_dwh").alias("max_days_from_dwh"),
-            F.avg("days_from_dwh").alias("avg_days_from_dwh")
-        )
-        .withColumn(
-            "deletion_pct",
-            F.when(
-                F.col("eligible_quotes") > 0,
-                (F.col("deleted_all_quotes") * F.lit(100.0)) / F.col("eligible_quotes")
-            ).otherwise(F.lit(None).cast("double"))
-        )
-        .withColumn("deletion_pct", F.round(F.col("deletion_pct"), 2).cast("double"))
-        .withColumn("created_ts", F.current_timestamp().cast("timestamp"))
-    )
-
-def write_summary_append(df: DataFrame) -> None:
-    final_df = (
-        df.withColumn("deletion_pct", F.col("deletion_pct").cast("double"))
-          .withColumn("created_ts", F.col("created_ts").cast("timestamp"))
-    )
-
-    (
-        final_df.write
-        .mode("append")
-        .saveAsTable(SUMMARY_TABLE)
-    )
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def main():
-    s = log_step_start("Create target tables if not exist")
-    create_target_tables_if_not_exist()
-    log_step_end("Create target tables if not exist", s)
-
-    s = log_step_start("Build eligible quotes")
-    eligible_df = get_eligible_quotes()
-    write_eligible_snapshot(eligible_df)
-    log_step_end("Build eligible quotes", s)
-
-    s = log_step_start("Read today's eligible snapshot")
-    eligible_today_df = read_today_eligible_snapshot()
-    log_step_end("Read today's eligible snapshot", s)
-
-    s = log_step_start("Delete today's detail and summary partitions")
-    delete_run_partition(DETAIL_TABLE)
-    delete_run_partition(SUMMARY_TABLE)
-    log_step_end("Delete today's detail and summary partitions", s)
-
-    s = log_step_start("Process ehubstream")
-    ehub_df = get_ehubstream_base()
-    ehub_detail_full = build_monitor_detail_aggregated(eligible_today_df, ehub_df, "ehubstream")
-    ehub_detail_exceptions = filter_exception_detail(ehub_detail_full)
-    write_detail_append(ehub_detail_exceptions)
-    log_step_end("Process ehubstream", s)
-
-    s = log_step_start("Process dlt_raw_enrichments")
-    raw_enrichments_df = get_dlt_raw_enrichments_base()
-    raw_enrichments_detail_full = build_monitor_detail_aggregated(
-        eligible_today_df,
-        raw_enrichments_df,
-        "dlt_raw_enrichments"
-    )
-    raw_enrichments_detail_exceptions = filter_exception_detail(raw_enrichments_detail_full)
-    write_detail_append(raw_enrichments_detail_exceptions)
-    log_step_end("Process dlt_raw_enrichments", s)
-
-    s = log_step_start("Process dlt_rating_request_v2")
-    rating_v2_df = get_dlt_rating_request_v2_base()
-    rating_v2_detail_full = build_monitor_detail_aggregated(
-        eligible_today_df,
-        rating_v2_df,
-        "dlt_rating_request_v2"
-    )
-    rating_v2_detail_exceptions = filter_exception_detail(rating_v2_detail_full)
-    write_detail_append(rating_v2_detail_exceptions)
-    log_step_end("Process dlt_rating_request_v2", s)
-
-    s = log_step_start("Build and write summary")
-    all_detail_full = safe_union([
-        ehub_detail_full,
-        raw_enrichments_detail_full,
-        rating_v2_detail_full
-    ])
-    summary_df = build_summary(all_detail_full)
-    write_summary_append(summary_df)
-    log_step_end("Build and write summary", s)
-
-    total_elapsed = round(time.perf_counter() - JOB_START, 2)
-    log_line(f"JOB COMPLETED SUCCESSFULLY | total_elapsed_sec={total_elapsed}")
-
-main()
+G. Ageing buckets for exceptions
+WITH latest_run AS (
+  SELECT MAX(run_date) AS run_date
+  FROM core_bld.default.dvla_payload_monitor_detail
+)
+SELECT
+    d.table_name,
+    d.message_type,
+    d.monitor_status,
+    CASE
+        WHEN d.days_from_dwh BETWEEN 61 AND 70 THEN '61-70'
+        WHEN d.days_from_dwh BETWEEN 71 AND 90 THEN '71-90'
+        WHEN d.days_from_dwh BETWEEN 91 AND 120 THEN '91-120'
+        WHEN d.days_from_dwh > 120 THEN '120+'
+        ELSE 'UNKNOWN'
+    END AS ageing_bucket,
+    COUNT(*) AS quote_count
+FROM core_bld.default.dvla_payload_monitor_detail d
+JOIN latest_run l
+  ON d.run_date = l.run_date
+GROUP BY
+    d.table_name,
+    d.message_type,
+    d.monitor_status,
+    CASE
+        WHEN d.days_from_dwh BETWEEN 61 AND 70 THEN '61-70'
+        WHEN d.days_from_dwh BETWEEN 71 AND 90 THEN '71-90'
+        WHEN d.days_from_dwh BETWEEN 91 AND 120 THEN '91-120'
+        WHEN d.days_from_dwh > 120 THEN '120+'
+        ELSE 'UNKNOWN'
+    END
+ORDER BY
+    d.table_name,
+    d.message_type,
+    d.monitor_status,
+    ageing_bucket;
+H. Worst affected quotes
+WITH latest_run AS (
+  SELECT MAX(run_date) AS run_date
+  FROM core_bld.default.dvla_payload_monitor_detail
+)
+SELECT
+    d.run_date,
+    d.table_name,
+    d.message_type,
+    d.mqs_quote_id,
+    d.quote_ref,
+    d.days_from_dwh,
+    d.target_row_count,
+    d.present_row_count,
+    d.not_present_row_count,
+    d.monitor_status
+FROM core_bld.default.dvla_payload_monitor_detail d
+JOIN latest_run l
+  ON d.run_date = l.run_date
+WHERE d.monitor_status IN (
+    'ELIGIBLE_RETAINED_ALL',
+    'ELIGIBLE_PARTIAL_DELETION',
+    'ORPHAN_PRESENT'
+)
+ORDER BY
+    d.days_from_dwh DESC,
+    d.present_row_count DESC,
+    d.target_row_count DESC
+LIMIT 100;
