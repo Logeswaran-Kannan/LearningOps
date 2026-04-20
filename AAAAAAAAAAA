@@ -1,11 +1,84 @@
-SELECT
-  enqueued_date,
-  table_name,
-  message_type,
-  dvla_present_count,
-  orphan_count,
-  eligible_dvla_present_count,
-  out_of_scope_dvla_present_count,
-  (orphan_count + eligible_dvla_present_count + out_of_scope_dvla_present_count) AS split_sum
-FROM core_bld.default.dvla_deletion_kpi_daily
-ORDER BY enqueued_date DESC, table_name, message_type;
+from pyspark.sql import functions as F
+from pyspark.sql import DataFrame
+from pyspark.sql.window import Window
+import time
+from datetime import datetime
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+DIM_TABLE = "curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions"
+
+EHUBSTREAM_TABLE = "core.mqs_athn_mtr.ehubstream"
+DLT_RAW_ENRICHMENTS_TABLE = "core.mqs_athn_mtr.dlt_raw_enrichments"
+DLT_RATING_REQUEST_V2_TABLE = "core.mqs_athn_mtr.dlt_rating_request_v2"
+MQS_MYLICENCE_TABLE = "core.mqs_athn_mtr.mqs_mylicence"
+
+MYLICENCE_SNAPSHOT_TABLE = "core_bld.default.mqs_mylicence_snapshot_daily"
+KPI_TABLE = "core_bld.default.dvla_deletion_kpi_daily"
+
+LOOKBACK_DAYS = 180
+ELIGIBILITY_DAYS = 60
+EXCLUDED_JOURNEY = "Athena Motor Sale"
+
+# =========================================================
+# LOGGING
+# =========================================================
+
+JOB_START = time.perf_counter()
+
+def log_line(message: str) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total_elapsed = round(time.perf_counter() - JOB_START, 2)
+    print(f"[{now}] {message} | total_elapsed_sec={total_elapsed}")
+
+def log_step_start(step_name: str) -> float:
+    log_line(f"START: {step_name}")
+    return time.perf_counter()
+
+def log_step_end(step_name: str, step_start: float) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    step_elapsed = round(time.perf_counter() - step_start, 2)
+    total_elapsed = round(time.perf_counter() - JOB_START, 2)
+    print(f"[{now}] END: {step_name} | step_elapsed_sec={step_elapsed} | total_elapsed_sec={total_elapsed}")
+
+# =========================================================
+# TARGET TABLES
+# =========================================================
+
+def create_target_tables_if_not_exist() -> None:
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {MYLICENCE_SNAPSHOT_TABLE} (
+            snapshot_date DATE,
+            mqs_quote_id STRING,
+            ehubqueueddatestamp DATE
+        )
+        USING DELTA
+        PARTITIONED BY (snapshot_date)
+    """)
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {KPI_TABLE} (
+            run_date DATE,
+            enqueued_date DATE,
+            table_name STRING,
+            deletion_type STRING,
+            message_type STRING,
+            total_count BIGINT,
+            eligible_quotes BIGINT,
+            deleted_quotes BIGINT,
+            retained_quotes BIGINT,
+            partial_deletion_quotes BIGINT,
+            orphan_count BIGINT,
+            dvla_present_count BIGINT,
+            eligible_dvla_present_count BIGINT,
+            out_of_scope_dvla_present_count BIGINT,
+            deletion_pct DOUBLE,
+            created_ts TIMESTAMP
+        )
+        USING DELTA
+        PARTITIONED BY (run_date)
+    """)
+
+def delete_today_kpi_partition() ->
