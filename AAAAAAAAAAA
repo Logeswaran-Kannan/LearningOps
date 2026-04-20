@@ -534,3 +534,18 @@ def main():
     log_line("JOB COMPLETED SUCCESSFULLY")
 
 main()
+
+
+________________
+
+SELECT
+  enqueued_date,
+  table_name,
+  message_type,
+  dvla_present_count,
+  orphan_count,
+  eligible_dvla_present_count,
+  out_of_scope_dvla_present_count,
+  (orphan_count + eligible_dvla_present_count + out_of_scope_dvla_present_count) AS split_sum
+FROM core_bld.default.dvla_deletion_kpi_daily
+ORDER BY enqueued_date DESC, table_name, message_type;
