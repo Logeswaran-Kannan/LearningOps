@@ -1,23 +1,15 @@
 from pyspark.sql import functions as F
 from pyspark.sql import Window
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 CSV_TABLE = "core_bld.radar_live.reconciliation_csv_source"
 FLOW_TABLE = "core.flow.ehubstream"
 TARGET_TABLE = "core_bld.radar_live.recon_interaction_detail"
 
-RUN_REQUEST_DATE = None   # example: "2026-02-09"
+RUN_REQUEST_DATE = "2026-02-09"
 SCAN_DAYS_BEFORE = 15
 SCAN_DAYS_AFTER = 15
 FLOW_HARD_START_DATE = "2026-01-30"
 
-
-# ============================================================
-# HELPERS
-# ============================================================
 
 def dedupe_df(df, partition_cols, order_cols):
     w = Window.partitionBy(*partition_cols).orderBy(*order_cols)
@@ -70,11 +62,7 @@ def calculate_time_diff(df, left_ts_col, right_ts_col):
     )
 
 
-# ============================================================
-# LOAD CSV SOURCE
-# ============================================================
-
-def load_csv_source(run_request_date=None):
+def load_csv_source():
     df = (
         spark.table(CSV_TABLE)
         .select(
@@ -88,6 +76,7 @@ def load_csv_source(run_request_date=None):
             F.col("product").cast("string").alias("product")
         )
         .filter(
+            (F.col("requestDate") == F.lit(RUN_REQUEST_DATE)) &
             F.col("interactionId").isNotNull() &
             F.col("requestTimestamp").isNotNull() &
             F.col("transactionCode").isNotNull()
@@ -99,10 +88,6 @@ def load_csv_source(run_request_date=None):
         )
     )
 
-    if run_request_date:
-        df = df.filter(F.col("requestDate") == F.lit(run_request_date))
-
-    # remove exact / functional duplicates in CSV
     df = dedupe_df(
         df=df,
         partition_cols=[
@@ -136,10 +121,6 @@ def get_csv_time_bounds(csv_df):
     return row["min_ts"], row["max_ts"]
 
 
-# ============================================================
-# LOAD INTERACTION FLOW
-# ============================================================
-
 def load_interaction_flow(min_ts, max_ts):
     dynamic_min_ts = F.lit(min_ts).cast("timestamp") - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS")
     dynamic_max_ts = F.lit(max_ts).cast("timestamp") + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
@@ -153,14 +134,6 @@ def load_interaction_flow(min_ts, max_ts):
             F.get_json_object("payload", "$.interaction.status").cast("string").alias("flow_status"),
             F.get_json_object("payload", "$.eventType").cast("string").alias("flow_eventType"),
             F.get_json_object("payload", "$.interaction.process").cast("string").alias("flow_process"),
-            F.get_json_object("interactionmessage", "$.agreementNumber").cast("string").alias("flow_agreementNumber"),
-            F.get_json_object("payload", "$.timestamp").cast("string").alias("flow_eventTimestamp"),
-            F.get_json_object("payload", "$.interaction.factors.rateDate").cast("string").alias("flow_rateDate"),
-            F.get_json_object("payload", "$.interaction.factors.quoteDate").cast("string").alias("flow_quoteDate"),
-            F.get_json_object("payload", "$.interaction.factors.originalQuoteDate").cast("string").alias("flow_originalQuoteDate"),
-            F.get_json_object("payload", "$.interaction.factors.inceptionDate").cast("string").alias("flow_inceptionDate"),
-            F.get_json_object("payload", "$.interaction.updatedOn").cast("string").alias("flow_updatedOn"),
-            F.get_json_object("payload", "$.interaction.createdOn").cast("string").alias("flow_createdOn"),
             F.to_timestamp("writeTimestamp").alias("flow_writeTimestamp"),
             F.to_timestamp("eHubQueuedDatestamp").alias("flow_eHubQueuedDatestamp"),
             F.to_timestamp("TimeEnqueued").alias("flow_TimeEnqueued")
@@ -170,8 +143,10 @@ def load_interaction_flow(min_ts, max_ts):
             F.col("flow_TimeEnqueued").isNotNull() &
             F.col("flow_eHubQueuedDatestamp").isNotNull()
         )
-        # hard lower bound first
         .filter(F.col("flow_eHubQueuedDatestamp") >= hard_start_ts)
+        .filter(
+            F.col("flow_TimeEnqueued").between(dynamic_min_ts, dynamic_max_ts)
+        )
         .withColumn(
             "flow_process_code",
             F.when(F.lower(F.col("flow_process")).like("mta%"), F.lit("30"))
@@ -186,13 +161,8 @@ def load_interaction_flow(min_ts, max_ts):
              .otherwise(F.lit("MQS_LINKED"))
         )
         .filter(F.col("flow_process_code").isNotNull())
-        # dynamic window second
-        .filter(
-            F.col("flow_TimeEnqueued").between(dynamic_min_ts, dynamic_max_ts)
-        )
     )
 
-    # remove duplicates in flow before reconciliation
     df = dedupe_df(
         df=df,
         partition_cols=[
@@ -210,10 +180,6 @@ def load_interaction_flow(min_ts, max_ts):
 
     return df
 
-
-# ============================================================
-# FORWARD RECONCILIATION
-# ============================================================
 
 def build_forward_reconciliation(csv_df, flow_df):
     join_condition = (
@@ -259,14 +225,6 @@ def build_forward_reconciliation(csv_df, flow_df):
             F.col("f.flow_process"),
             F.col("f.flow_process_code"),
             F.col("f.flow_segment"),
-            F.col("f.flow_agreementNumber"),
-            F.col("f.flow_eventTimestamp"),
-            F.col("f.flow_rateDate"),
-            F.col("f.flow_quoteDate"),
-            F.col("f.flow_originalQuoteDate"),
-            F.col("f.flow_inceptionDate"),
-            F.col("f.flow_updatedOn"),
-            F.col("f.flow_createdOn"),
             F.col("f.flow_writeTimestamp"),
             F.col("f.flow_eHubQueuedDatestamp"),
             F.col("f.flow_TimeEnqueued")
@@ -305,119 +263,17 @@ def build_forward_reconciliation(csv_df, flow_df):
     )
 
 
-# ============================================================
-# REVERSE RECONCILIATION
-# ============================================================
-
-def build_reverse_reconciliation(csv_df, flow_df):
-    join_condition = (
-        (flow_df["flow_interactionId"] == csv_df["interactionId"]) &
-        (flow_df["flow_process_code"] == csv_df["transactionCode"]) &
-        (
-            csv_df["requestTimestamp"].between(
-                flow_df["flow_TimeEnqueued"] - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS"),
-                flow_df["flow_TimeEnqueued"] + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
-            )
-        ) &
-        (
-            (
-                (flow_df["flow_segment"] == F.lit("MQS_LINKED")) &
-                (csv_df["csv_segment"] == F.lit("MQS_LINKED")) &
-                (flow_df["flow_mqsQuoteId"] == csv_df["mqsQuoteId"])
-            ) |
-            (
-                (flow_df["flow_segment"] == F.lit("POLARIS_OR_NON_MQS")) &
-                (csv_df["csv_segment"] == F.lit("POLARIS_OR_NON_MQS"))
-            )
-        )
-    )
-
-    joined = (
-        flow_df.alias("f")
-        .join(csv_df.alias("c"), join_condition, "left")
-        .select(
-            F.col("c.interactionId").alias("csv_interactionId"),
-            F.col("c.mqsQuoteId").alias("csv_mqsQuoteId"),
-            F.col("c.requestDate").alias("csv_requestDate"),
-            F.col("c.requestTime").alias("csv_requestTime"),
-            F.col("c.requestTimestamp").alias("csv_requestTimestamp"),
-            F.col("c.csv_transactionType"),
-            F.col("c.transactionCode").alias("csv_transactionCode"),
-            F.col("c.product").alias("csv_product"),
-            F.col("c.csv_segment"),
-
-            F.col("f.flow_interactionId"),
-            F.col("f.flow_mqsQuoteId"),
-            F.col("f.flow_status"),
-            F.col("f.flow_eventType"),
-            F.col("f.flow_process"),
-            F.col("f.flow_process_code"),
-            F.col("f.flow_segment"),
-            F.col("f.flow_agreementNumber"),
-            F.col("f.flow_eventTimestamp"),
-            F.col("f.flow_rateDate"),
-            F.col("f.flow_quoteDate"),
-            F.col("f.flow_originalQuoteDate"),
-            F.col("f.flow_inceptionDate"),
-            F.col("f.flow_updatedOn"),
-            F.col("f.flow_createdOn"),
-            F.col("f.flow_writeTimestamp"),
-            F.col("f.flow_eHubQueuedDatestamp"),
-            F.col("f.flow_TimeEnqueued")
-        )
-    )
-
-    joined = calculate_time_diff(joined, "flow_TimeEnqueued", "csv_requestTimestamp")
-
-    w = Window.partitionBy(
-        "flow_interactionId",
-        "flow_mqsQuoteId",
-        "flow_TimeEnqueued",
-        "flow_process_code",
-        "flow_segment"
-    ).orderBy(
-        F.when(F.col("csv_requestTimestamp").isNull(), F.lit(1)).otherwise(F.lit(0)),
-        F.abs(F.unix_timestamp("csv_requestTimestamp") - F.unix_timestamp("flow_TimeEnqueued")),
-        F.col("csv_requestTimestamp").asc_nulls_last()
-    )
-
-    return (
-        joined.withColumn("rn", F.row_number().over(w))
-        .filter(F.col("rn") == 1)
-        .drop("rn")
-        .withColumn("reconciliation_direction", F.lit("REVERSE"))
-        .withColumn(
-            "match_flag",
-            F.when(F.col("csv_requestTimestamp").isNotNull(), F.lit("Y")).otherwise(F.lit("N"))
-        )
-        .withColumn(
-            "recon_status",
-            F.when(F.col("csv_requestTimestamp").isNotNull(), F.lit("MATCHED_IN_CSV"))
-             .otherwise(F.lit("MISSING_IN_CSV"))
-        )
-        .withColumn("run_ts", F.current_timestamp())
-    )
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-csv_df = load_csv_source(RUN_REQUEST_DATE)
+csv_df = load_csv_source()
 min_ts, max_ts = get_csv_time_bounds(csv_df)
-
 flow_df = load_interaction_flow(min_ts, max_ts)
 
 forward_df = build_forward_reconciliation(csv_df, flow_df)
-reverse_df = build_reverse_reconciliation(csv_df, flow_df)
-
-final_df = forward_df.unionByName(reverse_df)
 
 (
-    final_df.write
+    forward_df.write
     .format("delta")
     .mode("overwrite")
     .saveAsTable(TARGET_TABLE)
 )
 
-print(f"Target table written successfully: {TARGET_TABLE}")
+print(f"9 Feb forward test written successfully: {TARGET_TABLE}")
