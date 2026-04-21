@@ -12,121 +12,21 @@ TARGET_TABLE = "core_bld.radar_live.recon_interaction_detail"
 RUN_REQUEST_DATE = None   # example: "2026-02-09"
 SCAN_DAYS_BEFORE = 15
 SCAN_DAYS_AFTER = 15
+FLOW_HARD_START_DATE = "2026-01-30"
 
 
 # ============================================================
-# LOAD CSV SOURCE
-# FULL CSV REQUIRED
+# HELPERS
 # ============================================================
 
-def load_csv_source(run_request_date=None):
-    df = (
-        spark.table(CSV_TABLE)
-        .select(
-            F.col("interactionId").cast("string").alias("interactionId"),
-            F.col("mqsQuoteId").cast("string").alias("mqsQuoteId"),
-            F.to_timestamp("requestTimestamp").alias("requestTimestamp"),
-            F.col("requestDate").alias("requestDate"),
-            F.col("requestTime").alias("requestTime"),
-            F.col("transactionType").cast("string").alias("csv_transactionType"),
-            F.col("transactionCode").cast("string").alias("transactionCode"),
-            F.col("product").cast("string").alias("product")
-        )
-        .filter(
-            F.col("interactionId").isNotNull() &
-            F.col("requestTimestamp").isNotNull() &
-            F.col("transactionCode").isNotNull()
-        )
-        .withColumn(
-            "csv_segment",
-            F.when(F.col("mqsQuoteId").isNull(), F.lit("POLARIS_OR_NON_MQS"))
-             .otherwise(F.lit("MQS_LINKED"))
-        )
+def dedupe_df(df, partition_cols, order_cols):
+    w = Window.partitionBy(*partition_cols).orderBy(*order_cols)
+    return (
+        df.withColumn("_rn", F.row_number().over(w))
+          .filter(F.col("_rn") == 1)
+          .drop("_rn")
     )
 
-    if run_request_date:
-        df = df.filter(F.col("requestDate") == F.lit(run_request_date))
-
-    return df
-
-
-# ============================================================
-# GET CSV TIME BOUNDS
-# ============================================================
-
-def get_csv_time_bounds(csv_df):
-    row = (
-        csv_df.select(
-            F.min("requestTimestamp").alias("min_ts"),
-            F.max("requestTimestamp").alias("max_ts")
-        )
-        .collect()[0]
-    )
-
-    if row["min_ts"] is None or row["max_ts"] is None:
-        raise ValueError("No valid CSV rows found for interaction reconciliation.")
-
-    return row["min_ts"], row["max_ts"]
-
-
-# ============================================================
-# LOAD INTERACTION FLOW SOURCE
-# NOTE: DO NOT FILTER OUT NULL mqsQuoteId
-# ============================================================
-
-def load_interaction_flow(min_ts, max_ts):
-    df = (
-        spark.table(FLOW_TABLE)
-        .select(
-            F.get_json_object("payload", "$.interaction.mqsQuoteId").cast("string").alias("flow_mqsQuoteId"),
-            F.get_json_object("payload", "$.interaction._id").cast("string").alias("flow_interactionId"),
-            F.get_json_object("payload", "$.interaction.status").cast("string").alias("flow_status"),
-            F.get_json_object("payload", "$.eventType").cast("string").alias("flow_eventType"),
-            F.get_json_object("payload", "$.interaction.process").cast("string").alias("flow_process"),
-            F.get_json_object("interactionmessage", "$.agreementNumber").cast("string").alias("flow_agreementNumber"),
-            F.get_json_object("payload", "$.timestamp").cast("string").alias("flow_eventTimestamp"),
-            F.get_json_object("payload", "$.interaction.factors.rateDate").cast("string").alias("flow_rateDate"),
-            F.get_json_object("payload", "$.interaction.factors.quoteDate").cast("string").alias("flow_quoteDate"),
-            F.get_json_object("payload", "$.interaction.factors.originalQuoteDate").cast("string").alias("flow_originalQuoteDate"),
-            F.get_json_object("payload", "$.interaction.factors.inceptionDate").cast("string").alias("flow_inceptionDate"),
-            F.get_json_object("payload", "$.interaction.updatedOn").cast("string").alias("flow_updatedOn"),
-            F.get_json_object("payload", "$.interaction.createdOn").cast("string").alias("flow_createdOn"),
-            F.to_timestamp("writeTimestamp").alias("flow_writeTimestamp"),
-            F.to_timestamp("eHubQueuedDatestamp").alias("flow_eHubQueuedDatestamp"),
-            F.to_timestamp("TimeEnqueued").alias("flow_TimeEnqueued")
-        )
-        .filter(
-            F.col("flow_interactionId").isNotNull() &
-            F.col("flow_TimeEnqueued").isNotNull()
-        )
-        .withColumn(
-            "flow_process_code",
-            F.when(F.lower(F.col("flow_process")).like("mta%"), F.lit("30"))
-             .when(F.lower(F.col("flow_process")).like("nb%"), F.lit("02"))
-             .when(F.lower(F.col("flow_process")).like("renewal%"), F.lit("08"))
-             .when(F.lower(F.col("flow_process")).like("support%"), F.lit("30"))
-             .otherwise(F.lit(None).cast("string"))
-        )
-        .withColumn(
-            "flow_segment",
-            F.when(F.col("flow_mqsQuoteId").isNull(), F.lit("POLARIS_OR_NON_MQS"))
-             .otherwise(F.lit("MQS_LINKED"))
-        )
-        .filter(F.col("flow_process_code").isNotNull())
-        .filter(
-            F.col("flow_TimeEnqueued").between(
-                F.lit(min_ts).cast("timestamp") - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS"),
-                F.lit(max_ts).cast("timestamp") + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
-            )
-        )
-    )
-
-    return df
-
-
-# ============================================================
-# COMMON TIME DIFF CALCULATION
-# ============================================================
 
 def calculate_time_diff(df, left_ts_col, right_ts_col):
     return (
@@ -171,8 +71,148 @@ def calculate_time_diff(df, left_ts_col, right_ts_col):
 
 
 # ============================================================
+# LOAD CSV SOURCE
+# ============================================================
+
+def load_csv_source(run_request_date=None):
+    df = (
+        spark.table(CSV_TABLE)
+        .select(
+            F.col("interactionId").cast("string").alias("interactionId"),
+            F.col("mqsQuoteId").cast("string").alias("mqsQuoteId"),
+            F.to_timestamp("requestTimestamp").alias("requestTimestamp"),
+            F.col("requestDate").alias("requestDate"),
+            F.col("requestTime").alias("requestTime"),
+            F.col("transactionType").cast("string").alias("csv_transactionType"),
+            F.col("transactionCode").cast("string").alias("transactionCode"),
+            F.col("product").cast("string").alias("product")
+        )
+        .filter(
+            F.col("interactionId").isNotNull() &
+            F.col("requestTimestamp").isNotNull() &
+            F.col("transactionCode").isNotNull()
+        )
+        .withColumn(
+            "csv_segment",
+            F.when(F.col("mqsQuoteId").isNull(), F.lit("POLARIS_OR_NON_MQS"))
+             .otherwise(F.lit("MQS_LINKED"))
+        )
+    )
+
+    if run_request_date:
+        df = df.filter(F.col("requestDate") == F.lit(run_request_date))
+
+    # remove exact / functional duplicates in CSV
+    df = dedupe_df(
+        df=df,
+        partition_cols=[
+            "interactionId",
+            "mqsQuoteId",
+            "requestTimestamp",
+            "transactionCode",
+            "csv_segment"
+        ],
+        order_cols=[
+            F.col("requestTimestamp").desc(),
+            F.col("requestDate").desc_nulls_last()
+        ]
+    )
+
+    return df
+
+
+def get_csv_time_bounds(csv_df):
+    row = (
+        csv_df.select(
+            F.min("requestTimestamp").alias("min_ts"),
+            F.max("requestTimestamp").alias("max_ts")
+        )
+        .collect()[0]
+    )
+
+    if row["min_ts"] is None or row["max_ts"] is None:
+        raise ValueError("No valid CSV rows found for interaction reconciliation.")
+
+    return row["min_ts"], row["max_ts"]
+
+
+# ============================================================
+# LOAD INTERACTION FLOW
+# ============================================================
+
+def load_interaction_flow(min_ts, max_ts):
+    dynamic_min_ts = F.lit(min_ts).cast("timestamp") - F.expr(f"INTERVAL {SCAN_DAYS_BEFORE} DAYS")
+    dynamic_max_ts = F.lit(max_ts).cast("timestamp") + F.expr(f"INTERVAL {SCAN_DAYS_AFTER} DAYS")
+    hard_start_ts = F.to_timestamp(F.lit(FLOW_HARD_START_DATE))
+
+    df = (
+        spark.table(FLOW_TABLE)
+        .select(
+            F.get_json_object("payload", "$.interaction.mqsQuoteId").cast("string").alias("flow_mqsQuoteId"),
+            F.get_json_object("payload", "$.interaction._id").cast("string").alias("flow_interactionId"),
+            F.get_json_object("payload", "$.interaction.status").cast("string").alias("flow_status"),
+            F.get_json_object("payload", "$.eventType").cast("string").alias("flow_eventType"),
+            F.get_json_object("payload", "$.interaction.process").cast("string").alias("flow_process"),
+            F.get_json_object("interactionmessage", "$.agreementNumber").cast("string").alias("flow_agreementNumber"),
+            F.get_json_object("payload", "$.timestamp").cast("string").alias("flow_eventTimestamp"),
+            F.get_json_object("payload", "$.interaction.factors.rateDate").cast("string").alias("flow_rateDate"),
+            F.get_json_object("payload", "$.interaction.factors.quoteDate").cast("string").alias("flow_quoteDate"),
+            F.get_json_object("payload", "$.interaction.factors.originalQuoteDate").cast("string").alias("flow_originalQuoteDate"),
+            F.get_json_object("payload", "$.interaction.factors.inceptionDate").cast("string").alias("flow_inceptionDate"),
+            F.get_json_object("payload", "$.interaction.updatedOn").cast("string").alias("flow_updatedOn"),
+            F.get_json_object("payload", "$.interaction.createdOn").cast("string").alias("flow_createdOn"),
+            F.to_timestamp("writeTimestamp").alias("flow_writeTimestamp"),
+            F.to_timestamp("eHubQueuedDatestamp").alias("flow_eHubQueuedDatestamp"),
+            F.to_timestamp("TimeEnqueued").alias("flow_TimeEnqueued")
+        )
+        .filter(
+            F.col("flow_interactionId").isNotNull() &
+            F.col("flow_TimeEnqueued").isNotNull() &
+            F.col("flow_eHubQueuedDatestamp").isNotNull()
+        )
+        # hard lower bound first
+        .filter(F.col("flow_eHubQueuedDatestamp") >= hard_start_ts)
+        .withColumn(
+            "flow_process_code",
+            F.when(F.lower(F.col("flow_process")).like("mta%"), F.lit("30"))
+             .when(F.lower(F.col("flow_process")).like("nb%"), F.lit("02"))
+             .when(F.lower(F.col("flow_process")).like("renewal%"), F.lit("08"))
+             .when(F.lower(F.col("flow_process")).like("support%"), F.lit("30"))
+             .otherwise(F.lit(None).cast("string"))
+        )
+        .withColumn(
+            "flow_segment",
+            F.when(F.col("flow_mqsQuoteId").isNull(), F.lit("POLARIS_OR_NON_MQS"))
+             .otherwise(F.lit("MQS_LINKED"))
+        )
+        .filter(F.col("flow_process_code").isNotNull())
+        # dynamic window second
+        .filter(
+            F.col("flow_TimeEnqueued").between(dynamic_min_ts, dynamic_max_ts)
+        )
+    )
+
+    # remove duplicates in flow before reconciliation
+    df = dedupe_df(
+        df=df,
+        partition_cols=[
+            "flow_interactionId",
+            "flow_mqsQuoteId",
+            "flow_TimeEnqueued",
+            "flow_process_code",
+            "flow_segment"
+        ],
+        order_cols=[
+            F.col("flow_eHubQueuedDatestamp").desc(),
+            F.col("flow_writeTimestamp").desc_nulls_last()
+        ]
+    )
+
+    return df
+
+
+# ============================================================
 # FORWARD RECONCILIATION
-# CSV -> INTERACTION FLOW
 # ============================================================
 
 def build_forward_reconciliation(csv_df, flow_df):
@@ -243,10 +283,11 @@ def build_forward_reconciliation(csv_df, flow_df):
         "csv_segment"
     ).orderBy(
         F.when(F.col("flow_TimeEnqueued").isNull(), F.lit(1)).otherwise(F.lit(0)),
-        F.abs(F.unix_timestamp("flow_TimeEnqueued") - F.unix_timestamp("csv_requestTimestamp"))
+        F.abs(F.unix_timestamp("flow_TimeEnqueued") - F.unix_timestamp("csv_requestTimestamp")),
+        F.col("flow_eHubQueuedDatestamp").asc_nulls_last()
     )
 
-    result = (
+    return (
         joined.withColumn("rn", F.row_number().over(w))
         .filter(F.col("rn") == 1)
         .drop("rn")
@@ -263,12 +304,9 @@ def build_forward_reconciliation(csv_df, flow_df):
         .withColumn("run_ts", F.current_timestamp())
     )
 
-    return result
-
 
 # ============================================================
 # REVERSE RECONCILIATION
-# INTERACTION FLOW -> CSV
 # ============================================================
 
 def build_reverse_reconciliation(csv_df, flow_df):
@@ -339,10 +377,11 @@ def build_reverse_reconciliation(csv_df, flow_df):
         "flow_segment"
     ).orderBy(
         F.when(F.col("csv_requestTimestamp").isNull(), F.lit(1)).otherwise(F.lit(0)),
-        F.abs(F.unix_timestamp("csv_requestTimestamp") - F.unix_timestamp("flow_TimeEnqueued"))
+        F.abs(F.unix_timestamp("csv_requestTimestamp") - F.unix_timestamp("flow_TimeEnqueued")),
+        F.col("csv_requestTimestamp").asc_nulls_last()
     )
 
-    result = (
+    return (
         joined.withColumn("rn", F.row_number().over(w))
         .filter(F.col("rn") == 1)
         .drop("rn")
@@ -358,8 +397,6 @@ def build_reverse_reconciliation(csv_df, flow_df):
         )
         .withColumn("run_ts", F.current_timestamp())
     )
-
-    return result
 
 
 # ============================================================
