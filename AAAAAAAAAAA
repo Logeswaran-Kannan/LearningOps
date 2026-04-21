@@ -1,10 +1,32 @@
-def compare_current_day_30min_counts(src_fqn: str, tgt_fqn: str):
+from pyspark.sql import functions as F
+
+# =========================================================
+# HELPER: 5 min bucket
+# =========================================================
+
+def add_5min_bucket(df, load_dt_col="LOAD_DT"):
+    """
+    Converts LOAD_DT timestamp into 5-min interval bucket
+    """
+    ts_sec = F.unix_timestamp(F.col(load_dt_col))
+
+    # 300 seconds = 5 minutes
+    bucket_start = F.from_unixtime((F.floor(ts_sec / 300) * 300)).cast("timestamp")
+
+    return df.withColumn("interval_start", bucket_start)
+
+
+# =========================================================
+# MAIN COMPARISON FUNCTION
+# =========================================================
+
+def compare_current_day_5min_counts(src_fqn: str, tgt_fqn: str):
 
     # ================================
-    # SOURCE AGG (silverish)
+    # SOURCE (silverish)
     # ================================
     src_agg = (
-        add_30min_bucket(spark.table(src_fqn).select("LOAD_DT"))
+        add_5min_bucket(spark.table(src_fqn).select("LOAD_DT"))
         .filter(F.to_date("LOAD_DT") == F.current_date())
         .groupBy("interval_start")
         .count()
@@ -12,10 +34,10 @@ def compare_current_day_30min_counts(src_fqn: str, tgt_fqn: str):
     )
 
     # ================================
-    # TARGET AGG (silver)
+    # TARGET (silver)
     # ================================
     tgt_agg = (
-        add_30min_bucket(spark.table(tgt_fqn).select("LOAD_DT"))
+        add_5min_bucket(spark.table(tgt_fqn).select("LOAD_DT"))
         .filter(F.to_date("LOAD_DT") == F.current_date())
         .groupBy("interval_start")
         .count()
@@ -23,8 +45,7 @@ def compare_current_day_30min_counts(src_fqn: str, tgt_fqn: str):
     )
 
     # ================================
-    # UNION OF ALL INTERVALS (KEY STEP)
-    # ensures missing intervals are included
+    # ALL INTERVALS (ensures missing intervals appear)
     # ================================
     all_intervals = (
         src_agg.select("interval_start")
@@ -33,7 +54,7 @@ def compare_current_day_30min_counts(src_fqn: str, tgt_fqn: str):
     )
 
     # ================================
-    # JOIN BACK TO GET COUNTS
+    # FINAL JOIN
     # ================================
     result = (
         all_intervals.alias("i")
