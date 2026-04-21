@@ -1,105 +1,51 @@
-from pyspark.sql import functions as F
-from functools import reduce
-
-# =========================================================
-# CONFIG
-# =========================================================
-
-silverish_base_tables = [
-    "DV_QUOTE_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_RESULT_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_DECLINE_RESULT_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_ENDT_RESULT_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_EXCESS_BRKDN_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_VEH_CLCLD_RESULT_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_VEH_ADDON_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_VEH_PREMIUM_OPTION_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_SCHEME_VEH_PRSTD_FACTOR_RATING_RSPN_MTR_ATHN_MQS_SAT",
-    "DV_QUOTE_ERROR_DETAIL_RATING_RSPN_MTR_ATHN_MQS_SAT"
-]
-
-silverish_schema = "core.mqs_athn_mtr"
-silver_schema = "core.curated_edw_dv"
-
-# =========================================================
-# TABLE MAPPING
-# silverish : DV_xxx_V2
-# silver    : xxx   (without DV_ and without _V2)
-# =========================================================
-
-table_pairs = []
-
-for base_tbl in silverish_base_tables:
-    silverish_tbl = f"{silverish_schema}.{base_tbl}_V2"
-
-    target_tbl = base_tbl
-    if target_tbl.startswith("DV_"):
-        target_tbl = target_tbl[3:]   # remove DV_
-
-    silver_tbl = f"{silver_schema}.{target_tbl}"
-
-    table_pairs.append((silverish_tbl, silver_tbl))
-
-# =========================================================
-# HELPER: 30 min bucket from LOAD_DT timestamp
-# =========================================================
-
-def add_30min_bucket(df, load_dt_col="LOAD_DT"):
-    """
-    Converts timestamp LOAD_DT into:
-    - load_date
-    - interval_start (30 min bucket)
-    """
-    ts_sec = F.unix_timestamp(F.col(load_dt_col))
-
-    bucket_start = F.from_unixtime((F.floor(ts_sec / 1800) * 1800)).cast("timestamp")
-
-    return (
-        df
-        .withColumn("load_date", F.to_date(F.col(load_dt_col)))
-        .withColumn("interval_start", bucket_start)
-    )
-
-# =========================================================
-# COMPARE CURRENT DATE ONLY
-# =========================================================
-
 def compare_current_day_30min_counts(src_fqn: str, tgt_fqn: str):
-    """
-    Compare current-date row counts in 30-minute intervals.
-    LOAD_DT is timestamp, but current-date filter is applied on to_date(LOAD_DT).
-    """
 
+    # ================================
+    # SOURCE AGG (silverish)
+    # ================================
     src_agg = (
         add_30min_bucket(spark.table(src_fqn).select("LOAD_DT"))
-        .filter(F.col("load_date") == F.current_date())
-        .groupBy("load_date", "interval_start")
+        .filter(F.to_date("LOAD_DT") == F.current_date())
+        .groupBy("interval_start")
         .count()
         .withColumnRenamed("count", "silverish_count")
     )
 
+    # ================================
+    # TARGET AGG (silver)
+    # ================================
     tgt_agg = (
         add_30min_bucket(spark.table(tgt_fqn).select("LOAD_DT"))
-        .filter(F.col("load_date") == F.current_date())
-        .groupBy("load_date", "interval_start")
+        .filter(F.to_date("LOAD_DT") == F.current_date())
+        .groupBy("interval_start")
         .count()
         .withColumnRenamed("count", "silver_count")
     )
 
+    # ================================
+    # UNION OF ALL INTERVALS (KEY STEP)
+    # ensures missing intervals are included
+    # ================================
+    all_intervals = (
+        src_agg.select("interval_start")
+        .union(tgt_agg.select("interval_start"))
+        .distinct()
+    )
+
+    # ================================
+    # JOIN BACK TO GET COUNTS
+    # ================================
     result = (
-        src_agg.alias("s")
-        .join(
-            tgt_agg.alias("t"),
-            on=["load_date", "interval_start"],
-            how="full_outer"
-        )
+        all_intervals.alias("i")
+        .join(src_agg.alias("s"), "interval_start", "left")
+        .join(tgt_agg.alias("t"), "interval_start", "left")
         .select(
             F.lit(src_fqn).alias("silverish_table"),
             F.lit(tgt_fqn).alias("silver_table"),
-            F.col("load_date"),
+            F.current_date().alias("load_date"),
             F.col("interval_start"),
-            F.coalesce(F.col("silverish_count"), F.lit(0)).alias("silverish_count"),
-            F.coalesce(F.col("silver_count"), F.lit(0)).alias("silver_count")
+            F.coalesce(F.col("s.silverish_count"), F.lit(0)).alias("silverish_count"),
+            F.coalesce(F.col("t.silver_count"), F.lit(0)).alias("silver_count")
         )
         .withColumn("count_diff", F.col("silverish_count") - F.col("silver_count"))
         .withColumn(
@@ -111,71 +57,3 @@ def compare_current_day_30min_counts(src_fqn: str, tgt_fqn: str):
     )
 
     return result
-
-# =========================================================
-# SUMMARY PER TABLE
-# =========================================================
-
-def build_table_summary(interval_df):
-    return (
-        interval_df
-        .groupBy("silverish_table", "silver_table", "load_date")
-        .agg(
-            F.count("*").alias("intervals_checked"),
-            F.sum(F.when(F.col("status") == "MATCH", 1).otherwise(0)).alias("matched_intervals"),
-            F.sum(F.when(F.col("status") == "MISMATCH", 1).otherwise(0)).alias("mismatched_intervals"),
-            F.sum("silverish_count").alias("silverish_total_count"),
-            F.sum("silver_count").alias("silver_total_count"),
-            F.sum("count_diff").alias("net_count_diff")
-        )
-        .withColumn(
-            "overall_status",
-            F.when(F.col("mismatched_intervals") == 0, "MATCH").otherwise("MISMATCH")
-        )
-        .orderBy("silverish_table")
-    )
-
-# =========================================================
-# MAIN
-# =========================================================
-
-all_interval_results = []
-all_summary_results = []
-
-for src_fqn, tgt_fqn in table_pairs:
-    print(f"Processing: {src_fqn}  <->  {tgt_fqn}")
-
-    interval_df = compare_current_day_30min_counts(src_fqn, tgt_fqn)
-    summary_df = build_table_summary(interval_df)
-
-    all_interval_results.append(interval_df)
-    all_summary_results.append(summary_df)
-
-final_interval_df = reduce(lambda a, b: a.unionByName(b), all_interval_results)
-final_summary_df = reduce(lambda a, b: a.unionByName(b), all_summary_results)
-
-# =========================================================
-# DISPLAY
-# =========================================================
-
-print("===== TABLE SUMMARY FOR CURRENT DATE =====")
-display(final_summary_df)
-
-print("===== 30-MIN INTERVAL COUNT COMPARISON FOR CURRENT DATE =====")
-display(final_interval_df)
-
-# =========================================================
-# OPTIONAL: ONLY MISMATCHES
-# =========================================================
-
-final_mismatch_df = final_interval_df.filter(F.col("status") == "MISMATCH")
-
-print("===== ONLY MISMATCHED INTERVALS =====")
-display(final_mismatch_df)
-
-# =========================================================
-# OPTIONAL SAVE
-# =========================================================
-# final_summary_df.write.mode("overwrite").saveAsTable("core_bld.radar_live.mqs_30min_currentday_summary")
-# final_interval_df.write.mode("overwrite").saveAsTable("core_bld.radar_live.mqs_30min_currentday_detail")
-# final_mismatch_df.write.mode("overwrite").saveAsTable("core_bld.radar_live.mqs_30min_currentday_mismatch")
