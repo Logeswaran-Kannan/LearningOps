@@ -5,7 +5,7 @@ CSV_TABLE = "core_bld.radar_live.reconciliation_csv_source"
 MQS_TABLE = "core.mqs_athn_mtr.ehubstream"
 TARGET_TABLE = "core_bld.radar_live.recon_mqs_detail"
 
-LOOKBACK_DAYS = 1
+LOOKBACK_DAYS = 2
 SCAN_DAYS_BEFORE = 15
 SCAN_DAYS_AFTER = 15
 
@@ -13,14 +13,13 @@ SCAN_DAYS_AFTER = 15
 def target_has_data():
     if not spark.catalog.tableExists(TARGET_TABLE):
         return False
-
     return spark.table(TARGET_TABLE).limit(1).count() > 0
 
 
 def load_csv_source():
     is_first_run = not target_has_data()
 
-    df = (
+    base_df = (
         spark.table(CSV_TABLE)
         .select(
             "interactionId",
@@ -36,22 +35,30 @@ def load_csv_source():
             F.col("interactionId").isNotNull() &
             F.col("mqsQuoteId").isNotNull() &
             F.col("requestTimestamp").isNotNull() &
-            F.col("transactionCode").isNotNull()
+            F.col("transactionCode").isNotNull() &
+            F.col("requestDate").isNotNull()
         )
     )
 
     if is_first_run:
-        return df.withColumn("run_type", F.lit("FIRST_RUN"))
+        return base_df.withColumn("run_type", F.lit("FIRST_RUN"))
 
-    max_processed_date = (
-        spark.table(TARGET_TABLE)
-        .select(F.max("recon_requestDate").alias("max_date"))
-        .collect()[0]["max_date"]
+    source_max_date = (
+        base_df
+        .select(F.max("requestDate").alias("source_max_date"))
+        .collect()[0]["source_max_date"]
     )
 
+    if source_max_date is None:
+        return base_df.limit(0).withColumn("run_type", F.lit("INCREMENTAL_RUN"))
+
     return (
-        df.filter(
-            F.col("requestDate") >= F.date_sub(F.lit(max_processed_date), LOOKBACK_DAYS)
+        base_df
+        .filter(
+            F.col("requestDate").between(
+                F.date_sub(F.lit(source_max_date), LOOKBACK_DAYS),
+                F.lit(source_max_date)
+            )
         )
         .withColumn("run_type", F.lit("INCREMENTAL_RUN"))
     )
@@ -59,15 +66,13 @@ def load_csv_source():
 
 def get_csv_time_bounds(csv_df):
     row = (
-        csv_df.select(
+        csv_df
+        .select(
             F.min("requestTimestamp").alias("min_ts"),
             F.max("requestTimestamp").alias("max_ts")
         )
         .collect()[0]
     )
-
-    if row["min_ts"] is None or row["max_ts"] is None:
-        raise ValueError("No valid CSV rows found for reconciliation.")
 
     return row["min_ts"], row["max_ts"]
 
@@ -108,29 +113,42 @@ def load_mqs_source(min_ts, max_ts):
 
 def calculate_time_diff(df, left_ts_col, right_ts_col):
     return (
-        df.withColumn(
+        df
+        .withColumn(
             "diff_days",
-            F.datediff(F.to_date(F.col(right_ts_col)), F.to_date(F.col(left_ts_col)))
+            F.when(
+                F.col(left_ts_col).isNotNull() & F.col(right_ts_col).isNotNull(),
+                F.datediff(F.to_date(F.col(right_ts_col)), F.to_date(F.col(left_ts_col)))
+            )
         )
         .withColumn(
             "diff_hours",
-            F.round(
-                (F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / 3600.0,
-                2
+            F.when(
+                F.col(left_ts_col).isNotNull() & F.col(right_ts_col).isNotNull(),
+                F.round(
+                    (F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / 3600.0,
+                    2
+                )
             )
         )
         .withColumn(
             "diff_minutes",
-            F.round(
-                (F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / 60.0,
-                2
+            F.when(
+                F.col(left_ts_col).isNotNull() & F.col(right_ts_col).isNotNull(),
+                F.round(
+                    (F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / 60.0,
+                    2
+                )
             )
         )
         .withColumn(
             "abs_diff_hours",
-            F.round(
-                F.abs(F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / 3600.0,
-                2
+            F.when(
+                F.col(left_ts_col).isNotNull() & F.col(right_ts_col).isNotNull(),
+                F.round(
+                    F.abs(F.unix_timestamp(F.col(right_ts_col)) - F.unix_timestamp(F.col(left_ts_col))) / 3600.0,
+                    2
+                )
             )
         )
     )
@@ -259,7 +277,13 @@ def build_reverse_reconciliation(csv_df, mqs_df):
 
 
 def write_target(final_df):
-    is_first_run = final_df.select("run_type").filter(F.col("run_type") == "FIRST_RUN").limit(1).count() > 0
+    is_first_run = (
+        final_df
+        .select("run_type")
+        .filter(F.col("run_type") == "FIRST_RUN")
+        .limit(1)
+        .count() > 0
+    )
 
     if is_first_run or not spark.catalog.tableExists(TARGET_TABLE):
         (
@@ -277,6 +301,10 @@ def write_target(final_df):
         if r["recon_requestDate"] is not None
     ]
 
+    if not impacted_dates:
+        print("No impacted dates found. Skipping target write.")
+        return
+
     replace_where = "recon_requestDate IN ({})".format(
         ",".join([f"DATE '{d}'" for d in impacted_dates])
     )
@@ -291,15 +319,19 @@ def write_target(final_df):
 
 
 csv_df = load_csv_source()
+
 min_ts, max_ts = get_csv_time_bounds(csv_df)
 
-mqs_df = load_mqs_source(min_ts, max_ts)
+if min_ts is None or max_ts is None:
+    print("No valid CSV rows found for this run. Skipping reconciliation.")
+else:
+    mqs_df = load_mqs_source(min_ts, max_ts)
 
-forward_df = build_forward_reconciliation(csv_df, mqs_df)
-reverse_df = build_reverse_reconciliation(csv_df, mqs_df)
+    forward_df = build_forward_reconciliation(csv_df, mqs_df)
+    reverse_df = build_reverse_reconciliation(csv_df, mqs_df)
 
-final_df = forward_df.unionByName(reverse_df)
+    final_df = forward_df.unionByName(reverse_df)
 
-write_target(final_df)
+    write_target(final_df)
 
-print(f"Target table written successfully: {TARGET_TABLE}")
+    print(f"Target table written successfully: {TARGET_TABLE}")
