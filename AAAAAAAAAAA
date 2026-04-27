@@ -1,5 +1,6 @@
 from pyspark.sql import functions as F
 from pyspark.sql import Window
+from delta.tables import DeltaTable
 
 CSV_TABLE = "core_bld.radar_live.reconciliation_csv_source"
 MQS_TABLE = "core.mqs_athn_mtr.ehubstream"
@@ -14,6 +15,18 @@ CSV_KEY_COLS = [
     "mqsQuoteId",
     "requestTimestamp",
     "transactionCode"
+]
+
+MERGE_KEY_COLS = [
+    "reconciliation_direction",
+    "csv_interactionId",
+    "csv_mqsQuoteId",
+    "csv_requestTimestamp",
+    "csv_transactionCode",
+    "mqs_externalID",
+    "mqs_mqsQuoteId",
+    "mqs_enqueuedTime",
+    "mqs_transactionCode"
 ]
 
 
@@ -65,37 +78,14 @@ def load_csv_source():
     if source_max_date is None:
         return base_df.limit(0).withColumn("run_type", F.lit("INCREMENTAL_RUN"))
 
-    recent_df = base_df.filter(
-        F.col("requestDate").between(
-            F.date_sub(F.lit(source_max_date), LOOKBACK_DAYS),
-            F.lit(source_max_date)
-        )
-    )
-
-    already_processed_df = (
-        spark.table(TARGET_TABLE)
-        .filter(F.col("reconciliation_direction") == "FORWARD")
-        .select(
-            F.col("csv_interactionId").alias("interactionId"),
-            F.col("csv_mqsQuoteId").alias("mqsQuoteId"),
-            F.col("csv_requestTimestamp").alias("requestTimestamp"),
-            F.col("csv_transactionCode").alias("transactionCode")
-        )
-        .distinct()
-    )
-
-    new_unprocessed_df = (
-        base_df.alias("src")
-        .join(
-            already_processed_df.alias("tgt"),
-            on=CSV_KEY_COLS,
-            how="left_anti"
-        )
-    )
-
     return (
-        recent_df
-        .unionByName(new_unprocessed_df)
+        base_df
+        .filter(
+            F.col("requestDate").between(
+                F.date_sub(F.lit(source_max_date), LOOKBACK_DAYS),
+                F.lit(source_max_date)
+            )
+        )
         .dropDuplicates(CSV_KEY_COLS)
         .withColumn("run_type", F.lit("INCREMENTAL_RUN"))
     )
@@ -338,26 +328,21 @@ def write_target(final_df):
         )
         return
 
-    impacted_dates = [
-        r["recon_requestDate"]
-        for r in final_df.select("recon_requestDate").distinct().collect()
-        if r["recon_requestDate"] is not None
-    ]
+    final_df = final_df.dropDuplicates(MERGE_KEY_COLS)
 
-    if not impacted_dates:
-        print("No impacted dates found. Skipping target write.")
-        return
+    merge_condition = " AND ".join([
+        f"t.{col_name} <=> s.{col_name}"
+        for col_name in MERGE_KEY_COLS
+    ])
 
-    replace_where = "recon_requestDate IN ({})".format(
-        ",".join([f"DATE '{d}'" for d in impacted_dates])
-    )
+    delta_target = DeltaTable.forName(spark, TARGET_TABLE)
 
     (
-        final_df.write
-        .format("delta")
-        .mode("overwrite")
-        .option("replaceWhere", replace_where)
-        .saveAsTable(TARGET_TABLE)
+        delta_target.alias("t")
+        .merge(final_df.alias("s"), merge_condition)
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute()
     )
 
 
