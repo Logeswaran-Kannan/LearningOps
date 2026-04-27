@@ -9,6 +9,13 @@ LOOKBACK_DAYS = 2
 SCAN_DAYS_BEFORE = 15
 SCAN_DAYS_AFTER = 15
 
+CSV_KEY_COLS = [
+    "interactionId",
+    "mqsQuoteId",
+    "requestTimestamp",
+    "transactionCode"
+]
+
 
 def target_has_data():
     if not spark.catalog.tableExists(TARGET_TABLE):
@@ -16,10 +23,8 @@ def target_has_data():
     return spark.table(TARGET_TABLE).limit(1).count() > 0
 
 
-def load_csv_source():
-    is_first_run = not target_has_data()
-
-    base_df = (
+def load_csv_base():
+    return (
         spark.table(CSV_TABLE)
         .select(
             "interactionId",
@@ -40,8 +45,16 @@ def load_csv_source():
         )
     )
 
-    if is_first_run:
-        return base_df.withColumn("run_type", F.lit("FIRST_RUN"))
+
+def load_csv_source():
+    base_df = load_csv_base()
+
+    if not target_has_data():
+        return (
+            base_df
+            .dropDuplicates(CSV_KEY_COLS)
+            .withColumn("run_type", F.lit("FIRST_RUN"))
+        )
 
     source_max_date = (
         base_df
@@ -52,14 +65,38 @@ def load_csv_source():
     if source_max_date is None:
         return base_df.limit(0).withColumn("run_type", F.lit("INCREMENTAL_RUN"))
 
-    return (
-        base_df
-        .filter(
-            F.col("requestDate").between(
-                F.date_sub(F.lit(source_max_date), LOOKBACK_DAYS),
-                F.lit(source_max_date)
-            )
+    recent_df = base_df.filter(
+        F.col("requestDate").between(
+            F.date_sub(F.lit(source_max_date), LOOKBACK_DAYS),
+            F.lit(source_max_date)
         )
+    )
+
+    already_processed_df = (
+        spark.table(TARGET_TABLE)
+        .filter(F.col("reconciliation_direction") == "FORWARD")
+        .select(
+            F.col("csv_interactionId").alias("interactionId"),
+            F.col("csv_mqsQuoteId").alias("mqsQuoteId"),
+            F.col("csv_requestTimestamp").alias("requestTimestamp"),
+            F.col("csv_transactionCode").alias("transactionCode")
+        )
+        .distinct()
+    )
+
+    new_unprocessed_df = (
+        base_df.alias("src")
+        .join(
+            already_processed_df.alias("tgt"),
+            on=CSV_KEY_COLS,
+            how="left_anti"
+        )
+    )
+
+    return (
+        recent_df
+        .unionByName(new_unprocessed_df)
+        .dropDuplicates(CSV_KEY_COLS)
         .withColumn("run_type", F.lit("INCREMENTAL_RUN"))
     )
 
@@ -73,7 +110,6 @@ def get_csv_time_bounds(csv_df):
         )
         .collect()[0]
     )
-
     return row["min_ts"], row["max_ts"]
 
 
@@ -209,7 +245,11 @@ def build_forward_reconciliation(csv_df, mqs_df):
         .drop("rn")
         .withColumn("reconciliation_direction", F.lit("FORWARD"))
         .withColumn("match_flag", F.when(F.col("mqs_enqueuedTime").isNotNull(), "Y").otherwise("N"))
-        .withColumn("recon_status", F.when(F.col("mqs_enqueuedTime").isNotNull(), "MATCHED_IN_MQS").otherwise("MISSING_IN_MQS"))
+        .withColumn(
+            "recon_status",
+            F.when(F.col("mqs_enqueuedTime").isNotNull(), "MATCHED_IN_MQS")
+             .otherwise("MISSING_IN_MQS")
+        )
         .withColumn("recon_requestDate", F.col("csv_requestDate"))
         .withColumn("run_ts", F.current_timestamp())
     )
@@ -270,7 +310,11 @@ def build_reverse_reconciliation(csv_df, mqs_df):
         .drop("rn")
         .withColumn("reconciliation_direction", F.lit("REVERSE"))
         .withColumn("match_flag", F.when(F.col("csv_requestTimestamp").isNotNull(), "Y").otherwise("N"))
-        .withColumn("recon_status", F.when(F.col("csv_requestTimestamp").isNotNull(), "MATCHED_IN_CSV").otherwise("MISSING_IN_CSV"))
+        .withColumn(
+            "recon_status",
+            F.when(F.col("csv_requestTimestamp").isNotNull(), "MATCHED_IN_CSV")
+             .otherwise("MISSING_IN_CSV")
+        )
         .withColumn("recon_requestDate", F.coalesce(F.col("csv_requestDate"), F.to_date("mqs_enqueuedTime")))
         .withColumn("run_ts", F.current_timestamp())
     )
@@ -279,7 +323,6 @@ def build_reverse_reconciliation(csv_df, mqs_df):
 def write_target(final_df):
     is_first_run = (
         final_df
-        .select("run_type")
         .filter(F.col("run_type") == "FIRST_RUN")
         .limit(1)
         .count() > 0
@@ -319,7 +362,6 @@ def write_target(final_df):
 
 
 csv_df = load_csv_source()
-
 min_ts, max_ts = get_csv_time_bounds(csv_df)
 
 if min_ts is None or max_ts is None:
