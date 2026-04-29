@@ -1,40 +1,109 @@
-QL to verify duplicate/multiple interaction matches
+.
+
+🎯 1. Core KPIs (must-have)
+✅ Forward Reconciliation %
+
+“Out of CSV records, how many found interaction?”
+
 SELECT
     recon_requestDate,
-    csv_interactionId,
-    csv_mqsQuoteId,
-    csv_requestTimestamp,
-    csv_transactionCode,
-    csv_segment,
-    COUNT(*) AS reverse_matched_count
+    ROUND(
+        100.0 * SUM(CASE WHEN match_flag = 'Y' THEN 1 END) 
+        / COUNT(*), 2
+    ) AS forward_recon_pct
 FROM core_bld.radar_live.recon_interaction_detail
-WHERE recon_requestDate = DATE '2026-03-13'
-  AND reconciliation_direction = 'REVERSE'
-  AND match_flag = 'Y'
-GROUP BY
-    recon_requestDate,
-    csv_interactionId,
-    csv_mqsQuoteId,
-    csv_requestTimestamp,
-    csv_transactionCode,
-    csv_segment
-HAVING COUNT(*) > 1
-ORDER BY reverse_matched_count DESC;
-Compare unique CSV keys
+WHERE reconciliation_direction = 'FORWARD'
+GROUP BY recon_requestDate
+ORDER BY recon_requestDate;
+✅ Reverse Reconciliation %
 
-Use this to reconcile apples-to-apples:
+“Out of interaction flow, how many found CSV?”
 
 SELECT
+    recon_requestDate,
+    ROUND(
+        100.0 * SUM(CASE WHEN match_flag = 'Y' THEN 1 END)
+        / COUNT(*), 2
+    ) AS reverse_recon_pct
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE reconciliation_direction = 'REVERSE'
+GROUP BY recon_requestDate
+ORDER BY recon_requestDate;
+📊 2. Volume KPI (very important for context)
+SELECT
+    recon_requestDate,
     reconciliation_direction,
-    COUNT(*) AS row_count,
-    COUNT(DISTINCT CONCAT_WS('|',
-        COALESCE(csv_interactionId, ''),
-        COALESCE(csv_mqsQuoteId, ''),
-        COALESCE(CAST(csv_requestTimestamp AS STRING), ''),
-        COALESCE(csv_transactionCode, ''),
-        COALESCE(csv_segment, '')
-    )) AS unique_csv_key_count
+    COUNT(*) AS total_records,
+    SUM(CASE WHEN match_flag = 'Y' THEN 1 ELSE 0 END) AS matched,
+    SUM(CASE WHEN match_flag = 'N' THEN 1 ELSE 0 END) AS missing
 FROM core_bld.radar_live.recon_interaction_detail
-WHERE recon_requestDate = DATE '2026-03-13'
+GROUP BY recon_requestDate, reconciliation_direction;
+⏱️ 3. Delay Distribution (business critical)
+Bucket-based delay
+SELECT
+    recon_requestDate,
+    CASE
+        WHEN abs_diff_hours <= 1 THEN '0-1 hr'
+        WHEN abs_diff_hours <= 3 THEN '1-3 hr'
+        WHEN abs_diff_hours <= 6 THEN '3-6 hr'
+        WHEN abs_diff_hours <= 12 THEN '6-12 hr'
+        WHEN abs_diff_hours <= 24 THEN '12-24 hr'
+        ELSE '24+ hr'
+    END AS delay_bucket,
+    COUNT(*) AS record_count
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE reconciliation_direction = 'FORWARD'
   AND match_flag = 'Y'
-GROUP BY reconciliation_direction;
+GROUP BY recon_requestDate, delay_bucket
+ORDER BY recon_requestDate, delay_bucket;
+📈 4. Maximum Delay KPI
+SELECT
+    recon_requestDate,
+    MAX(abs_diff_hours) AS max_delay_hours,
+    MAX(diff_days) AS max_delay_days
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE match_flag = 'Y'
+GROUP BY recon_requestDate;
+🔍 5. Late Processing % (very useful)
+SELECT
+    recon_requestDate,
+    ROUND(
+        100.0 * SUM(CASE WHEN abs_diff_hours > 24 THEN 1 END)
+        / COUNT(*), 2
+    ) AS late_processing_pct
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE reconciliation_direction = 'FORWARD'
+  AND match_flag = 'Y'
+GROUP BY recon_requestDate;
+🧩 6. Segment-wise KPI (important insight)
+SELECT
+    recon_requestDate,
+    csv_segment,
+    ROUND(
+        100.0 * SUM(CASE WHEN match_flag = 'Y' THEN 1 END)
+        / COUNT(*), 2
+    ) AS recon_pct
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE reconciliation_direction = 'FORWARD'
+GROUP BY recon_requestDate, csv_segment;
+⚠️ 7. Missing Analysis (business focus)
+SELECT
+    recon_requestDate,
+    csv_segment,
+    COUNT(*) AS missing_count
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE reconciliation_direction = 'FORWARD'
+  AND match_flag = 'N'
+GROUP BY recon_requestDate, csv_segment;
+📉 8. Trend KPI (for dashboard line chart)
+SELECT
+    recon_requestDate,
+    ROUND(
+        100.0 * SUM(CASE WHEN match_flag = 'Y' THEN 1 END)
+        / COUNT(*), 2
+    ) AS forward_recon_pct
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE reconciliation_direction = 'FORWARD'
+GROUP BY recon_requestDate
+ORDER BY recon_requestDate;
+⭐ Recommended Dashboard Layout (Business Friendly)
