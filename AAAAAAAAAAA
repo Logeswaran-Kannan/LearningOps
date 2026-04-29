@@ -1,2 +1,16 @@
-DELETE FROM core_bld.default.sla_alert_state
-WHERE alert_name = 'radar_live_sla_monitor';
+SELECT
+    recon_requestDate,
+    reconciliation_direction,
+    match_flag,
+    interaction_segment,
+    COUNT(*) AS record_count
+FROM core_bld.radar_live.recon_interaction_detail
+GROUP BY
+    recon_requestDate,
+    reconciliation_direction,
+    match_flag,
+    interaction_segment
+ORDER BY
+    recon_requestDate,
+    reconciliation_direction,
+    match_flag;
