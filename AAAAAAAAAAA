@@ -1,16 +1,40 @@
+QL to verify duplicate/multiple interaction matches
 SELECT
     recon_requestDate,
-    reconciliation_direction,
-    match_flag,
-    interaction_segment,
-    COUNT(*) AS record_count
+    csv_interactionId,
+    csv_mqsQuoteId,
+    csv_requestTimestamp,
+    csv_transactionCode,
+    csv_segment,
+    COUNT(*) AS reverse_matched_count
 FROM core_bld.radar_live.recon_interaction_detail
+WHERE recon_requestDate = DATE '2026-03-13'
+  AND reconciliation_direction = 'REVERSE'
+  AND match_flag = 'Y'
 GROUP BY
     recon_requestDate,
+    csv_interactionId,
+    csv_mqsQuoteId,
+    csv_requestTimestamp,
+    csv_transactionCode,
+    csv_segment
+HAVING COUNT(*) > 1
+ORDER BY reverse_matched_count DESC;
+Compare unique CSV keys
+
+Use this to reconcile apples-to-apples:
+
+SELECT
     reconciliation_direction,
-    match_flag,
-    interaction_segment
-ORDER BY
-    recon_requestDate,
-    reconciliation_direction,
-    match_flag;
+    COUNT(*) AS row_count,
+    COUNT(DISTINCT CONCAT_WS('|',
+        COALESCE(csv_interactionId, ''),
+        COALESCE(csv_mqsQuoteId, ''),
+        COALESCE(CAST(csv_requestTimestamp AS STRING), ''),
+        COALESCE(csv_transactionCode, ''),
+        COALESCE(csv_segment, '')
+    )) AS unique_csv_key_count
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE recon_requestDate = DATE '2026-03-13'
+  AND match_flag = 'Y'
+GROUP BY reconciliation_direction;
