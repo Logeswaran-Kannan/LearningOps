@@ -1,16 +1,1 @@
-.withColumn(
-    "quote_status",
-    F.when(
-        F.datediff(
-            F.to_date("eHubQueuedDatestamp"),
-            F.to_date("quoteDate")
-        ) > 7,
-        "invalidDatesince"
-    ).otherwise("validDate")
-)
-
-(Already safe — Spark handles nulls)
-
-✍️ One-line reviewer reply
-
-Initially used a year-based check as a simple guard for obvious data issues, but updated to a 7-day date difference to correctly handle valid year-end spillover scenarios while still flagging true anomalies.
+Updated logic to use a 33-day date difference threshold between quoteDate and eHubQueuedDatestamp to handle valid processing delays while identifying incorrect historical quote dates (e.g. 2022/2023 values).
