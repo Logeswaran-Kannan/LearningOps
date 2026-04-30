@@ -1,49 +1,161 @@
+Use this deep-dive SQL.
+
+-- Post-fix Renewal violation deep dive
+-- Fix timestamp: 14-Apr-2026 05:00
+
 WITH base AS (
     SELECT
+        RATING_QUOTE_KEY,
+        MQS_QUOTE_ID,
+        QUOTE_REF,
+        POLICY_REF,
+        BRAND_NAME,
+        RATING_REQUEST_CHANNEL_NAME,
         TRNSCTN_DESC,
+        LATEST_QUOTE_JOURNEY_DESC,
         TRNSCTN_DT,
         EFCTV_DTS,
-        LATEST_QUOTE_JOURNEY_DESC,
-        
-        -- Identify period
-        CASE 
-            WHEN TRNSCTN_DT < '2026-04-14 05:00:00' 
-            THEN 'PRE_FIX'
-            ELSE 'POST_FIX'
-        END AS period,
+        DELETION_STATUS,
+        INTERNAL_ANALYSIS_VISIBILITY,
+        VALIDATION_VISIBILITY,
+        DWH_DATA_DTS,
+        DWH_CREATE_DTS,
+        DWH_UPDATE_DTS,
 
-        -- Unconverted flag
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days,
+        months_between(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_months,
+
         CASE 
-            WHEN LATEST_QUOTE_JOURNEY_DESC NOT LIKE '%Sale%' 
-                 OR LATEST_QUOTE_JOURNEY_DESC IS NULL
-            THEN 1 ELSE 0 
+            WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
+              OR LATEST_QUOTE_JOURNEY_DESC NOT LIKE '%Sale%'
+            THEN 1 ELSE 0
         END AS is_unconverted,
 
-        -- Violation flag
         CASE 
-            WHEN datediff(EFCTV_DTS, TRNSCTN_DT) > 30 
-            THEN 1 ELSE 0 
-        END AS is_violation
+            WHEN datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) > 30
+            THEN 1 ELSE 0
+        END AS violates_30_day_rule
 
     FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE DWH_CREATE_DTS >= timestamp('2026-04-14 05:00:00')
+      AND LOWER(TRNSCTN_DESC) LIKE '%renewal%'
+),
+
+violations AS (
+    SELECT *
+    FROM base
+    WHERE is_unconverted = 1
+      AND violates_30_day_rule = 1
 )
 
 SELECT
     TRNSCTN_DESC,
+    LATEST_QUOTE_JOURNEY_DESC,
+    BRAND_NAME,
+    RATING_REQUEST_CHANNEL_NAME,
+    DELETION_STATUS,
+    INTERNAL_ANALYSIS_VISIBILITY,
+    VALIDATION_VISIBILITY,
 
-    COUNT(*) AS total_records,
+    COUNT(*) AS violating_records,
 
-    SUM(is_unconverted) AS unconverted_records,
+    MIN(TRNSCTN_DT) AS min_trnsctn_dt,
+    MAX(TRNSCTN_DT) AS max_trnsctn_dt,
+    MIN(EFCTV_DTS) AS min_efctv_dts,
+    MAX(EFCTV_DTS) AS max_efctv_dts,
 
-    SUM(CASE WHEN is_unconverted = 1 AND is_violation = 1 THEN 1 END) 
-        AS violating_unconverted_records,
+    MIN(diff_days) AS min_diff_days,
+    MAX(diff_days) AS max_diff_days,
+    ROUND(AVG(diff_days), 2) AS avg_diff_days,
 
-    ROUND(
-        100 * SUM(CASE WHEN is_unconverted = 1 AND is_violation = 1 THEN 1 END) 
-        / NULLIF(SUM(is_unconverted),0), 2
-    ) AS violation_pct_within_unconverted
+    COUNT(DISTINCT MQS_QUOTE_ID) AS distinct_mqs_quote_ids,
+    COUNT(DISTINCT QUOTE_REF) AS distinct_quote_refs,
+    COUNT(DISTINCT POLICY_REF) AS distinct_policy_refs
 
+FROM violations
+GROUP BY
+    TRNSCTN_DESC,
+    LATEST_QUOTE_JOURNEY_DESC,
+    BRAND_NAME,
+    RATING_REQUEST_CHANNEL_NAME,
+    DELETION_STATUS,
+    INTERNAL_ANALYSIS_VISIBILITY,
+    VALIDATION_VISIBILITY
+ORDER BY violating_records DESC;
+
+Then run this to check whether renewals are naturally sitting around annual renewal gaps.
+
+WITH base AS (
+    SELECT
+        TRNSCTN_DESC,
+        LATEST_QUOTE_JOURNEY_DESC,
+        TRNSCTN_DT,
+        EFCTV_DTS,
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE DWH_CREATE_DTS >= timestamp('2026-04-14 05:00:00')
+      AND LOWER(TRNSCTN_DESC) LIKE '%renewal%'
+      AND (
+            LATEST_QUOTE_JOURNEY_DESC IS NULL
+            OR LATEST_QUOTE_JOURNEY_DESC NOT LIKE '%Sale%'
+          )
+)
+
+SELECT
+    CASE
+        WHEN diff_days BETWEEN 0 AND 30 THEN '00-30 days - valid quote window'
+        WHEN diff_days BETWEEN 31 AND 60 THEN '31-60 days'
+        WHEN diff_days BETWEEN 61 AND 90 THEN '61-90 days'
+        WHEN diff_days BETWEEN 91 AND 180 THEN '91-180 days'
+        WHEN diff_days BETWEEN 181 AND 365 THEN '181-365 days'
+        WHEN diff_days > 365 THEN '365+ days'
+        WHEN diff_days < 0 THEN 'Negative gap - transaction after effective'
+        ELSE 'Unknown'
+    END AS diff_day_bucket,
+    COUNT(*) AS record_count
 FROM base
-WHERE period = 'PRE_FIX'
-GROUP BY TRNSCTN_DESC
-ORDER BY violating_unconverted_records DESC;
+GROUP BY
+    CASE
+        WHEN diff_days BETWEEN 0 AND 30 THEN '00-30 days - valid quote window'
+        WHEN diff_days BETWEEN 31 AND 60 THEN '31-60 days'
+        WHEN diff_days BETWEEN 61 AND 90 THEN '61-90 days'
+        WHEN diff_days BETWEEN 91 AND 180 THEN '91-180 days'
+        WHEN diff_days BETWEEN 181 AND 365 THEN '181-365 days'
+        WHEN diff_days > 365 THEN '365+ days'
+        WHEN diff_days < 0 THEN 'Negative gap - transaction after effective'
+        ELSE 'Unknown'
+    END
+ORDER BY diff_day_bucket;
+
+For sample record review:
+
+SELECT
+    RATING_QUOTE_KEY,
+    MQS_QUOTE_ID,
+    QUOTE_REF,
+    POLICY_REF,
+    BRAND_NAME,
+    RATING_REQUEST_CHANNEL_NAME,
+    TRNSCTN_DESC,
+    LATEST_QUOTE_JOURNEY_DESC,
+    TRNSCTN_DT,
+    EFCTV_DTS,
+    datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days,
+    months_between(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_months,
+    DELETION_STATUS,
+    INTERNAL_ANALYSIS_VISIBILITY,
+    VALIDATION_VISIBILITY,
+    DWH_CREATE_DTS,
+    DWH_UPDATE_DTS
+FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+WHERE DWH_CREATE_DTS >= timestamp('2026-04-14 05:00:00')
+  AND LOWER(TRNSCTN_DESC) LIKE '%renewal%'
+  AND (
+        LATEST_QUOTE_JOURNEY_DESC IS NULL
+        OR LATEST_QUOTE_JOURNEY_DESC NOT LIKE '%Sale%'
+      )
+  AND datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) > 30
+ORDER BY diff_days DESC
+LIMIT 200;
+
+Key thing to validate: for Renewal, EFCTV_DTS may naturally be far ahead of TRNSCTN_DT because renewal quotes can be generated well before policy renewal effective date. So the same 30-day rule may be valid for New Business, but not necessarily for Renewal.
