@@ -1,15 +1,48 @@
-WITH base AS (
+, diff_calc AS (
     SELECT
-        POLICY_REF,
-        TRNSCTN_DESC,
-        to_date(EFCTV_DTS) AS EFCTV_DT,
-        DWH_CREATE_DTS,
+        a.POLICY_REF,
+        a.TRNSCTN_DESC,
+        a.EFCTV_DT AS current_efctv_dt,
+        b.EFCTV_DT AS previous_efctv_dt,
 
-        ROW_NUMBER() OVER (
-            PARTITION BY POLICY_REF, TRNSCTN_DESC
-            ORDER BY EFCTV_DTS
-        ) AS rn
+        datediff(a.EFCTV_DT, b.EFCTV_DT) AS efctv_day_diff
 
-    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
-    WHERE POLICY_REF IS NOT NULL
+    FROM base a
+    LEFT JOIN base b
+        ON a.POLICY_REF = b.POLICY_REF
+       AND a.TRNSCTN_DESC = b.TRNSCTN_DESC
+       AND a.rn = b.rn + 1
 )
+📊 Step 3: Pattern Distribution
+SELECT
+    TRNSCTN_DESC,
+
+    CASE
+        WHEN efctv_day_diff IS NULL THEN 'FIRST_RECORD'
+        WHEN efctv_day_diff BETWEEN 0 AND 30 THEN '0-30 days'
+        WHEN efctv_day_diff BETWEEN 31 AND 90 THEN '31-90 days'
+        WHEN efctv_day_diff BETWEEN 91 AND 180 THEN '91-180 days'
+        WHEN efctv_day_diff BETWEEN 181 AND 365 THEN '181-365 days'
+        WHEN efctv_day_diff BETWEEN 366 AND 400 THEN '365± window'
+        WHEN efctv_day_diff > 400 THEN '400+ days'
+        WHEN efctv_day_diff < 0 THEN 'NEGATIVE (data issue)'
+        ELSE 'OTHER'
+    END AS efctv_pattern,
+
+    COUNT(*) AS record_count
+
+FROM diff_calc
+GROUP BY
+    TRNSCTN_DESC,
+    CASE
+        WHEN efctv_day_diff IS NULL THEN 'FIRST_RECORD'
+        WHEN efctv_day_diff BETWEEN 0 AND 30 THEN '0-30 days'
+        WHEN efctv_day_diff BETWEEN 31 AND 90 THEN '31-90 days'
+        WHEN efctv_day_diff BETWEEN 91 AND 180 THEN '91-180 days'
+        WHEN efctv_day_diff BETWEEN 181 AND 365 THEN '181-365 days'
+        WHEN efctv_day_diff BETWEEN 366 AND 400 THEN '365± window'
+        WHEN efctv_day_diff > 400 THEN '400+ days'
+        WHEN efctv_day_diff < 0 THEN 'NEGATIVE (data issue)'
+        ELSE 'OTHER'
+    END
+ORDER BY TRNSCTN_DESC, efctv_pattern;
