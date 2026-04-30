@@ -13,4 +13,4 @@
 
 ✍️ One-line reviewer reply
 
-Updated logic to use date diffe
+Initially used a year-based check as a simple guard for obvious data issues, but updated to a 7-day date difference to correctly handle valid year-end spillover scenarios while still flagging true anomalies.
