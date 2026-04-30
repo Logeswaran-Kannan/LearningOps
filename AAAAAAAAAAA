@@ -1,73 +1,16 @@
-WITH base AS (
-    SELECT
-        MQS_QUOTE_ID,
-        TRNSCTN_DESC,
-        LATEST_QUOTE_JOURNEY_DESC,
-        DWH_CREATE_DTS,
-        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days,
-
-        CASE
-            WHEN DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
-            THEN 'PRE_FIX'
-            ELSE 'POST_FIX'
-        END AS fix_period,
-
-        CASE
-            WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
-              OR LATEST_QUOTE_JOURNEY_DESC NOT LIKE '%Sale%'
-            THEN 1 ELSE 0
-        END AS is_unconverted
-
-    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
-    WHERE MQS_QUOTE_ID IS NOT NULL
-),
-
-rule_applied AS (
-    SELECT *,
-        CASE
-            WHEN LOWER(TRNSCTN_DESC) LIKE '%renewal%'
-                 AND diff_days > 33 THEN 1
-            WHEN LOWER(TRNSCTN_DESC) NOT LIKE '%renewal%'
-                 AND diff_days > 30 THEN 1
-            ELSE 0
-        END AS is_business_rule_violation
-    FROM base
+.withColumn(
+    "quote_status",
+    F.when(
+        F.datediff(
+            F.to_date("eHubQueuedDatestamp"),
+            F.to_date("quoteDate")
+        ) > 7,
+        "invalidDatesince"
+    ).otherwise("validDate")
 )
 
-SELECT
-    fix_period,
-    TRNSCTN_DESC,
+(Already safe — Spark handles nulls)
 
-    COUNT(DISTINCT MQS_QUOTE_ID) AS total_distinct_quotes,
+✍️ One-line reviewer reply
 
-    COUNT(DISTINCT CASE 
-        WHEN is_unconverted = 1 
-        THEN MQS_QUOTE_ID 
-    END) AS unconverted_distinct_quotes,
-
-    COUNT(DISTINCT CASE 
-        WHEN is_unconverted = 1 
-         AND is_business_rule_violation = 1
-        THEN MQS_QUOTE_ID 
-    END) AS violating_unconverted_distinct_quotes,
-
-    ROUND(
-        100.0 * COUNT(DISTINCT CASE 
-            WHEN is_unconverted = 1 
-             AND is_business_rule_violation = 1
-            THEN MQS_QUOTE_ID 
-        END)
-        / NULLIF(COUNT(DISTINCT CASE 
-            WHEN is_unconverted = 1 
-            THEN MQS_QUOTE_ID 
-        END), 0),
-        2
-    ) AS violation_pct_within_unconverted
-
-FROM rule_applied
-GROUP BY
-    fix_period,
-    TRNSCTN_DESC
-ORDER BY
-    fix_period,
-    violating_unconverted_distinct_quotes DESC;
+Updated logic to use date diffe
