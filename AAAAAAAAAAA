@@ -1,57 +1,15 @@
 WITH base AS (
     SELECT
         POLICY_REF,
-        MQS_QUOTE_ID,
         TRNSCTN_DESC,
-        TRNSCTN_DT,
-        EFCTV_DTS,
-        DWH_CREATE_DTS
+        to_date(EFCTV_DTS) AS EFCTV_DT,
+        DWH_CREATE_DTS,
+
+        ROW_NUMBER() OVER (
+            PARTITION BY POLICY_REF, TRNSCTN_DESC
+            ORDER BY EFCTV_DTS
+        ) AS rn
+
     FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
     WHERE POLICY_REF IS NOT NULL
-      AND EFCTV_DTS IS NOT NULL
-      AND TRNSCTN_DESC IN (
-            'New Business',
-            'Mid Term Adjustment',
-            'Renewal'
-      )
-),
-
-policy_txn_pattern AS (
-    SELECT
-        *,
-        MIN(to_date(EFCTV_DTS)) OVER (
-            PARTITION BY POLICY_REF, TRNSCTN_DESC
-        ) AS first_efctv_dt,
-
-        MAX(to_date(EFCTV_DTS)) OVER (
-            PARTITION BY POLICY_REF, TRNSCTN_DESC
-        ) AS last_efctv_dt,
-
-        COUNT(DISTINCT MQS_QUOTE_ID) OVER (
-            PARTITION BY POLICY_REF, TRNSCTN_DESC
-        ) AS distinct_quote_count
-    FROM base
 )
-
-SELECT
-    POLICY_REF,
-    TRNSCTN_DESC,
-    distinct_quote_count,
-    first_efctv_dt,
-    last_efctv_dt,
-    datediff(last_efctv_dt, first_efctv_dt) AS efctv_dts_day_diff,
-
-    COUNT(DISTINCT MQS_QUOTE_ID) AS distinct_mqs_quote_ids,
-    MIN(DWH_CREATE_DTS) AS min_dwh_create_dts,
-    MAX(DWH_CREATE_DTS) AS max_dwh_create_dts
-
-FROM policy_txn_pattern
-GROUP BY
-    POLICY_REF,
-    TRNSCTN_DESC,
-    distinct_quote_count,
-    first_efctv_dt,
-    last_efctv_dt
-ORDER BY
-    efctv_dts_day_diff DESC,
-    distinct_quote_count DESC;
