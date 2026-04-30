@@ -3,58 +3,32 @@ WITH base AS (
         MQS_QUOTE_ID,
         TRNSCTN_DESC,
         LATEST_QUOTE_JOURNEY_DESC,
-        TRNSCTN_DT,
-        EFCTV_DTS,
         DWH_CREATE_DTS,
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days,
 
-        CAST(DWH_CREATE_DTS AS DATE) AS dwh_create_date,
-
-        CASE 
-            WHEN DWH_CREATE_DTS < TIMESTAMP('2026-04-14 13:00:00') 
-                THEN 'PRE_FIX'
+        CASE
+            WHEN DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
+            THEN 'PRE_FIX'
             ELSE 'POST_FIX'
         END AS fix_period,
 
-        DATEDIFF(
-            TO_DATE(EFCTV_DTS),
-            TO_DATE(TRNSCTN_DT)
-        ) AS diff_days,
-
-        CASE 
+        CASE
             WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
-              OR LOWER(LATEST_QUOTE_JOURNEY_DESC) NOT LIKE '%sale%'
+              OR LATEST_QUOTE_JOURNEY_DESC NOT LIKE '%Sale%'
             THEN 1 ELSE 0
         END AS is_unconverted
 
     FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
     WHERE MQS_QUOTE_ID IS NOT NULL
-      AND TRNSCTN_DT IS NOT NULL
-      AND EFCTV_DTS IS NOT NULL
 ),
 
 rule_applied AS (
-    SELECT
-        *,
-
+    SELECT *,
         CASE
-            WHEN is_unconverted = 0 THEN 0
-
-            -- New business: only 0-30 days acceptable
-            WHEN LOWER(TRNSCTN_DESC) LIKE '%new business%'
-                 AND (diff_days < 0 OR diff_days > 30)
-            THEN 1
-
-            -- Renewal: 0-33 days acceptable
             WHEN LOWER(TRNSCTN_DESC) LIKE '%renewal%'
-                 AND (diff_days < 0 OR diff_days > 33)
-            THEN 1
-
-            -- Other transaction descriptions: keep 0-30 days rule
-            WHEN LOWER(TRNSCTN_DESC) NOT LIKE '%new business%'
-                 AND LOWER(TRNSCTN_DESC) NOT LIKE '%renewal%'
-                 AND (diff_days < 0 OR diff_days > 30)
-            THEN 1
-
+                 AND diff_days > 33 THEN 1
+            WHEN LOWER(TRNSCTN_DESC) NOT LIKE '%renewal%'
+                 AND diff_days > 30 THEN 1
             ELSE 0
         END AS is_business_rule_violation
     FROM base
@@ -62,7 +36,6 @@ rule_applied AS (
 
 SELECT
     fix_period,
-    dwh_create_date,
     TRNSCTN_DESC,
 
     COUNT(DISTINCT MQS_QUOTE_ID) AS total_distinct_quotes,
@@ -76,7 +49,7 @@ SELECT
         WHEN is_unconverted = 1 
          AND is_business_rule_violation = 1
         THEN MQS_QUOTE_ID 
-    END) AS violation_distinct_quotes,
+    END) AS violating_unconverted_distinct_quotes,
 
     ROUND(
         100.0 * COUNT(DISTINCT CASE 
@@ -89,18 +62,12 @@ SELECT
             THEN MQS_QUOTE_ID 
         END), 0),
         2
-    ) AS violation_pct_within_unconverted,
-
-    MIN(diff_days) AS min_diff_days,
-    MAX(diff_days) AS max_diff_days,
-    ROUND(AVG(diff_days), 2) AS avg_diff_days
+    ) AS violation_pct_within_unconverted
 
 FROM rule_applied
 GROUP BY
     fix_period,
-    dwh_create_date,
     TRNSCTN_DESC
 ORDER BY
-    dwh_create_date,
     fix_period,
-    violation_distinct_quotes DESC;
+    violating_unconverted_distinct_quotes DESC;
