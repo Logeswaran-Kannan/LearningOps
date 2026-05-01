@@ -1,7 +1,49 @@
-print("DEBUG VALIDATION RAW")
-print("mqs_interval:", mqs_interval, type(mqs_interval))
-print("interaction_interval:", interaction_interval, type(interaction_interval))
-print("ehub_rows:", ehub_rows)
-print("bronze_rows:", bronze_rows)
-print("interaction_rows:", interaction_rows)
-print("is_valid_interval:", is_valid_interval)
+validation_sql = f"""
+WITH common_mqs_interval AS (
+    SELECT MAX(e.interval_end) AS mqs_interval
+    FROM core_bld.default.monitoring_ehub_30min_metrics e
+    INNER JOIN core_bld.default.monitoring_mqs_bronze_30min b
+        ON e.interval_end = b.interval_end
+    WHERE e.interval_end >= current_timestamp() - INTERVAL {LOOKBACK_HOURS} HOURS
+      AND e.message_type <> 'ALL'
+      AND b.message_type <> 'ALL'
+),
+
+interaction_expected_interval AS (
+    SELECT mqs_interval - INTERVAL 30 MINUTES AS interaction_interval
+    FROM common_mqs_interval
+),
+
+ehub_check AS (
+    SELECT COUNT(*) AS ehub_rows
+    FROM core_bld.default.monitoring_ehub_30min_metrics
+    WHERE interval_end = (SELECT mqs_interval FROM common_mqs_interval)
+      AND message_type <> 'ALL'
+),
+
+bronze_check AS (
+    SELECT COUNT(*) AS bronze_rows
+    FROM core_bld.default.monitoring_mqs_bronze_30min
+    WHERE interval_end = (SELECT mqs_interval FROM common_mqs_interval)
+      AND message_type <> 'ALL'
+),
+
+interaction_check AS (
+    SELECT COUNT(*) AS interaction_rows
+    FROM core_bld.default.monitoring_mqs_interaction_status
+    WHERE interval_start = (
+        SELECT interaction_interval
+        FROM interaction_expected_interval
+    )
+)
+
+SELECT
+    (SELECT mqs_interval FROM common_mqs_interval) AS mqs_interval,
+    (SELECT interaction_interval FROM interaction_expected_interval) AS interaction_interval,
+    e.ehub_rows,
+    b.bronze_rows,
+    i.interaction_rows
+FROM ehub_check e
+CROSS JOIN bronze_check b
+CROSS JOIN interaction_check i
+"""
