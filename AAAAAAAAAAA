@@ -1,4 +1,20 @@
 SELECT
-  current_timestamp() AS databricks_current_ts,
-  current_timezone() AS databricks_timezone,
-  current_date() AS databricks_current_date;
+  'EHUB' AS source,
+  MAX(interval_end) AS max_interval
+FROM core_bld.default.monitoring_ehub_30min_metrics
+WHERE message_type <> 'ALL'
+
+UNION ALL
+
+SELECT
+  'BRONZE',
+  MAX(interval_end)
+FROM core_bld.default.monitoring_mqs_bronze_30min
+WHERE message_type <> 'ALL'
+
+UNION ALL
+
+SELECT
+  'INTERACTION',
+  MAX(interval_start)
+FROM core_bld.default.monitoring_mqs_interaction_status;
