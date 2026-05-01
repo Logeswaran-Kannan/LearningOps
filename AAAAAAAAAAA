@@ -1,48 +1,22 @@
-, diff_calc AS (
-    SELECT
-        a.POLICY_REF,
-        a.TRNSCTN_DESC,
-        a.EFCTV_DT AS current_efctv_dt,
-        b.EFCTV_DT AS previous_efctv_dt,
+SELECT 'EHUB' AS table_name, interval_end AS interval_value, COUNT(*) AS row_count
+FROM core_bld.default.monitoring_ehub_30min_metrics
+WHERE interval_end >= date_trunc('day', current_timestamp())
+  AND message_type <> 'ALL'
+GROUP BY interval_end
 
-        datediff(a.EFCTV_DT, b.EFCTV_DT) AS efctv_day_diff
+UNION ALL
 
-    FROM base a
-    LEFT JOIN base b
-        ON a.POLICY_REF = b.POLICY_REF
-       AND a.TRNSCTN_DESC = b.TRNSCTN_DESC
-       AND a.rn = b.rn + 1
-)
-📊 Step 3: Pattern Distribution
-SELECT
-    TRNSCTN_DESC,
+SELECT 'BRONZE' AS table_name, interval_end AS interval_value, COUNT(*) AS row_count
+FROM core_bld.default.monitoring_mqs_bronze_30min
+WHERE interval_end >= date_trunc('day', current_timestamp())
+  AND message_type <> 'ALL'
+GROUP BY interval_end
 
-    CASE
-        WHEN efctv_day_diff IS NULL THEN 'FIRST_RECORD'
-        WHEN efctv_day_diff BETWEEN 0 AND 30 THEN '0-30 days'
-        WHEN efctv_day_diff BETWEEN 31 AND 90 THEN '31-90 days'
-        WHEN efctv_day_diff BETWEEN 91 AND 180 THEN '91-180 days'
-        WHEN efctv_day_diff BETWEEN 181 AND 365 THEN '181-365 days'
-        WHEN efctv_day_diff BETWEEN 366 AND 400 THEN '365± window'
-        WHEN efctv_day_diff > 400 THEN '400+ days'
-        WHEN efctv_day_diff < 0 THEN 'NEGATIVE (data issue)'
-        ELSE 'OTHER'
-    END AS efctv_pattern,
+UNION ALL
 
-    COUNT(*) AS record_count
+SELECT 'INTERACTION' AS table_name, interval_start AS interval_value, COUNT(*) AS row_count
+FROM core_bld.default.monitoring_mqs_interaction_status
+WHERE interval_start >= date_trunc('day', current_timestamp())
+GROUP BY interval_start
 
-FROM diff_calc
-GROUP BY
-    TRNSCTN_DESC,
-    CASE
-        WHEN efctv_day_diff IS NULL THEN 'FIRST_RECORD'
-        WHEN efctv_day_diff BETWEEN 0 AND 30 THEN '0-30 days'
-        WHEN efctv_day_diff BETWEEN 31 AND 90 THEN '31-90 days'
-        WHEN efctv_day_diff BETWEEN 91 AND 180 THEN '91-180 days'
-        WHEN efctv_day_diff BETWEEN 181 AND 365 THEN '181-365 days'
-        WHEN efctv_day_diff BETWEEN 366 AND 400 THEN '365± window'
-        WHEN efctv_day_diff > 400 THEN '400+ days'
-        WHEN efctv_day_diff < 0 THEN 'NEGATIVE (data issue)'
-        ELSE 'OTHER'
-    END
-ORDER BY TRNSCTN_DESC, efctv_pattern;
+ORDER BY table_name, interval_value DESC;
