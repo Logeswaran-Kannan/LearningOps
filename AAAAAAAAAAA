@@ -1,49 +1,148 @@
-validation_sql = f"""
-WITH common_mqs_interval AS (
-    SELECT MAX(e.interval_end) AS mqs_interval
-    FROM core_bld.default.monitoring_ehub_30min_metrics e
-    INNER JOIN core_bld.default.monitoring_mqs_bronze_30min b
-        ON e.interval_end = b.interval_end
-    WHERE e.interval_end >= current_timestamp() - INTERVAL {LOOKBACK_HOURS} HOURS
-      AND e.message_type <> 'ALL'
-      AND b.message_type <> 'ALL'
+WITH params AS (
+    SELECT
+        current_date() AS run_dt,
+        timestamp('2026-04-14 13:00:00') AS fix_cutoff_ts
 ),
 
-interaction_expected_interval AS (
-    SELECT mqs_interval - INTERVAL 30 MINUTES AS interaction_interval
-    FROM common_mqs_interval
+base AS (
+    SELECT
+        t.MQS_QUOTE_ID,
+        t.RATING_QUOTE_KEY,
+        t.QUOTE_REF,
+        t.POLICY_REF,
+        t.BRAND_NAME,
+        t.RATING_REQUEST_CHANNEL_NAME,
+        t.TRNSCTN_DESC,
+        t.LATEST_QUOTE_JOURNEY_DESC,
+        to_date(t.TRNSCTN_DT) AS trnsctn_dt,
+        to_date(t.EFCTV_DTS) AS efctv_dt,
+        t.DWH_CREATE_DTS,
+
+        CASE
+            WHEN lower(t.RATING_REQUEST_CHANNEL_NAME) LIKE '%confused%' THEN 'Aggs - Confused'
+            WHEN lower(t.RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
+              OR lower(t.RATING_REQUEST_CHANNEL_NAME) LIKE '%compare the market%' THEN 'Aggs - CTM'
+            WHEN lower(t.RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%' THEN 'Aggs - Go Compare'
+            WHEN lower(t.RATING_REQUEST_CHANNEL_NAME) LIKE '%msm%'
+              OR lower(t.RATING_REQUEST_CHANNEL_NAME) LIKE '%money supermarket%' THEN 'Aggs - MSM'
+            ELSE 'Non Aggs - including partnerships'
+        END AS aggregator_group,
+
+        CASE
+            WHEN t.LATEST_QUOTE_JOURNEY_DESC IS NULL
+              OR lower(t.LATEST_QUOTE_JOURNEY_DESC) NOT LIKE '%sale%'
+            THEN 1 ELSE 0
+        END AS is_unconverted
+
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions t
+    CROSS JOIN params p
+    WHERE t.DWH_CREATE_DTS < p.fix_cutoff_ts
+      AND t.MQS_QUOTE_ID IS NOT NULL
 ),
 
-ehub_check AS (
-    SELECT COUNT(*) AS ehub_rows
-    FROM core_bld.default.monitoring_ehub_30min_metrics
-    WHERE interval_end = (SELECT mqs_interval FROM common_mqs_interval)
-      AND message_type <> 'ALL'
+retention_rule AS (
+    SELECT
+        b.*,
+
+        CASE
+            WHEN aggregator_group IN ('Aggs - CTM', 'Aggs - Go Compare') THEN 15
+            WHEN aggregator_group IN ('Aggs - Confused') THEN NULL       -- usage prohibited
+            ELSE 24
+        END AS retention_months,
+
+        CASE
+            WHEN aggregator_group = 'Aggs - Confused' THEN 'Usage Prohibited'
+            ELSE 'Delete'
+        END AS retention_action
+    FROM base b
 ),
 
-bronze_check AS (
-    SELECT COUNT(*) AS bronze_rows
-    FROM core_bld.default.monitoring_mqs_bronze_30min
-    WHERE interval_end = (SELECT mqs_interval FROM common_mqs_interval)
-      AND message_type <> 'ALL'
+calc AS (
+    SELECT
+        r.*,
+        p.run_dt,
+
+        -- Corrected date candidate:
+        -- If transaction date is clearly invalid vs effective date, use EFCTV_DTS - 30 days.
+        CASE
+            WHEN datediff(r.efctv_dt, r.trnsctn_dt) > 30
+            THEN date_sub(r.efctv_dt, 30)
+            ELSE r.trnsctn_dt
+        END AS corrected_retention_dt,
+
+        add_months(r.trnsctn_dt, r.retention_months) AS delete_due_by_trnsctn_dt,
+
+        add_months(
+            CASE
+                WHEN datediff(r.efctv_dt, r.trnsctn_dt) > 30
+                THEN date_sub(r.efctv_dt, 30)
+                ELSE r.trnsctn_dt
+            END,
+            r.retention_months
+        ) AS delete_due_by_corrected_dt
+
+    FROM retention_rule r
+    CROSS JOIN params p
+    WHERE r.retention_months IS NOT NULL
+      AND r.is_unconverted = 1
 ),
 
-interaction_check AS (
-    SELECT COUNT(*) AS interaction_rows
-    FROM core_bld.default.monitoring_mqs_interaction_status
-    WHERE interval_start = (
-        SELECT interaction_interval
-        FROM interaction_expected_interval
-    )
+flagged AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN delete_due_by_trnsctn_dt <= run_dt THEN 1 ELSE 0
+        END AS would_delete_using_trnsctn_dt,
+
+        CASE
+            WHEN delete_due_by_corrected_dt <= run_dt THEN 1 ELSE 0
+        END AS should_delete_using_corrected_dt,
+
+        CASE
+            WHEN delete_due_by_trnsctn_dt <= run_dt
+             AND delete_due_by_corrected_dt > run_dt
+            THEN 1 ELSE 0
+        END AS wrongly_deleted_flag
+
+    FROM calc
 )
 
 SELECT
-    (SELECT mqs_interval FROM common_mqs_interval) AS mqs_interval,
-    (SELECT interaction_interval FROM interaction_expected_interval) AS interaction_interval,
-    e.ehub_rows,
-    b.bronze_rows,
-    i.interaction_rows
-FROM ehub_check e
-CROSS JOIN bronze_check b
-CROSS JOIN interaction_check i
-"""
+    aggregator_group,
+    retention_months,
+    TRNSCTN_DESC,
+
+    COUNT(DISTINCT MQS_QUOTE_ID) AS total_unconverted_quotes_pre_fix,
+
+    COUNT(DISTINCT CASE
+        WHEN would_delete_using_trnsctn_dt = 1
+        THEN MQS_QUOTE_ID
+    END) AS would_delete_using_transaction_date,
+
+    COUNT(DISTINCT CASE
+        WHEN should_delete_using_corrected_dt = 1
+        THEN MQS_QUOTE_ID
+    END) AS should_delete_using_corrected_date,
+
+    COUNT(DISTINCT CASE
+        WHEN wrongly_deleted_flag = 1
+        THEN MQS_QUOTE_ID
+    END) AS wrongly_deleted_quotes,
+
+    ROUND(
+        100.0 * COUNT(DISTINCT CASE
+            WHEN wrongly_deleted_flag = 1
+            THEN MQS_QUOTE_ID
+        END)
+        / NULLIF(COUNT(DISTINCT MQS_QUOTE_ID), 0),
+        2
+    ) AS wrongly_deleted_pct
+
+FROM flagged
+GROUP BY
+    aggregator_group,
+    retention_months,
+    TRNSCTN_DESC
+ORDER BY
+    wrongly_deleted_quotes DESC;
