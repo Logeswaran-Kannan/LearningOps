@@ -1,1 +1,10 @@
-Yes, the target table will be created automatically on the first run using saveAsTable. For production, the TARGET_TABLE config will be updated from the build schema to the approved production schema, so the table is created in the correct location with the expected Delta format and partitioning.
+DELETE FROM core_bld.default.sla_alert_state
+WHERE alert_name = 'radar_live_sla_monitor';
+
+INSERT INTO core_bld.default.sla_alert_state
+VALUES (
+  'radar_live_sla_monitor',
+  'BREACH',
+  TIMESTAMP('2026-05-05 14:00:00'),
+  current_timestamp()
+);
