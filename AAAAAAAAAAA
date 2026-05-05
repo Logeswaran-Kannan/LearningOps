@@ -1,12 +1,13 @@
+test_payload = {
+    "text": "Radar Live test message"
+}
+
 response = requests.post(
     WEBHOOK_URL.strip(),
-    headers={"Content-Type": "application/json; charset=utf-8"},
-    data=payload_str.encode("utf-8"),
+    headers={"Content-Type": "application/json"},
+    data=json.dumps(test_payload),
     timeout=30
 )
 
-print("HTTP status:", response.status_code)
-print("Response text:", response.text)
-
-if response.status_code >= 400 or "Webhook message delivery failed" in response.text:
-    raise Exception(f"Teams webhook failed: {response.text}")
+print(response.status_code)
+print(response.text)
