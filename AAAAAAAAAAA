@@ -209,15 +209,15 @@ print("previous_status :", previous_status)
 print("previous_interval:", previous_interval)
 
 # =========================================================
-# CARD HELPERS
+# CARD HELPERS - WORKING ADAPTIVE CARD FORMAT
 # =========================================================
 def safe_text(value, max_len=80):
     if value is None:
         return ""
     s = str(value)
-    s = s.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-    s = re.sub(r"[<>]", "", s)
-    s = re.sub(r"\s+", " ", s).strip()
+    s = s.replace(chr(10), " ").replace(chr(13), " ").replace(chr(9), " ")
+    s = s.replace("<", "").replace(">", "")
+    s = " ".join(s.split()).strip()
     return s if len(s) <= max_len else s[:max_len - 3] + "..."
 
 
@@ -265,8 +265,6 @@ def wrap_card(body):
 def breach_card(items, interval_value):
     impacted_count = len(items)
     shown_items = items[:MAX_CARD_ROWS]
-    source_summary = summarize_sources(items)
-    compare_text = comparison_line(items)
 
     body = [
         {
@@ -297,13 +295,13 @@ def breach_card(items, interval_value):
                 {"title": "Interval", "value": safe_text(interval_value, 40)},
                 {"title": "Interaction Interval", "value": safe_text(interaction_interval, 40)},
                 {"title": "Impacted Flows", "value": str(impacted_count)},
-                {"title": "Affected Areas", "value": safe_text(source_summary, 120)},
+                {"title": "Affected Areas", "value": summarize_sources(items)},
                 {"title": "Severity", "value": "High"}
             ]
         },
         {
             "type": "TextBlock",
-            "text": compare_text,
+            "text": comparison_line(items),
             "wrap": True,
             "size": "Small",
             "spacing": "Small"
@@ -344,7 +342,7 @@ def breach_card(items, interval_value):
     if impacted_count > MAX_CARD_ROWS:
         body.append({
             "type": "TextBlock",
-            "text": f"Showing top {MAX_CARD_ROWS} impacted flow(s) by variance. Review dashboard for all {impacted_count} impacted flow(s).",
+            "text": f"Showing top {MAX_CARD_ROWS} of {impacted_count} impacted flow(s). Review dashboard for full details.",
             "wrap": True,
             "size": "Small",
             "isSubtle": True,
