@@ -146,3 +146,37 @@ GROUP BY
     TRNSCTN_DESC
 ORDER BY
     wrongly_deleted_quotes DESC;
+
+
+
+
+
+-------
+
+
+SELECT
+    aggregator_group,
+    retention_months,
+
+    COUNT(DISTINCT MQS_QUOTE_ID) AS total_unconverted_quotes_pre_fix,
+
+    COUNT(DISTINCT CASE
+        WHEN would_delete_using_trnsctn_dt = 1
+        THEN MQS_QUOTE_ID
+    END) AS would_delete_using_transaction_date,
+
+    COUNT(DISTINCT CASE
+        WHEN should_delete_using_corrected_dt = 1
+        THEN MQS_QUOTE_ID
+    END) AS should_delete_using_corrected_date,
+
+    COUNT(DISTINCT CASE
+        WHEN wrongly_deleted_flag = 1
+        THEN MQS_QUOTE_ID
+    END) AS wrongly_deleted_quotes
+
+FROM flagged
+GROUP BY
+    aggregator_group,
+    retention_months
+ORDER BY wrongly_deleted_quotes DESC;
