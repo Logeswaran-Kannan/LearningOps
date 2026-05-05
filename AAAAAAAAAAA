@@ -12,6 +12,7 @@ DASHBOARD_URL = "YOUR_DASHBOARD_URL"
 STATE_TABLE = "core_bld.default.sla_alert_state"
 ALERT_NAME = "radar_live_sla_monitor"
 LOOKBACK_HOURS = 24
+MAX_CARD_ROWS = 6
 
 # =========================================================
 # STATE TABLE
@@ -27,7 +28,7 @@ USING DELTA
 """)
 
 # =========================================================
-# VALIDATE INTERVALS
+# VALIDATE LATEST COMPLETE INTERVAL
 # =========================================================
 validation_sql = f"""
 WITH common_mqs_interval AS (
@@ -208,9 +209,9 @@ print("previous_status :", previous_status)
 print("previous_interval:", previous_interval)
 
 # =========================================================
-# TEAMS CARD HELPERS
+# CARD HELPERS
 # =========================================================
-def clean_value(value, max_len=80):
+def safe_text(value, max_len=80):
     if value is None:
         return ""
     s = str(value)
@@ -220,24 +221,27 @@ def clean_value(value, max_len=80):
     return s if len(s) <= max_len else s[:max_len - 3] + "..."
 
 
-def source_summary(items):
+def summarize_sources(items):
     counts = {}
     for r in items:
-        src = clean_value(r.get("breach_source", "UNKNOWN"), 40)
+        src = safe_text(r.get("breach_source", "UNKNOWN"), 40)
         counts[src] = counts.get(src, 0) + 1
-    return clean_value(", ".join([f"{k}: {v}" for k, v in counts.items()]), 120)
+    return safe_text(", ".join([f"{k}: {v}" for k, v in counts.items()]), 120)
 
 
 def comparison_line(items):
     if not items:
-        return "Latest valid monitoring interval is within SLA."
+        return "EHUB and Bronze counts are aligned within SLA for the latest monitored interval."
 
     max_diff = max(abs(int(r.get("count_difference", 0) or 0)) for r in items)
     non_zero = sum(1 for r in items if int(r.get("count_difference", 0) or 0) != 0)
 
-    return clean_value(
-        f"Count comparison: {non_zero} impacted flow(s), max EHUB vs Bronze variance {max_diff}.",
-        140
+    if max_diff == 0:
+        return "EHUB and Bronze counts are aligned for the monitored interval."
+
+    return safe_text(
+        f"Count comparison indicates {non_zero} impacted flow(s), with a maximum EHUB vs Bronze variance of {max_diff}.",
+        160
     )
 
 
@@ -247,11 +251,10 @@ def wrap_card(body):
         "attachments": [
             {
                 "contentType": "application/vnd.microsoft.card.adaptive",
-                "contentUrl": None,
                 "content": {
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
-                    "version": "1.0",
+                    "version": "1.2",
                     "body": body
                 }
             }
@@ -259,10 +262,16 @@ def wrap_card(body):
     }
 
 
-def breach_card(items):
+def breach_card(items, interval_value):
+    impacted_count = len(items)
+    shown_items = items[:MAX_CARD_ROWS]
+    source_summary = summarize_sources(items)
+    compare_text = comparison_line(items)
+
     body = [
         {
             "type": "Container",
+            "style": "attention",
             "items": [
                 {
                     "type": "TextBlock",
@@ -273,7 +282,7 @@ def breach_card(items):
                 },
                 {
                     "type": "TextBlock",
-                    "text": "Radar Live production monitoring has detected a pipeline health issue requiring immediate review.",
+                    "text": "Radar Live production monitoring has detected a service degradation requiring immediate review.",
                     "wrap": True,
                     "size": "Small",
                     "spacing": "Small"
@@ -285,16 +294,16 @@ def breach_card(items):
             "spacing": "Medium",
             "facts": [
                 {"title": "Environment", "value": "Production"},
-                {"title": "MQS Interval", "value": clean_value(mqs_interval, 40)},
-                {"title": "Interaction Interval", "value": clean_value(interaction_interval, 40)},
-                {"title": "Impacted Flows", "value": clean_value(len(items), 10)},
-                {"title": "Affected Areas", "value": source_summary(items)},
+                {"title": "Interval", "value": safe_text(interval_value, 40)},
+                {"title": "Interaction Interval", "value": safe_text(interaction_interval, 40)},
+                {"title": "Impacted Flows", "value": str(impacted_count)},
+                {"title": "Affected Areas", "value": safe_text(source_summary, 120)},
                 {"title": "Severity", "value": "High"}
             ]
         },
         {
             "type": "TextBlock",
-            "text": comparison_line(items),
+            "text": compare_text,
             "wrap": True,
             "size": "Small",
             "spacing": "Small"
@@ -318,24 +327,34 @@ def breach_card(items):
         }
     ]
 
-    for r in items:
+    for r in shown_items:
         body.append({
             "type": "ColumnSet",
             "separator": True,
             "spacing": "Small",
             "columns": [
-                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": clean_value(r.get("message_type_link"), 24), "wrap": True, "size": "Small"}]},
-                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": clean_value(r.get("ehub_count"), 15), "horizontalAlignment": "Center", "size": "Small"}]},
-                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": clean_value(r.get("bronze_count"), 15), "horizontalAlignment": "Center", "size": "Small"}]},
-                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": clean_value(r.get("count_difference"), 15), "horizontalAlignment": "Center", "size": "Small"}]},
-                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": clean_value(r.get("breach_source"), 30), "wrap": True, "size": "Small"}]}
+                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": safe_text(r.get("message_type_link"), 24), "wrap": True, "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": safe_text(r.get("ehub_count"), 15), "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": safe_text(r.get("bronze_count"), 15), "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": safe_text(r.get("count_difference"), 15), "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": safe_text(r.get("breach_source"), 30), "wrap": True, "size": "Small"}]}
             ]
+        })
+
+    if impacted_count > MAX_CARD_ROWS:
+        body.append({
+            "type": "TextBlock",
+            "text": f"Showing top {MAX_CARD_ROWS} impacted flow(s) by variance. Review dashboard for all {impacted_count} impacted flow(s).",
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True,
+            "spacing": "Small"
         })
 
     body.extend([
         {
             "type": "TextBlock",
-            "text": f"Dashboard: {clean_value(DASHBOARD_URL, 180)}",
+            "text": f"Dashboard: {DASHBOARD_URL}",
             "wrap": True,
             "size": "Small",
             "isSubtle": True,
@@ -343,19 +362,21 @@ def breach_card(items):
         },
         {
             "type": "TextBlock",
-            "text": "Please review affected flows and validate upstream/downstream processing.",
+            "text": "Please investigate the affected flows and validate upstream/downstream processing.",
             "wrap": True,
-            "size": "Small"
+            "size": "Small",
+            "spacing": "Small"
         }
     ])
 
     return wrap_card(body)
 
 
-def recovery_card():
+def healthy_card(interval_value):
     body = [
         {
             "type": "Container",
+            "style": "good",
             "items": [
                 {
                     "type": "TextBlock",
@@ -366,7 +387,7 @@ def recovery_card():
                 },
                 {
                     "type": "TextBlock",
-                    "text": "Radar Live monitoring confirms the service flow is now operating within SLA.",
+                    "text": "Radar Live monitoring confirms the service flow has recovered and is now operating within SLA.",
                     "wrap": True,
                     "size": "Small",
                     "spacing": "Small"
@@ -378,22 +399,22 @@ def recovery_card():
             "spacing": "Medium",
             "facts": [
                 {"title": "Environment", "value": "Production"},
-                {"title": "Recovered At", "value": clean_value(current_interval, 40)},
-                {"title": "Interaction Checked", "value": clean_value(interaction_interval, 40)},
+                {"title": "Recovered At", "value": safe_text(interval_value, 40)},
+                {"title": "Interaction Checked", "value": safe_text(interaction_interval, 40)},
                 {"title": "Status", "value": "Healthy"},
-                {"title": "Verification", "value": "Latest valid interval has no active breach"}
+                {"title": "Verification", "value": "Latest monitored interval is within SLA"}
             ]
         },
         {
             "type": "TextBlock",
-            "text": "EHUB, Bronze and Interaction monitoring are now within expected SLA checks for the latest valid cycle.",
+            "text": "EHUB and Bronze counts are aligned within the latest monitoring interval, and no active SLA breach is currently detected.",
             "wrap": True,
             "size": "Small",
             "spacing": "Small"
         },
         {
             "type": "TextBlock",
-            "text": f"Dashboard: {clean_value(DASHBOARD_URL, 180)}",
+            "text": f"Dashboard: {DASHBOARD_URL}",
             "wrap": True,
             "size": "Small",
             "isSubtle": True,
@@ -405,15 +426,15 @@ def recovery_card():
 
 
 def send_teams_payload(webhook_url, payload):
-    payload_str = json.dumps(payload, ensure_ascii=False)
+    payload_str = json.dumps(payload)
 
     print("Payload size:", len(payload_str))
     print(payload_str[:2000])
 
     response = requests.post(
-        webhook_url.strip(),
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        data=payload_str.encode("utf-8"),
+        webhook_url,
+        headers={"Content-Type": "application/json"},
+        data=payload_str,
         timeout=30
     )
 
@@ -430,12 +451,13 @@ def send_teams_payload(webhook_url, payload):
 # =========================================================
 payload = None
 
-if previous_status is None and current_status == "BREACH":
-    payload = breach_card(rows)
+if previous_status is None:
+    if current_status == "BREACH":
+        payload = breach_card(rows, current_interval)
 elif previous_status == "HEALTHY" and current_status == "BREACH":
-    payload = breach_card(rows)
+    payload = breach_card(rows, current_interval)
 elif previous_status == "BREACH" and current_status == "HEALTHY":
-    payload = recovery_card()
+    payload = healthy_card(current_interval)
 
 if payload:
     send_teams_payload(WEBHOOK_URL, payload)
