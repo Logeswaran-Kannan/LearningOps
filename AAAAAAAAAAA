@@ -1,1 +1,81 @@
-Quote Retention Logic – Data Quality Issue, Impact Analysis and Recommended Retention Strategy
+WITH params AS (
+    SELECT
+        current_date() AS run_dt,
+        timestamp('2026-04-14 13:00:00') AS fix_cutoff
+),
+
+base AS (
+    SELECT
+        MQS_QUOTE_ID,
+        to_date(TRNSCTN_DT) AS trnsctn_dt,
+        to_date(DWH_DATA_DTS) AS dwh_dt,
+        DWH_CREATE_DTS,
+
+        CASE
+            WHEN DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
+            THEN 'PRE_FIX'
+            ELSE 'POST_FIX'
+        END AS period,
+
+        CASE
+            WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
+              OR lower(LATEST_QUOTE_JOURNEY_DESC) NOT LIKE '%sale%'
+            THEN 1 ELSE 0
+        END AS is_unconverted,
+
+        CASE
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
+              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%'
+            THEN 15
+            ELSE 24
+        END AS retention_months
+
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE MQS_QUOTE_ID IS NOT NULL
+),
+
+calc AS (
+    SELECT
+        *,
+        add_months(trnsctn_dt, retention_months) AS delete_trnsctn_dt,
+        add_months(dwh_dt, retention_months) AS delete_dwh_dt
+    FROM base
+    WHERE is_unconverted = 1
+),
+
+flagged AS (
+    SELECT
+        *,
+        CASE WHEN delete_trnsctn_dt <= current_date() THEN 1 ELSE 0 END AS del_trnsctn,
+        CASE WHEN delete_dwh_dt <= current_date() THEN 1 ELSE 0 END AS del_dwh,
+
+        CASE
+            WHEN delete_trnsctn_dt <= current_date()
+             AND delete_dwh_dt > current_date()
+            THEN 1 ELSE 0
+        END AS wrongly_deleted
+    FROM calc
+)
+
+SELECT
+    period,
+
+    COUNT(DISTINCT MQS_QUOTE_ID) AS total_quotes,
+
+    COUNT(DISTINCT CASE 
+        WHEN wrongly_deleted = 1 
+        THEN MQS_QUOTE_ID 
+    END) AS impacted_quotes,
+
+    ROUND(
+        100.0 * COUNT(DISTINCT CASE 
+            WHEN wrongly_deleted = 1 
+            THEN MQS_QUOTE_ID 
+        END)
+        / NULLIF(COUNT(DISTINCT MQS_QUOTE_ID),0),
+        2
+    ) AS impact_percentage
+
+FROM flagged
+GROUP BY period
+ORDER BY period;
