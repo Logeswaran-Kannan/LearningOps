@@ -1,108 +1,15 @@
-WITH base AS (
-    SELECT
-        MQS_QUOTE_ID,
-        TRNSCTN_DESC,
-        RATING_REQUEST_CHANNEL_NAME,
-        LATEST_QUOTE_JOURNEY_DESC,
-        to_date(TRNSCTN_DT) AS trnsctn_dt,
-        to_date(EFCTV_DTS) AS efctv_dt,
-        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days,
+Before 14 Apr 1 PM, if retention uses TRNSCTN_DT, how many unconverted quotes would be deleted, grouped by:
 
-        CASE
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
-              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%compare the market%'
-            THEN 'Aggs - CTM'
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%'
-            THEN 'Aggs - Go Compare'
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%msm%'
-              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%money supermarket%'
-            THEN 'Aggs - MSM'
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%confused%'
-            THEN 'Aggs - Confused'
-            ELSE 'Non Aggs'
-        END AS aggregator_group,
+Aggregator + Retention Months + Transaction Type
 
-        CASE
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
-              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%compare the market%'
-              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%'
-            THEN 15
-            ELSE 24
-        END AS retention_months,
+Business rules
+Type	Valid date gap
+New Business	EFCTV_DTS - TRNSCTN_DT between 0 and 30 days
+MTA	EFCTV_DTS - TRNSCTN_DT between 0 and 30 days
+Renewal	EFCTV_DTS - TRNSCTN_DT between 0 and 33 days
 
-        CASE
-            WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
-              OR lower(LATEST_QUOTE_JOURNEY_DESC) NOT LIKE '%sale%'
-            THEN 1 ELSE 0
-        END AS is_unconverted
-
-    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
-    WHERE MQS_QUOTE_ID IS NOT NULL
-      AND DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
-),
-
-flagged AS (
-    SELECT
-        *,
-        CASE
-            WHEN lower(TRNSCTN_DESC) LIKE '%new business%'
-             AND diff_days BETWEEN 0 AND 30 THEN 'VALID'
-
-            WHEN (lower(TRNSCTN_DESC) LIKE '%mid term%' OR lower(TRNSCTN_DESC) LIKE '%mta%')
-             AND diff_days BETWEEN 0 AND 30 THEN 'VALID'
-
-            WHEN lower(TRNSCTN_DESC) LIKE '%renewal%'
-             AND diff_days BETWEEN 0 AND 33 THEN 'VALID'
-
-            ELSE 'INVALID'
-        END AS date_pattern_status,
-
-        CASE
-            WHEN is_unconverted = 1
-             AND add_months(trnsctn_dt, retention_months) <= current_date()
-            THEN 1 ELSE 0
-        END AS would_delete_using_trnsctn_dt
-    FROM base
-)
-
-SELECT
-    aggregator_group,
-    retention_months,
-    TRNSCTN_DESC,
-
-    COUNT(DISTINCT MQS_QUOTE_ID) AS total_quote_count,
-
-    COUNT(DISTINCT CASE
-        WHEN is_unconverted = 1
-        THEN MQS_QUOTE_ID
-    END) AS total_unconverted_quote_count,
-
-    COUNT(DISTINCT CASE
-        WHEN date_pattern_status = 'INVALID'
-        THEN MQS_QUOTE_ID
-    END) AS invalid_date_pattern_quote_count,
-
-    COUNT(DISTINCT CASE
-        WHEN would_delete_using_trnsctn_dt = 1
-        THEN MQS_QUOTE_ID
-    END) AS would_delete_using_transaction_date,
-
-    ROUND(
-        100.0 * COUNT(DISTINCT CASE
-            WHEN would_delete_using_trnsctn_dt = 1
-            THEN MQS_QUOTE_ID
-        END)
-        / NULLIF(COUNT(DISTINCT CASE
-            WHEN is_unconverted = 1
-            THEN MQS_QUOTE_ID
-        END), 0),
-        2
-    ) AS pct_expected_to_delete_using_transaction_date
-
-FROM flagged
-GROUP BY
-    aggregator_group,
-    retention_months,
-    TRNSCTN_DESC
-ORDER BY
-    would_delete_using_transaction_date DESC;
+total_quote_count = all distinct quotes before fix
+total_unconverted_quote_count = quotes without Sale
+invalid_date_pattern_quote_count = quotes where date gap breaks the NB/MTA/Renewal rule
+would_delete_using_transaction_date = quotes that retention would delete if using TRNSCTN_DT today
+pct_expected_to_delete_using_transaction_date = deletion risk percentage based on unconverted quotes
