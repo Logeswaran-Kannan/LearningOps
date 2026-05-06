@@ -1,3 +1,3 @@
-Recommendation to developer:
+I’ve completed the initial analysis and documented the findings related to the quote retention logic and transaction date data quality issue.
 
-Based on the analysis, we recommend using DWH_DATA_DTS as the retention anchor for historical records impacted by the transaction date issue. DWH_DATA_DTS is system-generated, reconciles closely with the interaction system create date, and is already proven through the DVLA retention implementation. For records created after the source fix, i.e. from 15th April onwards, using TRNSCTN_DT may be considered, but the final implementation approach should be agreed with the development team based on technical feasibility and consistency of retention logic. A hybrid approach can be considered where historical impacted records use DWH_DATA_DTS, while post-fix records may use corrected TRNSCTN_DT, subject to validation.
+Could you please review the document and share your feedback?
