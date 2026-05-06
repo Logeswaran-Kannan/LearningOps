@@ -1,85 +1,148 @@
-WITH params AS (
-    SELECT
-        to_date('2026-04-14') AS cut_off_dt,
-        timestamp('2026-04-14 13:00:00') AS fix_cutoff_ts
-),
-
-base AS (
+WITH base AS (
     SELECT
         MQS_QUOTE_ID,
+        TRNSCTN_DESC,
+        RATING_REQUEST_CHANNEL_NAME,
+        LATEST_QUOTE_JOURNEY_DESC,
+
         to_date(TRNSCTN_DT) AS trnsctn_dt,
-        to_date(DWH_DATA_DTS) AS dwh_dt,
+        to_date(EFCTV_DTS) AS efctv_dt,
         DWH_CREATE_DTS,
 
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days,
+
         CASE
-            WHEN DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
-            THEN 'PRE_FIX'
-            ELSE 'POST_FIX'
-        END AS period,
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
+              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%compare the market%'
+            THEN 'Aggs - CTM'
+
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%'
+            THEN 'Aggs - Go Compare'
+
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%msm%'
+              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%money supermarket%'
+            THEN 'Aggs - MSM'
+
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%confused%'
+            THEN 'Aggs - Confused'
+
+            ELSE 'Non Aggs'
+        END AS aggregator_group,
+
+        CASE
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
+              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%compare the market%'
+              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%'
+            THEN 15
+
+            ELSE 24
+        END AS retention_months,
 
         CASE
             WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
               OR lower(LATEST_QUOTE_JOURNEY_DESC) NOT LIKE '%sale%'
             THEN 1 ELSE 0
-        END AS is_unconverted,
-
-        CASE
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
-              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%'
-            THEN 15
-            ELSE 24
-        END AS retention_months
+        END AS is_unconverted
 
     FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
     WHERE MQS_QUOTE_ID IS NOT NULL
+      AND DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
 ),
 
-calc AS (
-    SELECT
-        b.*,
-        p.cut_off_dt,
-
-        add_months(trnsctn_dt, retention_months) AS delete_trnsctn_dt,
-        add_months(dwh_dt, retention_months) AS delete_dwh_dt
-
-    FROM base b
-    CROSS JOIN params p
-    WHERE is_unconverted = 1
-),
-
-flags AS (
+validation AS (
     SELECT
         *,
-        CASE WHEN delete_trnsctn_dt <= cut_off_dt THEN 1 ELSE 0 END AS del_trnsctn,
-        CASE WHEN delete_dwh_dt <= cut_off_dt THEN 1 ELSE 0 END AS del_dwh,
 
         CASE
-            WHEN delete_trnsctn_dt <= cut_off_dt
-             AND delete_dwh_dt > cut_off_dt
+            WHEN lower(TRNSCTN_DESC) LIKE '%new business%'
+             AND diff_days BETWEEN 0 AND 30
+            THEN 'VALID'
+
+            WHEN (
+                    lower(TRNSCTN_DESC) LIKE '%mid term%'
+                 OR lower(TRNSCTN_DESC) LIKE '%mta%'
+                 )
+             AND diff_days BETWEEN 0 AND 30
+            THEN 'VALID'
+
+            WHEN lower(TRNSCTN_DESC) LIKE '%renewal%'
+             AND diff_days BETWEEN 0 AND 33
+            THEN 'VALID'
+
+            ELSE 'INVALID'
+        END AS date_pattern_validation,
+
+        add_months(trnsctn_dt, retention_months) AS delete_due_using_trnsctn_dt
+
+    FROM base
+),
+
+impact AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN is_unconverted = 1
+             AND delete_due_using_trnsctn_dt <= current_date()
             THEN 1 ELSE 0
-        END AS wrongly_deleted
-    FROM calc
+        END AS would_delete_using_trnsctn_dt
+
+    FROM validation
 )
 
 SELECT
-    period,
+    aggregator_group,
+    retention_months,
+    TRNSCTN_DESC,
 
-    COUNT(DISTINCT MQS_QUOTE_ID) AS total_quotes,
+    COUNT(DISTINCT MQS_QUOTE_ID) AS total_quote_count,
 
-    COUNT(DISTINCT CASE 
-        WHEN wrongly_deleted = 1 
-        THEN MQS_QUOTE_ID 
-    END) AS impacted_quotes,
+    COUNT(DISTINCT CASE
+        WHEN is_unconverted = 1
+        THEN MQS_QUOTE_ID
+    END) AS total_unconverted_quote_count,
+
+    COUNT(DISTINCT CASE
+        WHEN date_pattern_validation = 'VALID'
+        THEN MQS_QUOTE_ID
+    END) AS valid_date_pattern_quote_count,
+
+    COUNT(DISTINCT CASE
+        WHEN date_pattern_validation = 'INVALID'
+        THEN MQS_QUOTE_ID
+    END) AS invalid_date_pattern_quote_count,
 
     ROUND(
-        100.0 * COUNT(DISTINCT CASE 
-            WHEN wrongly_deleted = 1 
-            THEN MQS_QUOTE_ID 
+        100.0 * COUNT(DISTINCT CASE
+            WHEN date_pattern_validation = 'INVALID'
+            THEN MQS_QUOTE_ID
         END)
-        / NULLIF(COUNT(DISTINCT MQS_QUOTE_ID),0),
+        / NULLIF(COUNT(DISTINCT MQS_QUOTE_ID), 0),
         2
-    ) AS impact_percentage
+    ) AS invalid_date_pattern_pct,
 
-FROM flags
-GROUP BY period
-ORDER BY period;
+    COUNT(DISTINCT CASE
+        WHEN would_delete_using_trnsctn_dt = 1
+        THEN MQS_QUOTE_ID
+    END) AS would_delete_using_transaction_date,
+
+    ROUND(
+        100.0 * COUNT(DISTINCT CASE
+            WHEN would_delete_using_trnsctn_dt = 1
+            THEN MQS_QUOTE_ID
+        END)
+        / NULLIF(COUNT(DISTINCT CASE
+            WHEN is_unconverted = 1
+            THEN MQS_QUOTE_ID
+        END), 0),
+        2
+    ) AS pct_expected_to_delete_using_transaction_date
+
+FROM impact
+GROUP BY
+    aggregator_group,
+    retention_months,
+    TRNSCTN_DESC
+ORDER BY
+    pct_expected_to_delete_using_transaction_date DESC,
+    invalid_date_pattern_pct DESC;
