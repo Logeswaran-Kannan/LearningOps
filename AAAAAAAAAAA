@@ -1,102 +1,231 @@
-WITH base AS (
+WITH params AS (
     SELECT
-        POLICY_REF,
+        current_date() AS run_dt,
+        timestamp('2026-04-14 13:00:00') AS fix_cutoff_ts
+),
+
+base AS (
+    SELECT
         MQS_QUOTE_ID,
+        RATING_QUOTE_KEY,
         QUOTE_REF,
+        POLICY_REF,
+        BRAND_NAME,
+        RATING_REQUEST_CHANNEL_NAME,
         TRNSCTN_DESC,
         LATEST_QUOTE_JOURNEY_DESC,
-        to_date(EFCTV_DTS) AS efctv_dt,
+
         to_date(TRNSCTN_DT) AS trnsctn_dt,
+        to_date(EFCTV_DTS) AS efctv_dt,
+        to_date(DWH_DATA_DTS) AS dwh_data_dt,
+
         DWH_CREATE_DTS,
+        DWH_UPDATE_DTS,
 
         CASE
-            WHEN lower(TRNSCTN_DESC) LIKE '%new business%' THEN 1 ELSE 0
-        END AS is_nb,
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%confused%' THEN 'Aggs - Confused'
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
+              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%compare the market%' THEN 'Aggs - CTM'
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%' THEN 'Aggs - Go Compare'
+            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%msm%'
+              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%money supermarket%' THEN 'Aggs - MSM'
+            ELSE 'Non Aggs - including partnerships'
+        END AS aggregator_group,
 
         CASE
-            WHEN lower(TRNSCTN_DESC) LIKE '%renewal%' THEN 1 ELSE 0
-        END AS is_renewal,
-
-        CASE
-            WHEN lower(TRNSCTN_DESC) LIKE '%mid term%'
-              OR lower(TRNSCTN_DESC) LIKE '%mta%' THEN 1 ELSE 0
-        END AS is_mta,
-
-        CASE
-            WHEN lower(LATEST_QUOTE_JOURNEY_DESC) LIKE '%sale%' THEN 'SALE'
-            ELSE 'QUOTE'
-        END AS journey_type
+            WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
+              OR lower(LATEST_QUOTE_JOURNEY_DESC) NOT LIKE '%sale%'
+            THEN 1 ELSE 0
+        END AS is_unconverted
 
     FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
-    WHERE POLICY_REF IS NOT NULL
+    WHERE DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
       AND MQS_QUOTE_ID IS NOT NULL
-      AND TRNSCTN_DESC IS NOT NULL
 ),
 
-policy_flags AS (
-    SELECT
-        POLICY_REF,
-
-        MAX(is_nb) AS has_nb,
-        MAX(is_renewal) AS has_renewal,
-        MAX(is_mta) AS has_mta,
-
-        COUNT(DISTINCT CASE WHEN is_nb = 1 THEN MQS_QUOTE_ID END) AS nb_quote_count,
-        COUNT(DISTINCT CASE WHEN is_renewal = 1 THEN MQS_QUOTE_ID END) AS renewal_quote_count,
-        COUNT(DISTINCT CASE WHEN is_mta = 1 THEN MQS_QUOTE_ID END) AS mta_quote_count,
-
-        MIN(CASE WHEN is_nb = 1 THEN efctv_dt END) AS nb_min_efctv_dt,
-        MAX(CASE WHEN is_nb = 1 THEN efctv_dt END) AS nb_max_efctv_dt,
-
-        MIN(CASE WHEN is_renewal = 1 THEN efctv_dt END) AS renewal_min_efctv_dt,
-        MAX(CASE WHEN is_renewal = 1 THEN efctv_dt END) AS renewal_max_efctv_dt,
-
-        MIN(CASE WHEN is_mta = 1 THEN efctv_dt END) AS mta_min_efctv_dt,
-        MAX(CASE WHEN is_mta = 1 THEN efctv_dt END) AS mta_max_efctv_dt
-
-    FROM base
-    GROUP BY POLICY_REF
-),
-
-eligible_policies AS (
+retention_rule AS (
     SELECT
         *,
         CASE
-            WHEN has_nb = 1 AND has_renewal = 1 AND has_mta = 1 THEN 'NB + Renewal + MTA'
-            WHEN has_nb = 1 AND has_renewal = 1 THEN 'NB + Renewal'
-            WHEN has_nb = 1 AND has_mta = 1 THEN 'NB + MTA'
-            WHEN has_renewal = 1 AND has_mta = 1 THEN 'Renewal + MTA'
-            ELSE 'Exclude'
-        END AS policy_combination
-    FROM policy_flags
-    WHERE (has_nb + has_renewal + has_mta) >= 2
+            WHEN aggregator_group IN ('Aggs - CTM', 'Aggs - Go Compare') THEN 15
+            WHEN aggregator_group = 'Aggs - Confused' THEN NULL
+            ELSE 24
+        END AS retention_months
+    FROM base
+),
+
+date_candidates AS (
+    SELECT
+        *,
+        date_sub(efctv_dt, 30) AS potential_earliest_trnsctn_dt,
+
+        add_months(trnsctn_dt, retention_months) AS delete_due_by_trnsctn_dt,
+        add_months(date_sub(efctv_dt, 30), retention_months) AS delete_due_by_efctv_minus_30,
+        add_months(dwh_data_dt, retention_months) AS delete_due_by_dwh_data_dt,
+
+        datediff(efctv_dt, trnsctn_dt) AS efctv_vs_trnsctn_days,
+        datediff(efctv_dt, dwh_data_dt) AS efctv_vs_dwh_data_days,
+        datediff(trnsctn_dt, dwh_data_dt) AS trnsctn_vs_dwh_data_days
+
+    FROM retention_rule
+    WHERE retention_months IS NOT NULL
+      AND is_unconverted = 1
+),
+
+flags AS (
+    SELECT
+        *,
+        CASE WHEN delete_due_by_trnsctn_dt <= current_date() THEN 1 ELSE 0 END AS delete_using_trnsctn_dt,
+        CASE WHEN delete_due_by_efctv_minus_30 <= current_date() THEN 1 ELSE 0 END AS delete_using_efctv_minus_30,
+        CASE WHEN delete_due_by_dwh_data_dt <= current_date() THEN 1 ELSE 0 END AS delete_using_dwh_data_dt,
+
+        CASE
+            WHEN delete_due_by_trnsctn_dt <= current_date()
+             AND delete_due_by_dwh_data_dt > current_date()
+            THEN 1 ELSE 0
+        END AS wrongly_delete_if_using_trnsctn_dt_vs_dwh,
+
+        CASE
+            WHEN delete_due_by_efctv_minus_30 <= current_date()
+             AND delete_due_by_dwh_data_dt > current_date()
+            THEN 1 ELSE 0
+        END AS wrongly_delete_if_using_efctv_minus_30_vs_dwh,
+
+        CASE
+            WHEN abs(datediff(efctv_dt, dwh_data_dt)) > 30
+            THEN 1 ELSE 0
+        END AS efctv_suspicious_vs_dwh,
+
+        CASE
+            WHEN abs(datediff(trnsctn_dt, dwh_data_dt)) > 30
+            THEN 1 ELSE 0
+        END AS trnsctn_suspicious_vs_dwh
+
+    FROM date_candidates
 )
 
 SELECT
-    POLICY_REF,
-    policy_combination,
+    aggregator_group,
+    retention_months,
+    TRNSCTN_DESC,
 
-    has_nb,
-    has_renewal,
-    has_mta,
+    COUNT(DISTINCT MQS_QUOTE_ID) AS total_unconverted_quotes_pre_fix,
 
-    nb_quote_count,
-    renewal_quote_count,
-    mta_quote_count,
+    COUNT(DISTINCT CASE WHEN delete_using_trnsctn_dt = 1 THEN MQS_QUOTE_ID END)
+        AS would_delete_using_trnsctn_dt,
 
-    nb_min_efctv_dt,
-    nb_max_efctv_dt,
-    renewal_min_efctv_dt,
-    renewal_max_efctv_dt,
-    mta_min_efctv_dt,
-    mta_max_efctv_dt,
+    COUNT(DISTINCT CASE WHEN delete_using_efctv_minus_30 = 1 THEN MQS_QUOTE_ID END)
+        AS would_delete_using_efctv_minus_30,
 
-    datediff(renewal_min_efctv_dt, nb_min_efctv_dt) AS nb_to_renewal_days,
-    datediff(mta_min_efctv_dt, nb_min_efctv_dt) AS nb_to_mta_days,
-    datediff(mta_min_efctv_dt, renewal_min_efctv_dt) AS renewal_to_mta_days
+    COUNT(DISTINCT CASE WHEN delete_using_dwh_data_dt = 1 THEN MQS_QUOTE_ID END)
+        AS would_delete_using_dwh_data_dt,
 
-FROM eligible_policies
+    COUNT(DISTINCT CASE WHEN wrongly_delete_if_using_trnsctn_dt_vs_dwh = 1 THEN MQS_QUOTE_ID END)
+        AS wrongly_delete_if_using_trnsctn_dt,
+
+    COUNT(DISTINCT CASE WHEN wrongly_delete_if_using_efctv_minus_30_vs_dwh = 1 THEN MQS_QUOTE_ID END)
+        AS wrongly_delete_if_using_efctv_minus_30,
+
+    COUNT(DISTINCT CASE WHEN efctv_suspicious_vs_dwh = 1 THEN MQS_QUOTE_ID END)
+        AS quotes_where_efctv_dt_suspicious,
+
+    COUNT(DISTINCT CASE WHEN trnsctn_suspicious_vs_dwh = 1 THEN MQS_QUOTE_ID END)
+        AS quotes_where_trnsctn_dt_suspicious
+
+FROM flags
+GROUP BY
+    aggregator_group,
+    retention_months,
+    TRNSCTN_DESC
 ORDER BY
-    policy_combination,
-    POLICY_REF
-LIMIT 500;
+    wrongly_delete_if_using_trnsctn_dt DESC; 
+
+-----------
+
+WITH base AS (
+    SELECT
+        MQS_QUOTE_ID,
+        POLICY_REF,
+        TRNSCTN_DESC,
+        RATING_REQUEST_CHANNEL_NAME,
+        LATEST_QUOTE_JOURNEY_DESC,
+        to_date(TRNSCTN_DT) AS trnsctn_dt,
+        to_date(EFCTV_DTS) AS efctv_dt,
+        to_date(DWH_DATA_DTS) AS dwh_data_dt,
+        date_sub(to_date(EFCTV_DTS), 30) AS potential_earliest_trnsctn_dt,
+        DWH_CREATE_DTS
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
+      AND MQS_QUOTE_ID IS NOT NULL
+)
+
+SELECT
+    TRNSCTN_DESC,
+
+    CASE
+        WHEN datediff(efctv_dt, dwh_data_dt) < -30 THEN 'EFCTV before DWH by >30 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN -30 AND 30 THEN 'EFCTV aligned with DWH +/-30'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN 31 AND 90 THEN 'EFCTV after DWH 31-90 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN 91 AND 180 THEN 'EFCTV after DWH 91-180 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN 181 AND 365 THEN 'EFCTV after DWH 181-365 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) > 365 THEN 'EFCTV after DWH >365 days'
+        ELSE 'Unknown'
+    END AS efctv_vs_dwh_bucket,
+
+    COUNT(DISTINCT MQS_QUOTE_ID) AS distinct_quotes,
+
+    MIN(efctv_dt) AS min_efctv_dt,
+    MAX(efctv_dt) AS max_efctv_dt,
+    MIN(dwh_data_dt) AS min_dwh_data_dt,
+    MAX(dwh_data_dt) AS max_dwh_data_dt,
+    MIN(potential_earliest_trnsctn_dt) AS min_potential_earliest_trnsctn_dt,
+    MAX(potential_earliest_trnsctn_dt) AS max_potential_earliest_trnsctn_dt
+
+FROM base
+GROUP BY
+    TRNSCTN_DESC,
+    CASE
+        WHEN datediff(efctv_dt, dwh_data_dt) < -30 THEN 'EFCTV before DWH by >30 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN -30 AND 30 THEN 'EFCTV aligned with DWH +/-30'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN 31 AND 90 THEN 'EFCTV after DWH 31-90 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN 91 AND 180 THEN 'EFCTV after DWH 91-180 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) BETWEEN 181 AND 365 THEN 'EFCTV after DWH 181-365 days'
+        WHEN datediff(efctv_dt, dwh_data_dt) > 365 THEN 'EFCTV after DWH >365 days'
+        ELSE 'Unknown'
+    END
+ORDER BY
+    TRNSCTN_DESC,
+    distinct_quotes DESC;
+
+----------
+
+
+SELECT
+    MQS_QUOTE_ID,
+    POLICY_REF,
+    QUOTE_REF,
+    TRNSCTN_DESC,
+    LATEST_QUOTE_JOURNEY_DESC,
+    RATING_REQUEST_CHANNEL_NAME,
+
+    to_date(TRNSCTN_DT) AS trnsctn_dt,
+    to_date(EFCTV_DTS) AS efctv_dt,
+    date_sub(to_date(EFCTV_DTS), 30) AS potential_earliest_trnsctn_dt,
+    to_date(DWH_DATA_DTS) AS dwh_data_dt,
+
+    datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS efctv_vs_trnsctn_days,
+    datediff(to_date(EFCTV_DTS), to_date(DWH_DATA_DTS)) AS efctv_vs_dwh_days,
+    datediff(date_sub(to_date(EFCTV_DTS), 30), to_date(DWH_DATA_DTS)) AS potential_vs_dwh_days,
+
+    DWH_CREATE_DTS,
+    DWH_UPDATE_DTS
+
+FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+WHERE DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
+  AND MQS_QUOTE_ID IS NOT NULL
+  AND abs(datediff(to_date(EFCTV_DTS), to_date(DWH_DATA_DTS))) > 30
+ORDER BY
+    abs(datediff(to_date(EFCTV_DTS), to_date(DWH_DATA_DTS))) DESC
+LIMIT 200;
+
+---------------
