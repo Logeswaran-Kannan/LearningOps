@@ -1,5 +1,1 @@
-“In the case of Mid-Term Adjustments (MTA), is it valid for the effective date (EFCTV_DTS) to be earlier than the transaction or system date (i.e., backdated changes)? If so, what is the acceptable range for such backdating?”
-
-🔍 Add context (optional but strong)
-
-“During analysis, we observed multiple MTA records where the effective date precedes the system ingestion date (DWH_DATA_DTS), resulting in negative date differences. We would like to confirm whether this represents valid business behavior or a data quality issue.”
+The proposed workaround of deriving POTENTIAL_EARLIEST_TRNSCTN_DT = EFCTV_DTS - 30 days is not reliable, as EFCTV_DTS itself is inconsistent across transaction types. In several cases, particularly for MTA records, the effective date incorrectly retains the original New Business effective date instead of reflecting the actual adjustment timing. This indicates a source data quality issue where effective dates are reused or not updated correctly. As a result, using EFCTV_DTS as a fallback would propagate the same inaccuracies and lead to incorrect retention decisions.
