@@ -1,7 +1,7 @@
 WITH params AS (
     SELECT
-        current_date() AS run_dt,
-        timestamp('2026-04-14 13:00:00') AS fix_cutoff
+        to_date('2026-04-14') AS cut_off_dt,
+        timestamp('2026-04-14 13:00:00') AS fix_cutoff_ts
 ),
 
 base AS (
@@ -36,22 +36,26 @@ base AS (
 
 calc AS (
     SELECT
-        *,
+        b.*,
+        p.cut_off_dt,
+
         add_months(trnsctn_dt, retention_months) AS delete_trnsctn_dt,
         add_months(dwh_dt, retention_months) AS delete_dwh_dt
-    FROM base
+
+    FROM base b
+    CROSS JOIN params p
     WHERE is_unconverted = 1
 ),
 
-flagged AS (
+flags AS (
     SELECT
         *,
-        CASE WHEN delete_trnsctn_dt <= current_date() THEN 1 ELSE 0 END AS del_trnsctn,
-        CASE WHEN delete_dwh_dt <= current_date() THEN 1 ELSE 0 END AS del_dwh,
+        CASE WHEN delete_trnsctn_dt <= cut_off_dt THEN 1 ELSE 0 END AS del_trnsctn,
+        CASE WHEN delete_dwh_dt <= cut_off_dt THEN 1 ELSE 0 END AS del_dwh,
 
         CASE
-            WHEN delete_trnsctn_dt <= current_date()
-             AND delete_dwh_dt > current_date()
+            WHEN delete_trnsctn_dt <= cut_off_dt
+             AND delete_dwh_dt > cut_off_dt
             THEN 1 ELSE 0
         END AS wrongly_deleted
     FROM calc
@@ -76,6 +80,6 @@ SELECT
         2
     ) AS impact_percentage
 
-FROM flagged
+FROM flags
 GROUP BY period
 ORDER BY period;
