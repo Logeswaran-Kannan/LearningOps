@@ -5,116 +5,98 @@ WITH base AS (
         QUOTE_REF,
         TRNSCTN_DESC,
         LATEST_QUOTE_JOURNEY_DESC,
-        to_date(TRNSCTN_DT) AS trnsctn_dt,
         to_date(EFCTV_DTS) AS efctv_dt,
+        to_date(TRNSCTN_DT) AS trnsctn_dt,
         DWH_CREATE_DTS,
 
         CASE
             WHEN lower(TRNSCTN_DESC) LIKE '%new business%' THEN 1 ELSE 0
-        END AS nb_flag,
+        END AS is_nb,
 
         CASE
             WHEN lower(TRNSCTN_DESC) LIKE '%renewal%' THEN 1 ELSE 0
-        END AS renewal_flag,
+        END AS is_renewal,
 
         CASE
             WHEN lower(TRNSCTN_DESC) LIKE '%mid term%'
-              OR lower(TRNSCTN_DESC) LIKE '%mta%'
-              OR lower(TRNSCTN_DESC) LIKE '%adjustment%' THEN 1 ELSE 0
-        END AS mta_flag
+              OR lower(TRNSCTN_DESC) LIKE '%mta%' THEN 1 ELSE 0
+        END AS is_mta,
+
+        CASE
+            WHEN lower(LATEST_QUOTE_JOURNEY_DESC) LIKE '%sale%' THEN 'SALE'
+            ELSE 'QUOTE'
+        END AS journey_type
 
     FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
     WHERE POLICY_REF IS NOT NULL
+      AND MQS_QUOTE_ID IS NOT NULL
+      AND TRNSCTN_DESC IS NOT NULL
 ),
 
 policy_flags AS (
     SELECT
         POLICY_REF,
-        MAX(nb_flag) AS has_nb,
-        MAX(renewal_flag) AS has_renewal,
-        MAX(mta_flag) AS has_mta,
-        COUNT(DISTINCT MQS_QUOTE_ID) AS distinct_quote_count,
-        COUNT(*) AS record_count,
-        MIN(efctv_dt) AS min_efctv_dt,
-        MAX(efctv_dt) AS max_efctv_dt
+
+        MAX(is_nb) AS has_nb,
+        MAX(is_renewal) AS has_renewal,
+        MAX(is_mta) AS has_mta,
+
+        COUNT(DISTINCT CASE WHEN is_nb = 1 THEN MQS_QUOTE_ID END) AS nb_quote_count,
+        COUNT(DISTINCT CASE WHEN is_renewal = 1 THEN MQS_QUOTE_ID END) AS renewal_quote_count,
+        COUNT(DISTINCT CASE WHEN is_mta = 1 THEN MQS_QUOTE_ID END) AS mta_quote_count,
+
+        MIN(CASE WHEN is_nb = 1 THEN efctv_dt END) AS nb_min_efctv_dt,
+        MAX(CASE WHEN is_nb = 1 THEN efctv_dt END) AS nb_max_efctv_dt,
+
+        MIN(CASE WHEN is_renewal = 1 THEN efctv_dt END) AS renewal_min_efctv_dt,
+        MAX(CASE WHEN is_renewal = 1 THEN efctv_dt END) AS renewal_max_efctv_dt,
+
+        MIN(CASE WHEN is_mta = 1 THEN efctv_dt END) AS mta_min_efctv_dt,
+        MAX(CASE WHEN is_mta = 1 THEN efctv_dt END) AS mta_max_efctv_dt
+
     FROM base
     GROUP BY POLICY_REF
 ),
 
 eligible_policies AS (
-    SELECT *
-    FROM policy_flags
-    WHERE has_nb = 1
-      AND (has_renewal = 1 OR has_mta = 1)   -- exclude only NB policies
-)
-
-SELECT
-    b.POLICY_REF,
-
-    p.has_nb,
-    p.has_renewal,
-    p.has_mta,
-
-    b.MQS_QUOTE_ID,
-    b.QUOTE_REF,
-    b.TRNSCTN_DESC,
-    b.LATEST_QUOTE_JOURNEY_DESC,
-    b.trnsctn_dt,
-    b.efctv_dt,
-
-    datediff(
-        b.efctv_dt,
-        lag(b.efctv_dt) OVER (
-            PARTITION BY b.POLICY_REF
-            ORDER BY b.efctv_dt, b.DWH_CREATE_DTS
-        )
-    ) AS efctv_days_from_previous,
-
-    b.DWH_CREATE_DTS
-
-FROM base b
-JOIN eligible_policies p
-    ON b.POLICY_REF = p.POLICY_REF
-ORDER BY
-    b.POLICY_REF,
-    b.efctv_dt,
-    b.DWH_CREATE_DTS
-LIMIT 500;
-
-
-
------------------
-
-
-
-WITH base AS (
     SELECT
-        POLICY_REF,
-        CASE WHEN lower(TRNSCTN_DESC) LIKE '%new business%' THEN 1 ELSE 0 END AS nb_flag,
-        CASE WHEN lower(TRNSCTN_DESC) LIKE '%renewal%' THEN 1 ELSE 0 END AS renewal_flag,
-        CASE 
-            WHEN lower(TRNSCTN_DESC) LIKE '%mid term%'
-              OR lower(TRNSCTN_DESC) LIKE '%mta%'
-              OR lower(TRNSCTN_DESC) LIKE '%adjustment%' 
-            THEN 1 ELSE 0 
-        END AS mta_flag,
-        to_date(EFCTV_DTS) AS efctv_dt,
-        MQS_QUOTE_ID
-    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
-    WHERE POLICY_REF IS NOT NULL
+        *,
+        CASE
+            WHEN has_nb = 1 AND has_renewal = 1 AND has_mta = 1 THEN 'NB + Renewal + MTA'
+            WHEN has_nb = 1 AND has_renewal = 1 THEN 'NB + Renewal'
+            WHEN has_nb = 1 AND has_mta = 1 THEN 'NB + MTA'
+            WHEN has_renewal = 1 AND has_mta = 1 THEN 'Renewal + MTA'
+            ELSE 'Exclude'
+        END AS policy_combination
+    FROM policy_flags
+    WHERE (has_nb + has_renewal + has_mta) >= 2
 )
 
 SELECT
     POLICY_REF,
-    MAX(nb_flag) AS has_nb,
-    MAX(renewal_flag) AS has_renewal,
-    MAX(mta_flag) AS has_mta,
-    COUNT(DISTINCT MQS_QUOTE_ID) AS distinct_quote_count,
-    MIN(efctv_dt) AS first_efctv_dt,
-    MAX(efctv_dt) AS latest_efctv_dt
-FROM base
-GROUP BY POLICY_REF
-HAVING MAX(nb_flag) = 1
-   AND (MAX(renewal_flag) = 1 OR MAX(mta_flag) = 1)
-ORDER BY distinct_quote_count DESC
-LIMIT 100;
+    policy_combination,
+
+    has_nb,
+    has_renewal,
+    has_mta,
+
+    nb_quote_count,
+    renewal_quote_count,
+    mta_quote_count,
+
+    nb_min_efctv_dt,
+    nb_max_efctv_dt,
+    renewal_min_efctv_dt,
+    renewal_max_efctv_dt,
+    mta_min_efctv_dt,
+    mta_max_efctv_dt,
+
+    datediff(renewal_min_efctv_dt, nb_min_efctv_dt) AS nb_to_renewal_days,
+    datediff(mta_min_efctv_dt, nb_min_efctv_dt) AS nb_to_mta_days,
+    datediff(mta_min_efctv_dt, renewal_min_efctv_dt) AS renewal_to_mta_days
+
+FROM eligible_policies
+ORDER BY
+    policy_combination,
+    POLICY_REF
+LIMIT 500;
