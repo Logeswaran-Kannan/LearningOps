@@ -1,15 +1,80 @@
-Before 14 Apr 1 PM, if retention uses TRNSCTN_DT, how many unconverted quotes would be deleted, grouped by:
+WITH base AS (
+    SELECT
+        MQS_QUOTE_ID,
+        POLICY_REF,
+        QUOTE_REF,
+        TRNSCTN_DESC,
+        LATEST_QUOTE_JOURNEY_DESC,
+        RATING_REQUEST_CHANNEL_NAME,
 
-Aggregator + Retention Months + Transaction Type
+        to_date(TRNSCTN_DT) AS trnsctn_dt,
+        to_date(EFCTV_DTS) AS efctv_dt,
+        to_date(DWH_DATA_DTS) AS dwh_data_dt,
 
-Business rules
-Type	Valid date gap
-New Business	EFCTV_DTS - TRNSCTN_DT between 0 and 30 days
-MTA	EFCTV_DTS - TRNSCTN_DT between 0 and 30 days
-Renewal	EFCTV_DTS - TRNSCTN_DT between 0 and 33 days
+        DWH_CREATE_DTS,
+        DWH_UPDATE_DTS,
 
-total_quote_count = all distinct quotes before fix
-total_unconverted_quote_count = quotes without Sale
-invalid_date_pattern_quote_count = quotes where date gap breaks the NB/MTA/Renewal rule
-would_delete_using_transaction_date = quotes that retention would delete if using TRNSCTN_DT today
-pct_expected_to_delete_using_transaction_date = deletion risk percentage based on unconverted quotes
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days,
+
+        CASE
+            WHEN LATEST_QUOTE_JOURNEY_DESC IS NULL
+              OR lower(LATEST_QUOTE_JOURNEY_DESC) NOT LIKE '%sale%'
+            THEN 1 ELSE 0
+        END AS is_unconverted
+
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE MQS_QUOTE_ID IS NOT NULL
+      AND DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
+),
+
+validation AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN lower(TRNSCTN_DESC) LIKE '%new business%'
+             AND diff_days BETWEEN 0 AND 30 THEN 'VALID'
+
+            WHEN (lower(TRNSCTN_DESC) LIKE '%mid term%'
+               OR lower(TRNSCTN_DESC) LIKE '%mta%')
+             AND diff_days BETWEEN 0 AND 30 THEN 'VALID'
+
+            WHEN lower(TRNSCTN_DESC) LIKE '%renewal%'
+             AND diff_days BETWEEN 0 AND 33 THEN 'VALID'
+
+            ELSE 'INVALID'
+        END AS date_pattern_status
+
+    FROM base
+)
+
+SELECT
+    MQS_QUOTE_ID,
+    POLICY_REF,
+    QUOTE_REF,
+    TRNSCTN_DESC,
+    LATEST_QUOTE_JOURNEY_DESC,
+    RATING_REQUEST_CHANNEL_NAME,
+
+    trnsctn_dt,
+    efctv_dt,
+    dwh_data_dt,
+
+    diff_days,
+
+    CASE
+        WHEN diff_days < 0 THEN 'NEGATIVE GAP (TRNSCTN > EFCTV)'
+        WHEN diff_days > 365 THEN 'EXTREME GAP (>1 YEAR)'
+        WHEN diff_days > 60 THEN 'HIGH GAP (>60 DAYS)'
+        WHEN diff_days > 30 THEN 'ABOVE EXPECTED RANGE'
+        ELSE 'OTHER'
+    END AS issue_type,
+
+    DWH_CREATE_DTS,
+    DWH_UPDATE_DTS
+
+FROM validation
+WHERE date_pattern_status = 'INVALID'
+ORDER BY
+    abs(diff_days) DESC
+LIMIT 500;
