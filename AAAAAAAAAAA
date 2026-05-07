@@ -1,1 +1,2 @@
-The transaction date issue identified in the source system (Athena) was resolved from 14 April 2026, 1 PM onwards. All references to April dates within this document correspond to the year 2026 for clarity and traceability.
+This analysis and the associated findings are specifically related to Athena Motor quote data.
+It is important to note that retention rules and data behaviour may differ for other lines of business (e.g., Home), and are therefore out of scope for this assessment.
