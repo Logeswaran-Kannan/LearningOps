@@ -1,22 +1,135 @@
+WITH base AS (
+    SELECT
+        MQS_QUOTE_ID,
+        POLICY_REF,
+        QUOTE_REF,
+        TRNSCTN_DESC,
+        LATEST_QUOTE_JOURNEY_DESC,
+        to_date(TRNSCTN_DT) AS trnsctn_dt,
+        to_date(EFCTV_DTS) AS efctv_dt,
+        DWH_CREATE_DTS,
+
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days
+
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE DWH_CREATE_DTS >= timestamp('2026-04-14 13:00:00')
+      AND MQS_QUOTE_ID IS NOT NULL
+      AND lower(TRNSCTN_DESC) LIKE 'm%'
+      AND (
+            lower(TRNSCTN_DESC) LIKE '%mta%'
+         OR lower(TRNSCTN_DESC) LIKE '%mtc%'
+         OR lower(TRNSCTN_DESC) LIKE '%mid term%'
+      )
+      AND COALESCE(LATEST_QUOTE_JOURNEY_DESC, '') <> 'Athena Motor Sales'
+),
+
+classified AS (
+    SELECT
+        *,
+        CASE
+            WHEN diff_days < 0 THEN 'BACKDATED'
+            WHEN diff_days BETWEEN 0 AND 7 THEN 'VALID_0_TO_7_DAYS'
+            WHEN diff_days > 7 THEN 'FUTURE_DATED_MORE_THAN_7_DAYS'
+            ELSE 'UNKNOWN'
+        END AS mta_mtc_validation_status
+    FROM base
+)
+
 SELECT
-    MQS_QUOTE_ID,
-    POLICY_REF,
-    QUOTE_REF,
-    aggregator_group,
+    COUNT(DISTINCT MQS_QUOTE_ID) AS total_mta_mtc_quotes_post_fix,
+
+    COUNT(DISTINCT CASE
+        WHEN mta_mtc_validation_status = 'BACKDATED'
+        THEN MQS_QUOTE_ID
+    END) AS backdated_quotes,
+
+    COUNT(DISTINCT CASE
+        WHEN mta_mtc_validation_status = 'FUTURE_DATED_MORE_THAN_7_DAYS'
+        THEN MQS_QUOTE_ID
+    END) AS future_dated_more_than_7_days_quotes,
+
+    COUNT(DISTINCT CASE
+        WHEN mta_mtc_validation_status = 'VALID_0_TO_7_DAYS'
+        THEN MQS_QUOTE_ID
+    END) AS valid_0_to_7_days_quotes,
+
+    ROUND(
+        100.0 * COUNT(DISTINCT CASE
+            WHEN mta_mtc_validation_status = 'BACKDATED'
+            THEN MQS_QUOTE_ID
+        END) / NULLIF(COUNT(DISTINCT MQS_QUOTE_ID), 0),
+        2
+    ) AS backdated_pct,
+
+    ROUND(
+        100.0 * COUNT(DISTINCT CASE
+            WHEN mta_mtc_validation_status = 'FUTURE_DATED_MORE_THAN_7_DAYS'
+            THEN MQS_QUOTE_ID
+        END) / NULLIF(COUNT(DISTINCT MQS_QUOTE_ID), 0),
+        2
+    ) AS future_dated_more_than_7_days_pct
+
+FROM classified;
+
+----------------
+
+
+WITH base AS (
+    SELECT
+        MQS_QUOTE_ID,
+        TRNSCTN_DESC,
+        LATEST_QUOTE_JOURNEY_DESC,
+        to_date(TRNSCTN_DT) AS trnsctn_dt,
+        to_date(EFCTV_DTS) AS efctv_dt,
+        DWH_CREATE_DTS,
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE DWH_CREATE_DTS >= timestamp('2026-04-14 13:00:00')
+      AND MQS_QUOTE_ID IS NOT NULL
+      AND lower(TRNSCTN_DESC) LIKE 'm%'
+      AND (
+            lower(TRNSCTN_DESC) LIKE '%mta%'
+         OR lower(TRNSCTN_DESC) LIKE '%mtc%'
+         OR lower(TRNSCTN_DESC) LIKE '%mid term%'
+      )
+      AND COALESCE(LATEST_QUOTE_JOURNEY_DESC, '') <> 'Athena Motor Sales'
+),
+
+classified AS (
+    SELECT
+        *,
+        CASE
+            WHEN diff_days < 0 THEN 'BACKDATED'
+            WHEN diff_days BETWEEN 0 AND 7 THEN 'VALID_0_TO_7_DAYS'
+            WHEN diff_days > 7 THEN 'FUTURE_DATED_MORE_THAN_7_DAYS'
+            ELSE 'UNKNOWN'
+        END AS mta_mtc_validation_status
+    FROM base
+)
+
+SELECT
     TRNSCTN_DESC,
-    LATEST_QUOTE_JOURNEY_DESC,
 
-    trnsctn_dt,
-    efctv_dt,
-    dwh_data_dt,
+    COUNT(DISTINCT MQS_QUOTE_ID) AS total_quotes,
 
-    diff_days,
-    validation_status,
+    COUNT(DISTINCT CASE
+        WHEN mta_mtc_validation_status = 'BACKDATED'
+        THEN MQS_QUOTE_ID
+    END) AS backdated_quotes,
 
-    DWH_CREATE_DTS
+    COUNT(DISTINCT CASE
+        WHEN mta_mtc_validation_status = 'FUTURE_DATED_MORE_THAN_7_DAYS'
+        THEN MQS_QUOTE_ID
+    END) AS future_dated_more_than_7_days_quotes,
 
-FROM validation
-WHERE validation_status <> 'VALID'
-ORDER BY
-    abs(diff_days) DESC
-LIMIT 500;
+    COUNT(DISTINCT CASE
+        WHEN mta_mtc_validation_status = 'VALID_0_TO_7_DAYS'
+        THEN MQS_QUOTE_ID
+    END) AS valid_0_to_7_days_quotes,
+
+    MIN(diff_days) AS min_diff_days,
+    MAX(diff_days) AS max_diff_days
+
+FROM classified
+GROUP BY TRNSCTN_DESC
+ORDER BY total_quotes DESC;
