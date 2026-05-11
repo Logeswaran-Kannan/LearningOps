@@ -1,7 +1,67 @@
-Nita and Glen,
+WITH mta_base AS (
+    SELECT
+        MQS_QUOTE_ID,
+        POLICY_REF,
+        QUOTE_REF,
+        TRNSCTN_DESC,
+        LATEST_QUOTE_JOURNEY_DESC,
+        RATING_REQUEST_CHANNEL_NAME,
 
-Thanks for reviewing the document.
+        to_date(TRNSCTN_DT) AS trnsctn_dt,
+        to_date(EFCTV_DTS) AS efctv_dt,
+        to_date(DWH_DATA_DTS) AS dwh_data_dt,
 
-I’ve incorporated the updates based on feedback for comments 1 and 2. For comments 3 and 4, I need a bit more clarification before making the changes.
+        DWH_CREATE_DTS,
+        DWH_UPDATE_DTS,
 
-I won’t be able to join the daily stand-up today. I’ll set up a separate call to walk through the document once I’ve consolidated Glen’s feedback.
+        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS efctv_vs_trnsctn_days
+
+    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
+    WHERE MQS_QUOTE_ID IS NOT NULL
+      AND (
+            lower(TRNSCTN_DESC) LIKE '%mid term%'
+         OR lower(TRNSCTN_DESC) LIKE '%mta%'
+      )
+),
+
+exceptions AS (
+    SELECT
+        *,
+        CASE
+            WHEN efctv_vs_trnsctn_days < 0
+            THEN 'INVALID - Backdated MTA'
+
+            WHEN efctv_vs_trnsctn_days > 7
+            THEN 'INVALID - MTA more than 7 days in future'
+
+            ELSE 'VALID'
+        END AS mta_validation_status
+    FROM mta_base
+)
+
+SELECT
+    MQS_QUOTE_ID,
+    POLICY_REF,
+    QUOTE_REF,
+    TRNSCTN_DESC,
+    LATEST_QUOTE_JOURNEY_DESC,
+    RATING_REQUEST_CHANNEL_NAME,
+
+    trnsctn_dt,
+    efctv_dt,
+    dwh_data_dt,
+    efctv_vs_trnsctn_days,
+
+    mta_validation_status,
+
+    DWH_CREATE_DTS,
+    DWH_UPDATE_DTS
+
+FROM exceptions
+WHERE mta_validation_status <> 'VALID'
+ORDER BY
+    CASE
+        WHEN efctv_vs_trnsctn_days < 0 THEN 1
+        ELSE 2
+    END,
+    abs(efctv_vs_trnsctn_days) DESC;
