@@ -1,93 +1,22 @@
-WITH base AS (
-    SELECT
-        MQS_QUOTE_ID,
-        POLICY_REF,
-        QUOTE_REF,
-        TRNSCTN_DESC,
-        LATEST_QUOTE_JOURNEY_DESC,
-        RATING_REQUEST_CHANNEL_NAME,
-
-        to_date(TRNSCTN_DT) AS trnsctn_dt,
-        to_date(EFCTV_DTS) AS efctv_dt,
-        to_date(DWH_DATA_DTS) AS dwh_data_dt,
-
-        DWH_CREATE_DTS,
-
-        datediff(
-            to_date(EFCTV_DTS),
-            to_date(TRNSCTN_DT)
-        ) AS diff_days,
-
-        CASE
-            WHEN DWH_CREATE_DTS < timestamp('2026-04-14 13:00:00')
-            THEN 'PRE_FIX'
-            ELSE 'POST_FIX'
-        END AS fix_period,
-
-        CASE
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%ctm%'
-              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%compare the market%'
-            THEN 'Aggs - CTM'
-
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%go compare%'
-            THEN 'Aggs - Go Compare'
-
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%msm%'
-              OR lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%money supermarket%'
-            THEN 'Aggs - MSM'
-
-            WHEN lower(RATING_REQUEST_CHANNEL_NAME) LIKE '%confused%'
-            THEN 'Aggs - Confused'
-
-            ELSE 'Non Aggs'
-        END AS aggregator_group
-
-    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
-    WHERE MQS_QUOTE_ID IS NOT NULL
-      AND (
-            lower(TRNSCTN_DESC) LIKE '%mid term%'
-         OR lower(TRNSCTN_DESC) LIKE '%mtc%'
-         OR lower(TRNSCTN_DESC) LIKE '%mta%'
-      )
-),
-
-validation AS (
-    SELECT
-        *,
-
-        CASE
-            WHEN diff_days BETWEEN 0 AND 7
-            THEN 'VALID'
-
-            WHEN diff_days < 0
-            THEN 'INVALID - BACKDATED'
-
-            WHEN diff_days > 7
-            THEN 'INVALID - FUTURE DATED >7'
-
-            ELSE 'INVALID'
-        END AS validation_status
-
-    FROM base
-)
-
 SELECT
-    fix_period,
+    MQS_QUOTE_ID,
+    POLICY_REF,
+    QUOTE_REF,
     aggregator_group,
+    TRNSCTN_DESC,
+    LATEST_QUOTE_JOURNEY_DESC,
+
+    trnsctn_dt,
+    efctv_dt,
+    dwh_data_dt,
+
+    diff_days,
     validation_status,
 
-    COUNT(DISTINCT MQS_QUOTE_ID) AS quote_count,
-
-    MIN(diff_days) AS min_diff_days,
-    MAX(diff_days) AS max_diff_days,
-    ROUND(AVG(diff_days),2) AS avg_diff_days
+    DWH_CREATE_DTS
 
 FROM validation
-GROUP BY
-    fix_period,
-    aggregator_group,
-    validation_status
+WHERE validation_status <> 'VALID'
 ORDER BY
-    fix_period,
-    aggregator_group,
-    validation_status;
+    abs(diff_days) DESC
+LIMIT 500;
