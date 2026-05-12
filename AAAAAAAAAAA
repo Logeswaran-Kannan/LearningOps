@@ -1,70 +1,7 @@
-WITH base AS (
-    SELECT
-        RATING_QUOTE_KEY,
-        MQS_QUOTE_ID,
-        POLICY_REF,
-        QUOTE_REF,
-        TRNSCTN_DESC,
-        LATEST_QUOTE_JOURNEY_DESC,
-        RATING_REQUEST_CHANNEL_NAME,
-        BRAND_NAME,
+Hi [Name], apologies for the delayed response — I was in training yesterday and just got a chance to go through the UARR template.
 
-        to_date(TRNSCTN_DT) AS trnsctn_dt,
-        to_date(EFCTV_DTS) AS efctv_dt,
-        to_date(DWH_DATA_DTS) AS dwh_data_dt,
+I reviewed the document, but I don’t find enough background/context information on how it is expected to be filled. From what I understand, the inputs required are more aligned with BA/Dev Lead/PM/Application Owner responsibilities, as they would have better visibility into application access, roles, permissions, and ownership details. From the Test Manager side, I may not be the right person to complete it accurately.
 
-        DWH_CREATE_DTS,
-        DWH_UPDATE_DTS,
+I will divert this to the PM for further coordination. Also, since the background and expectations are not very clear, it would probably help if you or someone from the requesting team could set up a short call to explain the context and required inputs.
 
-        datediff(to_date(EFCTV_DTS), to_date(TRNSCTN_DT)) AS diff_days
-
-    FROM core.curated_idw_mtr_athn_mqs.dim_audit_rating_quote_permissions
-    WHERE DWH_CREATE_DTS >= timestamp('2026-04-14 13:00:00')
-      AND MQS_QUOTE_ID IS NOT NULL
-      AND lower(TRNSCTN_DESC) LIKE 'm%'
-      AND (
-            lower(TRNSCTN_DESC) LIKE '%mta%'
-         OR lower(TRNSCTN_DESC) LIKE '%mtc%'
-         OR lower(TRNSCTN_DESC) LIKE '%mid term%'
-      )
-      AND COALESCE(LATEST_QUOTE_JOURNEY_DESC, '') <> 'Athena Motor Sales'
-),
-
-classified AS (
-    SELECT
-        *,
-        CASE
-            WHEN diff_days < 0 THEN 'BACKDATED'
-            WHEN diff_days > 7 THEN 'FUTURE_DATED_MORE_THAN_7_DAYS'
-            ELSE 'VALID'
-        END AS validation_status
-    FROM base
-)
-
-SELECT
-    RATING_QUOTE_KEY,
-    MQS_QUOTE_ID,
-    POLICY_REF,
-    QUOTE_REF,
-    TRNSCTN_DESC,
-    LATEST_QUOTE_JOURNEY_DESC,
-    RATING_REQUEST_CHANNEL_NAME,
-    BRAND_NAME,
-
-    trnsctn_dt,
-    efctv_dt,
-    diff_days,
-    validation_status,
-
-    dwh_data_dt,
-    DWH_CREATE_DTS,
-    DWH_UPDATE_DTS
-
-FROM classified
-WHERE validation_status <> 'VALID'
-ORDER BY
-    validation_status,
-    abs(diff_days) DESC,
-    POLICY_REF,
-    trnsctn_dt
-LIMIT 1000;
+Thanks.
