@@ -26,3 +26,48 @@ From the latest analysis:
 MQS flow volume is substantially higher than the CSV volume
 Missing records in CSV have increased sharply from April onward
 The gap continues to grow over time
+---------------------------
+
+
+Hi Team,
+
+As part of the ongoing RadarLive MQS source reconciliation testing, we’ve been analysing both the forward and reverse reconciliation trends between the Athena CSV source and the MQS flow data.
+
+A couple of observations from the latest analysis that we wanted to highlight for further investigation on the source side.
+
+1. Reverse reconciliation – significant records missing from CSV
+
+After the source-side logic change introduced around 14 April for identifying records to be included in the CSV extract, we are seeing a noticeable increase in records that exist in the MQS flow but are not present in the CSV file itself.
+
+This is especially visible from mid-April onwards, where the reverse reconciliation % dropped significantly compared to earlier periods.
+
+From testing so far, this suggests the updated source extraction logic may be excluding / not capturing a large set of valid MQS records in the CSV generation process.
+
+2. Forward reconciliation
+
+The forward reconciliation % currently appears very high (~99%+), however this is somewhat misleading because the denominator itself is reduced when records are missing from the CSV source.
+
+In other words:
+
+records that never make it into the CSV are naturally not counted in forward reconciliation,
+so the forward % alone does not fully represent end-to-end completeness.
+
+That said, there are still a small number of examples where records are present in the CSV but missing in the MQS flow, which also needs investigation from the MQS side.
+
+3. Trend observed
+
+The reverse reconciliation trend became noticeably worse after the April source-side change, particularly from:
+
+mid-April onwards,
+with a growing gap between MQS totals vs CSV totals.
+4. Sample analysis
+
+We have sample datasets / reconciliation outputs available showing:
+
+records existing in MQS flow but missing in CSV,
+daily count differences,
+and examples of records missing in MQS flow from the forward reconciliation side.
+
+Attaching sample analysis separately for reference.
+
+At the moment, the main concern appears to be more on the source CSV generation side due to the volume difference observed post-April logic change.
