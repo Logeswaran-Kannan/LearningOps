@@ -1,10 +1,28 @@
+Subject: MQS Reconciliation Observation – Significant Increase in Records Missing from Source CSV After 14 Apr Logic Change
+
 Hi Team,
 
-I had a chance to review the UARR template that was shared.
+As part of the RadarLive MQS reconciliation analysis, we have been comparing the Athena source CSV against the downstream MQS flow using both:
 
-From my understanding, the document requires detailed application-level access information including user extracts, roles, permissions, ownership details, and governance-related inputs. I currently do not have sufficient background, access visibility, or ownership from the Test Management side to accurately complete this request, and I may not be the appropriate person to fill this template.
+Forward reconciliation → CSV records missing in MQS flow
+Reverse reconciliation → MQS flow records missing in source CSV
 
-I have looped in Hazel for further assistance. Tria, could you please help provide the background and purpose of this request to Hazel so she may be able to guide this to the appropriate application/business owners or teams responsible for providing the required inputs for BICoE – Radar Live?
+After implementing the updated reverse reconciliation logic to correctly identify records present in MQS but absent in the CSV, we observed a significant discrepancy on the source side.
 
-Thanks,
-[Your Name]
+Key Observation
+
+The reverse reconciliation results indicate that a large volume of records are present in the MQS flow but are not being included in the Athena source CSV extract.
+
+This issue appears to have increased noticeably after the source-side logic change introduced around 14 Apr, which was intended to improve identification of records for the CSV extraction.
+
+Based on the analysis, the updated logic may now be excluding additional valid MQS records from the CSV generation process.
+
+Current Findings
+Forward reconciliation % remains consistently high (~99.9%), indicating most CSV records are successfully reaching MQS.
+However, Reverse reconciliation % has reduced significantly, proving the issue is primarily on the source CSV generation side rather than MQS ingestion.
+
+From the latest analysis:
+
+MQS flow volume is substantially higher than the CSV volume
+Missing records in CSV have increased sharply from April onward
+The gap continues to grow over time
