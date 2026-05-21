@@ -1,3 +1,4 @@
+Compute Cost Optimization & Serverless Best Practices
 Hi Team,
 
 Good to see the recent optimization initiative around MQS Reconciliation delivering positive results. Based on the reconciliation logic enhancement suggested from the testing side and quickly supported by the development team, the updated implementation has reduced the daily compute cost from approximately **£130 to £5.50**, resulting in around **95% daily cost savings**.
