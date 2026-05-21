@@ -1,73 +1,42 @@
-Subject: MQS Reconciliation Observation – Significant Increase in Records Missing from Source CSV After 14 Apr Logic Change
-
 Hi Team,
 
-As part of the RadarLive MQS reconciliation analysis, we have been comparing the Athena source CSV against the downstream MQS flow using both:
+Good to see the recent optimization initiative around MQS Reconciliation delivering positive results. Based on the reconciliation logic enhancement suggested from the testing side and quickly supported by the development team, the updated implementation has reduced the daily compute cost from approximately **£130 to £5.50**, resulting in around **95% daily cost savings**.
 
-Forward reconciliation → CSV records missing in MQS flow
-Reverse reconciliation → MQS flow records missing in source CSV
+Special thanks to the development team for reviewing and implementing the optimization logic quickly. This is a good example of how effective coordination between Development and Testing can directly contribute towards platform efficiency, better serverless utilization, and compute cost reduction.
 
-After implementing the updated reverse reconciliation logic to correctly identify records present in MQS but absent in the CSV, we observed a significant discrepancy on the source side.
+While this may look like a small optimization individually, similar improvements across monitoring, reconciliation, and validation activities can collectively bring significant savings opportunities over time.
 
-Key Observation
+As part of this initiative, please ensure the below serverless best practices are followed across all testing and monitoring activities.
 
-The reverse reconciliation results indicate that a large volume of records are present in the MQS flow but are not being included in the Athena source CSV extract.
+### Best Practices to Follow
 
-This issue appears to have increased noticeably after the source-side logic change introduced around 14 Apr, which was intended to improve identification of records for the CSV extraction.
+* Use filtered/sample datasets wherever possible during validation and testing.
+* Apply partition/date filters early to reduce unnecessary scans.
+* Fetch only required columns instead of full table reads.
+* Reuse cached/intermediate datasets where applicable.
+* Prefer incremental validations over full historical reprocessing.
+* Review long-running notebooks/queries for optimization opportunities.
+* Any notebook, reconciliation, or monitoring script consistently running beyond **10 minutes** should be reviewed for compute optimization opportunities.
+* Monitor abnormal execution duration or compute spikes proactively.
+* Reuse common frameworks/utilities instead of duplicate notebook logic.
+* Schedule heavy executions during appropriate windows where possible.
+* Clean up unused temp objects, stale notebooks, and unnecessary intermediate datasets regularly.
+* Ensure proper DevOps governance and cost awareness while using serverless resources.
 
-Based on the analysis, the updated logic may now be excluding additional valid MQS records from the CSV generation process.
+### Practices to Avoid
 
-Current Findings
-Forward reconciliation % remains consistently high (~99.9%), indicating most CSV records are successfully reaching MQS.
-However, Reverse reconciliation % has reduced significantly, proving the issue is primarily on the source CSV generation side rather than MQS ingestion.
+* Avoid repeated reruns without reviewing root cause/failure analysis.
+* Avoid unnecessary historical reloads or full-volume scans.
+* Avoid unoptimized joins/cross joins on large datasets.
+* Avoid duplicate monitoring logic across multiple notebooks.
+* Avoid using production monitoring notebooks for ad-hoc analysis activities.
+* Avoid keeping long-running or idle serverless executions active unnecessarily.
+* Avoid accepting long-running serverless executions as normal without optimization review.
+* Avoid moving notebooks to production without optimization review.
 
-From the latest analysis:
+The development team has been very supportive on optimization-related activities. Please continue coordinating effectively with them on any opportunities around compute optimization, serverless utilization, and platform efficiency improvements.
 
-MQS flow volume is substantially higher than the CSV volume
-Missing records in CSV have increased sharply from April onward
-The gap continues to grow over time
----------------------------
+Also, attached is the current monitoring notebook template containing AZ and CDA read replica monitoring job details. Please include the Britannia monitoring details as well going forward.
 
-
-Hi Team,
-
-As part of the ongoing RadarLive MQS source reconciliation testing, we’ve been analysing both the forward and reverse reconciliation trends between the Athena CSV source and the MQS flow data.
-
-A couple of observations from the latest analysis that we wanted to highlight for further investigation on the source side.
-
-1. Reverse reconciliation – significant records missing from CSV
-
-After the source-side logic change introduced around 14 April for identifying records to be included in the CSV extract, we are seeing a noticeable increase in records that exist in the MQS flow but are not present in the CSV file itself.
-
-This is especially visible from mid-April onwards, where the reverse reconciliation % dropped significantly compared to earlier periods.
-
-From testing so far, this suggests the updated source extraction logic may be excluding / not capturing a large set of valid MQS records in the CSV generation process.
-
-2. Forward reconciliation
-
-The forward reconciliation % currently appears very high (~99%+), however this is somewhat misleading because the denominator itself is reduced when records are missing from the CSV source.
-
-In other words:
-
-records that never make it into the CSV are naturally not counted in forward reconciliation,
-so the forward % alone does not fully represent end-to-end completeness.
-
-That said, there are still a small number of examples where records are present in the CSV but missing in the MQS flow, which also needs investigation from the MQS side.
-
-3. Trend observed
-
-The reverse reconciliation trend became noticeably worse after the April source-side change, particularly from:
-
-mid-April onwards,
-with a growing gap between MQS totals vs CSV totals.
-4. Sample analysis
-
-We have sample datasets / reconciliation outputs available showing:
-
-records existing in MQS flow but missing in CSV,
-daily count differences,
-and examples of records missing in MQS flow from the forward reconciliation side.
-
-Attaching sample analysis separately for reference.
-
-At the moment, the main concern appears to be more on the source CSV generation side due to the volume difference observed post-April logic change.
+Thanks,
+[Your Name]
