@@ -1,50 +1,5 @@
-DEBUG_MQS_QUOTE_ID = "MQS-d80edf94-e360-4983-8021-f6c5775c4318"
-
-raw_flow_debug_df = (
-    spark.table(FLOW_TABLE)
-    .select(
-        F.get_json_object("payload", "$.interaction._id").alias("interactionId"),
-        F.get_json_object("payload", "$.interaction.mqsQuoteId").alias("mqsQuoteId"),
-        F.get_json_object("payload", "$.interaction.process").alias("process"),
-        F.get_json_object("payload", "$.interaction.status").alias("status"),
-        F.to_timestamp("TimeEnqueued").alias("TimeEnqueued"),
-        F.to_timestamp("eHubQueuedDatestamp").alias("eHubQueuedDatestamp"),
-        F.to_timestamp("writeTimestamp").alias("writeTimestamp")
-    )
-    .filter(F.col("mqsQuoteId") == DEBUG_MQS_QUOTE_ID)
-)
-
-display(raw_flow_debug_df.orderBy("TimeEnqueued"))
-
-
----
-
-
-debug_interaction_df = (
-    raw_flow_debug_df
-    .withColumn(
-        "interaction_process_code",
-        F.when(F.lower(F.col("process")).like("m%"), "30")
-         .when(F.lower(F.col("process")).like("nb%"), "02")
-         .when(F.lower(F.col("process")).like("renewal%"), "08")
-         .when(F.lower(F.col("process")).like("support%"), "30")
-    )
-    .withColumn(
-        "interaction_segment",
-        F.when(F.col("mqsQuoteId").isNull(), "POLARIS_OR_NON_MQS")
-         .otherwise("MQS_LINKED")
-    )
-)
-
-display(
-    debug_interaction_df.select(
-        "interactionId",
-        "mqsQuoteId",
-        "process",
-        "interaction_process_code",
-        "status",
-        "TimeEnqueued",
-        "eHubQueuedDatestamp"
-    )
-    .orderBy("TimeEnqueued")
-)
+SELECT *
+FROM core_bld.radar_live.recon_interaction_detail
+WHERE interaction_mqsQuoteId = 'MQS-d80edf94-e360-4983-8021-f6c5775c4318'
+   OR csv_mqsQuoteId = 'MQS-d80edf94-e360-4983-8021-f6c5775c4318'
+ORDER BY reconciliation_direction, interaction_process_code;
