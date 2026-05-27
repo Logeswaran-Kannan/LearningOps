@@ -1,5 +1,68 @@
-SELECT *
-FROM core_bld.radar_live.recon_interaction_detail
-WHERE interaction_mqsQuoteId = 'MQS-d80edf94-e360-4983-8021-f6c5775c4318'
-   OR csv_mqsQuoteId = 'MQS-d80edf94-e360-4983-8021-f6c5775c4318'
-ORDER BY reconciliation_direction, interaction_process_code;
+WITH base AS (
+    SELECT
+        MQSQuoteId,
+        externalQuoteDate,
+        messageId,
+        policy_PolicyNo,
+        transaction,
+        todaysDate,
+        policy_EffectiveStartDate,
+        policy_Event_Date,
+        cover_StartDate,
+        policy_ExpiryDate,
+        policy_InceptionDate,
+        policy_InitialRateDate,
+        enqueuedTime,
+        eHubQueuedTimestamp,
+
+        DATEDIFF(policy_Event_Date, cover_StartDate) AS event_cover_diff,
+
+        DATEDIFF(policy_Event_Date, todaysDate) AS event_vs_quote_days,
+        DATEDIFF(cover_StartDate, todaysDate) AS cover_vs_quote_days,
+
+        CASE
+            WHEN policy_Event_Date = cover_StartDate THEN 'MATCH'
+            ELSE 'MISMATCH'
+        END AS event_cover_validation,
+
+        CASE
+            WHEN DATEDIFF(policy_Event_Date, todaysDate) < 0 THEN 'INVALID_BACKDATED'
+            WHEN DATEDIFF(policy_Event_Date, todaysDate) BETWEEN 0 AND 30 THEN 'VALID_0_TO_30_DAYS'
+            WHEN DATEDIFF(policy_Event_Date, todaysDate) BETWEEN 31 AND 37 THEN 'VALID_31_TO_37_MTA_TOLERANCE'
+            WHEN DATEDIFF(policy_Event_Date, todaysDate) > 37 THEN 'INVALID_MORE_THAN_37_DAYS'
+            ELSE 'UNKNOWN'
+        END AS mta_quote_effective_validation,
+
+        CASE
+            WHEN policy_EffectiveStartDate = policy_Event_Date THEN 'SAME_AS_POLICY_EFFECTIVE'
+            ELSE 'DIFFERENT_FROM_POLICY_EFFECTIVE'
+        END AS policy_effective_vs_mta_effective_check,
+
+        CASE
+            WHEN policy_Event_Date < policy_EffectiveStartDate THEN 'EVENT_BEFORE_POLICY_START'
+            ELSE 'EVENT_ON_OR_AFTER_POLICY_START'
+        END AS event_vs_policy_start_check
+
+    FROM core_bld.default.basemqsdata
+    WHERE transaction = 30
+      AND todaysDate >= DATE('2026-04-15')
+      AND enqueuedTime >= TIMESTAMP('2026-04-15 13:00:00')
+)
+
+SELECT
+    event_cover_validation,
+    mta_quote_effective_validation,
+    policy_effective_vs_mta_effective_check,
+    event_vs_policy_start_check,
+    COUNT(*) AS record_count
+FROM base
+GROUP BY
+    event_cover_validation,
+    mta_quote_effective_validation,
+    policy_effective_vs_mta_effective_check,
+    event_vs_policy_start_check
+ORDER BY
+    event_cover_validation,
+    mta_quote_effective_validation,
+    policy_effective_vs_mta_effective_check,
+    event_vs_policy_start_check;
