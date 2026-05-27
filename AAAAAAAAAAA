@@ -16,16 +16,20 @@ WITH base AS (
         eHubQueuedTimestamp,
 
         DATEDIFF(policy_Event_Date, cover_StartDate) AS event_cover_diff,
-
         DATEDIFF(policy_Event_Date, todaysDate) AS event_vs_quote_days,
         DATEDIFF(cover_StartDate, todaysDate) AS cover_vs_quote_days,
+        DATEDIFF(policy_Event_Date, policy_EffectiveStartDate) AS event_vs_policy_start_days,
 
         CASE
+            WHEN policy_Event_Date IS NULL AND cover_StartDate IS NULL THEN 'BOTH_EVENT_AND_COVER_DATE_MISSING'
+            WHEN policy_Event_Date IS NULL THEN 'POLICY_EVENT_DATE_MISSING'
+            WHEN cover_StartDate IS NULL THEN 'COVER_START_DATE_MISSING'
             WHEN policy_Event_Date = cover_StartDate THEN 'MATCH'
             ELSE 'MISMATCH'
         END AS event_cover_validation,
 
         CASE
+            WHEN policy_Event_Date IS NULL THEN 'UNKNOWN_MISSING_POLICY_EVENT_DATE'
             WHEN DATEDIFF(policy_Event_Date, todaysDate) < 0 THEN 'INVALID_BACKDATED'
             WHEN DATEDIFF(policy_Event_Date, todaysDate) BETWEEN 0 AND 30 THEN 'VALID_0_TO_30_DAYS'
             WHEN DATEDIFF(policy_Event_Date, todaysDate) BETWEEN 31 AND 37 THEN 'VALID_31_TO_37_MTA_TOLERANCE'
@@ -34,35 +38,28 @@ WITH base AS (
         END AS mta_quote_effective_validation,
 
         CASE
+            WHEN policy_EffectiveStartDate IS NULL THEN 'POLICY_EFFECTIVE_START_DATE_MISSING'
+            WHEN policy_Event_Date IS NULL THEN 'POLICY_EVENT_DATE_MISSING'
             WHEN policy_EffectiveStartDate = policy_Event_Date THEN 'SAME_AS_POLICY_EFFECTIVE'
             ELSE 'DIFFERENT_FROM_POLICY_EFFECTIVE'
         END AS policy_effective_vs_mta_effective_check,
 
         CASE
+            WHEN policy_EffectiveStartDate IS NULL OR policy_Event_Date IS NULL THEN 'UNKNOWN_MISSING_DATE'
             WHEN policy_Event_Date < policy_EffectiveStartDate THEN 'EVENT_BEFORE_POLICY_START'
             ELSE 'EVENT_ON_OR_AFTER_POLICY_START'
         END AS event_vs_policy_start_check
 
     FROM core_bld.default.basemqsdata
     WHERE transaction = 30
-      AND todaysDate >= DATE('2026-04-15')
       AND enqueuedTime >= TIMESTAMP('2026-04-15 13:00:00')
 )
 
-SELECT
-    event_cover_validation,
-    mta_quote_effective_validation,
-    policy_effective_vs_mta_effective_check,
-    event_vs_policy_start_check,
-    COUNT(*) AS record_count
+SELECT *
 FROM base
-GROUP BY
-    event_cover_validation,
-    mta_quote_effective_validation,
-    policy_effective_vs_mta_effective_check,
-    event_vs_policy_start_check
+WHERE event_cover_validation <> 'MATCH'
+   OR event_vs_policy_start_check = 'EVENT_BEFORE_POLICY_START'
 ORDER BY
     event_cover_validation,
-    mta_quote_effective_validation,
-    policy_effective_vs_mta_effective_check,
-    event_vs_policy_start_check;
+    event_vs_policy_start_check,
+    event_vs_policy_start_days;
