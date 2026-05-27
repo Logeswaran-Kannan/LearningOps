@@ -1,65 +1,21 @@
-WITH base AS (
-    SELECT
-        MQSQuoteId,
-        externalQuoteDate,
-        messageId,
-        policy_PolicyNo,
-        transaction,
-        todaysDate,
-        policy_EffectiveStartDate,
-        policy_Event_Date,
-        cover_StartDate,
-        policy_ExpiryDate,
-        policy_InceptionDate,
-        policy_InitialRateDate,
-        enqueuedTime,
-        eHubQueuedTimestamp,
+Hi Team,
 
-        DATEDIFF(policy_Event_Date, cover_StartDate) AS event_cover_diff,
-        DATEDIFF(policy_Event_Date, todaysDate) AS event_vs_quote_days,
-        DATEDIFF(cover_StartDate, todaysDate) AS cover_vs_quote_days,
-        DATEDIFF(policy_Event_Date, policy_EffectiveStartDate) AS event_vs_policy_start_days,
+From a business perspective, the validation confirms that `policy_EffectiveStartDate` is not suitable for deriving the MTA (transaction 30) effective date, as this field represents the original policy inception/effective date rather than the amendment/change effective date associated with the MTA transaction.
 
-        CASE
-            WHEN policy_Event_Date IS NULL AND cover_StartDate IS NULL THEN 'BOTH_EVENT_AND_COVER_DATE_MISSING'
-            WHEN policy_Event_Date IS NULL THEN 'POLICY_EVENT_DATE_MISSING'
-            WHEN cover_StartDate IS NULL THEN 'COVER_START_DATE_MISSING'
-            WHEN policy_Event_Date = cover_StartDate THEN 'MATCH'
-            ELSE 'MISMATCH'
-        END AS event_cover_validation,
+The alternate fields suggested (`policy_Event_Date` / `cover_StartDate`) align more closely with the expected MTA business behaviour, where customers can raise a quote and apply the amendment at a later effective date within the allowed business window.
 
-        CASE
-            WHEN policy_Event_Date IS NULL THEN 'UNKNOWN_MISSING_POLICY_EVENT_DATE'
-            WHEN DATEDIFF(policy_Event_Date, todaysDate) < 0 THEN 'INVALID_BACKDATED'
-            WHEN DATEDIFF(policy_Event_Date, todaysDate) BETWEEN 0 AND 30 THEN 'VALID_0_TO_30_DAYS'
-            WHEN DATEDIFF(policy_Event_Date, todaysDate) BETWEEN 31 AND 37 THEN 'VALID_31_TO_37_MTA_TOLERANCE'
-            WHEN DATEDIFF(policy_Event_Date, todaysDate) > 37 THEN 'INVALID_MORE_THAN_37_DAYS'
-            ELSE 'UNKNOWN'
-        END AS mta_quote_effective_validation,
+The analysis performed on post 15-Apr-2026 1 PM data (after the source-side correction to `todaysDate`) shows that:
 
-        CASE
-            WHEN policy_EffectiveStartDate IS NULL THEN 'POLICY_EFFECTIVE_START_DATE_MISSING'
-            WHEN policy_Event_Date IS NULL THEN 'POLICY_EVENT_DATE_MISSING'
-            WHEN policy_EffectiveStartDate = policy_Event_Date THEN 'SAME_AS_POLICY_EFFECTIVE'
-            ELSE 'DIFFERENT_FROM_POLICY_EFFECTIVE'
-        END AS policy_effective_vs_mta_effective_check,
+* `policy_Event_Date` and `cover_StartDate` are aligned for the majority of records and behave consistently with the expected MTA effective dating logic.
+* Most records fall within the valid future-dated quote window expected for MTA scenarios.
 
-        CASE
-            WHEN policy_EffectiveStartDate IS NULL OR policy_Event_Date IS NULL THEN 'UNKNOWN_MISSING_DATE'
-            WHEN policy_Event_Date < policy_EffectiveStartDate THEN 'EVENT_BEFORE_POLICY_START'
-            ELSE 'EVENT_ON_OR_AFTER_POLICY_START'
-        END AS event_vs_policy_start_check
+However, from a business reliability perspective, the alternate fields are still not fully suitable to be treated as a guaranteed effective date source because:
 
-    FROM core_bld.default.basemqsdata
-    WHERE transaction = 30
-      AND enqueuedTime >= TIMESTAMP('2026-04-15 13:00:00')
-)
+* 11 records do not contain `policy_Event_Date` / `cover_StartDate`, meaning the MTA effective date cannot be derived at all for those transactions.
+* 1 record contains a `policy_Event_Date` earlier than the original policy effective date, which appears to contradict the expected MTA lifecycle behaviour and may require further source-side clarification.
 
-SELECT *
-FROM base
-WHERE event_cover_validation <> 'MATCH'
-   OR event_vs_policy_start_check = 'EVENT_BEFORE_POLICY_START'
-ORDER BY
-    event_cover_validation,
-    event_vs_policy_start_check,
-    event_vs_policy_start_days;
+As this logic may be used downstream for retention/reconciliation processing, the effective date field ideally should not have null or inconsistent scenarios, particularly for business-critical transaction identification.
+
+Additionally, historical data prior to 15-Apr-2026 was intentionally excluded from validation, as the `todaysDate` field itself was not reliably populated before the source-side fix and therefore could not be used for accurate business validation.
+
+Thanks.
