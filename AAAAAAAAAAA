@@ -1,7 +1,61 @@
-Hi [BA Name],
+Source DVLA Entitlements
+Type	Code	validFrom
+P	B	01/01/2018
+F	B	01/06/2019
+F	C	01/01/2015
 
-My understanding of the `myLicence.entitlements.validfrom` logic is that it is not storing the actual licence valid-from date directly. Instead, the requirement calculates the number of completed months between the entitlement `validFrom` date and the `policy_EffectiveStartDate`, and derives the value based on that duration.
+Policy Effective Start Date:
 
-Because the requirement specifically refers to “number of completed months”, could you please confirm whether the target datatype for this field should actually be an Integer (months value) rather than a Date field?
+01/05/2025
+Step 1 — Apply Type + Code Selection Logic
 
-Just wanted to confirm the expected output format from the business perspective.
+Logic first checks:
+
+type = 'F'
+AND code IN ('B','BE')
+
+Matching records:
+
+Type	Code	validFrom
+F	B	01/06/2019
+
+This becomes the selected entitlement.
+
+Record:
+
+P + B
+
+is ignored because Full (F) takes priority.
+
+Record:
+
+F + C
+
+is ignored because code is not B/BE.
+
+Step 2 — Calculate Completed Months
+
+Between:
+
+01/06/2019 → 01/05/2025
+
+Completed months:
+
+71 months
+Step 3 — Derive Output Date
+
+Derived calculation:
+
+Policy Effective Start Date - 71 months
+
+So:
+
+01/05/2025 - 71 months
+= 01/06/2019
+Final Understanding
+
+The type logic is only used to:
+
+identify which entitlement validFrom date should be used
+
+Then the month-difference calculation is applied using that selected record.
