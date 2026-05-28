@@ -1,61 +1,46 @@
-Source DVLA Entitlements
-Type	Code	validFrom
-P	B	01/01/2018
-F	B	01/06/2019
-F	C	01/01/2015
+Hi Team,
 
-Policy Effective Start Date:
+My interpretation of the DVLA endorsement derivation logic is below, and I would like to confirm whether our understanding is correct before implementation and validation.
 
-01/05/2025
-Step 1 — Apply Type + Code Selection Logic
+Regarding the conviction code lookup logic, our understanding is that the final derived `myLicence.endorsements.code` is determined based on:
 
-Logic first checks:
+1. Original conviction code
+2. Ban duration category
 
-type = 'F'
-AND code IN ('B','BE')
+Our assumption is that the ban duration category is derived from `myLicence.endorsements.disqualperiod`.
 
-Matching records:
+Example interpretation:
 
-Type	Code	validFrom
-F	B	01/06/2019
+* Conviction Code = AC20
+* Disqualification Period = P2M
+* Ban category interpreted as “Ban 1-3”
+* Derived Conviction Code = AC10
 
-This becomes the selected entitlement.
+Similarly:
 
-Record:
+* Conviction Code = CD70
+* Disqualification Period = P2Y
+* Ban category interpreted as “Ban 13+”
+* Derived Conviction Code = CD40
 
-P + B
+However, from the JSON payloads currently available to us, we are unable to identify a separate raw “ban duration” field directly in the structure. Our assumption is that the lookup table expects the ban category to be interpreted from the `disqualperiod` value itself.
 
-is ignored because Full (F) takes priority.
+Could you please confirm if this interpretation is correct?
 
-Record:
+Secondly, the document mentions:
 
-F + C
+“The MyLicence Disqualification Period is input in ISO8601 duration format”
 
-is ignored because code is not B/BE.
+with example:
+`P1Y3M1DT12M`
 
-Step 2 — Calculate Completed Months
+However, in the JSON payloads currently available to us, the value already appears to be arriving in the derived/bucketed format itself (for example `P2M`, `P6M`, `P2Y`) rather than the raw ISO8601 duration structure. We are also unable to identify any separate raw field containing the original ISO8601 duration value.
 
-Between:
+From our current understanding, it appears the value may already be processed even in the raw message itself.
 
-01/06/2019 → 01/05/2025
+Could you please confirm whether:
 
-Completed months:
+* the incoming JSON value should simply be treated as the final derived value and processed as-is, or
+* whether an upstream raw ISO8601 duration field is expected to be available anywhere in the raw request/message structure?
 
-71 months
-Step 3 — Derive Output Date
-
-Derived calculation:
-
-Policy Effective Start Date - 71 months
-
-So:
-
-01/05/2025 - 71 months
-= 01/06/2019
-Final Understanding
-
-The type logic is only used to:
-
-identify which entitlement validFrom date should be used
-
-Then the month-difference calculation is applied using that selected record.
+Thanks,
