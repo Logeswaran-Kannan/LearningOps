@@ -1,516 +1,378 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    col, lit, current_timestamp, current_date,
-    concat_ws, coalesce, sha2
-)
+from pyspark.sql import functions as F
+from pyspark.sql.functions import create_map
+from itertools import chain
 from datetime import datetime
-import uuid
-import time
 
-spark = SparkSession.builder.appName("ODS_DDL_Change_Audit_InfoSchema_ServerlessSafe").getOrCreate()
-
-# ============================================================
+# ==============================================================
 # CONFIG
-# ============================================================
-CATALOG_NAME = "core"
+# ==============================================================
+SOURCE_FLOW_TABLE        = "core.flow.ehubstream"
+SOURCE_MTR_TABLE         = "core.mqs_athn_mtr.ehubstream"
+TARGET_TABLE             = "core_bld.default.monitoring_mqs_interaction_status"
+INTERVAL_MINUTES         = 30
+RETENTION_DAYS           = 3
+LATE_DATA_LOOKBACK_HOURS = 4
 
-BASELINE_TABLE = "core_bld.default.dw_schema_baseline"
-CHANGE_TABLE = "core_bld.default.dw_schema_change_audit"
-
-USE_EXCLUSION_LIST = False
-EXCLUSION_TABLE = "core_bld.default.exclusion_list"
-
-PREFIX_MAPPING = {
-    "policycenter_": "vw_policycenter_current_",
-    "billingcenter_": "vw_billingcenter_current_",
-    "claimcenter_": "vw_claimcenter_current_"
+# Brand name mapping — raw source value → normalised brand
+BRAND_NAME_MAP = {
+    "Britannia"    : "BRITANNIA",
+    "AllianzOnline": "AZ",
 }
 
-run_id_value = int(uuid.uuid4().int >> 96)
+# Generation code mapping — used when brandName is null
+GENERATION_CODE_MAP = {
+    "BRITMOT01": "BRITANNIA",
+    "FLOWAN01" : "AZ",
+    "FLOWAN02" : "AZ",
+}
 
-# ============================================================
-# LOGGING
-# ============================================================
-job_start = time.time()
+EXPECTED_BRANDS = ["AZ", "BRITANNIA"]
+SPINE_BRANDS    = ["AZ", "BRITANNIA", "OTHER"]
+MISSING_BRAND   = "MISSING_INTERACTION_BRAND"
+ALL_STATUS      = "ALL"
 
-def log(msg: str):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] {msg}")
-
-def log_step(step_name: str, start_time: float):
-    elapsed = time.time() - start_time
-    log(f"{step_name} completed in {elapsed:.2f} sec")
-
-log(f"Run started. run_id={run_id_value}")
-
-# ============================================================
-# HELPERS
-# ============================================================
-def get_view_table_name(base_name: str) -> str:
-    for prefix, mapped_prefix in PREFIX_MAPPING.items():
-        if base_name.startswith(prefix):
-            return base_name.replace(prefix, mapped_prefix, 1)
-    return base_name
-
-def normalize_table_name_expr(table_col: str) -> str:
-    return f"""
-    CASE
-        WHEN {table_col} LIKE 'vw_policycenter_current_%'
-            THEN regexp_replace({table_col}, '^vw_policycenter_current_', 'policycenter_')
-        WHEN {table_col} LIKE 'vw_billingcenter_current_%'
-            THEN regexp_replace({table_col}, '^vw_billingcenter_current_', 'billingcenter_')
-        WHEN {table_col} LIKE 'vw_claimcenter_current_%'
-            THEN regexp_replace({table_col}, '^vw_claimcenter_current_', 'claimcenter_')
-        ELSE {table_col}
-    END
-    """
-
-# ============================================================
-# CREATE TARGET TABLES
-# ============================================================
-t0 = time.time()
-log("Ensuring target Delta tables exist")
-
-spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {BASELINE_TABLE} (
-    db_name STRING,
-    table_name STRING,
-    actual_table_name STRING,
-    column_name STRING,
-    data_type STRING,
-    is_nullable STRING,
-    ordinal_position INT,
-    baseline_created_ts TIMESTAMP
-)
-USING DELTA
-""")
-
-spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {CHANGE_TABLE} (
-    change_key STRING,
-    run_id BIGINT,
-    run_date DATE,
-    is_latest STRING,
-    db_name STRING,
-    table_name STRING,
-    actual_table_name STRING,
-    change_type STRING,
-    column_name STRING,
-    old_data_type STRING,
-    new_data_type STRING,
-    old_is_nullable STRING,
-    new_is_nullable STRING,
-    old_ordinal_position INT,
-    new_ordinal_position INT,
-    change_comment STRING,
-    first_detected_date DATE,
-    last_detected_date DATE,
-    resolved_date DATE,
-    is_still_open STRING,
-    created_ts TIMESTAMP,
-    last_seen_ts TIMESTAMP
-)
-USING DELTA
-""")
-
-log_step("Target table check", t0)
-
-# ============================================================
-# BUILD FILTERS
-# ============================================================
-t0 = time.time()
-log("Preparing optional table filters")
-
-if USE_EXCLUSION_LIST:
-    base_table_list = [
-        r["tablename"]
-        for r in (
-            spark.read.table(EXCLUSION_TABLE)
-            .filter(col("excludeIndicator") == "Y")
-            .select("tablename")
-            .distinct()
-            .collect()
-        )
-    ]
-
-    if not base_table_list:
-        raise Exception("No tables found in exclusion list where excludeIndicator = 'Y'")
-
-    allowed_ods = "', '".join([t.replace("'", "''") for t in base_table_list])
-    allowed_views = "', '".join([get_view_table_name(t).replace("'", "''") for t in base_table_list])
-
-    ods_filter = f"table_name IN ('{allowed_ods}')"
-    views_filter = f"table_name IN ('{allowed_views}')"
-else:
-    ods_filter = "1=1"
-    views_filter = "1=1"
-
-log_step("Filter preparation", t0)
-
-# ============================================================
-# READ CURRENT SNAPSHOT FROM INFORMATION_SCHEMA
-# ============================================================
-t0 = time.time()
-log("Reading current schema snapshot from information_schema.columns")
-
-ods_sql = f"""
-SELECT
-    table_schema AS db_name,
-    table_name AS table_name,
-    table_name AS actual_table_name,
-    column_name,
-    full_data_type AS data_type,
-    CASE WHEN is_nullable = 'YES' THEN 'Y' ELSE 'N' END AS is_nullable,
-    CAST(ordinal_position AS INT) AS ordinal_position
-FROM {CATALOG_NAME}.information_schema.columns
-WHERE table_schema = 'ods'
-  AND {ods_filter}
-"""
-
-ods_views_sql = f"""
-SELECT
-    table_schema AS db_name,
-    {normalize_table_name_expr('table_name')} AS table_name,
-    table_name AS actual_table_name,
-    column_name,
-    full_data_type AS data_type,
-    CASE WHEN is_nullable = 'YES' THEN 'Y' ELSE 'N' END AS is_nullable,
-    CAST(ordinal_position AS INT) AS ordinal_position
-FROM {CATALOG_NAME}.information_schema.columns
-WHERE table_schema = 'ods_views'
-  AND {views_filter}
-"""
-
-current_df = spark.sql(ods_sql).unionByName(spark.sql(ods_views_sql))
-
-current_count = current_df.count()
-log(f"Current schema rows collected: {current_count}")
-
-if current_count == 0:
-    raise Exception("No schema metadata found in information_schema.columns for ods / ods_views")
-
-log_step("Current schema read", t0)
-
-# ============================================================
-# CHECK BASELINE
-# ============================================================
-t0 = time.time()
-log("Checking baseline existence")
-
-baseline_count = spark.table(BASELINE_TABLE).count()
-baseline_exists = baseline_count > 0
-
-log(f"Baseline row count: {baseline_count}")
-log_step("Baseline existence check", t0)
-
-# ============================================================
-# FIRST RUN -> CREATE FIXED BASELINE ONLY
-# ============================================================
-if not baseline_exists:
-    t0 = time.time()
-    log("No baseline found. Creating original fixed baseline")
-
-    baseline_insert_df = current_df.withColumn("baseline_created_ts", current_timestamp())
-
-    (
-        baseline_insert_df
-        .select(
-            "db_name",
-            "table_name",
-            "actual_table_name",
-            "column_name",
-            "data_type",
-            "is_nullable",
-            "ordinal_position",
-            "baseline_created_ts"
-        )
-        .write
-        .format("delta")
-        .mode("append")
-        .saveAsTable(BASELINE_TABLE)
-    )
-
-    inserted_count = baseline_insert_df.count()
-    log(f"Baseline created successfully. inserted_rows={inserted_count}")
-    log_step("Baseline creation", t0)
-
-else:
-    # ========================================================
-    # LOAD BASELINE
-    # ========================================================
-    t0 = time.time()
-    log("Loading baseline for comparison")
-    baseline_df = spark.table(BASELINE_TABLE)
-    log_step("Baseline load", t0)
-
-    # ========================================================
-    # COMPARE CURRENT VS FIXED BASELINE
-    # ========================================================
-    t0 = time.time()
-    log("Comparing current schema against fixed original baseline")
-
-    base = baseline_df.alias("base")
-    curr = current_df.alias("curr")
-
-    join_cond = [
-        col("base.db_name") == col("curr.db_name"),
-        col("base.table_name") == col("curr.table_name"),
-        col("base.column_name") == col("curr.column_name")
-    ]
-
-    added_df = (
-        curr.join(base, join_cond, "left_anti")
-        .select(
-            col("curr.db_name").alias("db_name"),
-            col("curr.table_name").alias("table_name"),
-            col("curr.actual_table_name").alias("actual_table_name"),
-            lit("COLUMN_ADDED").alias("change_type"),
-            col("curr.column_name").alias("column_name"),
-            lit(None).cast("string").alias("old_data_type"),
-            col("curr.data_type").alias("new_data_type"),
-            lit(None).cast("string").alias("old_is_nullable"),
-            col("curr.is_nullable").alias("new_is_nullable"),
-            lit(None).cast("int").alias("old_ordinal_position"),
-            col("curr.ordinal_position").alias("new_ordinal_position"),
-            lit("Column exists in current structure but not in original baseline").alias("change_comment")
-        )
-    )
-
-    removed_df = (
-        base.join(curr, join_cond, "left_anti")
-        .select(
-            col("base.db_name").alias("db_name"),
-            col("base.table_name").alias("table_name"),
-            col("base.actual_table_name").alias("actual_table_name"),
-            lit("COLUMN_REMOVED").alias("change_type"),
-            col("base.column_name").alias("column_name"),
-            col("base.data_type").alias("old_data_type"),
-            lit(None).cast("string").alias("new_data_type"),
-            col("base.is_nullable").alias("old_is_nullable"),
-            lit(None).cast("string").alias("new_is_nullable"),
-            col("base.ordinal_position").alias("old_ordinal_position"),
-            lit(None).cast("int").alias("new_ordinal_position"),
-            lit("Column exists in original baseline but not in current structure").alias("change_comment")
-        )
-    )
-
-    matched_df = base.join(curr, join_cond, "inner")
-
-    datatype_changed_df = (
-        matched_df
-        .filter(col("base.data_type") != col("curr.data_type"))
-        .select(
-            col("base.db_name").alias("db_name"),
-            col("base.table_name").alias("table_name"),
-            col("curr.actual_table_name").alias("actual_table_name"),
-            lit("DATA_TYPE_CHANGED").alias("change_type"),
-            col("base.column_name").alias("column_name"),
-            col("base.data_type").alias("old_data_type"),
-            col("curr.data_type").alias("new_data_type"),
-            col("base.is_nullable").alias("old_is_nullable"),
-            col("curr.is_nullable").alias("new_is_nullable"),
-            col("base.ordinal_position").alias("old_ordinal_position"),
-            col("curr.ordinal_position").alias("new_ordinal_position"),
-            lit("Column datatype changed from original baseline").alias("change_comment")
-        )
-    )
-
-    nullable_changed_df = (
-        matched_df
-        .filter(col("base.is_nullable") != col("curr.is_nullable"))
-        .select(
-            col("base.db_name").alias("db_name"),
-            col("base.table_name").alias("table_name"),
-            col("curr.actual_table_name").alias("actual_table_name"),
-            lit("NULLABILITY_CHANGED").alias("change_type"),
-            col("base.column_name").alias("column_name"),
-            col("base.data_type").alias("old_data_type"),
-            col("curr.data_type").alias("new_data_type"),
-            col("base.is_nullable").alias("old_is_nullable"),
-            col("curr.is_nullable").alias("new_is_nullable"),
-            col("base.ordinal_position").alias("old_ordinal_position"),
-            col("curr.ordinal_position").alias("new_ordinal_position"),
-            lit("Column nullability changed from original baseline").alias("change_comment")
-        )
-    )
-
-    ordinal_changed_df = (
-        matched_df
-        .filter(col("base.ordinal_position") != col("curr.ordinal_position"))
-        .select(
-            col("base.db_name").alias("db_name"),
-            col("base.table_name").alias("table_name"),
-            col("curr.actual_table_name").alias("actual_table_name"),
-            lit("ORDINAL_POSITION_CHANGED").alias("change_type"),
-            col("base.column_name").alias("column_name"),
-            col("base.data_type").alias("old_data_type"),
-            col("curr.data_type").alias("new_data_type"),
-            col("base.is_nullable").alias("old_is_nullable"),
-            col("curr.is_nullable").alias("new_is_nullable"),
-            col("base.ordinal_position").alias("old_ordinal_position"),
-            col("curr.ordinal_position").alias("new_ordinal_position"),
-            lit("Column position changed from original baseline").alias("change_comment")
-        )
-    )
-
-    current_changes_df = (
-        added_df
-        .unionByName(removed_df)
-        .unionByName(datatype_changed_df)
-        .unionByName(nullable_changed_df)
-        .unionByName(ordinal_changed_df)
-        .withColumn(
-            "change_key",
-            sha2(
-                concat_ws(
-                    "||",
-                    coalesce(col("db_name"), lit("")),
-                    coalesce(col("table_name"), lit("")),
-                    coalesce(col("change_type"), lit("")),
-                    coalesce(col("column_name"), lit("")),
-                    coalesce(col("old_data_type"), lit("")),
-                    coalesce(col("new_data_type"), lit("")),
-                    coalesce(col("old_is_nullable"), lit("")),
-                    coalesce(col("new_is_nullable"), lit("")),
-                    coalesce(col("old_ordinal_position").cast("string"), lit("")),
-                    coalesce(col("new_ordinal_position").cast("string"), lit(""))
-                ),
-                256
-            )
-        )
-    )
-
-    current_change_count = current_changes_df.count()
-    log(f"Detected current change rows: {current_change_count}")
-    log_step("Schema comparison", t0)
-
-    # ========================================================
-    # RESET TODAY'S PREVIOUS LATEST
-    # ========================================================
-    t0 = time.time()
-    log("Resetting today's previous latest rows")
-
+# ==============================================================
+# TARGET TABLE
+# ==============================================================
+def ensure_target_table():
     spark.sql(f"""
-    UPDATE {CHANGE_TABLE}
-    SET is_latest = 'N'
-    WHERE run_date = current_date()
-      AND is_latest = 'Y'
+    CREATE TABLE IF NOT EXISTS {TARGET_TABLE} (
+        run_date              DATE,
+        interval_start        TIMESTAMP,
+        interval_end          TIMESTAMP,
+        status                STRING,
+        brand                 STRING,
+        total_count           BIGINT,
+        is_sla_breach         INT,
+        is_unexpected_brand   INT
+    )
+    USING DELTA
+    PARTITIONED BY (run_date)
     """)
 
-    log_step("Latest reset", t0)
+def target_is_empty() -> bool:
+    return spark.table(TARGET_TABLE).limit(1).count() == 0
 
-    if current_change_count > 0:
-        # ----------------------------------------------------
-        # STAGE CURRENT CHANGES AS TEMP VIEW
-        # ----------------------------------------------------
-        t0 = time.time()
-        log("Creating temp view for current changes")
-        current_changes_df.createOrReplaceTempView("tmp_current_changes")
-        log_step("Temp view creation", t0)
+def is_start_of_day() -> bool:
+    now = datetime.now()
+    return now.hour == 0 and now.minute < 30
 
-        # ----------------------------------------------------
-        # UPDATE EXISTING CHANGES
-        # ----------------------------------------------------
-        t0 = time.time()
-        log("Updating existing change records seen again in this run")
+# ==============================================================
+# TIME HELPERS
+# ==============================================================
+def current_boundary_expr():
+    return f"""
+        from_unixtime(
+            floor(unix_timestamp(current_timestamp()) / ({INTERVAL_MINUTES}*60))
+            * ({INTERVAL_MINUTES}*60)
+        )
+    """
 
-        spark.sql(f"""
-        MERGE INTO {CHANGE_TABLE} tgt
-        USING tmp_current_changes src
-        ON tgt.change_key = src.change_key
-        WHEN MATCHED THEN UPDATE SET
-            tgt.run_id = CAST({run_id_value} AS BIGINT),
-            tgt.run_date = current_date(),
-            tgt.is_latest = 'Y',
-            tgt.actual_table_name = src.actual_table_name,
-            tgt.change_comment = src.change_comment,
-            tgt.last_detected_date = current_date(),
-            tgt.last_seen_ts = current_timestamp(),
-            tgt.is_still_open = 'Y',
-            tgt.resolved_date = NULL
-        """)
-
-        log_step("Existing change update", t0)
-
-        # ----------------------------------------------------
-        # INSERT NEW CHANGES
-        # ----------------------------------------------------
-        t0 = time.time()
-        log("Inserting newly detected change records")
-
-        spark.sql(f"""
-        INSERT INTO {CHANGE_TABLE}
+def build_intervals_df(start_ts_expr: str, end_ts_expr: str):
+    return spark.sql(f"""
+        WITH bounds AS (
+            SELECT
+                {start_ts_expr} AS start_ts,
+                {end_ts_expr}   AS end_ts
+        ),
+        seq AS (
+            SELECT explode(
+                sequence(
+                    start_ts,
+                    end_ts - INTERVAL {INTERVAL_MINUTES} MINUTES,
+                    INTERVAL {INTERVAL_MINUTES} MINUTES
+                )
+            ) AS interval_start
+            FROM bounds
+        )
         SELECT
-            src.change_key,
-            CAST({run_id_value} AS BIGINT) AS run_id,
-            current_date() AS run_date,
-            'Y' AS is_latest,
-            src.db_name,
-            src.table_name,
-            src.actual_table_name,
-            src.change_type,
-            src.column_name,
-            src.old_data_type,
-            src.new_data_type,
-            src.old_is_nullable,
-            src.new_is_nullable,
-            src.old_ordinal_position,
-            src.new_ordinal_position,
-            src.change_comment,
-            current_date() AS first_detected_date,
-            current_date() AS last_detected_date,
-            CAST(NULL AS DATE) AS resolved_date,
-            'Y' AS is_still_open,
-            current_timestamp() AS created_ts,
-            current_timestamp() AS last_seen_ts
-        FROM tmp_current_changes src
-        LEFT ANTI JOIN {CHANGE_TABLE} tgt
-            ON src.change_key = tgt.change_key
-        """)
+            interval_start,
+            interval_start + INTERVAL {INTERVAL_MINUTES} MINUTES AS interval_end,
+            DATE(interval_start) AS run_date
+        FROM seq
+    """)
 
-        log_step("New change insert", t0)
+def interval_floor(ts_col):
+    return F.from_unixtime(
+        (F.floor(F.unix_timestamp(ts_col) / (INTERVAL_MINUTES * 60))
+         * (INTERVAL_MINUTES * 60)).cast("long")
+    ).cast("timestamp")
 
-        # ----------------------------------------------------
-        # CLOSE RESOLVED CHANGES
-        # ----------------------------------------------------
-        t0 = time.time()
-        log("Closing previously open changes not present in this run")
+# ==============================================================
+# BRAND RESOLUTION
+# ==============================================================
+def build_brand_map_expr():
+    """
+    Resolves brand from payload fields.
 
-        spark.sql(f"""
-        UPDATE {CHANGE_TABLE}
-        SET is_still_open = 'N',
-            resolved_date = current_date(),
-            is_latest = 'N',
-            last_seen_ts = current_timestamp()
-        WHERE is_still_open = 'Y'
-          AND change_key NOT IN (SELECT change_key FROM tmp_current_changes)
-        """)
+    Priority:
+    1. brandName known         → AZ / BRITANNIA
+    2. brandName null + genCode known → AZ / BRITANNIA
+    3. both null               → MISSING_INTERACTION_BRAND
+    4. unknown value           → OTHER
+    """
+    brand_name_map_expr = create_map(
+        *chain.from_iterable(
+            (F.lit(k), F.lit(v)) for k, v in BRAND_NAME_MAP.items()
+        )
+    )
+    gen_code_map_expr = create_map(
+        *chain.from_iterable(
+            (F.lit(k), F.lit(v)) for k, v in GENERATION_CODE_MAP.items()
+        )
+    )
 
-        log_step("Resolved change close", t0)
+    brand_name_col = F.get_json_object(F.col("payload"), "$.interaction.brandName")
+    gen_code_col   = F.get_json_object(F.col("payload"), "$.interaction.generationCode")
 
-        log(f"Run completed successfully. run_id={run_id_value}, active_changes={current_change_count}")
+    return (
+        F.when(
+            brand_name_col.isNotNull(),
+            F.coalesce(brand_name_map_expr[brand_name_col], F.lit("OTHER"))
+        )
+        .when(
+            gen_code_col.isNotNull(),
+            F.coalesce(gen_code_map_expr[gen_code_col], F.lit("OTHER"))
+        )
+        .otherwise(F.lit(MISSING_BRAND))
+    )
 
-    else:
-        # ----------------------------------------------------
-        # NO CURRENT CHANGES -> CLOSE OPEN CHANGES
-        # ----------------------------------------------------
-        t0 = time.time()
-        log("No current changes found. Closing any open change records")
+# ==============================================================
+# COMPUTE COUNTS
+# ==============================================================
+def compute_counts(intervals_df, window_start_ts, window_end_ts):
 
-        spark.sql(f"""
-        UPDATE {CHANGE_TABLE}
-        SET is_still_open = 'N',
-            resolved_date = current_date(),
-            is_latest = 'N',
-            last_seen_ts = current_timestamp()
-        WHERE is_still_open = 'Y'
-        """)
+    # ---------- FLOW stream ----------
+    flow_df = (
+        spark.table(SOURCE_FLOW_TABLE)
+        .filter(
+            (F.col("eHubQueuedDatestamp") >= F.to_date(F.lit(window_start_ts))) &
+            (F.col("eHubQueuedDatestamp") <= F.to_date(F.lit(window_end_ts)))
+        )
+        .select(
+            F.to_date(
+                F.get_json_object(F.col("payload"), "$.timestamp")
+            ).alias("run_date"),
+            F.to_timestamp(
+                F.get_json_object(F.col("payload"), "$.timestamp")
+            ).alias("event_ts"),
+            F.get_json_object(F.col("payload"), "$.interaction.status")
+             .alias("status"),
+            F.get_json_object(F.col("payload"), "$.interaction.mqsQuoteId")
+             .alias("mqs_quote_id"),
+            F.get_json_object(F.col("payload"), "$.interaction._id")
+             .alias("interaction_id"),
+            build_brand_map_expr().alias("brand"),
+        )
+        .filter(
+            (F.col("event_ts") >= F.lit(window_start_ts)) &
+            (F.col("event_ts") <  F.lit(window_end_ts))
+        )
+    )
 
-        log_step("Open change close", t0)
-        log(f"Run completed successfully. run_id={run_id_value}, no schema changes found")
+    # ---------- MTR stream ----------
+    mtr_df = (
+        spark.table(SOURCE_MTR_TABLE)
+        .filter(
+            F.to_date(F.col("enqueuedTime")) >= F.to_date(F.lit(window_start_ts))
+        )
+        .select(
+            F.col("headers")["MQSQuoteId"].alias("mqs_quote_id"),
+            F.col("headers")["externalID"].alias("interaction_id"),
+        )
+        .dropDuplicates()
+    )
 
-# ============================================================
-# FINAL RUNTIME
-# ============================================================
-total_elapsed = time.time() - job_start
-log(f"Total run time: {total_elapsed:.2f} sec")
+    # ---------- Join flow + mtr ----------
+    joined_df = (
+        flow_df.join(
+            mtr_df,
+            on=["mqs_quote_id", "interaction_id"],
+            how="inner"
+        )
+        .select(
+            "run_date",
+            interval_floor(F.col("event_ts")).alias("interval_start"),
+            "status",
+            "brand",
+            "mqs_quote_id",
+        )
+    )
+
+    # ---------- Aggregate per interval + status + brand ----------
+    agg_by_status = (
+        joined_df
+        .groupBy("interval_start", "status", "brand")
+        .agg(F.count("mqs_quote_id").alias("total_count"))
+    )
+
+    # ---------- ALL row — total per interval + brand ----------
+    # Used for silent slot breach detection
+    agg_all = (
+        joined_df
+        .groupBy("interval_start", "brand")
+        .agg(F.count("mqs_quote_id").alias("total_count"))
+        .withColumn("status", F.lit(ALL_STATUS))
+    )
+
+    # ---------- Combine both ----------
+    agg_full = agg_by_status.unionByName(agg_all)
+
+    # ---------- Status spine — dynamic + always include ALL ----------
+    status_df = (
+        agg_by_status
+        .select("status")
+        .distinct()
+        .unionByName(
+            spark.createDataFrame([(ALL_STATUS,)], "status string")
+        )
+    )
+
+    # ---------- Brand spine — hardcoded ----------
+    brand_df = spark.createDataFrame(
+        [(b,) for b in SPINE_BRANDS + [MISSING_BRAND]], "brand string"
+    )
+
+    # ---------- Full spine: interval × status × brand ----------
+    # ALL row guaranteed every slot → silent slot always detected
+    grid = (
+        intervals_df.hint("broadcast")
+        .crossJoin(status_df)
+        .crossJoin(brand_df)
+    )
+
+    # ---------- Join agg onto spine ----------
+    out = (
+        grid
+        .join(agg_full, on=["interval_start", "status", "brand"], how="left")
+        .withColumn(
+            "total_count",
+            F.coalesce(F.col("total_count"), F.lit(0).cast("bigint"))
+        )
+        # SLA breach — ALL row only, AZ and BRITANNIA only
+        # Fires when zero interactions in slot regardless of status
+        .withColumn(
+            "is_sla_breach",
+            F.when(
+                (F.col("status") == ALL_STATUS) &
+                (F.col("total_count") == 0) &
+                (F.col("brand").isin(EXPECTED_BRANDS)),
+                F.lit(1)
+            ).otherwise(F.lit(0))
+        )
+        # Unexpected brand — OTHER with actual traffic
+        .withColumn(
+            "is_unexpected_brand",
+            F.when(
+                (F.col("brand") == "OTHER") &
+                (F.col("total_count") > 0),
+                F.lit(1)
+            ).otherwise(F.lit(0))
+        )
+        .withColumn(
+            "interval_end",
+            F.col("interval_start") +
+            F.expr(f"INTERVAL {INTERVAL_MINUTES} MINUTES")
+        )
+    )
+
+    return out.select(
+        "run_date", "interval_start", "interval_end",
+        "status", "brand", "total_count",
+        "is_sla_breach", "is_unexpected_brand"
+    )
+
+# ==============================================================
+# MERGE + RETENTION
+# ==============================================================
+def merge_into_target(batch_df):
+    batch_df.createOrReplaceTempView("batch_interaction")
+    spark.sql(f"""
+        MERGE INTO {TARGET_TABLE} t
+        USING batch_interaction s
+        ON  t.run_date       = s.run_date
+        AND t.interval_start = s.interval_start
+        AND t.interval_end   = s.interval_end
+        AND t.status         = s.status
+        AND t.brand          = s.brand
+        WHEN MATCHED THEN UPDATE SET
+            t.total_count           = s.total_count,
+            t.is_sla_breach         = s.is_sla_breach,
+            t.is_unexpected_brand   = s.is_unexpected_brand
+        WHEN NOT MATCHED THEN INSERT (
+            run_date, interval_start, interval_end,
+            status, brand, total_count,
+            is_sla_breach, is_unexpected_brand
+        ) VALUES (
+            s.run_date, s.interval_start, s.interval_end,
+            s.status, s.brand, s.total_count,
+            s.is_sla_breach, s.is_unexpected_brand
+        )
+    """)
+
+def apply_retention():
+    spark.sql(f"""
+        DELETE FROM {TARGET_TABLE}
+        WHERE run_date < date_sub(current_date(), {RETENTION_DAYS})
+    """)
+
+# ==============================================================
+# MAIN
+# ==============================================================
+ensure_target_table()
+
+boundary = spark.sql(
+    f"SELECT {current_boundary_expr()} AS boundary"
+).collect()[0]["boundary"]
+
+last_start = spark.sql(
+    f"SELECT timestampadd(MINUTE, -{INTERVAL_MINUTES}, timestamp '{boundary}') AS s"
+).collect()[0]["s"]
+last_end = boundary
+
+if target_is_empty():
+    # --------------------------------------------------------
+    # CASE 1 — First ever run
+    # Full backfill for RETENTION_DAYS
+    # --------------------------------------------------------
+    print("First run — backfilling last 3 days...")
+    intervals_df = build_intervals_df(
+        f"date_trunc('day', date_sub(current_timestamp(), {RETENTION_DAYS}))",
+        current_boundary_expr()
+    )
+
+elif is_start_of_day():
+    # --------------------------------------------------------
+    # CASE 2 — Midnight run
+    # Full reprocess of yesterday — catches late data
+    # --------------------------------------------------------
+    print("Midnight run — reprocessing full yesterday...")
+    intervals_df = build_intervals_df(
+        "date_trunc('day', date_sub(current_timestamp(), 1))",
+        "date_trunc('day', current_timestamp())"
+    )
+
+else:
+    # --------------------------------------------------------
+    # CASE 3 — Normal incremental run every 30 mins
+    # 4hr rolling lookback for late arriving data
+    # --------------------------------------------------------
+    print(f"Incremental run — {LATE_DATA_LOOKBACK_HOURS}hr lookback...")
+    intervals_df = build_intervals_df(
+        f"current_timestamp() - INTERVAL {LATE_DATA_LOOKBACK_HOURS} HOURS",
+        current_boundary_expr()
+    )
+
+bounds = intervals_df.agg(
+    F.min("interval_start").alias("mn"),
+    F.max("interval_end").alias("mx")
+).collect()[0]
+
+window_start_ts = bounds["mn"]
+window_end_ts   = bounds["mx"]
+
+batch_df = compute_counts(intervals_df, window_start_ts, window_end_ts)
+merge_into_target(batch_df)
+apply_retention()
+
+print("MQS interaction status monitoring job completed successfully.")
