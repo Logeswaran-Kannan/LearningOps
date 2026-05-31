@@ -1,9 +1,226 @@
-def get_latest_settled_interval():
+import json
+import requests
+import time
+from pyspark.sql import functions as F
+from datetime import datetime
+
+# ==============================================================
+# CONFIG
+# ==============================================================
+WEBHOOK_URL    = "https://allianzms.webhook.office.com/webhookb2/008b3c57-c5c0-4a5e-bcf1-d05456dc396d@6e06e42d-6925-47c6-b9e7-9581c7ca302a/IncomingWebhook/9caff3d026db4172af96442d8d7d3803/649a7ee9-ce94-475e-91e2-ec413d36b0db/V2mQ0hM0SA5SbzR0L6Kq4bZnaafJdZDZurFCWwV2kM9KA1"
+DASHBOARD_URL  = "https://adb-7628915684047777.17.azuredatabricks.net/dashboardsv3/01f102ad12581f03acf9c9663635867a/pu..."
+STATE_TABLE    = "core_bld.default.sla_alert_state"
+ALERT_NAME     = "radar_live_sla_monitor"
+
+EHUB_TABLE        = "core_bld.default.monitoring_ehub_30min_update"
+BRONZE_TABLE      = "core_bld.default.monitoring_mqs_bronze_30min_update"
+INTERACTION_TABLE = "core_bld.default.monitoring_mqs_interaction_status"
+
+EXPECTED_BRANDS            = ["AZ", "BRITANNIA"]
+BREACH_CONFIRM_INTERVALS   = 1    # send breach immediately
+RECOVERY_CONFIRM_INTERVALS = 3    # 3 consecutive healthy = 1.5hrs stable
+DAILY_HEALTH_HOUR          = 7    # 07:00 AM
+WEBHOOK_MAX_RETRIES        = 3    # retry up to 3 times on failure
+WEBHOOK_RETRY_DELAY        = 10   # seconds between retries
+
+# ==============================================================
+# STATE TABLE
+# ==============================================================
+def ensure_state_table():
+    spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {STATE_TABLE} (
+        alert_name         STRING,
+        current_status     STRING,
+        last_interval      TIMESTAMP,
+        last_notified_at   TIMESTAMP,
+        consecutive_count  INT,
+        notified_status    STRING
+    )
+    USING DELTA
+    """)
+    # Safe migration — add columns if old table exists without them
+    existing_cols = [c.lower() for c in spark.table(STATE_TABLE).columns]
+    if "consecutive_count" not in existing_cols:
+        spark.sql(f"ALTER TABLE {STATE_TABLE} ADD COLUMN consecutive_count INT")
+    if "notified_status" not in existing_cols:
+        spark.sql(f"ALTER TABLE {STATE_TABLE} ADD COLUMN notified_status STRING")
+
+def read_previous_state():
+    """Returns (current_status, notified_status, consecutive_count)"""
+    state_rows = (
+        spark.table(STATE_TABLE)
+        .filter(F.col("alert_name") == ALERT_NAME)
+        .collect()
+    )
+    if state_rows:
+        row = state_rows[0]
+        return (
+            row["current_status"],
+            row["notified_status"],
+            int(row["consecutive_count"] or 0)
+        )
+    return None, None, 0
+
+def upsert_state(current_status, current_interval,
+                 consecutive_count, notified_status):
+    """Atomic MERGE — no DELETE+INSERT gap, safe on failure."""
+    spark.createDataFrame(
+        [(ALERT_NAME, current_status,
+          current_interval, consecutive_count, notified_status)],
+        ["alert_name", "current_status",
+         "last_interval", "consecutive_count", "notified_status"]
+    ).withColumn(
+        "last_notified_at", F.current_timestamp()
+    ).createOrReplaceTempView("state_update")
+
+    spark.sql(f"""
+        MERGE INTO {STATE_TABLE} t
+        USING state_update s
+        ON t.alert_name = s.alert_name
+        WHEN MATCHED THEN UPDATE SET
+            t.current_status    = s.current_status,
+            t.last_interval     = s.last_interval,
+            t.last_notified_at  = s.last_notified_at,
+            t.consecutive_count = s.consecutive_count,
+            t.notified_status   = s.notified_status
+        WHEN NOT MATCHED THEN INSERT (
+            alert_name, current_status, last_interval,
+            last_notified_at, consecutive_count, notified_status
+        ) VALUES (
+            s.alert_name, s.current_status, s.last_interval,
+            s.last_notified_at, s.consecutive_count, s.notified_status
+        )
+    """)
+
+# ==============================================================
+# WEBHOOK SENDER — retry on 403/429/5xx
+# ==============================================================
+def send_webhook(payload, max_retries=WEBHOOK_MAX_RETRIES,
+                 retry_delay=WEBHOOK_RETRY_DELAY):
     """
-    Returns the second to last interval — guaranteed fully settled.
-    Skips the most recent slot which may still be processing.
+    Sends Adaptive Card to Teams webhook.
+    Retries up to max_retries on 403/429/5xx errors.
+    Returns True on success, False if all retries exhausted.
+    State is NOT updated on failure so next run retries the alert.
     """
-    result = spark.sql(f"""
+    last_error = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(
+                WEBHOOK_URL,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps(payload),
+                timeout=30
+            )
+            print(f"  Attempt {attempt} — HTTP {response.status_code}")
+
+            if response.status_code == 200:
+                print("  Webhook sent successfully.")
+                return True
+
+            if response.status_code in (403, 429, 500, 502, 503):
+                print(f"  Retryable error {response.status_code} — waiting {retry_delay}s...")
+                last_error = response.status_code
+                time.sleep(retry_delay)
+                continue
+
+            response.raise_for_status()
+
+        except requests.exceptions.Timeout:
+            print(f"  Attempt {attempt} timed out — waiting {retry_delay}s...")
+            last_error = "timeout"
+            time.sleep(retry_delay)
+            continue
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"  Attempt {attempt} connection error — waiting {retry_delay}s...")
+            last_error = str(e)
+            time.sleep(retry_delay)
+            continue
+
+    print(f"  All {max_retries} attempts failed. Last error: {last_error}")
+    print("  Alert NOT sent — state not updated — will retry next run.")
+    return False
+
+def wrap_adaptive_card(body):
+    """Teams legacy Incoming Webhook format — version 1.2."""
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.2",
+                    "body": body
+                }
+            }
+        ]
+    }
+
+# ==============================================================
+# HELPERS
+# ==============================================================
+def is_daily_health_window() -> bool:
+    """True only during 07:00–07:30 window."""
+    now = datetime.now()
+    return now.hour == DAILY_HEALTH_HOUR and now.minute < 30
+
+def safe_text(value, max_len=22):
+    s = "" if value is None else str(value)
+    return s if len(s) <= max_len else s[:max_len - 3] + "..."
+
+def summarize_sources(items):
+    counts = {}
+    for r in items:
+        src = str(r.get("breach_source", "UNKNOWN"))
+        counts[src] = counts.get(src, 0) + 1
+    return ", ".join([f"{k}: {v}" for k, v in counts.items()])
+
+def comparison_line(items):
+    if not items:
+        return "EHUB and Bronze counts are aligned within SLA for the latest monitored interval."
+    max_diff = max([abs(int(r.get("count_difference", 0))) for r in items]) if items else 0
+    non_zero = sum([1 for r in items if int(r.get("count_difference", 0)) != 0])
+    if max_diff == 0:
+        return "EHUB and Bronze counts are aligned for the monitored interval."
+    return (
+        f"Count comparison indicates {non_zero} impacted flow(s), "
+        f"with a maximum EHUB vs Bronze variance of {max_diff}."
+    )
+
+def should_send_alert(prev_status, current_status,
+                      notified_status, consecutive_count):
+    """
+    Returns 'breach', 'recovery', or None.
+    Breach  — immediate on first detection.
+    Recovery — only after RECOVERY_CONFIRM_INTERVALS consecutive healthy.
+    """
+    if current_status == "BREACH":
+        if notified_status != "BREACH":
+            return "breach"
+        return None
+    if current_status == "HEALTHY":
+        if notified_status == "BREACH":
+            if consecutive_count >= RECOVERY_CONFIRM_INTERVALS:
+                return "recovery"
+            else:
+                print(f"  Recovery pending — {consecutive_count}/{RECOVERY_CONFIRM_INTERVALS} intervals confirmed")
+                return None
+    return None
+
+# ==============================================================
+# CORE QUERIES
+# ==============================================================
+def get_settled_interval():
+    """
+    Returns second to last interval — guaranteed fully settled.
+    Skips the most recent slot which may still be processing by
+    monitoring jobs. Prevents false breach from timing race.
+    """
+    return spark.sql(f"""
         WITH bounds AS (
             SELECT date_trunc('day', current_timestamp()) AS day_start
         ),
@@ -19,26 +236,31 @@ def get_latest_settled_interval():
         SELECT MIN(interval_end) AS settled_interval
         FROM all_intervals
     """).collect()[0]["settled_interval"]
-    return result
 
-def get_breach_rows():
+def get_overnight_breach_count(brand: str) -> int:
+    """Count breach slots since midnight for a brand."""
+    return int(spark.sql(f"""
+        WITH bounds AS (
+            SELECT date_trunc('day', current_timestamp()) AS day_start
+        )
+        SELECT COUNT(*) AS breach_count
+        FROM {EHUB_TABLE}
+        WHERE run_date  >= (SELECT day_start FROM bounds)
+          AND brand      = '{brand}'
+          AND message_type <> 'ALL'
+          AND is_sla_breach = 1
+    """).collect()[0]["breach_count"])
+
+def get_breach_rows(settled_interval):
+    """
+    Reads breach data from the settled interval only.
+    Both brands combined in one query.
+    Joins EHUB + Bronze on (message_type_link, interval_end, brand).
+    Interaction joined on interval_start — no cross join.
+    """
     query = f"""
     WITH bounds AS (
         SELECT date_trunc('day', current_timestamp()) AS day_start
-    ),
-    all_intervals AS (
-        SELECT DISTINCT interval_end
-        FROM {EHUB_TABLE}
-        WHERE interval_end >= (SELECT day_start FROM bounds)
-          AND message_type <> 'ALL'
-          AND brand IN ('AZ','BRITANNIA')
-        ORDER BY interval_end DESC
-        LIMIT 2
-    ),
-    -- Use second to last interval — fully settled
-    settled_interval AS (
-        SELECT MIN(interval_end) AS max_interval
-        FROM all_intervals
     ),
     interaction_intervals AS (
         SELECT DISTINCT interval_start
@@ -52,7 +274,7 @@ def get_breach_rows():
             SELECT interval_start,
                    ROW_NUMBER() OVER (ORDER BY interval_start DESC) AS rn
             FROM interaction_intervals
-        ) x WHERE rn = 2    -- ← also use second to last for interaction
+        ) x WHERE rn = 2
     ),
     ehub_latest AS (
         SELECT
@@ -66,7 +288,7 @@ def get_breach_rows():
         FROM {EHUB_TABLE}
         WHERE message_type <> 'ALL'
           AND brand IN ('AZ','BRITANNIA')
-          AND interval_end = (SELECT max_interval FROM settled_interval)
+          AND interval_end = timestamp '{settled_interval}'
     ),
     bronze_latest AS (
         SELECT
@@ -89,7 +311,7 @@ def get_breach_rows():
         FROM {BRONZE_TABLE}
         WHERE message_type <> 'ALL'
           AND brand IN ('AZ','BRITANNIA')
-          AND interval_end = (SELECT max_interval FROM settled_interval)
+          AND interval_end = timestamp '{settled_interval}'
     ),
     interaction_latest AS (
         SELECT
@@ -98,7 +320,8 @@ def get_breach_rows():
         FROM {INTERACTION_TABLE}
         WHERE status = 'ALL'
           AND interval_start = (
-              SELECT interaction_interval FROM latest_minus_1_interaction
+              SELECT interaction_interval
+              FROM latest_minus_1_interaction
           )
         GROUP BY interval_start
     )
@@ -134,22 +357,318 @@ def get_breach_rows():
     """
     return [r.asDict() for r in spark.sql(query).collect()]
 
+# ==============================================================
+# CARD BUILDERS
+# ==============================================================
+def breach_card(items, interval_value):
+    impacted_count = len(items)
+    source_summary = summarize_sources(items)
+    compare_text   = comparison_line(items)
+    az_count       = sum(1 for r in items if r.get("brand") == "AZ")
+    brit_count     = sum(1 for r in items if r.get("brand") == "BRITANNIA")
+    brand_summary  = f"AZ: {az_count} flow(s), BRITANNIA: {brit_count} flow(s)"
+
+    body = [
+        {
+            "type": "Container",
+            "style": "attention",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "🔴 SLA BREACH DETECTED",
+                    "weight": "Bolder",
+                    "size": "Large",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Radar Live production monitoring has detected a service degradation requiring immediate review.",
+                    "wrap": True,
+                    "size": "Small",
+                    "spacing": "Small"
+                }
+            ]
+        },
+        {
+            "type": "FactSet",
+            "spacing": "Medium",
+            "facts": [
+                {"title": "Environment",     "value": "Production"},
+                {"title": "Interval",        "value": str(interval_value)},
+                {"title": "Brands Affected", "value": brand_summary},
+                {"title": "Impacted Flows",  "value": str(impacted_count)},
+                {"title": "Affected Areas",  "value": source_summary[:120]},
+                {"title": "Severity",        "value": "High"}
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": compare_text,
+            "wrap": True,
+            "size": "Small",
+            "spacing": "Small"
+        },
+        {
+            "type": "TextBlock",
+            "text": "Impact Summary",
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "ColumnSet",
+            "separator": True,
+            "columns": [
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Brand",        "weight": "Bolder", "size": "Small"}]},
+                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": "Message Type", "weight": "Bolder", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "EHUB",         "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Bronze",       "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": "Diff",         "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Source",       "weight": "Bolder", "size": "Small"}]},
+            ]
+        }
+    ]
+
+    for r in items[:12]:
+        body.append({
+            "type": "ColumnSet",
+            "separator": True,
+            "spacing": "Small",
+            "columns": [
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": safe_text(r.get("brand", "")),       "size": "Small"}]},
+                {"type": "Column", "width": 3, "items": [{"type": "TextBlock", "text": safe_text(r["message_type_link"]),   "wrap": True, "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": str(r["ehub_count"]),                "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": str(r["bronze_count"]),              "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 1, "items": [{"type": "TextBlock", "text": str(r["count_difference"]),          "horizontalAlignment": "Center", "size": "Small"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": str(r.get("breach_source", "")),     "wrap": True, "size": "Small"}]},
+            ]
+        })
+
+    body.extend([
+        {
+            "type": "TextBlock",
+            "text": f"Dashboard: {DASHBOARD_URL}",
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True,
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "⚠ Please investigate the affected flows and validate upstream/downstream processing.",
+            "wrap": True,
+            "size": "Small",
+            "spacing": "Small"
+        }
+    ])
+    return wrap_adaptive_card(body)
 
 
-def get_latest_interval():
-    return spark.sql(f"""
-        WITH bounds AS (
-            SELECT date_trunc('day', current_timestamp()) AS day_start
-        ),
-        all_intervals AS (
-            SELECT DISTINCT interval_end
-            FROM {EHUB_TABLE}
-            WHERE interval_end >= (SELECT day_start FROM bounds)
-              AND message_type <> 'ALL'
-              AND brand IN ('AZ','BRITANNIA')
-            ORDER BY interval_end DESC
-            LIMIT 2
+def healthy_card(interval_value):
+    body = [
+        {
+            "type": "Container",
+            "style": "good",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "✅ RETURNED TO NORMAL",
+                    "weight": "Bolder",
+                    "size": "Large",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Radar Live monitoring confirms the service flow has recovered and is now operating within SLA.",
+                    "wrap": True,
+                    "size": "Small",
+                    "spacing": "Small"
+                }
+            ]
+        },
+        {
+            "type": "FactSet",
+            "spacing": "Medium",
+            "facts": [
+                {"title": "Environment",  "value": "Production"},
+                {"title": "Brands",       "value": "AZ & BRITANNIA"},
+                {"title": "Recovered At", "value": str(interval_value)},
+                {"title": "Status",       "value": "Healthy"},
+                {"title": "Verification", "value": "Latest monitored interval is within SLA"}
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "EHUB and Bronze counts are aligned within the latest monitoring interval, and no active SLA breach is currently detected.",
+            "wrap": True,
+            "size": "Small",
+            "spacing": "Small"
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Dashboard: {DASHBOARD_URL}",
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True,
+            "spacing": "Medium"
+        }
+    ]
+    return wrap_adaptive_card(body)
+
+
+def daily_health_card(brand_summaries):
+    now = datetime.now().strftime("%A %d %B %Y")
+    body = [
+        {
+            "type": "Container",
+            "style": "emphasis",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": f"📊 DAILY HEALTH REPORT — {now}",
+                    "weight": "Bolder",
+                    "size": "Large",
+                    "wrap": True
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Morning summary of Radar Live SLA monitoring across all brands.",
+                    "wrap": True,
+                    "size": "Small",
+                    "spacing": "Small"
+                }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Brand Status Summary",
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "ColumnSet",
+            "separator": True,
+            "columns": [
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Brand",          "weight": "Bolder", "size": "Small"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Status",         "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Breaches Today", "weight": "Bolder", "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": "Last Interval",  "weight": "Bolder", "size": "Small"}]},
+            ]
+        }
+    ]
+
+    for bs in brand_summaries:
+        status_icon = "✅" if bs["status"] == "HEALTHY" else "🔴"
+        body.append({
+            "type": "ColumnSet",
+            "separator": True,
+            "spacing": "Small",
+            "columns": [
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": bs["brand"],                         "size": "Small"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": f"{status_icon} {bs['status']}",     "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": str(bs["breaches"]),                 "size": "Small", "horizontalAlignment": "Center"}]},
+                {"type": "Column", "width": 2, "items": [{"type": "TextBlock", "text": safe_text(str(bs["last_interval"])), "size": "Small"}]},
+            ]
+        })
+
+    body.extend([
+        {
+            "type": "TextBlock",
+            "text": "Breach count = intervals where message_count = 0 since midnight.",
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True,
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Dashboard: {DASHBOARD_URL}",
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True,
+            "spacing": "Small"
+        }
+    ])
+    return wrap_adaptive_card(body)
+
+# ==============================================================
+# MAIN
+# ==============================================================
+ensure_state_table()
+
+# ---------- Get settled interval — second to last ----------
+# Avoids timing race where latest slot is still being written
+# by monitoring jobs → prevents false breach from 0 counts
+settled_interval = get_settled_interval()
+print(f"Settled interval: {settled_interval}")
+
+if settled_interval is None:
+    print("No settled interval found — monitoring tables may be empty. Exiting.")
+else:
+    rows           = get_breach_rows(settled_interval)
+    current_status = "BREACH" if rows else "HEALTHY"
+
+    prev_status, notified_status, consecutive_count = read_previous_state()
+
+    # Update consecutive count
+    if current_status == prev_status:
+        consecutive_count += 1
+    else:
+        consecutive_count = 1
+
+    print(f"Settled={settled_interval} | Prev={prev_status} | Current={current_status} | Consecutive={consecutive_count} | LastNotified={notified_status}")
+
+    # ---------- Daily health card — 07:00 window ----------
+    if is_daily_health_window():
+        print("Daily health window — sending morning summary...")
+        brand_summaries = []
+        for brand in EXPECTED_BRANDS:
+            brand_summaries.append({
+                "brand"        : brand,
+                "status"       : current_status,
+                "breaches"     : get_overnight_breach_count(brand),
+                "last_interval": settled_interval
+            })
+        send_webhook(daily_health_card(brand_summaries))
+        print("Daily health card sent.")
+
+    # ---------- Breach / recovery alert ----------
+    action  = should_send_alert(
+        prev_status, current_status,
+        notified_status, consecutive_count
+    )
+    payload = None
+
+    if action == "breach":
+        print("→ Sending breach card")
+        payload         = breach_card(rows, settled_interval)
+        notified_status = "BREACH"
+
+    elif action == "recovery":
+        print(f"→ Sending recovery card after {consecutive_count} stable intervals")
+        payload         = healthy_card(settled_interval)
+        notified_status = "HEALTHY"
+
+    else:
+        print("→ No notification needed")
+
+    if payload:
+        sent = send_webhook(payload)
+        if sent:
+            # Only update state on successful send
+            # Failed send → state unchanged → next run retries
+            upsert_state(
+                current_status, settled_interval,
+                consecutive_count, notified_status
+            )
+            print(f"State updated — status={current_status} interval={settled_interval}")
+        else:
+            print("Webhook failed — state NOT updated — will retry next run")
+    else:
+        # No alert needed — always update state
+        upsert_state(
+            current_status, settled_interval,
+            consecutive_count, notified_status
         )
-        SELECT MIN(interval_end) AS latest_interval
-        FROM all_intervals
-    """).collect()[0]["latest_interval"]
+        print(f"State updated — status={current_status} interval={settled_interval}")
+
+    print("\nAlert job completed successfully.")
