@@ -1,71 +1,47 @@
-from pyspark.sql import functions as F
-from pyspark.sql.types import StructType, ArrayType
-from pyspark.sql import DataFrame
+Based on the sample provided, it covers only a subset of the DVLA derivation scenarios.
 
-source_table = "core_tst.your_schema.source_table"
-target_table = "core_tst.your_schema.target_deflatten_table"
-payload_col = "payload"
+Covered scenarios:
 
-df = spark.table(source_table)
+* Full licence entitlement (`entitlements_type = F`)
+* Non B/BE entitlement path (`entitlements_code = Q`)
+* Entitlement validFrom date populated
+* Licence status = FC
+* Single endorsement present (`SP30`)
+* Disqualification period = PT0S (no ban / less than 1 month bucket)
+* isDisqual = FALSE
+* Single endorsement points (`noOfPoints = 3`)
+* Offence date populated
 
-# Add traceable source row id before exploding arrays
-df = df.withColumn("source_row_id", F.monotonically_increasing_id())
+Not covered:
 
-# Infer JSON schema from payload
-payload_schema = spark.read.json(
-    df.select(payload_col)
-      .where(F.col(payload_col).isNotNull())
-      .rdd
-      .map(lambda r: r[payload_col])
-).schema
+* Entitlement derivation paths involving:
 
-# Parse payload string into struct
-df_parsed = df.withColumn(
-    "payload_json",
-    F.from_json(F.col(payload_col), payload_schema)
-)
+  * F + B
+  * F + BE
+  * P + B
+  * P + BE
+* Multiple entitlements for the same driver (priority and validFrom selection logic)
+* Conviction code lookup mappings (e.g. AC20→AC10, BA20→BA10, CD70→CD40)
+* Disqualification buckets:
 
-def flatten_df(df: DataFrame, sep: str = "_") -> DataFrame:
-    while True:
-        complex_cols = []
+  * P2M (1–3 months)
+  * P6M (4–12 months)
+  * P2Y (13+ months)
+* Multiple endorsements for the same driver
+* Validation of noOfPoints aggregation logic (sum of endorsement points)
+* Multiple drivers within the same quote (DriverPRN-level validation)
+* Current vs Original message scenarios
+* Additional licence status mappings (e.g. PC)
 
-        for field in df.schema.fields:
-            if isinstance(field.dataType, StructType):
-                complex_cols.append((field.name, "struct"))
-            elif isinstance(field.dataType, ArrayType):
-                complex_cols.append((field.name, "array"))
+Recommendation:
 
-        if not complex_cols:
-            break
+To achieve good coverage without creating excessive test data, the following additional samples would be sufficient:
 
-        col_name, col_type = complex_cols[0]
+1. F + B entitlement scenario
+2. P + B entitlement scenario
+3. Driver with multiple endorsements (e.g. 3 + 6 points)
+4. Conviction code lookup scenario (e.g. AC20, BA20, CD70)
+5. P2M, P6M and P2Y disqualification period scenarios
+6. Quote containing multiple drivers (multiple DriverPRNs)
 
-        if col_type == "struct":
-            nested_cols = [
-                F.col(f"`{col_name}`.`{nested.name}`")
-                 .alias(f"{col_name}{sep}{nested.name}")
-                for nested in df.schema[col_name].dataType.fields
-            ]
-
-            df = df.select("*", *nested_cols).drop(col_name)
-
-        elif col_type == "array":
-            df = df.withColumn(
-                col_name,
-                F.explode_outer(F.col(col_name))
-            )
-
-    return df
-
-# Flatten payload_json, keep original payload and source_row_id
-df_flattened = flatten_df(df_parsed)
-
-# Write target deflattened table
-(
-    df_flattened
-    .write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(target_table)
-)
+This would cover the main derivation branches and edge cases defined in the requirement.
