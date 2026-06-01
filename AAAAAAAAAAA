@@ -1,26 +1,31 @@
 from pyspark.sql import functions as F
+from pyspark.sql import types as T
 from datetime import datetime
 
 # ==============================================================
 # CONFIG
 # ==============================================================
-SOURCE_TABLE             = "core.mqs_athn_mtr.ehubstream"
-TARGET_TABLE             = "core_bld.default.monitoring_ehub_30min_update"
+TARGET_TABLE             = "core_bld.default.monitoring_mqs_bronze_30min_update"
 INTERVAL_MINUTES         = 30
 RETENTION_DAYS           = 2
-LATE_DATA_LOOKBACK_HOURS = 4
+PREFER_ENQUEUED_TIME     = True
 
-EXPECTED_MESSAGE_TYPES = [
-    "mqs-quote-request",
-    "precomp-response",
-    "rating-request",
-    "rating-response",
-    "quote-cache-id",
-    "stop-quota",
+SOURCE_TABLES = [
+    "core.mqs_athn_mtr.dlt_quote_request",
+    "core.mqs_athn_mtr.dlt_rating_request_v2",
+    "core.mqs_athn_mtr.dlt_rating_response_v2",
+    "core.mqs_athn_mtr.dlt_stop_quote",
+    "core.mqs_athn_mtr.dlt_cache_id",
+    "core.mqs_athn_mtr.dlt_precomp_response",
+    "core.mqs_athn_mtr.dlt_raw_enrichments",
+    "core.mqs_athn_mtr.dlt_rating_response_uw_results_v2",
+    "core.mqs_athn_mtr.dlt_rating_request_dvla_removed_v2",
+    "core.mqs_athn_mtr.dlt_rating_response_pricing_results_v2",
 ]
 
-EXPECTED_BRANDS = ["AZ", "BRITANNIA"]
-SPINE_BRANDS    = ["AZ", "BRITANNIA", "OTHER"]
+EXPECTED_BRANDS = ["AZ", "GSF"]
+SPINE_BRANDS    = ["AZ", "GSF", "OTHER"]
+MISSING_BRAND   = "MISSING_INTERACTION_BRAND"
 
 # ==============================================================
 # TARGET TABLE
@@ -90,56 +95,62 @@ def interval_floor_30min(ts_col):
     ).cast("timestamp")
 
 # ==============================================================
-# COLUMN / FIELD RESOLUTION
+# COLUMN DISCOVERY + PRUNING
 # ==============================================================
 def normalize_col_lookup(df):
     return {c.lower(): c for c in df.columns}
 
-def pick_time_expr(df):
+def choose_time_expr(df):
     """
-    Prefer enqueuedTime if present; else fallback to
-    eHubQueuedDatestamp at midnight.
-    Returns (time_expr, has_ehub_date)
-    """
-    m = normalize_col_lookup(df)
-    if "enqueuedtime" in m:
-        return F.col(m["enqueuedtime"]).cast("timestamp"), ("ehubqueueddatestamp" in m)
-    if "ehubqueueddatestamp" in m:
-        return F.to_timestamp(F.col(m["ehubqueueddatestamp"]).cast("date")), True
-    return None, False
+    Returns (time_col_expr, using_enqueued, has_ehub_date)
 
-def pick_message_type_expr(df):
+    Preference:
+    - PREFER_ENQUEUED_TIME=True  → enqueuedTime if present
+    - fallback                   → eHubQueuedDatestamp as date at midnight
     """
-    headers.messageType extraction:
-    - preferred: headers is a struct → headers.messageType
-    - fallback: top-level column headers.messageType
-    - last fallback: UNKNOWN
-    """
-    m = normalize_col_lookup(df)
-    if "headers" in m:
-        return F.col(m["headers"]).getField("messageType").cast("string")
-    if "headers.messagetype" in m:
-        return F.col(m["headers.messagetype"]).cast("string")
-    return F.lit("UNKNOWN").cast("string")
+    m       = normalize_col_lookup(df)
+    has_enq = "enqueuedtime" in m
+    has_ehub = "ehubqueueddatestamp" in m
+
+    if PREFER_ENQUEUED_TIME and has_enq:
+        return F.col(m["enqueuedtime"]).cast("timestamp"), True, has_ehub
+    if has_ehub:
+        return F.to_timestamp(F.col(m["ehubqueueddatestamp"]).cast("date")), False, True
+    if has_enq:
+        return F.col(m["enqueuedtime"]).cast("timestamp"), True, has_ehub
+    return None, False, False
 
 def pick_brand_expr(df):
     """
-    headers.brand extraction:
-    - preferred: headers is a struct → headers.brand
-    - fallback: top-level column headers.brand
-    - last fallback: null (bucketed into OTHER downstream)
+    Simple brand resolution from headers.brand:
+    - AZ        → AZ
+    - GSF → GSF
+    - null      → MISSING_INTERACTION_BRAND
+    - other     → OTHER
     """
     m = normalize_col_lookup(df)
-    if "headers" in m:
-        return F.col(m["headers"]).getField("brand").cast("string")
-    if "headers.brand" in m:
-        return F.col(m["headers.brand"]).cast("string")
-    return F.lit(None).cast("string")
 
-# ==============================================================
-# PRUNING (big table optimization)
-# ==============================================================
-def apply_pruning(df, time_expr, has_ehub_date, window_start_ts, window_end_ts):
+    if "headers" in m:
+        raw_brand = F.col(m["headers"]).getField("brand").cast("string")
+    elif "headers.brand" in m:
+        raw_brand = F.col(m["headers.brand"]).cast("string")
+    else:
+        # No brand column at all → all rows are MISSING
+        return F.lit(MISSING_BRAND)
+
+    return (
+        F.when(raw_brand.isin(EXPECTED_BRANDS), raw_brand)
+         .when(raw_brand.isNull(), F.lit(MISSING_BRAND))
+         .otherwise(F.lit("OTHER"))
+    )
+
+def apply_pruning(df, time_col_expr, has_ehub_date,
+                  window_start_ts, window_end_ts):
+    """
+    Two-stage pruning:
+    1. Date partition pruning via eHubQueuedDatestamp (if present)
+    2. Exact timestamp range filter
+    """
     pruned = df
     if has_ehub_date:
         m        = normalize_col_lookup(df)
@@ -149,37 +160,46 @@ def apply_pruning(df, time_expr, has_ehub_date, window_start_ts, window_end_ts):
             (F.col(ehub_col) <= F.to_date(F.lit(window_end_ts)))
         )
     pruned = pruned.where(
-        (time_expr >= F.lit(window_start_ts)) &
-        (time_expr <  F.lit(window_end_ts))
+        (time_col_expr >= F.lit(window_start_ts)) &
+        (time_col_expr <  F.lit(window_end_ts))
     )
     return pruned
 
 # ==============================================================
-# COUNTS PER (interval_start, message_type, brand)
+# CORE COUNT COMPUTATION PER TABLE
 # ==============================================================
-def compute_counts(intervals_df, window_start_ts, window_end_ts):
-    src = spark.table(SOURCE_TABLE)
+def compute_table_counts_for_intervals(
+    table_name, intervals_df, window_start_ts, window_end_ts
+):
+    """
+    For a single source table:
+    1. Prune to window
+    2. Bucket into 30min slots
+    3. Resolve brand
+    4. Aggregate count per (interval, brand)
+    5. Left join onto spine → fills missing slots with 0
+    6. Flag SLA breach and unexpected brand
+    """
+    src        = spark.table(table_name)
+    short_name = table_name.split(".")[-1]   # e.g. dlt_quote_request
 
-    time_expr, has_ehub_date = pick_time_expr(src)
+    time_expr, using_enqueued, has_ehub = choose_time_expr(src)
 
     # ---------- No time column → everything is a breach ----------
     if time_expr is None:
-        msg_df   = spark.createDataFrame(
-            [(m,) for m in EXPECTED_MESSAGE_TYPES], "message_type string"
-        )
         brand_df = spark.createDataFrame(
-            [(b,) for b in SPINE_BRANDS], "brand string"
-        )
-        grid = (
-            intervals_df.hint("broadcast")
-            .crossJoin(msg_df)
-            .crossJoin(brand_df)
+            [(b,) for b in SPINE_BRANDS + [MISSING_BRAND]], "brand string"
         )
         out = (
-            grid
+            intervals_df.hint("broadcast")
+            .crossJoin(brand_df)
+            .withColumn("message_type",        F.lit(short_name))
             .withColumn("message_count",       F.lit(0).cast("bigint"))
-            .withColumn("is_sla_breach",        F.lit(1))
-            .withColumn("is_unexpected_brand",  F.lit(0))
+            .withColumn("is_sla_breach",
+                F.when(F.col("brand").isin(EXPECTED_BRANDS), F.lit(1))
+                 .otherwise(F.lit(0))
+            )
+            .withColumn("is_unexpected_brand", F.lit(0))
         )
         return out.select(
             "run_date", "interval_start", "interval_end",
@@ -187,56 +207,44 @@ def compute_counts(intervals_df, window_start_ts, window_end_ts):
             "is_sla_breach", "is_unexpected_brand"
         )
 
-    msg_type_expr = pick_message_type_expr(src)
-    brand_expr    = pick_brand_expr(src)
-
-    # ---------- Partition pruning ----------
+    # ---------- Prune aggressively for big tables ----------
     pruned = apply_pruning(
-        src, time_expr, has_ehub_date, window_start_ts, window_end_ts
+        src, time_expr, has_ehub, window_start_ts, window_end_ts
     )
 
-    # ---------- Only count expected message types ----------
-    pruned = pruned.where(msg_type_expr.isin(EXPECTED_MESSAGE_TYPES))
+    # ---------- Resolve brand ----------
+    brand_expr = pick_brand_expr(src)
 
-    # ---------- Bucket null/unexpected brands into OTHER ----------
-    pruned = pruned.withColumn(
-        "brand_normalized",
-        F.when(brand_expr.isin(EXPECTED_BRANDS), brand_expr)
-         .otherwise(F.lit("OTHER"))
-    )
-
-    # ---------- Aggregate per interval + type + brand ----------
+    # ---------- Aggregate per interval + brand ----------
     agg = (
         pruned
         .withColumn("interval_start", interval_floor_30min(time_expr))
-        .withColumn("message_type",   msg_type_expr)
-        .groupBy("interval_start", "message_type", "brand_normalized")
+        .withColumn("brand",          brand_expr)
+        .groupBy("interval_start", "brand")
         .agg(F.count(F.lit(1)).alias("message_count"))
-        .withColumnRenamed("brand_normalized", "brand")
     )
 
-    # ---------- Hardcoded spine — guarantees all slots always present ----------
-    msg_df   = spark.createDataFrame(
-        [(m,) for m in EXPECTED_MESSAGE_TYPES], "message_type string"
-    )
+    # ---------- Hardcoded brand spine ----------
     brand_df = spark.createDataFrame(
-        [(b,) for b in SPINE_BRANDS], "brand string"
+        [(b,) for b in SPINE_BRANDS + [MISSING_BRAND]], "brand string"
     )
+
+    # ---------- Full spine: interval × brand ----------
     grid = (
         intervals_df.hint("broadcast")
-        .crossJoin(msg_df)
         .crossJoin(brand_df)
     )
 
     # ---------- Join agg onto spine ----------
     out = (
         grid
-        .join(agg, on=["interval_start", "message_type", "brand"], how="left")
+        .join(agg, on=["interval_start", "brand"], how="left")
         .withColumn(
             "message_count",
             F.coalesce(F.col("message_count"), F.lit(0).cast("bigint"))
         )
-        # SLA breach — only AZ and BRITANNIA, never OTHER
+        .withColumn("message_type", F.lit(short_name))
+        # SLA breach — AZ and GSF only, count = 0
         .withColumn(
             "is_sla_breach",
             F.when(
@@ -245,7 +253,7 @@ def compute_counts(intervals_df, window_start_ts, window_end_ts):
                 F.lit(1)
             ).otherwise(F.lit(0))
         )
-        # Unexpected brand alert — OTHER with traffic detected
+        # Unexpected brand alert — OTHER with traffic
         .withColumn(
             "is_unexpected_brand",
             F.when(
@@ -271,9 +279,9 @@ def merge_into_target(batch_df):
         MERGE INTO {TARGET_TABLE} t
         USING batch_monitoring s
         ON  t.run_date       = s.run_date
+        AND t.message_type   = s.message_type
         AND t.interval_start = s.interval_start
         AND t.interval_end   = s.interval_end
-        AND t.message_type   = s.message_type
         AND t.brand          = s.brand
         WHEN MATCHED THEN UPDATE SET
             t.message_count         = s.message_count,
@@ -313,37 +321,32 @@ last_end = boundary
 if target_is_empty():
     # --------------------------------------------------------
     # CASE 1 — First ever run
-    # Full 2 day backfill from 00:00 two days ago to now
+    # Full backfill for RETENTION_DAYS
     # --------------------------------------------------------
     print("First run — backfilling last 2 days...")
-    intervals_df = build_intervals_df(
-        f"date_trunc('day', date_sub(current_timestamp(), {RETENTION_DAYS}))",
-        current_boundary_expr()
-    )
+    start_ts_expr = f"date_trunc('day', date_sub(current_timestamp(), {RETENTION_DAYS}))"
+    end_ts_expr   = current_boundary_expr()
 
 elif is_start_of_day():
     # --------------------------------------------------------
-    # CASE 2 — Midnight run (00:00 every day)
-    # Full reprocess of yesterday — final cleanup for any
-    # late data that 4hr lookback missed during the day
+    # CASE 2 — Midnight run
+    # Full reprocess of yesterday — catches any late data
     # --------------------------------------------------------
     print("Midnight run — reprocessing full yesterday...")
-    intervals_df = build_intervals_df(
-        "date_trunc('day', date_sub(current_timestamp(), 1))",
-        "date_trunc('day', current_timestamp())"
-    )
+    start_ts_expr = "date_trunc('day', date_sub(current_timestamp(), 1))"
+    end_ts_expr   = "date_trunc('day', current_timestamp())"
 
 else:
     # --------------------------------------------------------
-    # CASE 3 — Normal incremental run (every 30 mins)
-    # 4hr rolling lookback — catches late arriving data
-    # from network/databricks outages up to 4hrs ago
+    # CASE 3 — Normal incremental run every 30 mins
+    # Reprocess from midnight today so every clean 30-min slot
+    # since 00:00 always has a placeholder row, even with no data.
     # --------------------------------------------------------
-    print(f"Incremental run — {LATE_DATA_LOOKBACK_HOURS}hr lookback...")
-    intervals_df = build_intervals_df(
-        f"current_timestamp() - INTERVAL {LATE_DATA_LOOKBACK_HOURS} HOURS",
-        current_boundary_expr()
-    )
+    print("Incremental run — reprocessing from midnight today...")
+    start_ts_expr = "date_trunc('day', current_timestamp())"
+    end_ts_expr   = current_boundary_expr()
+
+intervals_df = build_intervals_df(start_ts_expr, end_ts_expr)
 
 bounds = intervals_df.agg(
     F.min("interval_start").alias("mn"),
@@ -353,8 +356,16 @@ bounds = intervals_df.agg(
 window_start_ts = bounds["mn"]
 window_end_ts   = bounds["mx"]
 
-batch_df = compute_counts(intervals_df, window_start_ts, window_end_ts)
-merge_into_target(batch_df)
+# ---------- Process all source tables + union ----------
+batch = None
+for table in SOURCE_TABLES:
+    print(f"Processing {table}...")
+    df_t  = compute_table_counts_for_intervals(
+        table, intervals_df, window_start_ts, window_end_ts
+    )
+    batch = df_t if batch is None else batch.unionByName(df_t)
+
+merge_into_target(batch)
 apply_retention()
 
-print("Ehub monitoring job completed successfully.")
+print("Bronze monitoring job completed successfully.")
