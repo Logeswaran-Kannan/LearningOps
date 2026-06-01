@@ -1,5 +1,7 @@
 Based on the sample provided, it covers only a subset of the DVLA derivation scenarios.
 
+The supplied sample provides coverage for the default entitlement path (Type=F, Code=Q), FC licence status, single endorsement handling, PT0S disqualification period, FALSE/N disqualification indicator, offence date population and single endorsement points. However, it does not cover the key derivation branches for B/BE entitlements, conviction code lookup mappings, multiple endorsements, noOfPoints aggregation, multiple drivers, or the additional disqualification period categories (P2M, P6M, P2Y). Additional samples will be required to validate those derivation rules.
+
 Covered scenarios:
 
 * Full licence entitlement (`entitlements_type = F`)
