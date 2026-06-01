@@ -1,39 +1,71 @@
-The documented formula:
+from pyspark.sql import functions as F
+from pyspark.sql.types import StructType, ArrayType
+from pyspark.sql import DataFrame
 
-((Policy Year * 12) + Policy Month)
--
-((Offence Year * 12) + Offence Month)
+source_table = "core_tst.your_schema.source_table"
+target_table = "core_tst.your_schema.target_deflatten_table"
+payload_col = "payload"
 
-always produces a number.
+df = spark.table(source_table)
 
-Example:
+# Add traceable source row id before exploding arrays
+df = df.withColumn("source_row_id", F.monotonically_increasing_id())
 
-Policy Effective Date = 01/05/2025
-Offence Date = 15/02/2024
+# Infer JSON schema from payload
+payload_schema = spark.read.json(
+    df.select(payload_col)
+      .where(F.col(payload_col).isNotNull())
+      .rdd
+      .map(lambda r: r[payload_col])
+).schema
 
-Result = 15
+# Parse payload string into struct
+df_parsed = df.withColumn(
+    "payload_json",
+    F.from_json(F.col(payload_col), payload_schema)
+)
 
-There is no subsequent step in the requirement to convert:
+def flatten_df(df: DataFrame, sep: str = "_") -> DataFrame:
+    while True:
+        complex_cols = []
 
-15
+        for field in df.schema.fields:
+            if isinstance(field.dataType, StructType):
+                complex_cols.append((field.name, "struct"))
+            elif isinstance(field.dataType, ArrayType):
+                complex_cols.append((field.name, "array"))
 
-back into a date.
+        if not complex_cols:
+            break
 
-For comparison:
+        col_name, col_type = complex_cols[0]
 
-Entitlement validFrom
+        if col_type == "struct":
+            nested_cols = [
+                F.col(f"`{col_name}`.`{nested.name}`")
+                 .alias(f"{col_name}{sep}{nested.name}")
+                for nested in df.schema[col_name].dataType.fields
+            ]
 
-Requirement explicitly says:
+            df = df.select("*", *nested_cols).drop(col_name)
 
-Policy Effective Date
-minus
-number of completed months
+        elif col_type == "array":
+            df = df.withColumn(
+                col_name,
+                F.explode_outer(F.col(col_name))
+            )
 
-which produces another date.
+    return df
 
-Example:
+# Flatten payload_json, keep original payload and source_row_id
+df_flattened = flatten_df(df_parsed)
 
-01/05/2025 - 122 months
-= 01/03/2015
-
-Output = Date
+# Write target deflattened table
+(
+    df_flattened
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(target_table)
+)
