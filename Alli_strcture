@@ -7,8 +7,8 @@ from datetime import datetime
 # ==============================================================
 # CONFIG
 # ==============================================================
-WEBHOOK_URL    = "https://allianzms.webhook.office.com/webhookb2/008b3c57-c5c0-4a5e-bcf1-d05456dc396d@6e06e42d-6925-47c6-b9e7-9581c7ca302a/IncomingWebhook/9caff3d026db4172af96442d8d7d3803/649a7ee9-ce94-475e-91e2-ec413d36b0db/V2mQ0hM0SA5SbzR0L6Kq4bZnaafJdZDZurFCWwV2kM9KA1"
-DASHBOARD_URL  = "https://adb-7628915684047777.17.azuredatabricks.net/dashboardsv3/01f102ad12581f03acf9c9663635867a/pu..."
+WEBHOOK_URL    = "xxx"
+DASHBOARD_URL  = "yyy"
 STATE_TABLE    = "core_bld.default.sla_alert_state"
 ALERT_NAME     = "radar_live_sla_monitor"
 
@@ -16,7 +16,7 @@ EHUB_TABLE        = "core_bld.default.monitoring_ehub_30min_update"
 BRONZE_TABLE      = "core_bld.default.monitoring_mqs_bronze_30min_update"
 INTERACTION_TABLE = "core_bld.default.monitoring_mqs_interaction_status"
 
-EXPECTED_BRANDS            = ["AZ", "BRITANNIA"]
+EXPECTED_BRANDS            = ["AZ", "GSF"]
 BREACH_CONFIRM_INTERVALS   = 1    # send breach immediately
 RECOVERY_CONFIRM_INTERVALS = 3    # 3 consecutive healthy = 1.5hrs stable
 DAILY_HEALTH_HOUR          = 7    # 07:00 AM
@@ -229,7 +229,7 @@ def get_settled_interval():
             FROM {EHUB_TABLE}
             WHERE interval_end >= (SELECT day_start FROM bounds)
               AND message_type <> 'ALL'
-              AND brand IN ('AZ','BRITANNIA')
+              AND brand IN ('AZ','GSF')
             ORDER BY interval_end DESC
             LIMIT 2
         )
@@ -262,19 +262,20 @@ def get_breach_rows(settled_interval):
     WITH bounds AS (
         SELECT date_trunc('day', current_timestamp()) AS day_start
     ),
-    interaction_intervals AS (
-        SELECT DISTINCT interval_start
-        FROM {INTERACTION_TABLE}
-        WHERE interval_start >= (SELECT day_start FROM bounds)
-          AND status = 'ALL'
+    ehub_interval_start AS (
+        SELECT interval_start
+        FROM {EHUB_TABLE}
+        WHERE interval_end = timestamp '{settled_interval}'
+          AND brand IN ('AZ','GSF')
+          AND message_type <> 'ALL'
+        LIMIT 1
     ),
-    latest_minus_1_interaction AS (
-        SELECT interval_start AS interaction_interval
-        FROM (
-            SELECT interval_start,
-                   ROW_NUMBER() OVER (ORDER BY interval_start DESC) AS rn
-            FROM interaction_intervals
-        ) x WHERE rn = 2
+    interaction_settled AS (
+        SELECT MAX(interval_start) AS interaction_interval
+        FROM {INTERACTION_TABLE}
+        WHERE status = 'ALL'
+          AND interval_start >= (SELECT day_start FROM bounds)
+          AND interval_start <= (SELECT interval_start FROM ehub_interval_start)
     ),
     ehub_latest AS (
         SELECT
@@ -287,7 +288,7 @@ def get_breach_rows(settled_interval):
             brand
         FROM {EHUB_TABLE}
         WHERE message_type <> 'ALL'
-          AND brand IN ('AZ','BRITANNIA')
+          AND brand IN ('AZ','GSF')
           AND interval_end = timestamp '{settled_interval}'
     ),
     bronze_latest AS (
@@ -310,20 +311,17 @@ def get_breach_rows(settled_interval):
             brand
         FROM {BRONZE_TABLE}
         WHERE message_type <> 'ALL'
-          AND brand IN ('AZ','BRITANNIA')
+          AND brand IN ('AZ','GSF')
           AND interval_end = timestamp '{settled_interval}'
     ),
     interaction_latest AS (
-        SELECT
-            interval_start,
-            SUM(total_count) AS total_interaction_count
+        SELECT SUM(total_count) AS total_interaction_count
         FROM {INTERACTION_TABLE}
         WHERE status = 'ALL'
           AND interval_start = (
               SELECT interaction_interval
-              FROM latest_minus_1_interaction
+              FROM interaction_settled
           )
-        GROUP BY interval_start
     )
     SELECT
         e.run_date,
@@ -346,8 +344,7 @@ def get_breach_rows(settled_interval):
         ON  e.message_type_link = b.message_type_link
         AND e.interval_end      = b.interval_end
         AND e.brand             = b.brand
-    LEFT JOIN interaction_latest i
-        ON  e.interval_start    = i.interval_start
+    LEFT JOIN interaction_latest i ON true
     WHERE
         e.ehub_sla = 1
         OR COALESCE(b.is_sla_flag, 0) = 1
@@ -365,8 +362,8 @@ def breach_card(items, interval_value):
     source_summary = summarize_sources(items)
     compare_text   = comparison_line(items)
     az_count       = sum(1 for r in items if r.get("brand") == "AZ")
-    brit_count     = sum(1 for r in items if r.get("brand") == "BRITANNIA")
-    brand_summary  = f"AZ: {az_count} flow(s), BRITANNIA: {brit_count} flow(s)"
+    brit_count     = sum(1 for r in items if r.get("brand") == "GSF")
+    brand_summary  = f"AZ: {az_count} flow(s), GSF: {brit_count} flow(s)"
 
     body = [
         {
@@ -490,7 +487,7 @@ def healthy_card(interval_value):
             "spacing": "Medium",
             "facts": [
                 {"title": "Environment",  "value": "Production"},
-                {"title": "Brands",       "value": "AZ & BRITANNIA"},
+                {"title": "Brands",       "value": "AZ & GSF"},
                 {"title": "Recovered At", "value": str(interval_value)},
                 {"title": "Status",       "value": "Healthy"},
                 {"title": "Verification", "value": "Latest monitored interval is within SLA"}
