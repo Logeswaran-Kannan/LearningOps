@@ -1,142 +1,39 @@
-def print_diagnostic(settled_interval, rows):
-    """
-    Prints exactly what the alert evaluated for this run.
-    Shows which interval was used from each source and what counts were found.
-    """
-    print("\n" + "="*60)
-    print("ALERT DIAGNOSTIC REPORT")
-    print("="*60)
-    print(f"Run time          : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Settled interval  : {settled_interval}")
-    print(f"Breach rows found : {len(rows)}")
-    print("-"*60)
+The documented formula:
 
-    # ---------- EHUB counts for settled interval ----------
-    ehub_check = spark.sql(f"""
-        SELECT
-            brand,
-            message_type,
-            message_count,
-            is_sla_breach
-        FROM {EHUB_TABLE}
-        WHERE interval_end   = timestamp '{settled_interval}'
-          AND message_type  <> 'ALL'
-          AND brand IN ('AZ','BRITANNIA')
-        ORDER BY brand, message_type
-    """).collect()
+((Policy Year * 12) + Policy Month)
+-
+((Offence Year * 12) + Offence Month)
 
-    print(f"\nEHUB — interval_end = {settled_interval}")
-    print(f"  {'Brand':<12} {'Message Type':<30} {'Count':>8} {'Breach':>8}")
-    print(f"  {'-'*12} {'-'*30} {'-'*8} {'-'*8}")
-    if ehub_check:
-        for r in ehub_check:
-            breach_flag = "⚠ YES" if r["is_sla_breach"] == 1 else "ok"
-            print(f"  {str(r['brand']):<12} {str(r['message_type']):<30} {str(r['message_count']):>8} {breach_flag:>8}")
-    else:
-        print("  ⚠ NO DATA FOUND for this interval")
+always produces a number.
 
-    # ---------- Bronze counts for settled interval ----------
-    bronze_check = spark.sql(f"""
-        SELECT
-            brand,
-            message_type,
-            message_count,
-            is_sla_breach
-        FROM {BRONZE_TABLE}
-        WHERE interval_end   = timestamp '{settled_interval}'
-          AND message_type  <> 'ALL'
-          AND brand IN ('AZ','BRITANNIA')
-        ORDER BY brand, message_type
-    """).collect()
+Example:
 
-    print(f"\nBRONZE — interval_end = {settled_interval}")
-    print(f"  {'Brand':<12} {'Message Type':<30} {'Count':>8} {'Breach':>8}")
-    print(f"  {'-'*12} {'-'*30} {'-'*8} {'-'*8}")
-    if bronze_check:
-        for r in bronze_check:
-            breach_flag = "⚠ YES" if r["is_sla_breach"] == 1 else "ok"
-            print(f"  {str(r['brand']):<12} {str(r['message_type']):<30} {str(r['message_count']):>8} {breach_flag:>8}")
-    else:
-        print("  ⚠ NO DATA FOUND for this interval")
+Policy Effective Date = 01/05/2025
+Offence Date = 15/02/2024
 
-    # ---------- Interaction counts for settled interval ----------
-    inter_check = spark.sql(f"""
-        WITH bounds AS (
-            SELECT date_trunc('day', current_timestamp()) AS day_start
-        ),
-        interaction_intervals AS (
-            SELECT DISTINCT interval_start
-            FROM {INTERACTION_TABLE}
-            WHERE interval_start >= (SELECT day_start FROM bounds)
-              AND status = 'ALL'
-        ),
-        settled AS (
-            SELECT interval_start AS interaction_interval
-            FROM (
-                SELECT interval_start,
-                       ROW_NUMBER() OVER (ORDER BY interval_start DESC) AS rn
-                FROM interaction_intervals
-            ) x WHERE rn = 2
-        )
-        SELECT
-            brand,
-            status,
-            interval_start,
-            SUM(total_count) AS total_count
-        FROM {INTERACTION_TABLE}
-        WHERE status = 'ALL'
-          AND interval_start = (SELECT interaction_interval FROM settled)
-        GROUP BY brand, status, interval_start
-        ORDER BY brand
-    """).collect()
+Result = 15
 
-    if inter_check:
-        inter_interval = inter_check[0]["interval_start"]
-        print(f"\nINTERACTION — interval_start = {inter_interval}")
-        print(f"  {'Brand':<12} {'Status':<10} {'Count':>8}")
-        print(f"  {'-'*12} {'-'*10} {'-'*8}")
-        for r in inter_check:
-            count_flag = "⚠ 0" if int(r["total_count"]) == 0 else str(r["total_count"])
-            print(f"  {str(r['brand']):<12} {str(r['status']):<10} {count_flag:>8}")
-    else:
-        print(f"\nINTERACTION — ⚠ NO DATA FOUND for settled interval")
+There is no subsequent step in the requirement to convert:
 
-    # ---------- Breach rows summary ----------
-    if rows:
-        print(f"\nBREACH ROWS PASSED TO ALERT CARD:")
-        print(f"  {'Brand':<12} {'Message Type':<30} {'EHUB':>6} {'Bronze':>8} {'Diff':>6} {'Source':<20}")
-        print(f"  {'-'*12} {'-'*30} {'-'*6} {'-'*8} {'-'*6} {'-'*20}")
-        for r in rows:
-            print(
-                f"  {str(r.get('brand','')):<12} "
-                f"{str(r.get('message_type_link','')):<30} "
-                f"{str(r.get('ehub_count',0)):>6} "
-                f"{str(r.get('bronze_count',0)):>8} "
-                f"{str(r.get('count_difference',0)):>6} "
-                f"{str(r.get('breach_source','')):.<20}"
-            )
-    else:
-        print(f"\nNO BREACH ROWS — status is HEALTHY")
+15
 
-    print("="*60 + "\n")
+back into a date.
 
+For comparison:
 
+Entitlement validFrom
 
-----------
+Requirement explicitly says:
 
+Policy Effective Date
+minus
+number of completed months
 
-# Right after get_breach_rows()
-settled_interval = get_settled_interval()
-print(f"Settled interval: {settled_interval}")
+which produces another date.
 
-if settled_interval is None:
-    print("No settled interval found — exiting.")
-else:
-    rows           = get_breach_rows(settled_interval)
-    current_status = "BREACH" if rows else "HEALTHY"
+Example:
 
-    # ← ADD THIS LINE
-    print_diagnostic(settled_interval, rows)
+01/05/2025 - 122 months
+= 01/03/2015
 
-    prev_status, notified_status, consecutive_count = read_previous_state()
-    # ... rest of main continues
+Output = Date
