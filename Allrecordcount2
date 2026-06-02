@@ -1,44 +1,71 @@
--- Create the target table for table-level metrics
-CREATE TABLE ddl_comparison_table_level_metrics (
-    LOAD_DATE DATE,
-    TABLE_NAME_RESOLVED STRING,
-    PRESENT_IN_ORACLE INT,
-    PRESENT_IN_REPLICA INT,
-    ORACLE_COLUMN_COUNT INT,
-    REPLICA_COLUMN_COUNT INT,
-    MATCH_COUNT INT,
-    COLUMN_MISSING_IN_ORACLE_COUNT INT,
-    COLUMN_MISSING_IN_REPLICA_COUNT INT,
-    PRECISION_SCALE_MISMATCH_COUNT INT,
-    IS_ORA_PC INT
-);
+from pyspark.sql import functions as F
+from pyspark.sql.types import StructType, ArrayType
+from pyspark.sql import DataFrame
 
--- Insert logic into the metrics table
-INSERT INTO ddl_comparison_table_level_metrics
-SELECT
-    CURRENT_DATE AS LOAD_DATE,
-    TABLE_NAME_RESOLVED,
+source_table = "core_tst.your_schema.source_table"
+target_table = "core_tst.your_schema.target_deflatten_table"
+payload_col = "payload"
 
-    -- Presence flags
-    CASE WHEN MAX(CASE WHEN ORACLE_TABLE_NAME IS NOT NULL THEN 1 ELSE 0 END) = 1 THEN 1 ELSE 0 END AS PRESENT_IN_ORACLE,
-    CASE WHEN MAX(CASE WHEN REPLICA_TABLE_NAME IS NOT NULL THEN 1 ELSE 0 END) = 1 THEN 1 ELSE 0 END AS PRESENT_IN_REPLICA,
+df = spark.table(source_table)
 
-    -- Column counts
-    COUNT(DISTINCT CASE WHEN ORACLE_COLUMN_NAME IS NOT NULL THEN ORACLE_COLUMN_NAME END) AS ORACLE_COLUMN_COUNT,
-    COUNT(DISTINCT CASE WHEN REPLICA_COLUMN_NAME IS NOT NULL THEN REPLICA_COLUMN_NAME END) AS REPLICA_COLUMN_COUNT,
+# Add traceable source row id before exploding arrays
+df = df.withColumn("source_row_id", F.monotonically_increasing_id())
 
-    -- Comparison result metrics
-    COUNT(CASE WHEN COMPARISON_RESULT = 'MATCH' THEN 1 END) AS MATCH_COUNT,
-    COUNT(CASE WHEN COMPARISON_RESULT = 'COLUMN MISSING IN ORACLE' THEN 1 END) AS COLUMN_MISSING_IN_ORACLE_COUNT,
-    COUNT(CASE WHEN COMPARISON_RESULT = 'COLUMN MISSING IN REPLICA' THEN 1 END) AS COLUMN_MISSING_IN_REPLICA_COUNT,
-    COUNT(CASE WHEN COMPARISON_RESULT = 'PRECISION OR SCALE MISMATCH' THEN 1 END) AS PRECISION_SCALE_MISMATCH_COUNT,
+# Infer JSON schema from payload
+payload_schema = spark.read.json(
+    df.select(payload_col)
+      .where(F.col(payload_col).isNotNull())
+      .rdd
+      .map(lambda r: r[payload_col])
+).schema
 
-    -- Conditional Oracle PC flag
-    CASE 
-        WHEN MAX(CASE WHEN ORACLE_TABLE_NAME IS NOT NULL THEN 1 ELSE 0 END) = 1 
-             AND LOWER(SUBSTRING(TABLE_NAME_RESOLVED, 1, 2)) = 'pc' 
-        THEN 1 ELSE 0 
-    END AS IS_ORA_PC
+# Parse payload string into struct
+df_parsed = df.withColumn(
+    "payload_json",
+    F.from_json(F.col(payload_col), payload_schema)
+)
 
-FROM ddl_comparison_table  -- Replace with your actual base comparison table
-GROUP BY TABLE_NAME_RESOLVED;
+def flatten_df(df: DataFrame, sep: str = "_") -> DataFrame:
+    while True:
+        complex_cols = []
+
+        for field in df.schema.fields:
+            if isinstance(field.dataType, StructType):
+                complex_cols.append((field.name, "struct"))
+            elif isinstance(field.dataType, ArrayType):
+                complex_cols.append((field.name, "array"))
+
+        if not complex_cols:
+            break
+
+        col_name, col_type = complex_cols[0]
+
+        if col_type == "struct":
+            nested_cols = [
+                F.col(f"`{col_name}`.`{nested.name}`")
+                 .alias(f"{col_name}{sep}{nested.name}")
+                for nested in df.schema[col_name].dataType.fields
+            ]
+
+            df = df.select("*", *nested_cols).drop(col_name)
+
+        elif col_type == "array":
+            df = df.withColumn(
+                col_name,
+                F.explode_outer(F.col(col_name))
+            )
+
+    return df
+
+# Flatten payload_json, keep original payload and source_row_id
+df_flattened = flatten_df(df_parsed)
+
+# Write target deflattened table
+(
+    df_flattened
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(target_table)
+)
