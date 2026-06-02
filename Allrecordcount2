@@ -1,74 +1,12 @@
-from pyspark.sql import functions as F
-from pyspark.sql.types import StructType, ArrayType
-from pyspark.sql import DataFrame
-
-SOURCE_TABLE = "core_tst.mqs_athn_mtr.ehubstream"
-TARGET_TABLE = "core_tst.mqs_athn_mtr.precomp_request_flattened"
-
-df = (
-    spark.table(SOURCE_TABLE)
-    .filter(
-        F.col("headers")
-         .getField("messageType")
-         .cast("string") == "precomp-request"
-    )
-)
-
-df = df.withColumn("source_row_id", F.monotonically_increasing_id())
-
-# Serverless-friendly schema inference
-sample_payload_df = (
-    df.select(F.col("payload").cast("string").alias("payload"))
-      .where(F.col("payload").isNotNull())
-      .limit(10000)
-)
-
-payload_schema_json = (
-    sample_payload_df
-    .select(F.schema_of_json(F.collect_list("payload")[0]).alias("schema"))
-    .collect()[0]["schema"]
-)
-
-df = df.withColumn(
-    "payload_json",
-    F.from_json(F.col("payload").cast("string"), payload_schema_json)
-)
-
-def flatten_df(df: DataFrame, sep="_") -> DataFrame:
-    while True:
-        complex_cols = []
-
-        for field in df.schema.fields:
-            if isinstance(field.dataType, StructType):
-                complex_cols.append((field.name, "struct"))
-            elif isinstance(field.dataType, ArrayType):
-                complex_cols.append((field.name, "array"))
-
-        if not complex_cols:
-            break
-
-        col_name, col_type = complex_cols[0]
-
-        if col_type == "struct":
-            expanded = [
-                F.col(f"`{col_name}`.`{f.name}`").alias(f"{col_name}{sep}{f.name}")
-                for f in df.schema[col_name].dataType.fields
-            ]
-            df = df.select("*", *expanded).drop(col_name)
-
-        elif col_type == "array":
-            df = df.withColumn(col_name, F.explode_outer(F.col(col_name)))
-
-    return df
-
-df_flat = flatten_df(df)
-
-(
-    df_flat.write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(TARGET_TABLE)
-)
-
-print(f"Created target table: {TARGET_TABLE}")
+SELECT
+    event_time,
+    source_table_full_name,
+    target_table_full_name,
+    entity_type,
+    entity_id,
+    entity_run_id,
+    entity_metadata
+FROM system.access.table_lineage
+WHERE lower(source_table_full_name) =
+      lower('core_tst.ods_views.vw_billingcenter_current_bc_account')
+ORDER BY event_time DESC;
