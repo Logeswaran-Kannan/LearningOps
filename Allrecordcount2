@@ -5,7 +5,6 @@ from pyspark.sql import DataFrame
 SOURCE_TABLE = "core_tst.mqs_athn_mtr.ehubstream"
 TARGET_TABLE = "core_tst.mqs_athn_mtr.precomp_request_flattened"
 
-# Read source data
 df = (
     spark.table(SOURCE_TABLE)
     .filter(
@@ -15,34 +14,33 @@ df = (
     )
 )
 
-# Traceable source row id
 df = df.withColumn("source_row_id", F.monotonically_increasing_id())
 
-# Infer payload schema
-payload_schema = spark.read.json(
-    df.select("payload")
+# Serverless-friendly schema inference
+sample_payload_df = (
+    df.select(F.col("payload").cast("string").alias("payload"))
       .where(F.col("payload").isNotNull())
-      .rdd
-      .map(lambda r: r["payload"])
-).schema
-
-# Parse JSON payload
-df = df.withColumn(
-    "payload_json",
-    F.from_json(F.col("payload"), payload_schema)
+      .limit(10000)
 )
 
-def flatten_df(df: DataFrame, sep="_"):
+payload_schema_json = (
+    sample_payload_df
+    .select(F.schema_of_json(F.collect_list("payload")[0]).alias("schema"))
+    .collect()[0]["schema"]
+)
 
+df = df.withColumn(
+    "payload_json",
+    F.from_json(F.col("payload").cast("string"), payload_schema_json)
+)
+
+def flatten_df(df: DataFrame, sep="_") -> DataFrame:
     while True:
-
         complex_cols = []
 
         for field in df.schema.fields:
-
             if isinstance(field.dataType, StructType):
                 complex_cols.append((field.name, "struct"))
-
             elif isinstance(field.dataType, ArrayType):
                 complex_cols.append((field.name, "array"))
 
@@ -52,31 +50,19 @@ def flatten_df(df: DataFrame, sep="_"):
         col_name, col_type = complex_cols[0]
 
         if col_type == "struct":
-
             expanded = [
-                F.col(f"`{col_name}`.`{f.name}`")
-                 .alias(f"{col_name}{sep}{f.name}")
+                F.col(f"`{col_name}`.`{f.name}`").alias(f"{col_name}{sep}{f.name}")
                 for f in df.schema[col_name].dataType.fields
             ]
-
             df = df.select("*", *expanded).drop(col_name)
 
         elif col_type == "array":
-
-            df = df.withColumn(
-                col_name,
-                F.explode_outer(F.col(col_name))
-            )
+            df = df.withColumn(col_name, F.explode_outer(F.col(col_name)))
 
     return df
 
-# Flatten entire dataframe
 df_flat = flatten_df(df)
 
-# Optional cleanup
-df_flat = df_flat.drop("payload_json")
-
-# Save flattened output
 (
     df_flat.write
     .format("delta")
@@ -85,16 +71,4 @@ df_flat = df_flat.drop("payload_json")
     .saveAsTable(TARGET_TABLE)
 )
 
-print(f"Flattened table created: {TARGET_TABLE}")
-
-
-
-
-
-# Count how many flattened rows each source message produced
-display(
-    spark.table(TARGET_TABLE)
-         .groupBy("source_row_id")
-         .count()
-         .orderBy(F.desc("count"))
-)
+print(f"Created target table: {TARGET_TABLE}")
