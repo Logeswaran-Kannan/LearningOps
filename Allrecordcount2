@@ -1,12 +1,29 @@
-SELECT
-    event_time,
-    source_table_full_name,
-    target_table_full_name,
-    entity_type,
-    entity_id,
-    entity_run_id,
-    entity_metadata
-FROM system.access.table_lineage
-WHERE lower(source_table_full_name) =
-      lower('core_tst.ods_views.vw_billingcenter_current_bc_account')
-ORDER BY event_time DESC;
+Just checking my understanding with the team.
+
+From what I understand, the final presentation layer is still under discussion, with two options being considered for the Pricing view:
+
+**Option 1**
+
+* Keep the existing payload column in the view.
+* Replace the `myLicence` section within the Current/Original JSON structure with the derived/obfuscated DVLA values.
+
+**Option 2**
+
+* Keep the existing payload column as the DVLA-removed version.
+* Create a separate DVLA variant column containing the derived/obfuscated DVLA values for both Current and Original.
+
+If that's correct, then most of the implementation work appears to be common regardless of which option is selected.
+
+We can still proceed with:
+
+* extracting DVLA data from Current and Original
+* building a driver-level derived dataset (`MQSQuoteId + DriverPRN`)
+* implementing and validating the entitlement, endorsement, status and disqualification derivation rules
+* preparing test data and expected outputs
+
+The only part that seems dependent on the final design decision is how those derived values are presented in the view:
+
+* merged back into the payload JSON, or
+* exposed as a separate DVLA variant column.
+
+Have I understood this correctly, or am I missing something?
