@@ -1,2 +1,8 @@
 start_date = 2026-06-08 00:00:00
 end_date   = 2026-06-08 23:59:59
+
+
+SELECT
+  MIN(interval_end) AS min_date,
+  MAX(interval_end) AS max_date
+FROM core_bld.default.monitoring_ehub_30min_update;
