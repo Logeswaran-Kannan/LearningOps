@@ -1,35 +1,3 @@
-## QA Scope and Validation Approach
-
-As discussed, the primary objective from a QA perspective is to provide confidence that the CDA-based ingestion solution produces equivalent business outcomes to the existing Read Replica implementation before any production cutover decision is made.
-
-The QA validation approach will focus on three key areas:
-
-1. **Reconciliation Testing (Test Automation Framework)**
-
-   * An automated test framework will be developed to compare Read Replica and CDA datasets during testing.
-   * Validation will include schema, count, data format, DDL, and row-level comparisons using agreed watermark/cutoff points.
-   * The framework is intended for **test validation purposes only** and should not be considered the production reconciliation monitoring solution.
-
-2. **Schema Drift Validation (Test Automation Framework)**
-
-   * An automated approach will be implemented to identify schema changes between the Read Replica and CDA implementations.
-   * Validation will focus on detecting additions, removals, datatype changes, nullability changes, and other structural differences that may impact downstream processing.
-   * This capability is intended to support testing activities and validate the migration readiness of the CDA solution.
-
-3. **Switch-over Validation (Manual Testing)**
-
-   * Following successful reconciliation and schema drift validation, switch-over testing will be performed to validate downstream jobs, pipelines, and business processes using the CDA source.
-   * This activity will primarily be a manual validation exercise based on the downstream impact assessment provided by the Data Engineering team.
-
-It is important to note that the automated reconciliation and schema drift frameworks described above are intended to support QA testing and migration validation activities only. The productionised reconciliation monitoring solution and operational dashboards will be developed and maintained separately by the Development/Data Engineering team as part of the long-term monitoring strategy.
-
-## Validation Success Criteria
-
-The CDA migration testing activities will be considered successful when:
-
-* Reconciliation validation confirms that CDA ODS Views produce equivalent business outcomes to the Read Replica benchmark for the agreed test scope.
-* No critical schema drift issues remain unresolved.
-* Business-critical tables identified for detailed validation meet agreed reconciliation thresholds.
-* Switch-over testing demonstrates that downstream jobs and pipelines continue to operate successfully using CDA as the source.
-* Any identified defects are resolved or formally accepted by the project stakeholders.
-* QA, Data Engineering, and business stakeholders agree that sufficient confidence has been established to support production cutover planning.
+SELECT *
+FROM core_bld.default.monitoring_ehub_30min_update
+WHERE brand = :brand
