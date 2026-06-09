@@ -1,8 +1,53 @@
-start_date = 2026-06-08 00:00:00
-end_date   = 2026-06-08 23:59:59
+Hi Team,
 
+As requested, below is a summary of the current status and impact assessment for the open MQS/Athena-related incidents.
 
-SELECT
-  MIN(interval_end) AS min_date,
-  MAX(interval_end) AS max_date
-FROM core_bld.default.monitoring_ehub_30min_update;
+**INC33121509 – MQS Quote IDs with Missing MQS Quote Request**
+
+**Background:**
+This incident was raised due to MQS journeys missing the expected starting Quote Request event, resulting in orphan quote sequences. MQS implemented a fix around 6 March 2026.
+
+**Current Impact:**
+The fix significantly reduced the occurrence rate from approximately 0.05% in March to less than 0.002% from April onwards. While the issue has largely been mitigated, a small number of orphan quotes are still observed and require further investigation to understand the remaining low-volume cases.
+
+---
+
+**INC33310634 – Data Loss Observed After MQS Release**
+
+**Background:**
+Following the validation of INC33121509, additional orphan sequence patterns were identified where the Quote Request existed but subsequent expected events were missing. This extended the investigation beyond the original missing Quote Request scenario.
+
+**Current Impact:**
+Analysis identified several orphan sequence patterns, including dual-risk journeys where Mule was not sending Stop Quote events. While some root causes were identified, the wider investigation was paused due to competing priorities. The incident remains open pending further analysis of the remaining orphan sequence patterns across MQS, Mule and Athena.
+
+---
+
+**INC33529974 – MQS Quote IDs Missing in Athena Interaction Data**
+
+**Background:**
+Athena identified that certain aggregator click-through journeys were not being correctly selected into the reconciliation process because records were selected using the interaction CreatedOn date rather than the latest UpdatedOn date.
+
+**Current Impact:**
+Following the Athena fix, orphan interaction rates reduced from approximately 0.43% in February to 0.23% in May. The fix has improved the situation considerably; however, a residual orphan population remains and requires further investigation to determine any remaining causes.
+
+---
+
+**INC34337773 – Reverse Reconciliation Issue**
+
+**Background:**
+This incident relates to a significant drop in reverse reconciliation (MQS Landing → CSV). Athena identified that click-through interaction records were being excluded from the reconciliation CSV due to the record selection logic using the interaction CreatedOn date rather than UpdatedOn date.
+
+**Current Impact:**
+Forward reconciliation remains stable at approximately 100%; however, reverse reconciliation reduced from around 99% prior to April to approximately 40–60% currently, with the latest position around 59.8%. Athena has identified the root cause and proposed corrective changes, but the issue continues to impact reconciliation reporting and remains the highest-volume open reconciliation issue.
+
+---
+
+**Overall Assessment**
+
+* INC33121509 is largely mitigated following the MQS fix, with only low-volume residual cases remaining.
+* INC33310634 remains an open investigation into broader orphan sequence patterns.
+* INC33529974 has improved following Athena changes but still shows a small residual orphan population.
+* INC34337773 remains the most significant open issue from a reconciliation perspective due to the ongoing impact on reverse reconciliation performance.
+
+Thanks,
+[Your Name]
