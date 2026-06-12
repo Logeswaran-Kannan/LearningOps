@@ -1,9 +1,8 @@
-Hi,
-
-The URL I shared with Joe was created using a slightly different approach from the one you've generated. The Power Automate/Workflow method typically produces a `powerplatform.com` URL, whereas the older direct Teams webhook approach generates a `webhook.office.com` URL.
-
-It's possible the issue is related to the type of endpoint being used or a network/firewall restriction between Databricks and the target URL.
-
-If you're happy to share the webhook URL (or Team/Channel details), I can do a quick test by sending a sample message from Databricks to see whether the endpoint is reachable from our environment. That should help narrow down whether the issue is with the webhook configuration itself or connectivity from Databricks.
-
-Happy to take a look.
+SELECT
+    catalog_name,
+    schema_name,
+    table_name,
+    created_by,
+    created_at
+FROM system.information_schema.table_storage_metrics
+WHERE lower(created_by) = lower('user@company.com');
