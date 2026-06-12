@@ -1,14 +1,6 @@
-from pyspark.sql import functions as F
-
-target_users = [
-    "user1@company.com",
-    "user2@company.com",
-    "user3@company.com"
-]
-
 users_df = spark.createDataFrame(
     [(u.lower(),) for u in target_users],
-    ["table_owner"]
+    ["owner_email"]
 )
 
 tables_df = (
@@ -22,51 +14,11 @@ tables_df = (
     .withColumn("table_owner_lc", F.lower("table_owner"))
     .join(
         users_df,
-        F.col("table_owner_lc") == F.col("table_owner"),
+        F.col("table_owner_lc") == F.col("owner_email"),
         "inner"
     )
     .withColumn(
         "full_table_name",
         F.concat_ws(".", "table_catalog", "table_schema", "table_name")
-    )
-)
-
-last_access_df = (
-    spark.table("system.access.table_lineage")
-    .where(F.col("source_table_full_name").isNotNull())
-    .groupBy(F.lower("source_table_full_name").alias("full_table_name_lc"))
-    .agg(F.max("event_time").alias("last_accessed_time"))
-)
-
-final_df = (
-    tables_df.alias("t")
-    .join(
-        last_access_df.alias("l"),
-        F.lower(F.col("t.full_table_name")) == F.col("l.full_table_name_lc"),
-        "left"
-    )
-    .select(
-        "t.table_owner",
-        "t.table_catalog",
-        "t.table_schema",
-        "t.table_name",
-        "t.full_table_name",
-        "l.last_accessed_time"
-    )
-    .withColumn(
-        "cleanup_status",
-        F.when(F.col("last_accessed_time").isNull(), "Never accessed / no lineage")
-         .when(F.col("last_accessed_time") < F.current_timestamp() - F.expr("INTERVAL 90 DAYS"), "Not used > 90 days")
-         .when(F.col("last_accessed_time") < F.current_timestamp() - F.expr("INTERVAL 60 DAYS"), "Not used > 60 days")
-         .otherwise("Recently used")
-    )
-)
-
-display(
-    final_df.orderBy(
-        "table_owner",
-        "table_catalog",
-        "table_schema",
-        F.col("last_accessed_time").asc_nulls_first()
     )
 )
