@@ -1,8 +1,25 @@
-SELECT
-    catalog_name,
-    schema_name,
+WITH user_tables AS (
+  SELECT
+    table_catalog,
+    table_schema,
     table_name,
-    created_by,
-    created_at
-FROM system.information_schema.table_storage_metrics
-WHERE lower(created_by) = lower('user@company.com');
+    concat(table_catalog, '.', table_schema, '.', table_name) AS full_table_name,
+    table_owner
+  FROM system.information_schema.tables
+  WHERE lower(table_owner) = lower('user@company.com')
+),
+last_access AS (
+  SELECT
+    source_table_full_name,
+    max(event_time) AS last_accessed_time
+  FROM system.access.table_lineage
+  GROUP BY source_table_full_name
+)
+SELECT
+  u.full_table_name,
+  u.table_owner,
+  l.last_accessed_time
+FROM user_tables u
+LEFT JOIN last_access l
+  ON lower(u.full_table_name) = lower(l.source_table_full_name)
+ORDER BY l.last_accessed_time DESC NULLS LAST;
