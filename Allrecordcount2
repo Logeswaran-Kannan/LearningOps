@@ -1,147 +1,65 @@
-from pyspark.sql import functions as F
+WITH target_users AS (
+  SELECT lower(email) AS email
+  FROM VALUES
+    ('user1@company.com'),
+    ('user2@company.com'),
+    ('user3@company.com')
+  AS t(email)
+),
 
-# ==========================================
-# 1. Input users
-# ==========================================
-
-target_users = [
-    "user1@company.com",
-    "user2@company.com",
-    "user3@company.com"
-]
-
-target_users_df = spark.createDataFrame(
-    [(u.lower(),) for u in target_users],
-    ["email"]
-)
-
-target_users_df.createOrReplaceTempView("target_users")
-
-
-# ==========================================
-# 2. Tables created by users
-# ==========================================
-
-created_tables_df = spark.sql("""
-SELECT
+created_tables AS (
+  SELECT
     event_time AS created_time,
     lower(user_identity.email) AS created_by,
     request_params.full_name AS full_table_name
-FROM system.access.audit
-WHERE action_name IN ('createTable', 'createTableV2')
-  AND lower(user_identity.email) IN (SELECT email FROM target_users)
-  AND request_params.full_name IS NOT NULL
-""")
+  FROM system.access.audit
+  WHERE action_name IN ('createTable', 'createTableV2')
+    AND lower(user_identity.email) IN (SELECT email FROM target_users)
+    AND request_params.full_name IS NOT NULL
+),
 
+table_list AS (
+  SELECT
+    created_by,
+    full_table_name,
+    split(full_table_name, '\\.')[0] AS catalog_name,
+    split(full_table_name, '\\.')[1] AS schema_name,
+    split(full_table_name, '\\.')[2] AS table_name,
+    min(created_time) AS created_time
+  FROM created_tables
+  GROUP BY created_by, full_table_name
+),
 
-# ==========================================
-# 3. Parse catalog, schema, table
-# ==========================================
-
-table_list_df = (
-    created_tables_df
-    .withColumn("catalog_name", F.split("full_table_name", "\\.").getItem(0))
-    .withColumn("schema_name", F.split("full_table_name", "\\.").getItem(1))
-    .withColumn("table_name", F.split("full_table_name", "\\.").getItem(2))
-    .groupBy(
-        "created_by",
-        "catalog_name",
-        "schema_name",
-        "table_name",
-        "full_table_name"
-    )
-    .agg(F.min("created_time").alias("created_time"))
-)
-
-
-# ==========================================
-# 4. Last accessed from table lineage
-# ==========================================
-
-last_access_df = spark.sql("""
-SELECT
+last_access AS (
+  SELECT
     lower(source_table_full_name) AS full_table_name,
     max(event_time) AS last_accessed_time
-FROM system.access.table_lineage
-WHERE source_table_full_name IS NOT NULL
-GROUP BY lower(source_table_full_name)
-""")
-
-
-# ==========================================
-# 5. Final cleanup readiness table
-# ==========================================
-
-final_df = (
-    table_list_df.alias("t")
-    .join(
-        last_access_df.alias("l"),
-        F.lower(F.col("t.full_table_name")) == F.col("l.full_table_name"),
-        "left"
-    )
-    .select(
-        "t.created_by",
-        "t.catalog_name",
-        "t.schema_name",
-        "t.table_name",
-        "t.full_table_name",
-        "t.created_time",
-        "l.last_accessed_time"
-    )
-    .withColumn(
-        "cleanup_readiness_status",
-        F.when(F.col("last_accessed_time").isNull(), "Never accessed / no lineage found")
-         .when(F.col("last_accessed_time") < F.current_timestamp() - F.expr("INTERVAL 90 DAYS"), "Not used > 90 days")
-         .when(F.col("last_accessed_time") < F.current_timestamp() - F.expr("INTERVAL 60 DAYS"), "Not used > 60 days")
-         .otherwise("Recently used")
-    )
+  FROM system.access.table_lineage
+  WHERE source_table_full_name IS NOT NULL
+  GROUP BY lower(source_table_full_name)
 )
 
-display(final_df.orderBy("created_by", "catalog_name", "schema_name", F.col("last_accessed_time").asc_nulls_first()))
+SELECT
+  t.created_by,
+  t.catalog_name,
+  t.schema_name,
+  t.table_name,
+  t.full_table_name,
+  t.created_time,
+  l.last_accessed_time,
 
+  CASE
+    WHEN l.last_accessed_time IS NULL THEN 'Never accessed / no lineage found'
+    WHEN l.last_accessed_time < current_timestamp() - INTERVAL 90 DAYS THEN 'Not used > 90 days'
+    WHEN l.last_accessed_time < current_timestamp() - INTERVAL 60 DAYS THEN 'Not used > 60 days'
+    ELSE 'Recently used'
+  END AS cleanup_readiness_status
 
-# ==========================================
-# 6. Summary table by user / catalog / schema
-# ==========================================
-
-summary_df = (
-    final_df
-    .groupBy("created_by", "catalog_name", "schema_name")
-    .agg(
-        F.count("*").alias("total_tables"),
-        F.sum(F.when(F.col("cleanup_readiness_status") == "Never accessed / no lineage found", 1).otherwise(0)).alias("never_accessed"),
-        F.sum(F.when(F.col("cleanup_readiness_status") == "Not used > 90 days", 1).otherwise(0)).alias("not_used_90_days"),
-        F.sum(F.when(F.col("cleanup_readiness_status") == "Not used > 60 days", 1).otherwise(0)).alias("not_used_60_days"),
-        F.sum(F.when(F.col("cleanup_readiness_status") == "Recently used", 1).otherwise(0)).alias("recently_used")
-    )
-)
-
-display(summary_df.orderBy("created_by", "catalog_name", "schema_name"))
-
-
-# ==========================================
-# 7. Graph 1 - Cleanup readiness count
-# ==========================================
-
-status_summary_df = (
-    final_df
-    .groupBy("cleanup_readiness_status")
-    .count()
-    .orderBy("cleanup_readiness_status")
-)
-
-display(status_summary_df)
-
-
-# ==========================================
-# 8. Graph 2 - User-wise cleanup readiness
-# ==========================================
-
-user_status_summary_df = (
-    final_df
-    .groupBy("created_by", "cleanup_readiness_status")
-    .count()
-    .orderBy("created_by", "cleanup_readiness_status")
-)
-
-display(user_status_summary_df)
+FROM table_list t
+LEFT JOIN last_access l
+  ON lower(t.full_table_name) = l.full_table_name
+ORDER BY
+  t.created_by,
+  t.catalog_name,
+  t.schema_name,
+  l.last_accessed_time ASC NULLS FIRST;
