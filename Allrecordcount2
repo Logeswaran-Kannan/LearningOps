@@ -1,7 +1,7 @@
 from pyspark.sql import functions as F
 
 # =========================================================
-# Input: handful of users
+# Input users
 # =========================================================
 
 target_users = [
@@ -16,16 +16,16 @@ users_df = spark.createDataFrame(
 )
 
 # =========================================================
-# Get tables owned by those users
+# Tables owned by users
 # =========================================================
 
 tables_df = (
     spark.table("system.information_schema.tables")
     .select(
-        F.col("table_catalog"),
-        F.col("table_schema"),
-        F.col("table_name"),
-        F.col("table_owner")
+        "table_catalog",
+        "table_schema",
+        "table_name",
+        "table_owner"
     )
     .withColumn("table_owner_lc", F.lower(F.col("table_owner")))
     .join(
@@ -35,12 +35,7 @@ tables_df = (
     )
     .withColumn(
         "full_table_name",
-        F.concat_ws(
-            ".",
-            F.col("table_catalog"),
-            F.col("table_schema"),
-            F.col("table_name")
-        )
+        F.concat_ws(".", "table_catalog", "table_schema", "table_name")
     )
     .select(
         "table_owner",
@@ -52,22 +47,39 @@ tables_df = (
 )
 
 # =========================================================
-# Get last accessed time from lineage
+# Last accessed time
 # =========================================================
 
 last_access_df = (
     spark.table("system.access.table_lineage")
     .where(F.col("source_table_full_name").isNotNull())
-    .groupBy(
-        F.lower(F.col("source_table_full_name")).alias("full_table_name_lc")
-    )
-    .agg(
-        F.max(F.col("event_time")).alias("last_accessed_time")
+    .groupBy(F.lower(F.col("source_table_full_name")).alias("full_table_name_lc"))
+    .agg(F.max("event_time").alias("last_accessed_time"))
+)
+
+# =========================================================
+# Table size
+# =========================================================
+
+size_df = (
+    spark.table("system.information_schema.table_storage_metrics")
+    .select(
+        F.lower(
+            F.concat_ws(
+                ".",
+                F.col("table_catalog"),
+                F.col("table_schema"),
+                F.col("table_name")
+            )
+        ).alias("full_table_name_lc"),
+        F.col("size_bytes"),
+        F.round(F.col("size_bytes") / 1024 / 1024, 2).alias("size_mb"),
+        F.round(F.col("size_bytes") / 1024 / 1024 / 1024, 2).alias("size_gb")
     )
 )
 
 # =========================================================
-# Final table-level cleanup readiness
+# Final cleanup readiness
 # =========================================================
 
 final_df = (
@@ -77,12 +89,20 @@ final_df = (
         F.lower(F.col("t.full_table_name")) == F.col("l.full_table_name_lc"),
         "left"
     )
+    .join(
+        size_df.alias("s"),
+        F.lower(F.col("t.full_table_name")) == F.col("s.full_table_name_lc"),
+        "left"
+    )
     .select(
         F.col("t.table_owner"),
         F.col("t.table_catalog"),
         F.col("t.table_schema"),
         F.col("t.table_name"),
         F.col("t.full_table_name"),
+        F.col("s.size_bytes"),
+        F.col("s.size_mb"),
+        F.col("s.size_gb"),
         F.col("l.last_accessed_time")
     )
     .withColumn(
@@ -101,6 +121,10 @@ final_df = (
     )
 )
 
+# =========================================================
+# Table level output
+# =========================================================
+
 display(
     final_df.orderBy(
         F.col("table_owner"),
@@ -111,18 +135,15 @@ display(
 )
 
 # =========================================================
-# Summary by owner / catalog / schema
+# Summary by owner/catalog/schema
 # =========================================================
 
 summary_df = (
     final_df
-    .groupBy(
-        "table_owner",
-        "table_catalog",
-        "table_schema"
-    )
+    .groupBy("table_owner", "table_catalog", "table_schema")
     .agg(
         F.count("*").alias("total_tables"),
+        F.round(F.sum("size_gb"), 2).alias("total_size_gb"),
         F.sum(F.when(F.col("cleanup_status") == "Never accessed / no lineage", 1).otherwise(0)).alias("never_accessed"),
         F.sum(F.when(F.col("cleanup_status") == "Not used > 90 days", 1).otherwise(0)).alias("not_used_90_days"),
         F.sum(F.when(F.col("cleanup_status") == "Not used > 60 days", 1).otherwise(0)).alias("not_used_60_days"),
@@ -130,36 +151,28 @@ summary_df = (
     )
 )
 
+display(summary_df.orderBy("table_owner", "table_catalog", "table_schema"))
+
+# =========================================================
+# Chart-ready outputs
+# =========================================================
+
 display(
-    summary_df.orderBy(
-        "table_owner",
-        "table_catalog",
-        "table_schema"
-    )
-)
-
-# =========================================================
-# Chart 1: cleanup status count
-# =========================================================
-
-status_chart_df = (
     final_df
     .groupBy("cleanup_status")
-    .count()
+    .agg(
+        F.count("*").alias("table_count"),
+        F.round(F.sum("size_gb"), 2).alias("total_size_gb")
+    )
     .orderBy("cleanup_status")
 )
 
-display(status_chart_df)
-
-# =========================================================
-# Chart 2: cleanup status by user
-# =========================================================
-
-user_chart_df = (
+display(
     final_df
     .groupBy("table_owner", "cleanup_status")
-    .count()
+    .agg(
+        F.count("*").alias("table_count"),
+        F.round(F.sum("size_gb"), 2).alias("total_size_gb")
+    )
     .orderBy("table_owner", "cleanup_status")
 )
-
-display(user_chart_df)
