@@ -1,37 +1,80 @@
-import requests
+from pyspark.sql import functions as F
 
-jira_base_url = "https://your-jira-url"
-jira_token = "paste_token_here"
+# =========================================================
+# Input: one insert view from Glen's spreadsheet
+# Example: vw_ins_gwpc_policy_hub
+# =========================================================
 
-url = f"{jira_base_url}/rest/api/2/myself"
+insert_view_name = "vw_ins_gwpc_policy_hub"   # change this
+output_table = "core_tst.qa_cda.lineage_check_single_insert_view"
 
-headers = {
-    "Authorization": f"Bearer {jira_token}",
-    "Accept": "application/json"
-}
+# =========================================================
+# 1. Read Unity Catalog table lineage
+# =========================================================
 
-try:
-    response = requests.get(url, headers=headers, timeout=30)
+lineage_df = spark.table("system.access.table_lineage")
 
-    print("Status Code:", response.status_code)
-    print("Response Text:")
-    print(response.text)
+# =========================================================
+# 2. Filter lineage where insert view appears as source or target
+# =========================================================
 
-    if response.status_code == 200:
-        print("SUCCESS: Databricks can connect to Jira and token is valid.")
-    elif response.status_code in [401, 403]:
-        print("AUTH ISSUE: Token is invalid or user does not have permission.")
-    else:
-        print("CONNECTIVITY/API ISSUE: Check Jira URL, firewall, proxy, or endpoint.")
+filtered_df = (
+    lineage_df
+    .filter(
+        (F.lower(F.col("source_table_full_name")).contains(insert_view_name.lower())) |
+        (F.lower(F.col("target_table_full_name")).contains(insert_view_name.lower()))
+    )
+)
 
-except requests.exceptions.ConnectTimeout:
-    print("FAILED: Connection timed out. Jira may not be reachable from Databricks.")
-except requests.exceptions.SSLError as e:
-    print("FAILED: SSL certificate issue.")
-    print(str(e))
-except requests.exceptions.ConnectionError as e:
-    print("FAILED: Network connection error. Firewall or DNS issue likely.")
-    print(str(e))
-except Exception as e:
-    print("FAILED: Unexpected error.")
-    print(str(e))
+# =========================================================
+# 3. Classify lineage direction
+# =========================================================
+
+result_df = (
+    filtered_df
+    .withColumn(
+        "lineage_direction",
+        F.when(
+            F.lower(F.col("target_table_full_name")).contains(insert_view_name.lower()),
+            F.lit("UPSTREAM_TO_INSERT_VIEW")
+        ).when(
+            F.lower(F.col("source_table_full_name")).contains(insert_view_name.lower()),
+            F.lit("INSERT_VIEW_TO_DOWNSTREAM")
+        ).otherwise(F.lit("UNKNOWN"))
+    )
+    .withColumn("job_id", F.get_json_object(F.col("entity_metadata"), "$.job_info.job_id"))
+    .withColumn("job_run_id", F.get_json_object(F.col("entity_metadata"), "$.job_info.job_run_id"))
+    .withColumn("notebook_id", F.get_json_object(F.col("entity_metadata"), "$.notebook_id"))
+    .select(
+        F.lit(insert_view_name).alias("insert_view_name"),
+        "lineage_direction",
+        "event_time",
+        "source_table_full_name",
+        "target_table_full_name",
+        "entity_type",
+        "entity_id",
+        "job_id",
+        "job_run_id",
+        "notebook_id",
+        "entity_metadata"
+    )
+    .dropDuplicates([
+        "insert_view_name",
+        "lineage_direction",
+        "source_table_full_name",
+        "target_table_full_name",
+        "entity_type",
+        "entity_id"
+    ])
+    .orderBy("lineage_direction", "source_table_full_name", "target_table_full_name")
+)
+
+display(result_df)
+
+# =========================================================
+# 4. Save result for review
+# =========================================================
+
+result_df.write.mode("overwrite").saveAsTable(output_table)
+
+print(f"Lineage result saved to: {output_table}")
