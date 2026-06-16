@@ -1,79 +1,29 @@
-from pyspark.sql import functions as F
+Hi Team,
 
-# =========================================================
-# Input: one insert view from Glen's spreadsheet
-# =========================================================
+Following the investigation into the data retention observation discussed this morning, below is a summary of the findings.
 
-insert_view_name = "vw_ins_gwpc_policy_hub"   # change this
-output_table = "core_tst.qa_cda.lineage_check_single_insert_view"
+**Issue 1 – Retention Logic Change (60th Day vs 61st Day)**
 
-# =========================================================
-# Read Unity Catalog table lineage
-# =========================================================
+The original retention design was to delete records from the 61st day onwards.
 
-lineage_df = spark.table("system.access.table_lineage")
+During a previous optimisation-related code change, the retention calculation was updated, resulting in records being deleted on the 60th day instead. This change was not identified during test validation and highlights a gap in validating retention boundary conditions during regression testing.
 
-# =========================================================
-# Filter lineage where insert view appears as source or target
-# =========================================================
+As a corrective action, future changes impacting retention rules will include explicit validation of boundary scenarios against the original business requirements as part of test sign-off.
 
-filtered_df = (
-    lineage_df
-    .filter(
-        (F.lower(F.col("source_table_full_name")).contains(insert_view_name.lower())) |
-        (F.lower(F.col("target_table_full_name")).contains(insert_view_name.lower()))
-    )
-)
+Based on the discussion during the morning call, deletion on the 60th day is considered acceptable from both a business and compliance perspective. Therefore, no production change is required, and this will be documented as a reference point for future data retention changes and validations.
 
-# =========================================================
-# Classify lineage direction and extract metadata from STRUCT
-# =========================================================
+**Issue 2 – Retention Inconsistency Between Enrichment and Rating Request Datasets**
 
-result_df = (
-    filtered_df
-    .withColumn(
-        "lineage_direction",
-        F.when(
-            F.lower(F.col("target_table_full_name")).contains(insert_view_name.lower()),
-            F.lit("UPSTREAM_TO_INSERT_VIEW")
-        ).when(
-            F.lower(F.col("source_table_full_name")).contains(insert_view_name.lower()),
-            F.lit("INSERT_VIEW_TO_DOWNSTREAM")
-        ).otherwise(F.lit("UNKNOWN"))
-    )
-    .withColumn("job_id", F.col("entity_metadata.job_info.job_id"))
-    .withColumn("job_run_id", F.col("entity_metadata.job_info.job_run_id"))
-    .withColumn("notebook_id", F.col("entity_metadata.notebook_id"))
-    .withColumn("dashboard_id", F.col("entity_metadata.dashboard_id"))
-    .select(
-        F.lit(insert_view_name).alias("insert_view_name"),
-        "lineage_direction",
-        "event_time",
-        "source_table_full_name",
-        "target_table_full_name",
-        "entity_type",
-        "entity_id",
-        "job_id",
-        "job_run_id",
-        "notebook_id",
-        "dashboard_id"
-    )
-    .dropDuplicates([
-        "insert_view_name",
-        "lineage_direction",
-        "source_table_full_name",
-        "target_table_full_name",
-        "entity_type",
-        "entity_id",
-        "job_id",
-        "job_run_id",
-        "notebook_id"
-    ])
-    .orderBy("lineage_direction", "source_table_full_name", "target_table_full_name")
-)
+A separate observation identified a difference in retention behaviour between the Enrichment and Rating Request datasets.
 
-display(result_df)
+Initial analysis indicates this is likely due to the scheduling of the jobs rather than a retention logic issue. The Enrichment ingestion process runs every three hours, while the retention process runs daily at 9 AM. This can result in a short timing difference where records are removed from Rating Request but remain in Enrichment until the next scheduled run.
 
-result_df.write.mode("overwrite").saveAsTable(output_table)
+This appears to be a scheduling alignment issue and requires a quick review from the development team to determine whether any schedule adjustment is needed.
 
-print(f"Lineage result saved to: {output_table}")
+**Summary**
+
+* Issue 1: Retention behaviour changed through a previous code update. Business acceptance confirmed. No further action required.
+* Issue 2: Minor timing difference caused by job scheduling. Development team to review and confirm whether schedule alignment is required.
+
+Thanks,
+[Your Name]
