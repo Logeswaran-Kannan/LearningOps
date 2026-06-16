@@ -22,3 +22,6 @@ On 16 June 2026, when we checked the retention boundary:
 
 Records dated 17 April 2026 (exactly 60 days old) had already been deleted from the Rating Request table.
 Based on the original retention requirement, those records would have been expected to remain available throughout 16 June 2026 and only become eligible for deletion on 17 June 2026.
+
+
+As an additional control, the automated data retention monitoring currently under development as part of the optimisation initiative is expected to provide daily visibility of retention-related exceptions and boundary-condition variances across key datasets. Once implemented, this will strengthen ongoing monitoring and enable earlier identification of any unexpected retention behaviour,
