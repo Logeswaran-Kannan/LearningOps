@@ -1,5 +1,7 @@
 # Manual Testing Scenarios – CDA Migration Validation
 
+While thinking through the migration risks, these are some scenarios that came to mind which we may want to consider as part of the overall test approach. Happy to discuss whether any of these add value or should be incorporated into the scope.
+
 | Task ID | Jira Title                                                | Description                                                                                                                                                                                                                                                      | Priority |
 | ------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | MT-01   | Validate CDC Insert Processing                            | Verify newly created records in Guidewire are correctly reflected through the CDA ingestion process and produce the same outcome as Read Replica processing. Confirm records are available in CDA ODS Views and downstream Silver tables.                        | High     |
