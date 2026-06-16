@@ -1,27 +1,24 @@
-Record Date	Age on 16 Jun 2026	Expected Status (Original Requirement)
-18 Apr 2026	59 days	Present
-17 Apr 2026	60 days	Present
-16 Apr 2026	61 days	Deleted
+# Manual Testing Scenarios – CDA Migration Validation
 
-So on 16 June 2026:
-
-Data from 17 April 2026 should still exist because it has only completed 60 days.
-Data from 16 April 2026 should be deleted because it has reached 61 days.
-
-The observation was that records dated 17 April 2026 were already deleted on 16 June 2026, meaning the implementation is effectively:
-
-Retain for 59 completed days and delete on Day 60
-
-instead of:
-
-Retain for 60 completed days and delete on Day 61
-
-
-
-On 16 June 2026, when we checked the retention boundary:
-
-Records dated 17 April 2026 (exactly 60 days old) had already been deleted from the Rating Request table.
-Based on the original retention requirement, those records would have been expected to remain available throughout 16 June 2026 and only become eligible for deletion on 17 June 2026.
-
-
-As an additional control, the automated data retention monitoring currently under development as part of the optimisation initiative is expected to provide daily visibility of retention-related exceptions and boundary-condition variances across key datasets. Once implemented, this will strengthen ongoing monitoring and enable earlier identification of any unexpected retention behaviour,
+| Task ID | Jira Title                                                | Description                                                                                                                                                                                                                                                      | Priority |
+| ------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| MT-01   | Validate CDC Insert Processing                            | Verify newly created records in Guidewire are correctly reflected through the CDA ingestion process and produce the same outcome as Read Replica processing. Confirm records are available in CDA ODS Views and downstream Silver tables.                        | High     |
+| MT-02   | Validate CDC Update Processing                            | Verify updates to existing records are correctly represented in CDA SCD processing. Confirm latest record versions are reflected in CDA ODS Views and match Read Replica outputs.                                                                                | High     |
+| MT-03   | Validate CDC Delete Processing                            | Verify deletion scenarios are handled correctly through CDA ingestion. Confirm deleted records are represented according to the agreed business logic (soft delete, hard delete, inactive record, or SCD end dating) and downstream datasets behave as expected. | High     |
+| MT-04   | Validate Multiple Updates within Single Processing Window | Verify records updated multiple times within the same CDA ingestion cycle are processed correctly and only the final expected state is exposed through ODS Views.                                                                                                | High     |
+| MT-05   | Validate Out-of-Order CDC Events                          | Verify CDA processing correctly handles change events arriving out of sequence and produces the expected final state in ODS Views and downstream tables.                                                                                                         | Medium   |
+| MT-06   | Validate Watermark and Checkpoint Recovery                | Verify ingestion processing resumes correctly from the last successful watermark/checkpoint following a restart or failure scenario. Confirm no duplicate or missing records are introduced.                                                                     | High     |
+| MT-07   | Validate Duplicate Event Handling                         | Verify duplicate CDC events do not result in duplicate business records within ODS Views or downstream Silver tables.                                                                                                                                            | High     |
+| MT-08   | Validate Historical Record Preservation in SCD Tables     | Verify CDA SCD tables correctly preserve historical versions of records using start and end timestamps and that record history aligns with expected business events.                                                                                             | Medium   |
+| MT-09   | Validate Current State Representation in ODS Views        | Verify CDA ODS Views correctly expose the latest/current business record and align with Read Replica benchmark outputs.                                                                                                                                          | High     |
+| MT-10   | Validate Large Column Data Handling (>1 MB)               | Identify tables containing large text or object columns and verify data is successfully extracted, transferred, stored, and exposed without truncation, corruption, or performance degradation.                                                                  | High     |
+| MT-11   | Validate Null and Empty Value Handling                    | Verify null, blank, and default values are processed consistently between Read Replica and CDA implementations.                                                                                                                                                  | Medium   |
+| MT-12   | Validate Special Character and Unicode Data Handling      | Verify special characters, extended ASCII, Unicode, and multi-language data are processed correctly through CDA ingestion and remain unchanged.                                                                                                                  | Medium   |
+| MT-13   | Validate Data Type Conversion Handling                    | Verify numeric, date, timestamp, boolean, and decimal fields are represented consistently between Read Replica and CDA implementations.                                                                                                                          | Medium   |
+| MT-14   | Validate High Volume Data Processing                      | Verify CDA processing successfully handles high-volume tables and produces complete datasets without data loss or processing failures.                                                                                                                           | High     |
+| MT-15   | Validate Schema Change Detection                          | Introduce or leverage source DDL changes and verify schema drift detection mechanisms identify and report the changes correctly.                                                                                                                                 | High     |
+| MT-16   | Validate Downstream Silver Table Population               | Verify CDA ODS Views successfully populate downstream Silver tables through existing insert views and pipelines without functional differences.                                                                                                                  | High     |
+| MT-17   | Validate Downstream Job Execution During Switch-over      | Verify existing jobs, pipelines, notebooks, and scheduled processes execute successfully when CDA ODS Views are used as the source instead of Read Replica ODS Views.                                                                                            | High     |
+| MT-18   | Validate Rollback Procedure                               | Verify rollback procedures successfully restore the previous processing state following a failed switch-over scenario.                                                                                                                                           | High     |
+| MT-19   | Validate Business Critical Table Reconciliation           | Perform detailed manual validation of selected business-critical tables to confirm equivalent business outcomes between Read Replica and CDA implementations.                                                                                                    | High     |
+| MT-20   | Validate Production Cutover Watermark Logic               | Verify the agreed cutover watermark/cutoff point prevents duplicate processing and avoids missing transactions during the transition from Read Replica to CDA.                                                                                                   | Critical |
