@@ -1,178 +1,29 @@
-from pyspark.sql import functions as F
+import requests
 
-# =========================================================
-# Input users
-# =========================================================
+jira_base_url = "https://your-jira-url"
+jira_token = dbutils.secrets.get(scope="your_scope", key="jira_pat")
 
-target_users = [
-    "user1@company.com",
-    "user2@company.com",
-    "user3@company.com"
-]
+url = f"{jira_base_url}/rest/api/2/myself"
 
-users_df = spark.createDataFrame(
-    [(u.lower(),) for u in target_users],
-    ["target_user"]
-)
+headers = {
+    "Authorization": f"Bearer {jira_token}",
+    "Accept": "application/json"
+}
 
-# =========================================================
-# Tables owned by users
-# =========================================================
+try:
+    response = requests.get(url, headers=headers, timeout=30)
 
-tables_df = (
-    spark.table("system.information_schema.tables")
-    .select(
-        "table_catalog",
-        "table_schema",
-        "table_name",
-        "table_owner"
-    )
-    .withColumn("table_owner_lc", F.lower(F.col("table_owner")))
-    .join(
-        users_df,
-        F.col("table_owner_lc") == F.col("target_user"),
-        "inner"
-    )
-    .withColumn(
-        "full_table_name",
-        F.concat_ws(".", "table_catalog", "table_schema", "table_name")
-    )
-    .select(
-        "table_owner",
-        "table_catalog",
-        "table_schema",
-        "table_name",
-        "full_table_name"
-    )
-)
+    print("Status Code:", response.status_code)
+    print("Response:")
+    print(response.text[:1000])
 
-# =========================================================
-# Last accessed time
-# =========================================================
+except requests.exceptions.Timeout:
+    print("Connection timed out. Databricks cannot reach Jira within 30 seconds.")
 
-last_access_df = (
-    spark.table("system.access.table_lineage")
-    .where(F.col("source_table_full_name").isNotNull())
-    .groupBy(F.lower(F.col("source_table_full_name")).alias("full_table_name_lc"))
-    .agg(F.max("event_time").alias("last_accessed_time"))
-)
+except requests.exceptions.ConnectionError as e:
+    print("Connection error. Possible firewall / DNS / network issue.")
+    print(str(e))
 
-# =========================================================
-# Table size
-# =========================================================
-
-size_df = (
-    spark.table("system.information_schema.table_storage_metrics")
-    .select(
-        F.lower(
-            F.concat_ws(
-                ".",
-                F.col("table_catalog"),
-                F.col("table_schema"),
-                F.col("table_name")
-            )
-        ).alias("full_table_name_lc"),
-        F.col("size_bytes"),
-        F.round(F.col("size_bytes") / 1024 / 1024, 2).alias("size_mb"),
-        F.round(F.col("size_bytes") / 1024 / 1024 / 1024, 2).alias("size_gb")
-    )
-)
-
-# =========================================================
-# Final cleanup readiness
-# =========================================================
-
-final_df = (
-    tables_df.alias("t")
-    .join(
-        last_access_df.alias("l"),
-        F.lower(F.col("t.full_table_name")) == F.col("l.full_table_name_lc"),
-        "left"
-    )
-    .join(
-        size_df.alias("s"),
-        F.lower(F.col("t.full_table_name")) == F.col("s.full_table_name_lc"),
-        "left"
-    )
-    .select(
-        F.col("t.table_owner"),
-        F.col("t.table_catalog"),
-        F.col("t.table_schema"),
-        F.col("t.table_name"),
-        F.col("t.full_table_name"),
-        F.col("s.size_bytes"),
-        F.col("s.size_mb"),
-        F.col("s.size_gb"),
-        F.col("l.last_accessed_time")
-    )
-    .withColumn(
-        "days_since_last_access",
-        F.when(
-            F.col("last_accessed_time").isNotNull(),
-            F.datediff(F.current_date(), F.to_date(F.col("last_accessed_time")))
-        )
-    )
-    .withColumn(
-        "cleanup_status",
-        F.when(F.col("last_accessed_time").isNull(), "Never accessed / no lineage")
-         .when(F.col("last_accessed_time") < F.current_timestamp() - F.expr("INTERVAL 90 DAYS"), "Not used > 90 days")
-         .when(F.col("last_accessed_time") < F.current_timestamp() - F.expr("INTERVAL 60 DAYS"), "Not used > 60 days")
-         .otherwise("Recently used")
-    )
-)
-
-# =========================================================
-# Table level output
-# =========================================================
-
-display(
-    final_df.orderBy(
-        F.col("table_owner"),
-        F.col("table_catalog"),
-        F.col("table_schema"),
-        F.col("last_accessed_time").asc_nulls_first()
-    )
-)
-
-# =========================================================
-# Summary by owner/catalog/schema
-# =========================================================
-
-summary_df = (
-    final_df
-    .groupBy("table_owner", "table_catalog", "table_schema")
-    .agg(
-        F.count("*").alias("total_tables"),
-        F.round(F.sum("size_gb"), 2).alias("total_size_gb"),
-        F.sum(F.when(F.col("cleanup_status") == "Never accessed / no lineage", 1).otherwise(0)).alias("never_accessed"),
-        F.sum(F.when(F.col("cleanup_status") == "Not used > 90 days", 1).otherwise(0)).alias("not_used_90_days"),
-        F.sum(F.when(F.col("cleanup_status") == "Not used > 60 days", 1).otherwise(0)).alias("not_used_60_days"),
-        F.sum(F.when(F.col("cleanup_status") == "Recently used", 1).otherwise(0)).alias("recently_used")
-    )
-)
-
-display(summary_df.orderBy("table_owner", "table_catalog", "table_schema"))
-
-# =========================================================
-# Chart-ready outputs
-# =========================================================
-
-display(
-    final_df
-    .groupBy("cleanup_status")
-    .agg(
-        F.count("*").alias("table_count"),
-        F.round(F.sum("size_gb"), 2).alias("total_size_gb")
-    )
-    .orderBy("cleanup_status")
-)
-
-display(
-    final_df
-    .groupBy("table_owner", "cleanup_status")
-    .agg(
-        F.count("*").alias("table_count"),
-        F.round(F.sum("size_gb"), 2).alias("total_size_gb")
-    )
-    .orderBy("table_owner", "cleanup_status")
-)
+except Exception as e:
+    print("Unexpected error:")
+    print(str(e))
