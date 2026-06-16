@@ -1,7 +1,7 @@
 import requests
 
 jira_base_url = "https://your-jira-url"
-jira_token = dbutils.secrets.get(scope="your_scope", key="jira_pat")
+jira_token = "paste_token_here"
 
 url = f"{jira_base_url}/rest/api/2/myself"
 
@@ -14,16 +14,24 @@ try:
     response = requests.get(url, headers=headers, timeout=30)
 
     print("Status Code:", response.status_code)
-    print("Response:")
-    print(response.text[:1000])
+    print("Response Text:")
+    print(response.text)
 
-except requests.exceptions.Timeout:
-    print("Connection timed out. Databricks cannot reach Jira within 30 seconds.")
+    if response.status_code == 200:
+        print("SUCCESS: Databricks can connect to Jira and token is valid.")
+    elif response.status_code in [401, 403]:
+        print("AUTH ISSUE: Token is invalid or user does not have permission.")
+    else:
+        print("CONNECTIVITY/API ISSUE: Check Jira URL, firewall, proxy, or endpoint.")
 
-except requests.exceptions.ConnectionError as e:
-    print("Connection error. Possible firewall / DNS / network issue.")
+except requests.exceptions.ConnectTimeout:
+    print("FAILED: Connection timed out. Jira may not be reachable from Databricks.")
+except requests.exceptions.SSLError as e:
+    print("FAILED: SSL certificate issue.")
     print(str(e))
-
+except requests.exceptions.ConnectionError as e:
+    print("FAILED: Network connection error. Firewall or DNS issue likely.")
+    print(str(e))
 except Exception as e:
-    print("Unexpected error:")
+    print("FAILED: Unexpected error.")
     print(str(e))
