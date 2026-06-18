@@ -1,1 +1,8 @@
-Design and execute manual validation activities to monitor the operational behaviour of the CDA ingestion workflow during parallel execution with the existing Read Replica process. Validation will focus on workflow execution, scheduling, dependency management, watermark progression, manifest generation, file availability, ingestion completion, processing duration, and overall pipeline health. The objective is to establish confidence that the CDA ingestion process operates reliably and consistently before switch-over activities commence.
+Hi Hazel,
+
+Thanks, I agree the switch-over testing area has a few additional dependencies and unknowns that we still need to work through. Having Stephen involved from w/c 22/06 would be really helpful to support the analysis, preparation and execution activities.
+
+Thanks for arranging this with Simon. I'll get him up to speed on the current status and plan once he's available.
+
+Thanks,
+Loges
