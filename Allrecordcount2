@@ -1,33 +1,86 @@
-SELECT
-    'SELECT ' ||
-    quote_literal(c.table_name) || ' AS table_name, ' ||
-    quote_literal(c.column_name) || ' AS column_name, ' ||
-    'ctid::text AS row_ctid, ' ||
-    'ROUND(pg_column_size(' || quote_ident(c.column_name) || ')::numeric / 1024 / 1024, 2) AS size_mb ' ||
-    'FROM public.' || quote_ident(c.table_name) || ' ' ||
-    'WHERE ' || quote_ident(d.column_name) || ' >= CURRENT_DATE - INTERVAL ''7 days'' ' ||
-    'AND pg_column_size(' || quote_ident(c.column_name) || ') > 1048576 ' ||
-    'ORDER BY size_mb DESC;'
-    AS sql_to_run
-FROM information_schema.columns c
-JOIN information_schema.columns d
-  ON c.table_schema = d.table_schema
- AND c.table_name = d.table_name
-WHERE c.table_schema = 'public'
-  AND c.data_type IN (
-      'text',
-      'character varying',
-      'character',
-      'json',
-      'jsonb',
-      'xml',
-      'bytea'
-  )
-  AND d.column_name IN (
-      'createtime',
-      'updatetime',
-      'createdate',
-      'updatedate',
-      'load_dt'
-  )
-ORDER BY c.table_name, c.column_name;
+from pyspark.sql import functions as F
+from pyspark.sql.types import StringType, BinaryType
+
+catalog = "core_tst"          # change
+schema = "mqs_athn_mtr"       # change
+days_back = 7
+size_limit_bytes = 1024 * 1024
+
+date_columns_priority = [
+    "load_dt",
+    "LOAD_DT",
+    "created_at",
+    "createdate",
+    "createtime",
+    "updated_at",
+    "updatedate",
+    "updatetime"
+]
+
+tables_df = spark.sql(f"""
+SHOW TABLES IN {catalog}.{schema}
+""")
+
+results = []
+
+for row in tables_df.collect():
+    table_name = row["tableName"]
+    full_table = f"{catalog}.{schema}.{table_name}"
+
+    try:
+        df = spark.table(full_table)
+
+        # find date filter column
+        date_col = None
+        for c in date_columns_priority:
+            if c in df.columns:
+                date_col = c
+                break
+
+        if date_col:
+            df = df.filter(
+                F.to_date(F.col(date_col)) >= F.date_sub(F.current_date(), days_back)
+            )
+
+        # check only string / binary columns
+        check_cols = [
+            field.name
+            for field in df.schema.fields
+            if isinstance(field.dataType, (StringType, BinaryType))
+        ]
+
+        for col_name in check_cols:
+            large_count = (
+                df.filter(F.length(F.col(col_name)) > size_limit_bytes)
+                  .count()
+            )
+
+            if large_count > 0:
+                max_size = (
+                    df.select(F.max(F.length(F.col(col_name))).alias("max_size_bytes"))
+                      .collect()[0]["max_size_bytes"]
+                )
+
+                results.append((
+                    full_table,
+                    col_name,
+                    date_col if date_col else "NO_DATE_FILTER",
+                    large_count,
+                    round(max_size / 1024 / 1024, 2)
+                ))
+
+    except Exception as e:
+        results.append((
+            full_table,
+            "ERROR",
+            "ERROR",
+            0,
+            str(e)
+        ))
+
+result_df = spark.createDataFrame(
+    results,
+    ["table_name", "column_name", "date_filter_column", "rows_over_1mb", "max_size_mb"]
+)
+
+display(result_df.orderBy(F.desc("max_size_mb")))
