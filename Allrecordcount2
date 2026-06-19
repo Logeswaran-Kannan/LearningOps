@@ -1,15 +1,20 @@
 SELECT
     'SELECT ' ||
-    quote_literal(table_name) || ' AS table_name, ' ||
-    quote_literal(column_name) || ' AS column_name, ' ||
+    quote_literal(c.table_name) || ' AS table_name, ' ||
+    quote_literal(c.column_name) || ' AS column_name, ' ||
     'ctid::text AS row_ctid, ' ||
-    'ROUND(pg_column_size(' || quote_ident(column_name) || ')::numeric / 1024 / 1024, 2) AS size_mb ' ||
-    'FROM public.' || quote_ident(table_name) || ' ' ||
-    'WHERE pg_column_size(' || quote_ident(column_name) || ') > 1048576;'
+    'ROUND(pg_column_size(' || quote_ident(c.column_name) || ')::numeric / 1024 / 1024, 2) AS size_mb ' ||
+    'FROM public.' || quote_ident(c.table_name) || ' ' ||
+    'WHERE ' || quote_ident(d.column_name) || ' >= CURRENT_DATE - INTERVAL ''7 days'' ' ||
+    'AND pg_column_size(' || quote_ident(c.column_name) || ') > 1048576 ' ||
+    'ORDER BY size_mb DESC;'
     AS sql_to_run
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND data_type IN (
+FROM information_schema.columns c
+JOIN information_schema.columns d
+  ON c.table_schema = d.table_schema
+ AND c.table_name = d.table_name
+WHERE c.table_schema = 'public'
+  AND c.data_type IN (
       'text',
       'character varying',
       'character',
@@ -18,4 +23,11 @@ WHERE table_schema = 'public'
       'xml',
       'bytea'
   )
-ORDER BY table_name, column_name;
+  AND d.column_name IN (
+      'createtime',
+      'updatetime',
+      'createdate',
+      'updatedate',
+      'load_dt'
+  )
+ORDER BY c.table_name, c.column_name;
