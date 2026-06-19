@@ -1,44 +1,47 @@
 DO $$
 DECLARE
     r RECORD;
-    sql_text TEXT;
 BEGIN
-    DROP TABLE IF EXISTS temp_large_columns;
+    DROP TABLE IF EXISTS temp_large_column_values;
 
-    CREATE TEMP TABLE temp_large_columns (
-        schema_name TEXT,
-        table_name  TEXT,
-        column_name TEXT,
-        row_id      TEXT,
-        data_size_mb NUMERIC
+    CREATE TEMP TABLE temp_large_column_values (
+        table_name   TEXT,
+        column_name  TEXT,
+        row_ctid     TEXT,
+        size_mb      NUMERIC(20,2)
     );
 
     FOR r IN
-        SELECT table_schema, table_name, column_name
+        SELECT table_name, column_name
         FROM information_schema.columns
-        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-          AND data_type NOT IN ('bytea') -- remove this line if you also want bytea columns
+        WHERE table_schema = 'public'
+          AND data_type IN (
+              'text',
+              'character varying',
+              'character',
+              'json',
+              'jsonb',
+              'xml',
+              'bytea'
+          )
     LOOP
-        sql_text := format(
-            'INSERT INTO temp_large_columns
-             SELECT %L, %L, %L,
+        EXECUTE format(
+            'INSERT INTO temp_large_column_values
+             SELECT %L,
+                    %L,
                     ctid::text,
                     ROUND(pg_column_size(%I)::numeric / 1024 / 1024, 2)
-             FROM %I.%I
+             FROM public.%I
              WHERE pg_column_size(%I) > 1048576',
-            r.table_schema,
             r.table_name,
             r.column_name,
             r.column_name,
-            r.table_schema,
             r.table_name,
             r.column_name
         );
-
-        EXECUTE sql_text;
     END LOOP;
 END $$;
 
 SELECT *
-FROM temp_large_columns
-ORDER BY data_size_mb DESC;
+FROM temp_large_column_values
+ORDER BY size_mb DESC;
