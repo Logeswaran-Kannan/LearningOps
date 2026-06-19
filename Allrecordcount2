@@ -1,48 +1,21 @@
-DO $$
-DECLARE
-    r RECORD;
-    sql_stmt TEXT;
-BEGIN
-    CREATE TEMP TABLE large_column_values (
-        table_name  TEXT,
-        column_name TEXT,
-        row_ctid    TEXT,
-        size_mb     NUMERIC(20,2)
-    );
-
-    FOR r IN
-        SELECT table_name, column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND data_type IN (
-              'text',
-              'character varying',
-              'character',
-              'json',
-              'jsonb',
-              'xml',
-              'bytea'
-          )
-    LOOP
-        sql_stmt := format(
-            'INSERT INTO large_column_values
-             SELECT %L,
-                    %L,
-                    ctid::text,
-                    ROUND(pg_column_size(%I)::numeric / 1024 / 1024, 2)
-             FROM public.%I
-             WHERE pg_column_size(%I) > 1048576',
-            r.table_name,
-            r.column_name,
-            r.column_name,
-            r.table_name,
-            r.column_name
-        );
-
-        EXECUTE sql_stmt;
-    END LOOP;
-END $$;
-
-SELECT *
-FROM large_column_values
-ORDER BY size_mb DESC;
+SELECT
+    'SELECT ' ||
+    quote_literal(table_name) || ' AS table_name, ' ||
+    quote_literal(column_name) || ' AS column_name, ' ||
+    'ctid::text AS row_ctid, ' ||
+    'ROUND(pg_column_size(' || quote_ident(column_name) || ')::numeric / 1024 / 1024, 2) AS size_mb ' ||
+    'FROM public.' || quote_ident(table_name) || ' ' ||
+    'WHERE pg_column_size(' || quote_ident(column_name) || ') > 1048576;'
+    AS sql_to_run
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND data_type IN (
+      'text',
+      'character varying',
+      'character',
+      'json',
+      'jsonb',
+      'xml',
+      'bytea'
+  )
+ORDER BY table_name, column_name;
