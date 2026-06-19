@@ -1,7 +1,44 @@
+DO $$
+DECLARE
+    r RECORD;
+    sql_text TEXT;
+BEGIN
+    DROP TABLE IF EXISTS temp_large_columns;
 
-Review Guidewire PolicyCenter, BillingCenter and ClaimCenter datasets together with downstream lineage, Silver table dependencies and business consumption patterns. As production reconciliation monitoring will execute daily and validating all available tables would significantly increase execution time, operational overhead and compute cost, identify a subset of business-critical tables and key business columns that provide sufficient coverage to detect data quality issues following migration. Selection should consider business impact, transaction volume, regulatory/reporting importance, downstream dependencies and historical defect trends. Define reconciliation scope for production monitoring including schema, count and row-level validation requirements. DoD: Approved inventory of business-critical tables and columns produced, business owners identified, reconciliation rules agreed, and production monitoring scope formally signed off by QA, Data Engineering and Business stakeholders.
+    CREATE TEMP TABLE temp_large_columns (
+        schema_name TEXT,
+        table_name  TEXT,
+        column_name TEXT,
+        row_id      TEXT,
+        data_size_mb NUMERIC
+    );
 
-Define Switch-over Test Scope	Graham + QA + Data Engineering	Review downstream impact analysis, lineage mapping, Guidewire_RunPipelineMaster dependencies, insert views, Silver tables, business-critical tables, consuming applications and reporting datasets. Identify all jobs, pipelines, tables, views and business processes that require validation when the source is switched from Read Replica ODS Views to CDA ODS Views. Define testing boundaries, assumptions, dependencies, environment requirements, rollback scope, participating teams, execution sequence and success criteria. DoD: Approved switch-over test scope document produced containing impacted objects, validation scope, dependencies, assumptions, rollback scope, participating teams and agreed success criteria.
-Prepare Switch-over Test Cases	QA	Develop detailed manual test scenarios covering CDA workflow execution, ODS View validation, downstream pipeline execution, Silver table validation, business-critical table reconciliation, CDC edge cases, large column handling, workflow scheduling behaviour, rollback validation, operational monitoring and business outcome validation. Define expected results, execution steps, evidence requirements, ownership and entry/exit criteria for each scenario. DoD: Switch-over test pack completed, reviewed and approved with full traceability to impacted jobs, pipelines, business-critical tables and validation requirements.
-Execute Switch-over Testing	QA + Data Engineering	Coordinate execution window and confirm prerequisite reconciliation and schema drift validation activities have been successfully completed. Switch downstream processing from Read Replica ODS Views to CDA ODS Views within the agreed test environment. Execute Guidewire_RunPipelineMaster and all in-scope downstream jobs and pipelines. Monitor workflow execution, scheduling behaviour, processing duration, failures, retries, dependency chains and operational stability. Validate Silver table population, business-critical table outcomes, reconciliation spot checks, CDC behaviour, large column processing and downstream business processes. Capture execution evidence, observations and defects. Execute rollback validation where required. DoD: All in-scope jobs and pipelines executed successfully using CDA ODS Views, no critical processing failures observed, business-critical tables validated, rollback successfully tested, defects logged and triaged, and execution evidence stored in the test repository.
-Switch-over Sign-off Assessment	QA + Graham + Data Engineering	Review switch-over execution results, downstream validation outcomes, reconciliation findings, defect status, rollback validation results and operational observations. Assess whether CDA processing produces equivalent business outcomes to Read Replica processing and whether identified risks are acceptable for production planning. Document residual risks, assumptions, limitations and recommendations. DoD: Formal switch-over assessment completed, critical defects resolved or accepted, outstanding risks documented, stakeholder review completed, and QA recommendation issued as Pass, Pass with Risk, or Fail for production readiness consideration.
+    FOR r IN
+        SELECT table_schema, table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+          AND data_type NOT IN ('bytea') -- remove this line if you also want bytea columns
+    LOOP
+        sql_text := format(
+            'INSERT INTO temp_large_columns
+             SELECT %L, %L, %L,
+                    ctid::text,
+                    ROUND(pg_column_size(%I)::numeric / 1024 / 1024, 2)
+             FROM %I.%I
+             WHERE pg_column_size(%I) > 1048576',
+            r.table_schema,
+            r.table_name,
+            r.column_name,
+            r.column_name,
+            r.table_schema,
+            r.table_name,
+            r.column_name
+        );
+
+        EXECUTE sql_text;
+    END LOOP;
+END $$;
+
+SELECT *
+FROM temp_large_columns
+ORDER BY data_size_mb DESC;
