@@ -1,14 +1,13 @@
 DO $$
 DECLARE
     r RECORD;
+    sql_stmt TEXT;
 BEGIN
-    DROP TABLE IF EXISTS temp_large_column_values;
-
-    CREATE TEMP TABLE temp_large_column_values (
-        table_name   TEXT,
-        column_name  TEXT,
-        row_ctid     TEXT,
-        size_mb      NUMERIC(20,2)
+    CREATE TEMP TABLE large_column_values (
+        table_name  TEXT,
+        column_name TEXT,
+        row_ctid    TEXT,
+        size_mb     NUMERIC(20,2)
     );
 
     FOR r IN
@@ -25,8 +24,8 @@ BEGIN
               'bytea'
           )
     LOOP
-        EXECUTE format(
-            'INSERT INTO temp_large_column_values
+        sql_stmt := format(
+            'INSERT INTO large_column_values
              SELECT %L,
                     %L,
                     ctid::text,
@@ -39,9 +38,11 @@ BEGIN
             r.table_name,
             r.column_name
         );
+
+        EXECUTE sql_stmt;
     END LOOP;
 END $$;
 
 SELECT *
-FROM temp_large_column_values
+FROM large_column_values
 ORDER BY size_mb DESC;
