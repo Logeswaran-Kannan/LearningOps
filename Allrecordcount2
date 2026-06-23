@@ -1,86 +1,31 @@
-from pyspark.sql import functions as F
-from pyspark.sql.types import StringType, BinaryType
+import smtplib
+from email.mime.text import MIMEText
 
-catalog = "core_tst"          # change
-schema = "mqs_athn_mtr"       # change
-days_back = 7
-size_limit_bytes = 1024 * 1024
+dbutils.widgets.text("smtp_server", "")
+dbutils.widgets.text("smtp_port", "25")
+dbutils.widgets.text("from_email", "databricks-cleanup@company.com")
 
-date_columns_priority = [
-    "load_dt",
-    "LOAD_DT",
-    "created_at",
-    "createdate",
-    "createtime",
-    "updated_at",
-    "updatedate",
-    "updatetime"
-]
+SMTP_SERVER = dbutils.widgets.get("smtp_server")
+SMTP_PORT = int(dbutils.widgets.get("smtp_port"))
+FROM_EMAIL = dbutils.widgets.get("from_email")
 
-tables_df = spark.sql(f"""
-SHOW TABLES IN {catalog}.{schema}
-""")
+def send_notification(owner_email, tables):
+    body = "Databricks table cleanup notification\n\n"
 
-results = []
+    for t in tables:
+        body += (
+            f"{t['full_table_name']} | "
+            f"Last used: {t['last_used_date']} | "
+            f"Size GB: {t['table_size_gb']} | "
+            f"Delete date: {t['scheduled_delete_date']}\n"
+        )
 
-for row in tables_df.collect():
-    table_name = row["tableName"]
-    full_table = f"{catalog}.{schema}.{table_name}"
+    msg = MIMEText(body)
+    msg["Subject"] = "Databricks Table Cleanup Notification"
+    msg["From"] = FROM_EMAIL
+    msg["To"] = owner_email
 
-    try:
-        df = spark.table(full_table)
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.sendmail(FROM_EMAIL, [owner_email], msg.as_string())
 
-        # find date filter column
-        date_col = None
-        for c in date_columns_priority:
-            if c in df.columns:
-                date_col = c
-                break
-
-        if date_col:
-            df = df.filter(
-                F.to_date(F.col(date_col)) >= F.date_sub(F.current_date(), days_back)
-            )
-
-        # check only string / binary columns
-        check_cols = [
-            field.name
-            for field in df.schema.fields
-            if isinstance(field.dataType, (StringType, BinaryType))
-        ]
-
-        for col_name in check_cols:
-            large_count = (
-                df.filter(F.length(F.col(col_name)) > size_limit_bytes)
-                  .count()
-            )
-
-            if large_count > 0:
-                max_size = (
-                    df.select(F.max(F.length(F.col(col_name))).alias("max_size_bytes"))
-                      .collect()[0]["max_size_bytes"]
-                )
-
-                results.append((
-                    full_table,
-                    col_name,
-                    date_col if date_col else "NO_DATE_FILTER",
-                    large_count,
-                    round(max_size / 1024 / 1024, 2)
-                ))
-
-    except Exception as e:
-        results.append((
-            full_table,
-            "ERROR",
-            "ERROR",
-            0,
-            str(e)
-        ))
-
-result_df = spark.createDataFrame(
-    results,
-    ["table_name", "column_name", "date_filter_column", "rows_over_1mb", "max_size_mb"]
-)
-
-display(result_df.orderBy(F.desc("max_size_mb")))
+    print(f"Email sent to {owner_email}")
