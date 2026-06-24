@@ -1,31 +1,4 @@
-import smtplib
-from email.mime.text import MIMEText
-
-dbutils.widgets.text("smtp_server", "")
-dbutils.widgets.text("smtp_port", "25")
-dbutils.widgets.text("from_email", "databricks-cleanup@company.com")
-
-SMTP_SERVER = dbutils.widgets.get("smtp_server")
-SMTP_PORT = int(dbutils.widgets.get("smtp_port"))
-FROM_EMAIL = dbutils.widgets.get("from_email")
-
-def send_notification(owner_email, tables):
-    body = "Databricks table cleanup notification\n\n"
-
-    for t in tables:
-        body += (
-            f"{t['full_table_name']} | "
-            f"Last used: {t['last_used_date']} | "
-            f"Size GB: {t['table_size_gb']} | "
-            f"Delete date: {t['scheduled_delete_date']}\n"
-        )
-
-    msg = MIMEText(body)
-    msg["Subject"] = "Databricks Table Cleanup Notification"
-    msg["From"] = FROM_EMAIL
-    msg["To"] = owner_email
-
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.sendmail(FROM_EMAIL, [owner_email], msg.as_string())
-
-    print(f"Email sent to {owner_email}")
+SELECT
+    MAX(octet_length(your_column)) AS max_size_bytes,
+    ROUND(MAX(octet_length(your_column))/1024.0/1024.0,2) AS max_size_mb
+FROM schema_name.table_name;
