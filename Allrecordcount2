@@ -1,4 +1,9 @@
-SELECT
-    MAX(octet_length(your_column)) AS max_size_bytes,
-    ROUND(MAX(octet_length(your_column))/1024.0/1024.0,2) AS max_size_mb
-FROM schema_name.table_name;
+SELECT schemaname, tablename
+FROM pg_catalog.pg_tables
+WHERE tablename IN ('cc_document','cc_outboundrecord');
+
+
+SELECT table_schema, table_name, column_name, data_type, udt_name
+FROM information_schema.columns
+WHERE table_name IN ('cc_document','cc_outboundrecord')
+ORDER BY table_name, ordinal_position;
