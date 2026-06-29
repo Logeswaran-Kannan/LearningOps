@@ -1,20 +1,8 @@
-Hi <Architect Name>,
+print("Bucket Name:")
+print(dbutils.secrets.get(
+    scope="Azure-secret-key-vault",
+    key="gw-cda-s3-bucket-name"
+))
 
-I have a question regarding access to the Guidewire CDA S3 bucket.
-
-From our understanding, the development team is not directly browsing the Guidewire-managed S3 bucket. Instead, the CDA ingestion into Databricks appears to be performed using a Databricks connector with the necessary credentials/IAM role to access the S3 bucket.
-
-From the BICoE testing perspective, we are trying to understand whether there is any simple way to browse the CDA files directly for investigation purposes (for example, to verify historical parquet files, manifests, retention behaviour, etc.).
-
-Could you please advise if there is any supported option to directly browse the Guidewire S3 bucket, such as:
-
-* Read-only access through the AWS Console
-* Read-only access using the AWS CLI
-* An IAM role that can be assumed for S3 access
-* Any other approved method for browsing the Guidewire-managed S3 bucket
-
-Alternatively, if direct S3 access is not permitted, is there a recommended way to inspect the CDA landing files through Databricks (for example, via External Locations, Volumes, or another supported mechanism)?
-
-We're mainly trying to understand the available options before deciding on our investigation approach for the CDA migration and retention validation.
-
-Thanks.
+print("\nManifest Location:")
+print(manifest_location)
