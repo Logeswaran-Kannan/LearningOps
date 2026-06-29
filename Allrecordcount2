@@ -1,10 +1,5 @@
 from datetime import datetime
-from pyspark.sql import Row
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-
-# =========================
-# CONFIG
-# =========================
 
 bucket = dbutils.secrets.get(
     scope="Azure-secret-key-vault",
@@ -13,115 +8,100 @@ bucket = dbutils.secrets.get(
 
 base_path = f"s3a://{bucket}/prod/bc/1756398239893/"
 
-print("Base path configured.")
-
-# =========================
-# SCHEMAS
-# =========================
-
-table_schema = StructType([
-    StructField("table_name", StringType(), True),
-    StructField("table_path", StringType(), True)
-])
-
-summary_schema = StructType([
-    StructField("table_name", StringType(), True),
-    StructField("batch_folder_count", IntegerType(), True),
-    StructField("min_batch_date", StringType(), True),
-    StructField("max_batch_date", StringType(), True),
-    StructField("min_month_year", StringType(), True),
-    StructField("max_month_year", StringType(), True),
-    StructField("table_path", StringType(), True),
-    StructField("status", StringType(), True),
-    StructField("error_message", StringType(), True)
-])
-
-# =========================
-# STEP 1: LIST TABLE FOLDERS
-# =========================
+rows = []
 
 table_folders = [t for t in dbutils.fs.ls(base_path) if t.isDir()]
 
-table_list = [
-    (
-        t.name.rstrip("/"),
-        t.path
-    )
-    for t in table_folders
-]
+for table in table_folders:
+    table_name = table.name.rstrip("/")
+    table_path = table.path
 
-table_df = spark.createDataFrame(table_list, schema=table_schema)
-
-display(table_df.orderBy("table_name"))
-
-# =========================
-# STEP 2: MIN / MAX BATCH DATE PER TABLE
-# =========================
-
-results = []
-
-for t in table_folders:
-    table_name = t.name.rstrip("/")
-    table_path = t.path
+    batch_dates = []
+    subfolder_count = 0
+    timestamp_folder_count = 0
+    status = "SUCCESS"
+    error_message = ""
 
     try:
-        batch_folders = [b for b in dbutils.fs.ls(table_path) if b.isDir()]
-        batch_dates = []
+        subfolders = [s for s in dbutils.fs.ls(table_path) if s.isDir()]
+        subfolder_count = len(subfolders)
 
-        for b in batch_folders:
-            folder_name = b.name.rstrip("/")
-
+        for sub in subfolders:
             try:
-                batch_ts = int(folder_name)
-                batch_dt = datetime.fromtimestamp(batch_ts / 1000)
-                batch_dates.append(batch_dt)
-            except:
-                pass
+                timestamp_folders = [x for x in dbutils.fs.ls(sub.path) if x.isDir()]
+                timestamp_folder_count += len(timestamp_folders)
+
+                for ts_folder in timestamp_folders:
+                    ts_name = ts_folder.name.rstrip("/")
+
+                    try:
+                        ts = int(ts_name)
+                        dt = datetime.fromtimestamp(ts / 1000)
+                        batch_dates.append(dt)
+                    except:
+                        pass
+
+            except Exception as e:
+                status = "PARTIAL_SUCCESS"
+                error_message = str(e)
 
         if batch_dates:
             min_dt = min(batch_dates)
             max_dt = max(batch_dates)
 
-            results.append((
+            rows.append((
                 table_name,
-                len(batch_folders),
+                table_path,
+                subfolder_count,
+                timestamp_folder_count,
                 min_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 max_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 min_dt.strftime("%b-%Y"),
                 max_dt.strftime("%b-%Y"),
-                table_path,
-                "SUCCESS",
-                ""
+                status,
+                error_message
             ))
         else:
-            results.append((
+            rows.append((
                 table_name,
-                len(batch_folders),
-                "",
-                "",
-                "",
-                "",
                 table_path,
-                "NO_TIMESTAMP_FOLDER",
-                ""
+                subfolder_count,
+                timestamp_folder_count,
+                "",
+                "",
+                "",
+                "",
+                "NO_TIMESTAMP_FOUND",
+                error_message
             ))
 
     except Exception as e:
-        results.append((
+        rows.append((
             table_name,
-            None,
-            "",
-            "",
-            "",
-            "",
             table_path,
+            subfolder_count,
+            timestamp_folder_count,
+            "",
+            "",
+            "",
+            "",
             "FAILED",
             str(e)
         ))
 
-summary_df = spark.createDataFrame(results, schema=summary_schema)
+schema = StructType([
+    StructField("table_name", StringType(), True),
+    StructField("table_path", StringType(), True),
+    StructField("subfolder_count", IntegerType(), True),
+    StructField("timestamp_folder_count", IntegerType(), True),
+    StructField("min_batch_date", StringType(), True),
+    StructField("max_batch_date", StringType(), True),
+    StructField("min_month_year", StringType(), True),
+    StructField("max_month_year", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("error_message", StringType(), True)
+])
+
+summary_df = spark.createDataFrame(rows, schema)
 
 display(summary_df.orderBy("table_name"))
-
-# Optional save
-summary_df.write.mode("overwrite").saveAsTable("recon.cda_s3_table_batch_summary_bc")
