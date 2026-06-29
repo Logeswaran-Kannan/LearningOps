@@ -1,8 +1,13 @@
-print("Bucket Name:")
-print(dbutils.secrets.get(
+
+bucket = dbutils.secrets.get(
     scope="Azure-secret-key-vault",
     key="gw-cda-s3-bucket-name"
-))
+)
 
-print("\nManifest Location:")
-print(manifest_location)
+print(f"Bucket : {bucket}")
+
+try:
+    folders = dbutils.fs.ls(f"s3a://{bucket}/")
+    display(folders)
+except Exception as e:
+    print(e)
