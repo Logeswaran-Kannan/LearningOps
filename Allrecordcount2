@@ -9,11 +9,14 @@ path = f"s3a://{bucket}/prod/bc/"
 
 for f in dbutils.fs.ls(path):
     try:
-        t = int(f.name.replace("/",""))
-        d = datetime.fromtimestamp(t/1000)
+        # Remove trailing slash if present
+        ts = int(f.name.rstrip("/"))
 
-        if d.year == 2025:
-            print(d, f.path)
+        # Convert milliseconds to datetime
+        dt = datetime.fromtimestamp(ts / 1000)
 
-    except:
+        print(f"{f.name:<20} --> {dt.strftime('%B %Y')} ({dt.strftime('%Y-%m-%d %H:%M:%S')})")
+
+    except ValueError:
+        # Skip non-timestamp folders
         pass
