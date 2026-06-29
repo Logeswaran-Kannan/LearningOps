@@ -1,5 +1,6 @@
 from datetime import datetime
 from pyspark.sql import Row
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 # =========================
 # CONFIG
@@ -15,20 +16,41 @@ base_path = f"s3a://{bucket}/prod/bc/1756398239893/"
 print("Base path configured.")
 
 # =========================
+# SCHEMAS
+# =========================
+
+table_schema = StructType([
+    StructField("table_name", StringType(), True),
+    StructField("table_path", StringType(), True)
+])
+
+summary_schema = StructType([
+    StructField("table_name", StringType(), True),
+    StructField("batch_folder_count", IntegerType(), True),
+    StructField("min_batch_date", StringType(), True),
+    StructField("max_batch_date", StringType(), True),
+    StructField("min_month_year", StringType(), True),
+    StructField("max_month_year", StringType(), True),
+    StructField("table_path", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("error_message", StringType(), True)
+])
+
+# =========================
 # STEP 1: LIST TABLE FOLDERS
 # =========================
 
 table_folders = [t for t in dbutils.fs.ls(base_path) if t.isDir()]
 
 table_list = [
-    Row(
-        table_name=t.name.rstrip("/"),
-        table_path=t.path
+    (
+        t.name.rstrip("/"),
+        t.path
     )
     for t in table_folders
 ]
 
-table_df = spark.createDataFrame(table_list)
+table_df = spark.createDataFrame(table_list, schema=table_schema)
 
 display(table_df.orderBy("table_name"))
 
@@ -44,14 +66,12 @@ for t in table_folders:
 
     try:
         batch_folders = [b for b in dbutils.fs.ls(table_path) if b.isDir()]
-
         batch_dates = []
 
         for b in batch_folders:
             folder_name = b.name.rstrip("/")
 
             try:
-                # folder name is epoch milliseconds
                 batch_ts = int(folder_name)
                 batch_dt = datetime.fromtimestamp(batch_ts / 1000)
                 batch_dates.append(batch_dt)
@@ -62,44 +82,44 @@ for t in table_folders:
             min_dt = min(batch_dates)
             max_dt = max(batch_dates)
 
-            results.append(Row(
-                table_name=table_name,
-                batch_folder_count=len(batch_folders),
-                min_batch_date=min_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                max_batch_date=max_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                min_month_year=min_dt.strftime("%b-%Y"),
-                max_month_year=max_dt.strftime("%b-%Y"),
-                table_path=table_path,
-                status="SUCCESS",
-                error_message=None
+            results.append((
+                table_name,
+                len(batch_folders),
+                min_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                max_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                min_dt.strftime("%b-%Y"),
+                max_dt.strftime("%b-%Y"),
+                table_path,
+                "SUCCESS",
+                ""
             ))
         else:
-            results.append(Row(
-                table_name=table_name,
-                batch_folder_count=len(batch_folders),
-                min_batch_date=None,
-                max_batch_date=None,
-                min_month_year=None,
-                max_month_year=None,
-                table_path=table_path,
-                status="NO_TIMESTAMP_FOLDER",
-                error_message=None
+            results.append((
+                table_name,
+                len(batch_folders),
+                "",
+                "",
+                "",
+                "",
+                table_path,
+                "NO_TIMESTAMP_FOLDER",
+                ""
             ))
 
     except Exception as e:
-        results.append(Row(
-            table_name=table_name,
-            batch_folder_count=None,
-            min_batch_date=None,
-            max_batch_date=None,
-            min_month_year=None,
-            max_month_year=None,
-            table_path=table_path,
-            status="FAILED",
-            error_message=str(e)
+        results.append((
+            table_name,
+            None,
+            "",
+            "",
+            "",
+            "",
+            table_path,
+            "FAILED",
+            str(e)
         ))
 
-summary_df = spark.createDataFrame(results)
+summary_df = spark.createDataFrame(results, schema=summary_schema)
 
 display(summary_df.orderBy("table_name"))
 
