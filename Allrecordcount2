@@ -1,9 +1,12 @@
-SELECT schemaname, tablename
-FROM pg_catalog.pg_tables
-WHERE tablename IN ('cc_document','cc_outboundrecord');
+Hi [Client Name],
 
+As discussed, please find below the details of the replacement resource for the onboarding process.
 
-SELECT table_schema, table_name, column_name, data_type, udt_name
-FROM information_schema.columns
-WHERE table_name IN ('cc_document','cc_outboundrecord')
-ORDER BY table_name, ordinal_position;
+Name: Tarun Saxena
+Email: [Tarun's Email]
+Employee ID: [Employee ID] (if required)
+
+Please let me know if you need any additional information from our side to initiate the onboarding activities.
+
+Thanks,
+Loges
