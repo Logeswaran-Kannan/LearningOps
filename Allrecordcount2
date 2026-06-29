@@ -1,13 +1,19 @@
+from datetime import datetime
 
 bucket = dbutils.secrets.get(
     scope="Azure-secret-key-vault",
     key="gw-cda-s3-bucket-name"
 )
 
-print(f"Bucket : {bucket}")
+path = f"s3a://{bucket}/prod/bc/"
 
-try:
-    folders = dbutils.fs.ls(f"s3a://{bucket}/")
-    display(folders)
-except Exception as e:
-    print(e)
+for f in dbutils.fs.ls(path):
+    try:
+        t = int(f.name.replace("/",""))
+        d = datetime.fromtimestamp(t/1000)
+
+        if d.year == 2025:
+            print(d, f.path)
+
+    except:
+        pass
