@@ -1,22 +1,115 @@
 from datetime import datetime
+from pyspark.sql import Row
+
+# =========================
+# CONFIG
+# =========================
 
 bucket = dbutils.secrets.get(
     scope="Azure-secret-key-vault",
     key="gw-cda-s3-bucket-name"
 )
 
-path = f"s3a://{bucket}/prod/bc/"
+base_path = f"s3a://{bucket}/prod/bc/1756398239893/"
 
-for f in dbutils.fs.ls(path):
+print("Scanning base path:")
+print(base_path)
+
+# =========================
+# HELPER
+# =========================
+
+def epoch_ms_to_dt(value):
     try:
-        # Remove trailing slash if present
-        ts = int(f.name.rstrip("/"))
+        return datetime.fromtimestamp(int(value) / 1000)
+    except:
+        return None
 
-        # Convert milliseconds to datetime
-        dt = datetime.fromtimestamp(ts / 1000)
+def fmt(dt):
+    return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else None
 
-        print(f"{f.name:<20} --> {dt.strftime('%B %Y')} ({dt.strftime('%Y-%m-%d %H:%M:%S')})")
+def month_year(dt):
+    return dt.strftime("%b-%Y") if dt else None
 
-    except ValueError:
-        # Skip non-timestamp folders
-        pass
+# =========================
+# SCAN TABLE FOLDERS
+# =========================
+
+results = []
+
+table_folders = dbutils.fs.ls(base_path)
+
+for table_folder in table_folders:
+    if not table_folder.isDir():
+        continue
+
+    table_name = table_folder.name.rstrip("/")
+    table_path = table_folder.path
+
+    file_count = 0
+    total_size = 0
+
+    min_file_mod = None
+    max_file_mod = None
+
+    min_folder_dt = None
+    max_folder_dt = None
+
+    try:
+        child_folders = dbutils.fs.ls(table_path)
+
+        for child in child_folders:
+
+            # Child folders are usually timestamp folders
+            child_name = child.name.rstrip("/")
+            folder_dt = epoch_ms_to_dt(child_name)
+
+            if folder_dt:
+                min_folder_dt = folder_dt if min_folder_dt is None or folder_dt < min_folder_dt else min_folder_dt
+                max_folder_dt = folder_dt if max_folder_dt is None or folder_dt > max_folder_dt else max_folder_dt
+
+            if child.isDir():
+                try:
+                    files = dbutils.fs.ls(child.path)
+
+                    for f in files:
+                        if f.isDir():
+                            continue
+
+                        # Count parquet and _SUCCESS files separately if needed
+                        if f.name.endswith(".parquet"):
+                            file_count += 1
+                            total_size += f.size
+
+                            mod_dt = datetime.fromtimestamp(f.modificationTime / 1000)
+
+                            min_file_mod = mod_dt if min_file_mod is None or mod_dt < min_file_mod else min_file_mod
+                            max_file_mod = mod_dt if max_file_mod is None or mod_dt > max_file_mod else max_file_mod
+
+                except Exception as e:
+                    print(f"Could not list child path: {child.path} | {e}")
+
+    except Exception as e:
+        print(f"Could not list table path: {table_path} | {e}")
+
+    results.append(Row(
+        table_name=table_name,
+        table_path=table_path,
+        file_count=file_count,
+        total_size_bytes=total_size,
+        total_size_mb=round(total_size / (1024 * 1024), 2),
+        min_file_modified_date=fmt(min_file_mod),
+        max_file_modified_date=fmt(max_file_mod),
+        min_folder_timestamp=fmt(min_folder_dt),
+        max_folder_timestamp=fmt(max_folder_dt),
+        min_folder_month_year=month_year(min_folder_dt),
+        max_folder_month_year=month_year(max_folder_dt)
+    ))
+
+# =========================
+# CREATE DATAFRAME
+# =========================
+
+df = spark.createDataFrame(results)
+
+display(df.orderBy("table_name"))
