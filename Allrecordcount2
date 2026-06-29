@@ -12,104 +12,96 @@ bucket = dbutils.secrets.get(
 
 base_path = f"s3a://{bucket}/prod/bc/1756398239893/"
 
-print("Scanning base path:")
-print(base_path)
+print("Base path configured.")
 
 # =========================
-# HELPER
+# STEP 1: LIST TABLE FOLDERS
 # =========================
 
-def epoch_ms_to_dt(value):
-    try:
-        return datetime.fromtimestamp(int(value) / 1000)
-    except:
-        return None
+table_folders = [t for t in dbutils.fs.ls(base_path) if t.isDir()]
 
-def fmt(dt):
-    return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else None
+table_list = [
+    Row(
+        table_name=t.name.rstrip("/"),
+        table_path=t.path
+    )
+    for t in table_folders
+]
 
-def month_year(dt):
-    return dt.strftime("%b-%Y") if dt else None
+table_df = spark.createDataFrame(table_list)
+
+display(table_df.orderBy("table_name"))
 
 # =========================
-# SCAN TABLE FOLDERS
+# STEP 2: MIN / MAX BATCH DATE PER TABLE
 # =========================
 
 results = []
 
-table_folders = dbutils.fs.ls(base_path)
-
-for table_folder in table_folders:
-    if not table_folder.isDir():
-        continue
-
-    table_name = table_folder.name.rstrip("/")
-    table_path = table_folder.path
-
-    file_count = 0
-    total_size = 0
-
-    min_file_mod = None
-    max_file_mod = None
-
-    min_folder_dt = None
-    max_folder_dt = None
+for t in table_folders:
+    table_name = t.name.rstrip("/")
+    table_path = t.path
 
     try:
-        child_folders = dbutils.fs.ls(table_path)
+        batch_folders = [b for b in dbutils.fs.ls(table_path) if b.isDir()]
 
-        for child in child_folders:
+        batch_dates = []
 
-            # Child folders are usually timestamp folders
-            child_name = child.name.rstrip("/")
-            folder_dt = epoch_ms_to_dt(child_name)
+        for b in batch_folders:
+            folder_name = b.name.rstrip("/")
 
-            if folder_dt:
-                min_folder_dt = folder_dt if min_folder_dt is None or folder_dt < min_folder_dt else min_folder_dt
-                max_folder_dt = folder_dt if max_folder_dt is None or folder_dt > max_folder_dt else max_folder_dt
+            try:
+                # folder name is epoch milliseconds
+                batch_ts = int(folder_name)
+                batch_dt = datetime.fromtimestamp(batch_ts / 1000)
+                batch_dates.append(batch_dt)
+            except:
+                pass
 
-            if child.isDir():
-                try:
-                    files = dbutils.fs.ls(child.path)
+        if batch_dates:
+            min_dt = min(batch_dates)
+            max_dt = max(batch_dates)
 
-                    for f in files:
-                        if f.isDir():
-                            continue
-
-                        # Count parquet and _SUCCESS files separately if needed
-                        if f.name.endswith(".parquet"):
-                            file_count += 1
-                            total_size += f.size
-
-                            mod_dt = datetime.fromtimestamp(f.modificationTime / 1000)
-
-                            min_file_mod = mod_dt if min_file_mod is None or mod_dt < min_file_mod else min_file_mod
-                            max_file_mod = mod_dt if max_file_mod is None or mod_dt > max_file_mod else max_file_mod
-
-                except Exception as e:
-                    print(f"Could not list child path: {child.path} | {e}")
+            results.append(Row(
+                table_name=table_name,
+                batch_folder_count=len(batch_folders),
+                min_batch_date=min_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                max_batch_date=max_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                min_month_year=min_dt.strftime("%b-%Y"),
+                max_month_year=max_dt.strftime("%b-%Y"),
+                table_path=table_path,
+                status="SUCCESS",
+                error_message=None
+            ))
+        else:
+            results.append(Row(
+                table_name=table_name,
+                batch_folder_count=len(batch_folders),
+                min_batch_date=None,
+                max_batch_date=None,
+                min_month_year=None,
+                max_month_year=None,
+                table_path=table_path,
+                status="NO_TIMESTAMP_FOLDER",
+                error_message=None
+            ))
 
     except Exception as e:
-        print(f"Could not list table path: {table_path} | {e}")
+        results.append(Row(
+            table_name=table_name,
+            batch_folder_count=None,
+            min_batch_date=None,
+            max_batch_date=None,
+            min_month_year=None,
+            max_month_year=None,
+            table_path=table_path,
+            status="FAILED",
+            error_message=str(e)
+        ))
 
-    results.append(Row(
-        table_name=table_name,
-        table_path=table_path,
-        file_count=file_count,
-        total_size_bytes=total_size,
-        total_size_mb=round(total_size / (1024 * 1024), 2),
-        min_file_modified_date=fmt(min_file_mod),
-        max_file_modified_date=fmt(max_file_mod),
-        min_folder_timestamp=fmt(min_folder_dt),
-        max_folder_timestamp=fmt(max_folder_dt),
-        min_folder_month_year=month_year(min_folder_dt),
-        max_folder_month_year=month_year(max_folder_dt)
-    ))
+summary_df = spark.createDataFrame(results)
 
-# =========================
-# CREATE DATAFRAME
-# =========================
+display(summary_df.orderBy("table_name"))
 
-df = spark.createDataFrame(results)
-
-display(df.orderBy("table_name"))
+# Optional save
+summary_df.write.mode("overwrite").saveAsTable("recon.cda_s3_table_batch_summary_bc")
