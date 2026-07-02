@@ -2,13 +2,14 @@ from pyspark.sql import functions as F
 
 # ============================================================
 # ODS Views -> Downstream Silver: Upstream Lineage Scan
+# Safer version: no recursive SQL CTE
 # ============================================================
 
 INPUT_TABLE = "core_tst.testing_sb.target_entities"
 DEST_CATALOG = "core"
 
 MAX_DEPTH = 10
-EVENT_LOOKBACK_DAYS = 400  # None = scan all available lineage history
+EVENT_LOOKBACK_DAYS = 400
 
 OUTPUT_TABLE_LEVEL = "core_tst.testing_sb.ods_upstream_tables"
 OUTPUT_COLUMN_LEVEL = "core_tst.testing_sb.ods_upstream_columns"
@@ -17,6 +18,9 @@ OUTPUT_SUMMARY = "core_tst.testing_sb.ods_lineage_scan_summary"
 
 # ------------------------------------------------------------
 # Load destination tables
+# target_entities columns:
+#   dest_schema = schema name
+#   dest_entity = table name
 # ------------------------------------------------------------
 
 targets_df = (
@@ -25,84 +29,142 @@ targets_df = (
         F.col("dest_schema").alias("schema_name"),
         F.col("dest_entity").alias("table_name")
     )
+    .where(
+        F.col("dest_schema").isNotNull()
+        & F.col("dest_entity").isNotNull()
+    )
     .distinct()
 )
 
 targets_df = targets_df.withColumn(
     "full_name",
-    F.concat(
-        F.lit(DEST_CATALOG),
-        F.lit("."),
-        F.col("schema_name"),
-        F.lit("."),
-        F.col("table_name")
-    )
+    F.concat_ws(".", F.lit(DEST_CATALOG), F.col("schema_name"), F.col("table_name"))
 )
 
-target_names = [r["full_name"] for r in targets_df.collect()]
+target_names = [r["full_name"] for r in targets_df.select("full_name").collect()]
 
 print(f"Loaded {len(target_names)} destination tables from {INPUT_TABLE}")
 
 if len(target_names) == 0:
-    raise ValueError(
-        f"No rows found in {INPUT_TABLE} - check schema_name/table_name columns are populated"
-    )
+    raise ValueError(f"No destination tables found in {INPUT_TABLE}")
 
 targets_df.select("full_name").createOrReplaceTempView("_lineage_targets")
 
 # ------------------------------------------------------------
-# Step 1: Recursive table-level lineage walk
+# Prepare table lineage base
 # ------------------------------------------------------------
 
-lookback_clause = (
-    f"AND event_date >= date_sub(current_date(), {EVENT_LOOKBACK_DAYS})"
-    if EVENT_LOOKBACK_DAYS is not None
-    else ""
+table_lineage_base = (
+    spark.table("system.access.table_lineage")
+    .select(
+        F.lower(F.col("source_table_full_name")).alias("source_table_full_name"),
+        F.lower(F.col("target_table_full_name")).alias("target_table_full_name"),
+        F.col("event_date")
+    )
+    .where(F.col("source_table_full_name").isNotNull())
+    .where(F.col("target_table_full_name").isNotNull())
 )
 
-table_lineage_sql = f"""
-WITH RECURSIVE lineage_chain AS (
-    SELECT
-        tl.source_table_full_name,
-        tl.target_table_full_name,
-        tl.target_table_full_name AS origin_destination,
-        1 AS depth
-    FROM system.access.table_lineage tl
-    JOIN _lineage_targets t
-        ON tl.target_table_full_name = t.full_name
-    WHERE tl.source_table_full_name IS NOT NULL
-    {lookback_clause}
+if EVENT_LOOKBACK_DAYS is not None:
+    table_lineage_base = table_lineage_base.where(
+        F.col("event_date") >= F.date_sub(F.current_date(), EVENT_LOOKBACK_DAYS)
+    )
 
-    UNION ALL
-
-    SELECT
-        tl.source_table_full_name,
-        tl.target_table_full_name,
-        lc.origin_destination,
-        lc.depth + 1 AS depth
-    FROM system.access.table_lineage tl
-    JOIN lineage_chain lc
-        ON tl.target_table_full_name = lc.source_table_full_name
-    WHERE lc.depth < {MAX_DEPTH}
-      AND tl.source_table_full_name IS NOT NULL
-    {lookback_clause}
+table_lineage_base = (
+    table_lineage_base
+    .select("source_table_full_name", "target_table_full_name")
+    .distinct()
+    .cache()
 )
-SELECT
-    source_table_full_name AS ods_table,
-    origin_destination AS destination_table,
-    MIN(depth) AS min_hop_depth
-FROM lineage_chain
-WHERE lower(source_table_full_name) LIKE '%.ods_views.%'
-GROUP BY source_table_full_name, origin_destination
-"""
 
-lineage_result = spark.sql(table_lineage_sql)
-lineage_result.cache()
+target_names_lower = [x.lower() for x in target_names]
+
+# ------------------------------------------------------------
+# Step 1: Iterative table-level lineage
+# ------------------------------------------------------------
+
+frontier = spark.createDataFrame(
+    [(x, x, 0) for x in target_names_lower],
+    ["current_table", "origin_destination", "depth"]
+)
+
+all_edges = None
+
+for depth in range(1, MAX_DEPTH + 1):
+    next_edges = (
+        frontier.alias("f")
+        .join(
+            table_lineage_base.alias("tl"),
+            F.col("tl.target_table_full_name") == F.col("f.current_table"),
+            "inner"
+        )
+        .select(
+            F.col("tl.source_table_full_name").alias("source_table_full_name"),
+            F.col("tl.target_table_full_name").alias("target_table_full_name"),
+            F.col("f.origin_destination").alias("origin_destination"),
+            F.lit(depth).alias("depth")
+        )
+        .distinct()
+    )
+
+    next_count = next_edges.count()
+    print(f"Depth {depth}: {next_count} lineage edges")
+
+    if next_count == 0:
+        break
+
+    all_edges = next_edges if all_edges is None else all_edges.unionByName(next_edges).distinct()
+
+    already_seen = (
+        all_edges
+        .select(
+            F.col("source_table_full_name").alias("current_table"),
+            "origin_destination"
+        )
+        .distinct()
+    )
+
+    frontier = (
+        next_edges
+        .select(
+            F.col("source_table_full_name").alias("current_table"),
+            "origin_destination",
+            "depth"
+        )
+        .distinct()
+        .join(
+            already_seen,
+            ["current_table", "origin_destination"],
+            "left_anti"
+        )
+    )
+
+if all_edges is None:
+    all_edges = spark.createDataFrame(
+        [],
+        """
+        source_table_full_name STRING,
+        target_table_full_name STRING,
+        origin_destination STRING,
+        depth INT
+        """
+    )
+
+lineage_result = (
+    all_edges
+    .where(F.lower(F.col("source_table_full_name")).contains(".ods_views."))
+    .groupBy(
+        F.col("source_table_full_name").alias("ods_table"),
+        F.col("origin_destination").alias("destination_table")
+    )
+    .agg(F.min("depth").alias("min_hop_depth"))
+    .cache()
+)
 
 print(f"Raw ods -> destination edges found: {lineage_result.count()}")
 
 # ------------------------------------------------------------
-# Deduped list of ODS tables consumed downstream
+# Deduped ODS table result
 # ------------------------------------------------------------
 
 ods_upstream_tables = (
@@ -116,158 +178,96 @@ ods_upstream_tables = (
     .orderBy("ods_table")
 )
 
-print(f"Distinct ods_views tables actually consumed downstream: {ods_upstream_tables.count()}")
 display(ods_upstream_tables)
-
-# ------------------------------------------------------------
-# Missing lineage destinations
-# ------------------------------------------------------------
-
-destinations_with_lineage = set(
-    r["destination_table"]
-    for r in lineage_result.select("destination_table").distinct().collect()
-)
-
-all_destinations = set(target_names)
-
-destinations_missing_lineage = sorted(all_destinations - destinations_with_lineage)
-
-print(f"Destinations with NO ods_views lineage found: {len(destinations_missing_lineage)}")
-
-for d in destinations_missing_lineage:
-    print(f" - {d}")
-
-missing_lineage_df = spark.createDataFrame(
-    [(d,) for d in destinations_missing_lineage],
-    ["destination_table"]
-)
-
-missing_lineage_df.write.mode("overwrite").saveAsTable(OUTPUT_MISSING_LINEAGE)
-print(f"Saved missing-lineage destinations to {OUTPUT_MISSING_LINEAGE}")
-
-display(missing_lineage_df)
-
-# ------------------------------------------------------------
-# Persist table-level result
-# ------------------------------------------------------------
 
 ods_upstream_tables.write.mode("overwrite").saveAsTable(OUTPUT_TABLE_LEVEL)
 print(f"Saved table-level lineage to {OUTPUT_TABLE_LEVEL}")
 
 # ------------------------------------------------------------
-# Step 2: Column-level lineage
+# Missing lineage destinations
 # ------------------------------------------------------------
 
-ods_table_list = [r["ods_table"] for r in ods_upstream_tables.collect()]
+destinations_with_lineage = [
+    r["destination_table"]
+    for r in lineage_result.select("destination_table").distinct().collect()
+]
 
-print(
-    f"Running column-level lineage for "
-    f"{len(ods_table_list)} ods tables x {len(target_names)} destinations"
+missing_lineage_df = (
+    spark.createDataFrame([(x,) for x in target_names_lower], ["destination_table"])
+    .join(
+        spark.createDataFrame([(x,) for x in destinations_with_lineage], ["destination_table"]),
+        "destination_table",
+        "left_anti"
+    )
 )
 
-if len(ods_table_list) > 0:
+display(missing_lineage_df)
 
-    spark.createDataFrame(
-        [(t,) for t in ods_table_list],
-        ["ods_table"]
-    ).createOrReplaceTempView("_lineage_ods_sources")
+missing_lineage_df.write.mode("overwrite").saveAsTable(OUTPUT_MISSING_LINEAGE)
+print(f"Saved missing-lineage destinations to {OUTPUT_MISSING_LINEAGE}")
 
-    column_lineage_sql = f"""
-    WITH RECURSIVE col_chain AS (
-        SELECT
-            cl.source_table_full_name,
-            cl.source_column_name,
-            cl.target_table_full_name,
-            cl.target_column_name,
-            cl.target_table_full_name AS origin_destination,
-            1 AS depth
-        FROM system.access.column_lineage cl
-        JOIN _lineage_targets t
-            ON cl.target_table_full_name = t.full_name
-        WHERE cl.source_table_full_name IS NOT NULL
-        {lookback_clause}
+# ------------------------------------------------------------
+# Step 2: Column-level lineage - direct scan only
+# ------------------------------------------------------------
+# This avoids recursive column-lineage explosion.
+# It returns column lineage where ODS table directly maps to destination.
+# Table-level lineage above still traces multi-hop dependencies.
+# ------------------------------------------------------------
 
-        UNION ALL
+ods_tables_df = ods_upstream_tables.select("ods_table").distinct()
+destinations_df = spark.createDataFrame(
+    [(x,) for x in target_names_lower],
+    ["destination_table"]
+)
 
-        SELECT
-            cl.source_table_full_name,
-            cl.source_column_name,
-            cl.target_table_full_name,
-            cl.target_column_name,
-            cc.origin_destination,
-            cc.depth + 1 AS depth
-        FROM system.access.column_lineage cl
-        JOIN col_chain cc
-            ON cl.target_table_full_name = cc.source_table_full_name
-           AND cl.target_column_name = cc.source_column_name
-        WHERE cc.depth < {MAX_DEPTH}
-          AND cl.source_table_full_name IS NOT NULL
-        {lookback_clause}
+column_lineage_base = (
+    spark.table("system.access.column_lineage")
+    .select(
+        F.lower(F.col("source_table_full_name")).alias("ods_table"),
+        F.col("source_column_name").alias("ods_column"),
+        F.lower(F.col("target_table_full_name")).alias("destination_table"),
+        F.col("target_column_name").alias("destination_column"),
+        F.col("event_date")
     )
-    SELECT DISTINCT
-        source_table_full_name AS ods_table,
-        source_column_name AS ods_column,
-        origin_destination AS destination_table,
-        target_column_name AS destination_column,
-        depth AS hop_depth
-    FROM col_chain
-    WHERE source_table_full_name IN (
-        SELECT ods_table FROM _lineage_ods_sources
-    )
-    """
+    .where(F.col("source_table_full_name").isNotNull())
+    .where(F.col("target_table_full_name").isNotNull())
+)
 
-    ods_upstream_columns = spark.sql(column_lineage_sql)
-    ods_upstream_columns.cache()
-
-    print(f"Column-level lineage rows: {ods_upstream_columns.count()}")
-    display(ods_upstream_columns)
-
-    ods_upstream_columns.write.mode("overwrite").saveAsTable(OUTPUT_COLUMN_LEVEL)
-    print(f"Saved column-level lineage to {OUTPUT_COLUMN_LEVEL}")
-
-else:
-    print("No ods tables found in Step 1 - skipping column-level scan.")
-
-    ods_upstream_columns = spark.createDataFrame(
-        [],
-        """
-        ods_table STRING,
-        ods_column STRING,
-        destination_table STRING,
-        destination_column STRING,
-        hop_depth INT
-        """
+if EVENT_LOOKBACK_DAYS is not None:
+    column_lineage_base = column_lineage_base.where(
+        F.col("event_date") >= F.date_sub(F.current_date(), EVENT_LOOKBACK_DAYS)
     )
 
-    ods_upstream_columns.write.mode("overwrite").saveAsTable(OUTPUT_COLUMN_LEVEL)
+ods_upstream_columns = (
+    column_lineage_base
+    .join(ods_tables_df, "ods_table", "inner")
+    .join(destinations_df, "destination_table", "inner")
+    .select(
+        "ods_table",
+        "ods_column",
+        "destination_table",
+        "destination_column"
+    )
+    .distinct()
+    .withColumn("hop_depth", F.lit(1))
+)
+
+display(ods_upstream_columns)
+
+ods_upstream_columns.write.mode("overwrite").saveAsTable(OUTPUT_COLUMN_LEVEL)
+print(f"Saved column-level lineage to {OUTPUT_COLUMN_LEVEL}")
 
 # ------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------
 
-num_ods_tables = ods_upstream_tables.count()
-num_ods_columns = ods_upstream_columns.count() if len(ods_table_list) > 0 else 0
-
-print("=" * 60)
-print("SUMMARY")
-print("=" * 60)
-print(f"Destination tables scanned:        {len(target_names)}")
-print(f"Destinations with lineage found:   {len(destinations_with_lineage)}")
-print(f"Destinations missing lineage:      {len(destinations_missing_lineage)}")
-print(f"Distinct ods_views tables in use:  {num_ods_tables}")
-print(f"Column-level lineage rows:         {num_ods_columns}")
-print(f"Table-level output:                {OUTPUT_TABLE_LEVEL}")
-print(f"Column-level output:               {OUTPUT_COLUMN_LEVEL}")
-print(f"Missing-lineage output:            {OUTPUT_MISSING_LINEAGE}")
-print(f"Summary output:                    {OUTPUT_SUMMARY}")
-
 summary_df = spark.createDataFrame(
     [(
-        len(target_names),
-        len(destinations_with_lineage),
-        len(destinations_missing_lineage),
-        num_ods_tables,
-        num_ods_columns
+        len(target_names_lower),
+        lineage_result.select("destination_table").distinct().count(),
+        missing_lineage_df.count(),
+        ods_upstream_tables.count(),
+        ods_upstream_columns.count()
     )],
     [
         "destinations_scanned",
@@ -278,6 +278,7 @@ summary_df = spark.createDataFrame(
     ]
 )
 
-summary_df.write.mode("overwrite").saveAsTable(OUTPUT_SUMMARY)
-
 display(summary_df)
+
+summary_df.write.mode("overwrite").saveAsTable(OUTPUT_SUMMARY)
+print(f"Saved summary to {OUTPUT_SUMMARY}")
