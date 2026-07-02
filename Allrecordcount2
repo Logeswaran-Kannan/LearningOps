@@ -1,16 +1,19 @@
-SELECT
-  tl.target_table_catalog,
-  tl.target_table_schema,
-  tl.target_table_name,
-  tl.source_table_catalog,
-  tl.source_table_schema,
-  tl.source_table_name,
-  tl.source_type,
-  MAX(tl.event_time) AS last_seen
-FROM system.access.table_lineage tl
-JOIN target_entities te
-  ON lower(tl.target_table_schema) = lower(te.dest_schema)
- AND lower(tl.target_table_name)   = lower(te.dest_entity)
-WHERE tl.event_date >= DATE_SUB(current_date(), 90)   -- widen if needed
-GROUP BY ALL
-ORDER BY tl.target_table_name, tl.source_table_name;
+WITH RECURSIVE upstream AS (
+  SELECT target_table_schema, target_table_name,
+         source_table_schema, source_table_name, 1 AS depth
+  FROM system.access.table_lineage tl
+  JOIN target_entities te
+    ON lower(tl.target_table_schema) = lower(te.dest_schema)
+   AND lower(tl.target_table_name)   = lower(te.dest_entity)
+
+  UNION ALL
+
+  SELECT tl.target_table_schema, tl.target_table_name,
+         tl.source_table_schema, tl.source_table_name, u.depth + 1
+  FROM system.access.table_lineage tl
+  JOIN upstream u
+    ON tl.target_table_schema = u.source_table_schema
+   AND tl.target_table_name   = u.source_table_name
+  WHERE u.depth < 6   -- guard against runaway recursion
+)
+SELECT * FROM upstream ORDER BY target_table_name, depth;
