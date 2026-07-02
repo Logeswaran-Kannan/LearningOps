@@ -21,7 +21,10 @@ OUTPUT_SUMMARY = "core_tst.testing_sb.ods_lineage_scan_summary"
 
 targets_df = (
     spark.table(INPUT_TABLE)
-    .select("schema_name", "table_name")
+    .select(
+        F.col("dest_schema").alias("schema_name"),
+        F.col("dest_entity").alias("table_name")
+    )
     .distinct()
 )
 
