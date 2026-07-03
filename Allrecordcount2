@@ -1,53 +1,240 @@
 from pyspark.sql import functions as F
 
+# ============================================================
+# Detailed ODS Views Lineage Report
+# ============================================================
+
 INPUT_TABLE = "core_tst.testing_sb.target_entities"
 DEST_CATALOG = "core"
+
+MAX_DEPTH = 5
 EVENT_LOOKBACK_DAYS = 400
 
-OUTPUT_ODS_LIST = "core_tst.testing_sb.ods_upstream_tables"
+OUTPUT_TABLE_REPORT  = "core_tst.testing_sb.ods_lineage_table_report"
+OUTPUT_COLUMN_REPORT = "core_tst.testing_sb.ods_lineage_column_report"
+
+# ------------------------------------------------------------
+# Load downstream target tables
+# ------------------------------------------------------------
 
 targets_df = (
     spark.table(INPUT_TABLE)
     .select(
-        F.lower(F.col("dest_schema")).alias("dest_schema"),
-        F.lower(F.col("dest_entity")).alias("dest_entity")
+        F.lower(F.col("dest_schema")).alias("downstream_schema"),
+        F.lower(F.col("dest_entity")).alias("downstream_table")
     )
-    .where(F.col("dest_schema").isNotNull())
-    .where(F.col("dest_entity").isNotNull())
+    .where(F.col("downstream_schema").isNotNull())
+    .where(F.col("downstream_table").isNotNull())
     .distinct()
     .withColumn(
-        "destination_table",
-        F.concat_ws(".", F.lit(DEST_CATALOG), F.col("dest_schema"), F.col("dest_entity"))
+        "downstream_full_name",
+        F.concat_ws(".", F.lit(DEST_CATALOG), F.col("downstream_schema"), F.col("downstream_table"))
     )
 )
 
-table_lineage_df = (
+display(targets_df)
+
+target_count = targets_df.count()
+print(f"Downstream target count: {target_count}")
+
+# ------------------------------------------------------------
+# Read table lineage only for lookback period
+# ------------------------------------------------------------
+
+table_lineage_base = (
     spark.table("system.access.table_lineage")
     .select(
-        F.lower(F.col("source_table_full_name")).alias("ods_table"),
-        F.lower(F.col("target_table_full_name")).alias("destination_table"),
+        F.lower(F.col("source_table_full_name")).alias("source_table"),
+        F.lower(F.col("target_table_full_name")).alias("target_table"),
         F.col("event_date")
     )
     .where(F.col("source_table_full_name").isNotNull())
     .where(F.col("target_table_full_name").isNotNull())
-    .where(F.lower(F.col("source_table_full_name")).contains(".ods_views."))
 )
 
-table_lineage_df = table_lineage_df.where(
-    F.col("event_date") >= F.date_sub(F.current_date(), EVENT_LOOKBACK_DAYS)
-)
+if EVENT_LOOKBACK_DAYS is not None:
+    table_lineage_base = table_lineage_base.where(
+        F.col("event_date") >= F.date_sub(F.current_date(), EVENT_LOOKBACK_DAYS)
+    )
 
-ods_upstream_tables = (
-    table_lineage_df
-    .join(targets_df.select("destination_table"), "destination_table", "inner")
-    .select("ods_table")
+table_lineage_base = (
+    table_lineage_base
+    .select("source_table", "target_table")
     .distinct()
-    .orderBy("ods_table")
+    .cache()
 )
 
-display(ods_upstream_tables)
+# ------------------------------------------------------------
+# Recursive upstream walk using PySpark loop
+# ------------------------------------------------------------
 
-ods_upstream_tables.write.mode("overwrite").saveAsTable(OUTPUT_ODS_LIST)
+frontier = (
+    targets_df
+    .select(
+        F.col("downstream_schema"),
+        F.col("downstream_table"),
+        F.col("downstream_full_name"),
+        F.col("downstream_full_name").alias("current_table")
+    )
+    .withColumn("hop_depth", F.lit(0))
+    .withColumn("lineage_path", F.col("downstream_full_name"))
+)
 
-print(f"Saved upstream ods_views table list to {OUTPUT_ODS_LIST}")
-print(f"ODS upstream table count: {ods_upstream_tables.count()}")
+all_lineage = None
+
+for depth in range(1, MAX_DEPTH + 1):
+
+    next_level = (
+        frontier.alias("f")
+        .join(
+            table_lineage_base.alias("tl"),
+            F.col("f.current_table") == F.col("tl.target_table"),
+            "inner"
+        )
+        .select(
+            F.col("f.downstream_schema"),
+            F.col("f.downstream_table"),
+            F.col("f.downstream_full_name"),
+            F.col("tl.source_table").alias("upstream_full_name"),
+            F.lit(depth).alias("hop_depth"),
+            F.concat(
+                F.col("tl.source_table"),
+                F.lit(" -> "),
+                F.col("f.lineage_path")
+            ).alias("lineage_path")
+        )
+        .distinct()
+    )
+
+    level_count = next_level.count()
+    print(f"Depth {depth}: {level_count} upstream rows")
+
+    if level_count == 0:
+        break
+
+    all_lineage = next_level if all_lineage is None else all_lineage.unionByName(next_level).distinct()
+
+    frontier = (
+        next_level
+        .select(
+            "downstream_schema",
+            "downstream_table",
+            "downstream_full_name",
+            F.col("upstream_full_name").alias("current_table"),
+            "hop_depth",
+            "lineage_path"
+        )
+        .distinct()
+    )
+
+if all_lineage is None:
+    all_lineage = spark.createDataFrame(
+        [],
+        """
+        downstream_schema STRING,
+        downstream_table STRING,
+        downstream_full_name STRING,
+        upstream_full_name STRING,
+        hop_depth INT,
+        lineage_path STRING
+        """
+    )
+
+# ------------------------------------------------------------
+# Filter only ODS views and split schema/table
+# ------------------------------------------------------------
+
+ods_table_report = (
+    all_lineage
+    .where(F.col("upstream_full_name").contains(".ods_views."))
+    .withColumn("name_parts", F.split(F.col("upstream_full_name"), "\\."))
+    .withColumn("upstream_schema", F.col("name_parts")[1])
+    .withColumn("upstream_table", F.col("name_parts")[2])
+    .drop("name_parts")
+    .select(
+        "downstream_schema",
+        "downstream_table",
+        "downstream_full_name",
+        "upstream_schema",
+        "upstream_table",
+        "upstream_full_name",
+        "hop_depth",
+        "lineage_path"
+    )
+    .distinct()
+    .orderBy("downstream_schema", "downstream_table", "upstream_schema", "upstream_table")
+)
+
+display(ods_table_report)
+
+ods_table_report.write.mode("overwrite").saveAsTable(OUTPUT_TABLE_REPORT)
+
+print(f"Saved table-level detailed report to {OUTPUT_TABLE_REPORT}")
+
+# ------------------------------------------------------------
+# Column-level lineage for direct ODS mappings
+# ------------------------------------------------------------
+
+column_lineage_base = (
+    spark.table("system.access.column_lineage")
+    .select(
+        F.lower(F.col("source_table_full_name")).alias("upstream_full_name"),
+        F.col("source_column_name").alias("upstream_column"),
+        F.lower(F.col("target_table_full_name")).alias("downstream_full_name"),
+        F.col("target_column_name").alias("downstream_column"),
+        F.col("event_date")
+    )
+    .where(F.col("source_table_full_name").isNotNull())
+    .where(F.col("target_table_full_name").isNotNull())
+)
+
+if EVENT_LOOKBACK_DAYS is not None:
+    column_lineage_base = column_lineage_base.where(
+        F.col("event_date") >= F.date_sub(F.current_date(), EVENT_LOOKBACK_DAYS)
+    )
+
+ods_column_report = (
+    column_lineage_base
+    .join(
+        ods_table_report.select(
+            "downstream_schema",
+            "downstream_table",
+            "downstream_full_name",
+            "upstream_schema",
+            "upstream_table",
+            "upstream_full_name",
+            "hop_depth",
+            "lineage_path"
+        ),
+        ["downstream_full_name", "upstream_full_name"],
+        "inner"
+    )
+    .select(
+        "downstream_schema",
+        "downstream_table",
+        "downstream_full_name",
+        "upstream_schema",
+        "upstream_table",
+        "upstream_full_name",
+        "upstream_column",
+        "downstream_column",
+        "hop_depth",
+        "lineage_path"
+    )
+    .distinct()
+    .orderBy(
+        "downstream_schema",
+        "downstream_table",
+        "upstream_schema",
+        "upstream_table",
+        "upstream_column"
+    )
+)
+
+display(ods_column_report)
+
+ods_column_report.write.mode("overwrite").saveAsTable(OUTPUT_COLUMN_REPORT)
+
+print(f"Saved column-level detailed report to {OUTPUT_COLUMN_REPORT}")
+
+print("Completed.")
