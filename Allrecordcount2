@@ -1,240 +1,226 @@
 from pyspark.sql import functions as F
+from pyspark.sql.types import *
 
 # ============================================================
-# Detailed ODS Views Lineage Report
+# CONFIG
 # ============================================================
+LOOKBACK_DAYS   = 180
+MAX_DEPTH       = 8
+ODS_SCHEMA      = "ods_views"
+ODS_PREFIXES    = ["vw_policy", "vw_claim", "vw_bili"]
+TARGET_SCHEMAS  = ["curated_edw_insert_views", "curated_edw"]   # stop/hit condition
+OUTPUT_TABLE    = "your_catalog.your_schema.ods_downstream_column_impact"
 
-INPUT_TABLE = "core_tst.testing_sb.target_entities"
-DEST_CATALOG = "core"
-
-MAX_DEPTH = 5
-EVENT_LOOKBACK_DAYS = 400
-
-OUTPUT_TABLE_REPORT  = "core_tst.testing_sb.ods_lineage_table_report"
-OUTPUT_COLUMN_REPORT = "core_tst.testing_sb.ods_lineage_column_report"
-
-# ------------------------------------------------------------
-# Load downstream target tables
-# ------------------------------------------------------------
-
-targets_df = (
-    spark.table(INPUT_TABLE)
-    .select(
-        F.lower(F.col("dest_schema")).alias("downstream_schema"),
-        F.lower(F.col("dest_entity")).alias("downstream_table")
+# ============================================================
+# STEP 1: Build seed list dynamically from information_schema
+#          (no manual entity list needed — pattern-driven)
+# ============================================================
+seed_tables = (
+    spark.table("system.information_schema.tables")
+    .filter(F.lower(F.col("table_schema")) == ODS_SCHEMA)
+    .filter(
+        F.expr(f"""lower(table_name) rlike '^({"|".join(ODS_PREFIXES)})'""")
     )
-    .where(F.col("downstream_schema").isNotNull())
-    .where(F.col("downstream_table").isNotNull())
-    .distinct()
-    .withColumn(
-        "downstream_full_name",
-        F.concat_ws(".", F.lit(DEST_CATALOG), F.col("downstream_schema"), F.col("downstream_table"))
+    .select(
+        F.lower(F.col("table_catalog")).alias("catalog"),
+        F.lower(F.col("table_schema")).alias("schema"),
+        F.lower(F.col("table_name")).alias("table")
     )
 )
 
-display(targets_df)
+seed_count = seed_tables.count()
+print(f"Seed ODS views matched: {seed_count}")
 
-target_count = targets_df.count()
-print(f"Downstream target count: {target_count}")
+seed_keys = (
+    seed_tables
+    .withColumn("node", F.concat_ws(".", "catalog", "schema", "table"))
+    .select("node")
+    .distinct()
+)
 
-# ------------------------------------------------------------
-# Read table lineage only for lookback period
-# ------------------------------------------------------------
+# ============================================================
+# STEP 2: Cache table_lineage edges ONCE (null-safe 3-part keys)
+# ============================================================
+def make_key(cat_col, schema_col, table_col):
+    return F.lower(F.concat_ws(".",
+        F.coalesce(F.col(cat_col), F.lit("unknown_catalog")),
+        F.col(schema_col),
+        F.col(table_col)
+    ))
 
-table_lineage_base = (
+lineage_raw = (
     spark.table("system.access.table_lineage")
+    .filter(F.col("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
+    .filter(F.col("source_table_name").isNotNull())
+    .filter(F.col("target_table_name").isNotNull())
+)
+
+edges = (
+    lineage_raw
     .select(
-        F.lower(F.col("source_table_full_name")).alias("source_table"),
-        F.lower(F.col("target_table_full_name")).alias("target_table"),
-        F.col("event_date")
+        make_key("source_table_catalog", "source_table_schema", "source_table_name").alias("src"),
+        make_key("target_table_catalog", "target_table_schema", "target_table_name").alias("tgt"),
+        F.lower(F.col("target_table_schema")).alias("tgt_schema"),
+        "source_type", "event_time"
     )
-    .where(F.col("source_table_full_name").isNotNull())
-    .where(F.col("target_table_full_name").isNotNull())
+    .groupBy("src", "tgt", "tgt_schema", "source_type")
+    .agg(F.max("event_time").alias("last_seen"))
 )
 
-if EVENT_LOOKBACK_DAYS is not None:
-    table_lineage_base = table_lineage_base.where(
-        F.col("event_date") >= F.date_sub(F.current_date(), EVENT_LOOKBACK_DAYS)
-    )
+edges.cache()
+print(f"Cached edges: {edges.count()}")
 
-table_lineage_base = (
-    table_lineage_base
-    .select("source_table", "target_table")
-    .distinct()
-    .cache()
-)
+# ============================================================
+# STEP 3: BFS DOWNSTREAM (forward direction) from ODS seeds
+#          Stop expanding a branch once it reaches a target schema
+# ============================================================
+all_hops = []
+visited = seed_keys
+current_frontier = seed_keys
+depth = 0
 
-# ------------------------------------------------------------
-# Recursive upstream walk using PySpark loop
-# ------------------------------------------------------------
+while depth < MAX_DEPTH:
+    depth += 1
 
-frontier = (
-    targets_df
-    .select(
-        F.col("downstream_schema"),
-        F.col("downstream_table"),
-        F.col("downstream_full_name"),
-        F.col("downstream_full_name").alias("current_table")
-    )
-    .withColumn("hop_depth", F.lit(0))
-    .withColumn("lineage_path", F.col("downstream_full_name"))
-)
-
-all_lineage = None
-
-for depth in range(1, MAX_DEPTH + 1):
-
-    next_level = (
-        frontier.alias("f")
-        .join(
-            table_lineage_base.alias("tl"),
-            F.col("f.current_table") == F.col("tl.target_table"),
-            "inner"
-        )
+    next_hop = (
+        current_frontier.alias("f")
+        .join(edges.alias("e"), F.col("f.node") == F.col("e.src"), "inner")
         .select(
-            F.col("f.downstream_schema"),
-            F.col("f.downstream_table"),
-            F.col("f.downstream_full_name"),
-            F.col("tl.source_table").alias("upstream_full_name"),
-            F.lit(depth).alias("hop_depth"),
-            F.concat(
-                F.col("tl.source_table"),
-                F.lit(" -> "),
-                F.col("f.lineage_path")
-            ).alias("lineage_path")
+            F.col("e.src").alias("src"),
+            F.col("e.tgt").alias("tgt"),
+            F.col("e.tgt_schema").alias("tgt_schema"),
+            F.col("e.source_type").alias("source_type"),
+            F.col("e.last_seen").alias("last_seen"),
+            F.lit(depth).alias("depth")
         )
-        .distinct()
     )
 
-    level_count = next_level.count()
-    print(f"Depth {depth}: {level_count} upstream rows")
-
-    if level_count == 0:
+    hop_count = next_hop.count()
+    if hop_count == 0:
+        print(f"Depth {depth}: no further downstream edges. Stopping.")
         break
 
-    all_lineage = next_level if all_lineage is None else all_lineage.unionByName(next_level).distinct()
+    all_hops.append(next_hop)
+    print(f"Depth {depth}: {hop_count} edges found")
 
-    frontier = (
-        next_level
-        .select(
-            "downstream_schema",
-            "downstream_table",
-            "downstream_full_name",
-            F.col("upstream_full_name").alias("current_table"),
-            "hop_depth",
-            "lineage_path"
-        )
-        .distinct()
+    # Don't expand further from nodes that already landed in a target schema
+    # (keeps the BFS from over-exploring past your area of interest)
+    not_yet_at_target = next_hop.filter(~F.col("tgt_schema").isin(TARGET_SCHEMAS))
+
+    new_frontier = (
+        not_yet_at_target.select(F.col("tgt").alias("node")).distinct()
+        .join(visited.select("node"), "node", "left_anti")   # cycle guard
     )
 
-if all_lineage is None:
-    all_lineage = spark.createDataFrame(
-        [],
-        """
-        downstream_schema STRING,
-        downstream_table STRING,
-        downstream_full_name STRING,
-        upstream_full_name STRING,
-        hop_depth INT,
-        lineage_path STRING
-        """
-    )
+    new_count = new_frontier.count()
+    if new_count == 0:
+        print(f"Depth {depth}: no new unvisited nodes to expand. Stopping.")
+        break
 
-# ------------------------------------------------------------
-# Filter only ODS views and split schema/table
-# ------------------------------------------------------------
+    visited = visited.union(new_frontier).distinct()
+    current_frontier = new_frontier
 
-ods_table_report = (
-    all_lineage
-    .where(F.col("upstream_full_name").contains(".ods_views."))
-    .withColumn("name_parts", F.split(F.col("upstream_full_name"), "\\."))
-    .withColumn("upstream_schema", F.col("name_parts")[1])
-    .withColumn("upstream_table", F.col("name_parts")[2])
-    .drop("name_parts")
-    .select(
-        "downstream_schema",
-        "downstream_table",
-        "downstream_full_name",
-        "upstream_schema",
-        "upstream_table",
-        "upstream_full_name",
-        "hop_depth",
-        "lineage_path"
-    )
+# Union all hops
+if all_hops:
+    full_table_lineage = all_hops[0]
+    for df in all_hops[1:]:
+        full_table_lineage = full_table_lineage.unionByName(df)
+else:
+    full_table_lineage = spark.createDataFrame([], edges.schema)
+
+full_table_lineage = full_table_lineage.dropDuplicates(["src", "tgt"])
+full_table_lineage.cache()
+print(f"Total table-level downstream edges: {full_table_lineage.count()}")
+
+# ============================================================
+# STEP 4: Keep only edges that are ON A PATH reaching TARGET_SCHEMAS
+#          (prunes noise — branches that dead-end elsewhere)
+# ============================================================
+hit_nodes = (
+    full_table_lineage
+    .filter(F.col("tgt_schema").isin(TARGET_SCHEMAS))
+    .select(F.col("tgt").alias("node"))
     .distinct()
-    .orderBy("downstream_schema", "downstream_table", "upstream_schema", "upstream_table")
 )
+print(f"Nodes landing in target schemas: {hit_nodes.count()}")
 
-display(ods_table_report)
+# Backward-prune: walk edges backward from hit_nodes to find contributing path nodes
+prune_frontier = hit_nodes
+path_nodes = hit_nodes
+for _ in range(MAX_DEPTH):
+    contributing = (
+        full_table_lineage.alias("e")
+        .join(prune_frontier.alias("p"), F.col("e.tgt") == F.col("p.node"), "inner")
+        .select(F.col("e.src").alias("node")).distinct()
+    )
+    new_nodes = contributing.join(path_nodes, "node", "left_anti")
+    if new_nodes.count() == 0:
+        break
+    path_nodes = path_nodes.union(new_nodes).distinct()
+    prune_frontier = new_nodes
 
-ods_table_report.write.mode("overwrite").saveAsTable(OUTPUT_TABLE_REPORT)
+pruned_lineage = full_table_lineage.join(
+    path_nodes.withColumnRenamed("node", "src"), "src", "inner"
+)
+pruned_lineage.cache()
+print(f"Pruned table-level edges (only paths reaching target schemas): {pruned_lineage.count()}")
 
-print(f"Saved table-level detailed report to {OUTPUT_TABLE_REPORT}")
+# ============================================================
+# STEP 5: Column-level lineage — scoped ONLY to nodes on the pruned path
+#          This is the perf win: column_lineage scan is filtered to a
+#          small IN-list instead of a full scan.
+# ============================================================
+relevant_tables = (
+    pruned_lineage.select("src").union(pruned_lineage.select("tgt"))
+    .distinct()
+    .rdd.map(lambda r: r[0]).collect()
+)
+print(f"Relevant tables for column-level scan: {len(relevant_tables)}")
 
-# ------------------------------------------------------------
-# Column-level lineage for direct ODS mappings
-# ------------------------------------------------------------
-
-column_lineage_base = (
+col_lineage_raw = (
     spark.table("system.access.column_lineage")
-    .select(
-        F.lower(F.col("source_table_full_name")).alias("upstream_full_name"),
-        F.col("source_column_name").alias("upstream_column"),
-        F.lower(F.col("target_table_full_name")).alias("downstream_full_name"),
-        F.col("target_column_name").alias("downstream_column"),
-        F.col("event_date")
-    )
-    .where(F.col("source_table_full_name").isNotNull())
-    .where(F.col("target_table_full_name").isNotNull())
+    .filter(F.col("event_date") >= F.date_sub(F.current_date(), LOOKBACK_DAYS))
 )
 
-if EVENT_LOOKBACK_DAYS is not None:
-    column_lineage_base = column_lineage_base.where(
-        F.col("event_date") >= F.date_sub(F.current_date(), EVENT_LOOKBACK_DAYS)
+col_edges = (
+    col_lineage_raw
+    .withColumn("src_tbl", F.lower(F.col("source_table_full_name")))
+    .withColumn("tgt_tbl", F.lower(F.col("target_table_full_name")))
+    .filter(F.col("src_tbl").isin(relevant_tables) | F.col("tgt_tbl").isin(relevant_tables))
+    .select(
+        "src_tbl", F.lower(F.col("source_column_name")).alias("src_col"),
+        "tgt_tbl", F.lower(F.col("target_column_name")).alias("tgt_col"),
+        "event_time"
     )
+    .groupBy("src_tbl", "src_col", "tgt_tbl", "tgt_col")
+    .agg(F.max("event_time").alias("last_seen"))
+)
 
-ods_column_report = (
-    column_lineage_base
+col_edges.cache()
+print(f"Scoped column-level edges: {col_edges.count()}")
+
+# ============================================================
+# STEP 6: Final combined output — table path + column detail
+# ============================================================
+final_result = (
+    pruned_lineage
     .join(
-        ods_table_report.select(
-            "downstream_schema",
-            "downstream_table",
-            "downstream_full_name",
-            "upstream_schema",
-            "upstream_table",
-            "upstream_full_name",
-            "hop_depth",
-            "lineage_path"
-        ),
-        ["downstream_full_name", "upstream_full_name"],
-        "inner"
+        col_edges,
+        (pruned_lineage.src == col_edges.src_tbl) & (pruned_lineage.tgt == col_edges.tgt_tbl),
+        "left"   # keep table-level rows even if column granularity absent
     )
     .select(
-        "downstream_schema",
-        "downstream_table",
-        "downstream_full_name",
-        "upstream_schema",
-        "upstream_table",
-        "upstream_full_name",
-        "upstream_column",
-        "downstream_column",
-        "hop_depth",
-        "lineage_path"
-    )
-    .distinct()
-    .orderBy(
-        "downstream_schema",
-        "downstream_table",
-        "upstream_schema",
-        "upstream_table",
-        "upstream_column"
+        pruned_lineage.src.alias("source_table"),
+        col_edges.src_col.alias("source_column"),
+        pruned_lineage.tgt.alias("target_table"),
+        pruned_lineage.tgt_schema.alias("target_schema"),
+        col_edges.tgt_col.alias("target_column"),
+        pruned_lineage.depth,
+        pruned_lineage.last_seen
     )
 )
 
-display(ods_column_report)
+display(final_result.orderBy("source_table", "depth"))
 
-ods_column_report.write.mode("overwrite").saveAsTable(OUTPUT_COLUMN_REPORT)
-
-print(f"Saved column-level detailed report to {OUTPUT_COLUMN_REPORT}")
-
-print("Completed.")
+final_result.write.mode("overwrite").saveAsTable(OUTPUT_TABLE)
+print(f"Saved to {OUTPUT_TABLE}")
