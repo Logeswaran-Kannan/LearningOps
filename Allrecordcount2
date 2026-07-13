@@ -1,9 +1,434 @@
-Just to clarify, the Guidewire S3 retention policy and the data available in the ODS tables are two different things.
+# Databricks notebook source
+"""
+Guidewire three-way DDL/schema-drift reconciliation.
 
-The 180-day retention configured by the Guidewire source team applies only to the source files stored in S3. After 180 days, those files are deleted from S3 and are no longer available for reprocessing.
+Compares production read replica (truth), test read replica, and CDA.
+Designed for Databricks serverless using Spark SQL/DataFrames only.
+"""
 
-The ODS is populated by our ingestion process. Once data is ingested into the ODS, it is not governed by the Guidewire S3 retention policy. As far as I'm aware, there is currently no ODS retention policy implemented on our side.
+from datetime import datetime, timezone
+import uuid
 
-Since this is the test environment, the earliest data you see in the ODS most likely reflects when ingestion into this environment started (or when the environment was initialized), rather than the 180-day S3 retention period.
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
-So, the absence of older data in the test ODS does not necessarily indicate that it was removed due to S3 retention. The S3 retention is managed by Guidewire and is outside the scope of our ingestion process.
+# COMMAND ----------
+# CONFIGURATION
+
+PROD_CATALOG = "core"
+PROD_SCHEMA = "ods_views"
+TEST_RR_CATALOG = "core_tst"
+TEST_RR_SCHEMA = "ods_views"
+CDA_CATALOG = "core_tst_std001"
+CDA_SCHEMA = "ods_views"
+
+RESULT_CATALOG = "core_tst_std001"
+RESULT_SCHEMA = "testing_sb"
+RUN_TABLE = "gw_ddl_reconciliation_run"
+TABLE_RESULT_TABLE = "gw_ddl_reconciliation_table"
+COLUMN_RESULT_TABLE = "gw_ddl_reconciliation_column"
+
+CDA_SUFFIX = "_cda"
+TABLE_PREFIXES = [
+    "vw_policycenter_current_p",
+    "vw_billingcenter_current_b",
+    "vw_claimcenter_current_c",
+]
+INCLUDE_ONLY_TABLES = []
+EXCLUDE_TABLES = []
+
+RUN_ID = str(uuid.uuid4())
+RUN_STARTED_AT = datetime.now(timezone.utc)
+
+
+def q(name: str) -> str:
+    return f"`{name.replace('`', '``')}`"
+
+
+def fqn(catalog: str, schema: str, table: str) -> str:
+    return f"{q(catalog)}.{q(schema)}.{q(table)}"
+
+
+def table_filter(col_name: str):
+    name = F.lower(F.col(col_name))
+    condition = None
+    for prefix in TABLE_PREFIXES:
+        current = name.startswith(prefix.lower())
+        condition = current if condition is None else condition | current
+    if INCLUDE_ONLY_TABLES:
+        condition = condition & name.isin([x.lower() for x in INCLUDE_ONLY_TABLES])
+    if EXCLUDE_TABLES:
+        condition = condition & (~name.isin([x.lower() for x in EXCLUDE_TABLES]))
+    return condition
+
+
+def domain_expr(col_name: str):
+    name = F.lower(F.col(col_name))
+    return (
+        F.when(name.startswith("vw_policycenter_current_p"), "POLICYCENTER")
+        .when(name.startswith("vw_billingcenter_current_b"), "BILLINGCENTER")
+        .when(name.startswith("vw_claimcenter_current_c"), "CLAIMCENTER")
+        .otherwise("UNKNOWN")
+    )
+
+
+def read_metadata(catalog: str, schema: str, environment: str, cda: bool = False):
+    tables = (
+        spark.table(f"{q(catalog)}.information_schema.tables")
+        .filter(F.lower("table_schema") == schema.lower())
+        .filter(F.col("table_type").isin("VIEW", "MANAGED", "EXTERNAL"))
+        .select(
+            F.lower("table_name").alias("physical_table_name"),
+            F.col("table_name").alias("physical_table_name_actual"),
+            "table_type",
+        )
+    )
+
+    if cda:
+        tables = (
+            tables
+            .filter(F.col("physical_table_name").endswith(CDA_SUFFIX.lower()))
+            .withColumn(
+                "base_table_name",
+                F.regexp_replace("physical_table_name", f"(?i){CDA_SUFFIX}$", ""),
+            )
+        )
+    else:
+        tables = tables.withColumn("base_table_name", F.col("physical_table_name"))
+
+    tables = (
+        tables
+        .filter(table_filter("base_table_name"))
+        .withColumn("environment", F.lit(environment))
+        .withColumn("domain", domain_expr("base_table_name"))
+    )
+
+    columns = (
+        spark.table(f"{q(catalog)}.information_schema.columns")
+        .filter(F.lower("table_schema") == schema.lower())
+        .select(
+            F.lower("table_name").alias("physical_table_name"),
+            F.lower("column_name").alias("column_name"),
+            F.col("column_name").alias("column_name_actual"),
+            F.col("ordinal_position").cast("int").alias("ordinal_position"),
+            "data_type",
+            "full_data_type",
+            "is_nullable",
+            "column_default",
+            F.col("comment").alias("column_comment"),
+        )
+        .join(
+            tables.select("physical_table_name", "base_table_name", "domain"),
+            "physical_table_name",
+            "inner",
+        )
+        .withColumn(
+            "normalized_data_type",
+            F.lower(
+                F.regexp_replace(
+                    F.trim(F.coalesce("full_data_type", "data_type")), r"\s+", ""
+                )
+            ),
+        )
+        .withColumn("environment", F.lit(environment))
+    )
+    return tables, columns
+
+
+prod_tables, prod_columns = read_metadata(PROD_CATALOG, PROD_SCHEMA, "PROD_RR")
+test_tables, test_columns = read_metadata(TEST_RR_CATALOG, TEST_RR_SCHEMA, "TEST_RR")
+cda_tables, cda_columns = read_metadata(CDA_CATALOG, CDA_SCHEMA, "CDA", cda=True)
+
+for df in [prod_tables, prod_columns, test_tables, test_columns, cda_tables, cda_columns]:
+    df.cache()
+
+# COMMAND ----------
+# TABLE PRESENCE
+
+table_universe = (
+    prod_tables.select("base_table_name", "domain")
+    .unionByName(test_tables.select("base_table_name", "domain"))
+    .unionByName(cda_tables.select("base_table_name", "domain"))
+    .groupBy("base_table_name")
+    .agg(F.first("domain", ignorenulls=True).alias("domain"))
+)
+
+table_presence = (
+    table_universe
+    .join(prod_tables.select(
+        "base_table_name",
+        F.lit(True).alias("prod_exists"),
+        F.col("physical_table_name_actual").alias("prod_table_name"),
+        F.col("table_type").alias("prod_table_type")), "base_table_name", "left")
+    .join(test_tables.select(
+        "base_table_name",
+        F.lit(True).alias("test_rr_exists"),
+        F.col("physical_table_name_actual").alias("test_rr_table_name"),
+        F.col("table_type").alias("test_rr_table_type")), "base_table_name", "left")
+    .join(cda_tables.select(
+        "base_table_name",
+        F.lit(True).alias("cda_exists"),
+        F.col("physical_table_name_actual").alias("cda_table_name"),
+        F.col("table_type").alias("cda_table_type")), "base_table_name", "left")
+    .fillna({"prod_exists": False, "test_rr_exists": False, "cda_exists": False})
+)
+
+# COMMAND ----------
+# COLUMN PRESENCE AND TYPE DRIFT
+
+def prep(df, prefix):
+    return df.select(
+        "base_table_name", "column_name",
+        F.col("column_name_actual").alias(f"{prefix}_column_name_actual"),
+        F.col("ordinal_position").alias(f"{prefix}_ordinal_position"),
+        F.col("data_type").alias(f"{prefix}_data_type"),
+        F.col("full_data_type").alias(f"{prefix}_full_data_type"),
+        F.col("normalized_data_type").alias(f"{prefix}_normalized_data_type"),
+        F.col("is_nullable").alias(f"{prefix}_is_nullable"),
+        F.lit(True).alias(f"{prefix}_column_exists"),
+    )
+
+column_keys = (
+    prod_columns.select("base_table_name", "column_name")
+    .unionByName(test_columns.select("base_table_name", "column_name"))
+    .unionByName(cda_columns.select("base_table_name", "column_name"))
+    .distinct()
+)
+
+column_result = (
+    column_keys
+    .join(prep(prod_columns, "prod"), ["base_table_name", "column_name"], "left")
+    .join(prep(test_columns, "test_rr"), ["base_table_name", "column_name"], "left")
+    .join(prep(cda_columns, "cda"), ["base_table_name", "column_name"], "left")
+    .join(table_universe, "base_table_name", "left")
+    .fillna({"prod_column_exists": False, "test_rr_column_exists": False, "cda_column_exists": False})
+)
+
+all_exist = F.col("prod_column_exists") & F.col("test_rr_column_exists") & F.col("cda_column_exists")
+prod_test_type_equal = F.col("prod_normalized_data_type") == F.col("test_rr_normalized_data_type")
+prod_cda_type_equal = F.col("prod_normalized_data_type") == F.col("cda_normalized_data_type")
+
+column_result = (
+    column_result
+    .withColumn(
+        "drift_category",
+        F.when(F.col("prod_column_exists") & ~F.col("test_rr_column_exists") & ~F.col("cda_column_exists"), "MISSING_IN_TEST_RR_AND_CDA")
+        .when(F.col("prod_column_exists") & ~F.col("test_rr_column_exists"), "MISSING_IN_TEST_RR")
+        .when(F.col("prod_column_exists") & ~F.col("cda_column_exists"), "MISSING_IN_CDA")
+        .when(~F.col("prod_column_exists") & F.col("test_rr_column_exists") & F.col("cda_column_exists"), "ADDITIONAL_IN_TEST_RR_AND_CDA")
+        .when(~F.col("prod_column_exists") & F.col("test_rr_column_exists"), "ADDITIONAL_IN_TEST_RR_ONLY")
+        .when(~F.col("prod_column_exists") & F.col("cda_column_exists"), "ADDITIONAL_IN_CDA_ONLY")
+        .when(all_exist & ~prod_test_type_equal & ~prod_cda_type_equal, "DATATYPE_CHANGED_IN_TEST_RR_AND_CDA")
+        .when(all_exist & ~prod_test_type_equal, "DATATYPE_CHANGED_IN_TEST_RR")
+        .when(all_exist & ~prod_cda_type_equal, "DATATYPE_CHANGED_IN_CDA")
+        .when(all_exist & (F.col("prod_is_nullable") != F.col("test_rr_is_nullable")) & (F.col("prod_is_nullable") != F.col("cda_is_nullable")), "NULLABILITY_CHANGED_IN_TEST_RR_AND_CDA")
+        .when(all_exist & (F.col("prod_is_nullable") != F.col("test_rr_is_nullable")), "NULLABILITY_CHANGED_IN_TEST_RR")
+        .when(all_exist & (F.col("prod_is_nullable") != F.col("cda_is_nullable")), "NULLABILITY_CHANGED_IN_CDA")
+        .when(all_exist & (F.col("prod_ordinal_position") != F.col("test_rr_ordinal_position")) & (F.col("prod_ordinal_position") != F.col("cda_ordinal_position")), "COLUMN_ORDER_CHANGED_IN_TEST_RR_AND_CDA")
+        .when(all_exist & (F.col("prod_ordinal_position") != F.col("test_rr_ordinal_position")), "COLUMN_ORDER_CHANGED_IN_TEST_RR")
+        .when(all_exist & (F.col("prod_ordinal_position") != F.col("cda_ordinal_position")), "COLUMN_ORDER_CHANGED_IN_CDA")
+        .otherwise("MATCH"),
+    )
+    .withColumn(
+        "severity",
+        F.when(F.col("drift_category") == "MATCH", "PASS")
+        .when(F.col("drift_category").startswith("COLUMN_ORDER_CHANGED"), "WARNING")
+        .otherwise("FAIL"),
+    )
+    .withColumn(
+        "comment",
+        F.when(F.col("drift_category") == "MATCH", "Column matches production truth in all three environments.")
+        .when(F.col("drift_category") == "MISSING_IN_TEST_RR_AND_CDA", "Production-truth column is missing from both test read replica and CDA.")
+        .when(F.col("drift_category") == "MISSING_IN_TEST_RR", "Production-truth column is missing from test read replica.")
+        .when(F.col("drift_category") == "MISSING_IN_CDA", "Production-truth column is missing from CDA.")
+        .when(F.col("drift_category") == "ADDITIONAL_IN_TEST_RR_AND_CDA", "Column is absent from production truth but exists in both test read replica and CDA.")
+        .when(F.col("drift_category") == "ADDITIONAL_IN_TEST_RR_ONLY", "Column exists only in test read replica.")
+        .when(F.col("drift_category") == "ADDITIONAL_IN_CDA_ONLY", "Column exists only in CDA.")
+        .when(F.col("drift_category").startswith("DATATYPE_CHANGED"), F.concat(
+            F.lit("Datatype drift. PROD="), F.coalesce("prod_full_data_type", F.lit("<missing>")),
+            F.lit(", TEST_RR="), F.coalesce("test_rr_full_data_type", F.lit("<missing>")),
+            F.lit(", CDA="), F.coalesce("cda_full_data_type", F.lit("<missing>")), F.lit(".")))
+        .when(F.col("drift_category").startswith("NULLABILITY_CHANGED"), F.concat(
+            F.lit("Nullability drift. PROD="), F.coalesce("prod_is_nullable", F.lit("<missing>")),
+            F.lit(", TEST_RR="), F.coalesce("test_rr_is_nullable", F.lit("<missing>")),
+            F.lit(", CDA="), F.coalesce("cda_is_nullable", F.lit("<missing>")), F.lit(".")))
+        .when(F.col("drift_category").startswith("COLUMN_ORDER_CHANGED"), F.concat(
+            F.lit("Column order drift. PROD="), F.coalesce(F.col("prod_ordinal_position").cast("string"), F.lit("<missing>")),
+            F.lit(", TEST_RR="), F.coalesce(F.col("test_rr_ordinal_position").cast("string"), F.lit("<missing>")),
+            F.lit(", CDA="), F.coalesce(F.col("cda_ordinal_position").cast("string"), F.lit("<missing>")), F.lit(".")))
+        .otherwise("Unclassified schema drift."),
+    )
+    .withColumn("run_id", F.lit(RUN_ID))
+    .withColumn("reconciled_at", F.current_timestamp())
+)
+
+# COMMAND ----------
+# TABLE SUMMARY
+
+column_summary = (
+    column_result.groupBy("base_table_name", "domain")
+    .agg(
+        F.count("*").alias("union_column_count"),
+        F.sum(F.when(F.col("severity") == "FAIL", 1).otherwise(0)).alias("failed_column_count"),
+        F.sum(F.when(F.col("severity") == "WARNING", 1).otherwise(0)).alias("warning_column_count"),
+        F.sum(F.when(F.col("drift_category") == "MATCH", 1).otherwise(0)).alias("matching_column_count"),
+        F.sort_array(F.collect_set(F.when(F.col("drift_category") != "MATCH", F.col("drift_category")))).alias("drift_categories"),
+        F.sort_array(F.collect_set(F.when(F.col("severity") == "FAIL", F.col("column_name")))).alias("failed_columns"),
+    )
+)
+
+counts = (
+    prod_columns.groupBy("base_table_name").agg(F.count("*").alias("prod_column_count"))
+    .join(test_columns.groupBy("base_table_name").agg(F.count("*").alias("test_rr_column_count")), "base_table_name", "full")
+    .join(cda_columns.groupBy("base_table_name").agg(F.count("*").alias("cda_column_count")), "base_table_name", "full")
+)
+
+table_result = (
+    table_presence
+    .join(column_summary, ["base_table_name", "domain"], "left")
+    .join(counts, "base_table_name", "left")
+    .fillna({
+        "prod_column_count": 0, "test_rr_column_count": 0, "cda_column_count": 0,
+        "union_column_count": 0, "failed_column_count": 0,
+        "warning_column_count": 0, "matching_column_count": 0,
+    })
+    .withColumn(
+        "table_drift_category",
+        F.when(~F.col("prod_exists") & F.col("test_rr_exists") & F.col("cda_exists"), "TABLE_ADDITIONAL_IN_TEST_RR_AND_CDA")
+        .when(~F.col("prod_exists") & F.col("test_rr_exists"), "TABLE_ADDITIONAL_IN_TEST_RR_ONLY")
+        .when(~F.col("prod_exists") & F.col("cda_exists"), "TABLE_ADDITIONAL_IN_CDA_ONLY")
+        .when(F.col("prod_exists") & ~F.col("test_rr_exists") & ~F.col("cda_exists"), "TABLE_MISSING_IN_TEST_RR_AND_CDA")
+        .when(F.col("prod_exists") & ~F.col("test_rr_exists"), "TABLE_MISSING_IN_TEST_RR")
+        .when(F.col("prod_exists") & ~F.col("cda_exists"), "TABLE_MISSING_IN_CDA")
+        .when(F.col("failed_column_count") > 0, "COLUMN_SCHEMA_DRIFT")
+        .when(F.col("warning_column_count") > 0, "COLUMN_ORDER_DRIFT")
+        .otherwise("MATCH"),
+    )
+    .withColumn(
+        "status",
+        F.when(F.col("table_drift_category") == "MATCH", "PASS")
+        .when(F.col("table_drift_category") == "COLUMN_ORDER_DRIFT", "WARNING")
+        .otherwise("FAIL"),
+    )
+    .withColumn(
+        "comment",
+        F.when(F.col("table_drift_category") == "MATCH", "Table exists in all three environments and schema matches production truth.")
+        .when(F.col("table_drift_category") == "TABLE_MISSING_IN_TEST_RR_AND_CDA", "Production-truth table is missing from both test read replica and CDA.")
+        .when(F.col("table_drift_category") == "TABLE_MISSING_IN_TEST_RR", "Production-truth table is missing from test read replica.")
+        .when(F.col("table_drift_category") == "TABLE_MISSING_IN_CDA", "Production-truth table is missing from CDA.")
+        .when(F.col("table_drift_category") == "TABLE_ADDITIONAL_IN_TEST_RR_AND_CDA", "Table is not in production truth but exists in both test read replica and CDA.")
+        .when(F.col("table_drift_category") == "TABLE_ADDITIONAL_IN_TEST_RR_ONLY", "Table exists only in test read replica.")
+        .when(F.col("table_drift_category") == "TABLE_ADDITIONAL_IN_CDA_ONLY", "Table exists only in CDA.")
+        .when(F.col("table_drift_category") == "COLUMN_SCHEMA_DRIFT", F.concat(
+            F.lit("Schema drift in "), F.col("failed_column_count").cast("string"),
+            F.lit(" column(s). Categories: "), F.concat_ws(", ", "drift_categories"),
+            F.lit(". Columns: "), F.concat_ws(", ", "failed_columns"), F.lit(".")))
+        .when(F.col("table_drift_category") == "COLUMN_ORDER_DRIFT", "Only column ordinal position differs; no missing column or datatype drift.")
+        .otherwise("Unclassified table schema drift."),
+    )
+    .withColumn("run_id", F.lit(RUN_ID))
+    .withColumn("reconciled_at", F.current_timestamp())
+)
+
+# COMMAND ----------
+# PERSIST RESULTS
+
+RESULT_NAMESPACE = f"{q(RESULT_CATALOG)}.{q(RESULT_SCHEMA)}"
+RUN_FQN = fqn(RESULT_CATALOG, RESULT_SCHEMA, RUN_TABLE)
+TABLE_FQN = fqn(RESULT_CATALOG, RESULT_SCHEMA, TABLE_RESULT_TABLE)
+COLUMN_FQN = fqn(RESULT_CATALOG, RESULT_SCHEMA, COLUMN_RESULT_TABLE)
+
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {RESULT_NAMESPACE}")
+
+TABLE_COLUMNS = [
+    "run_id", "reconciled_at", "domain", "base_table_name",
+    "prod_table_name", "test_rr_table_name", "cda_table_name",
+    "prod_exists", "test_rr_exists", "cda_exists",
+    "prod_table_type", "test_rr_table_type", "cda_table_type",
+    "prod_column_count", "test_rr_column_count", "cda_column_count",
+    "union_column_count", "matching_column_count", "failed_column_count",
+    "warning_column_count", "table_drift_category", "status",
+    "drift_categories", "failed_columns", "comment",
+]
+
+COLUMN_COLUMNS = [
+    "run_id", "reconciled_at", "domain", "base_table_name", "column_name",
+    "prod_column_exists", "test_rr_column_exists", "cda_column_exists",
+    "prod_column_name_actual", "test_rr_column_name_actual", "cda_column_name_actual",
+    "prod_ordinal_position", "test_rr_ordinal_position", "cda_ordinal_position",
+    "prod_data_type", "test_rr_data_type", "cda_data_type",
+    "prod_full_data_type", "test_rr_full_data_type", "cda_full_data_type",
+    "prod_is_nullable", "test_rr_is_nullable", "cda_is_nullable",
+    "drift_category", "severity", "comment",
+]
+
+(table_result.select(*TABLE_COLUMNS).limit(0).write.format("delta").mode("ignore").saveAsTable(TABLE_FQN))
+(column_result.select(*COLUMN_COLUMNS).limit(0).write.format("delta").mode("ignore").saveAsTable(COLUMN_FQN))
+
+RUN_SCHEMA = T.StructType([
+    T.StructField("run_id", T.StringType(), False),
+    T.StructField("run_status", T.StringType(), False),
+    T.StructField("tables_compared", T.LongType(), False),
+    T.StructField("tables_passed", T.LongType(), False),
+    T.StructField("tables_warned", T.LongType(), False),
+    T.StructField("tables_failed", T.LongType(), False),
+    T.StructField("column_drift_records", T.LongType(), False),
+    T.StructField("started_at", T.TimestampType(), False),
+    T.StructField("completed_at", T.TimestampType(), False),
+    T.StructField("duration_seconds", T.DoubleType(), False),
+])
+(spark.createDataFrame([], RUN_SCHEMA).write.format("delta").mode("ignore").saveAsTable(RUN_FQN))
+
+(table_result.select(*TABLE_COLUMNS).write.format("delta").mode("append").saveAsTable(TABLE_FQN))
+
+column_drift = column_result.filter(F.col("drift_category") != "MATCH")
+(column_drift.select(*COLUMN_COLUMNS).write.format("delta").mode("append").saveAsTable(COLUMN_FQN))
+
+summary = table_result.agg(
+    F.count("*").alias("tables_compared"),
+    F.sum(F.when(F.col("status") == "PASS", 1).otherwise(0)).alias("tables_passed"),
+    F.sum(F.when(F.col("status") == "WARNING", 1).otherwise(0)).alias("tables_warned"),
+    F.sum(F.when(F.col("status") == "FAIL", 1).otherwise(0)).alias("tables_failed"),
+).first()
+
+column_drift_count = column_drift.count()
+completed_at = datetime.now(timezone.utc)
+run_status = "FAIL" if summary["tables_failed"] else ("WARNING" if summary["tables_warned"] else "PASS")
+
+run_row = [{
+    "run_id": RUN_ID,
+    "run_status": run_status,
+    "tables_compared": int(summary["tables_compared"]),
+    "tables_passed": int(summary["tables_passed"]),
+    "tables_warned": int(summary["tables_warned"]),
+    "tables_failed": int(summary["tables_failed"]),
+    "column_drift_records": int(column_drift_count),
+    "started_at": RUN_STARTED_AT,
+    "completed_at": completed_at,
+    "duration_seconds": (completed_at - RUN_STARTED_AT).total_seconds(),
+}]
+(spark.createDataFrame(run_row, RUN_SCHEMA).write.format("delta").mode("append").saveAsTable(RUN_FQN))
+
+print(f"Run ID: {RUN_ID}")
+print(f"Status: {run_status}")
+print(f"Tables compared: {summary['tables_compared']}")
+print(f"Passed: {summary['tables_passed']}")
+print(f"Warnings: {summary['tables_warned']}")
+print(f"Failed: {summary['tables_failed']}")
+print(f"Column drift records: {column_drift_count}")
+
+# COMMAND ----------
+# CURRENT-RUN REPORTS
+
+display(
+    spark.table(TABLE_FQN)
+    .filter(F.col("run_id") == RUN_ID)
+    .filter(F.col("status") != "PASS")
+    .orderBy("domain", "base_table_name")
+)
+
+display(
+    spark.table(COLUMN_FQN)
+    .filter(F.col("run_id") == RUN_ID)
+    .orderBy("domain", "base_table_name", "prod_ordinal_position", "column_name")
+)
