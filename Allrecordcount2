@@ -1,11 +1,3 @@
-# Databricks notebook source
-"""
-Guidewire three-way DDL/schema-drift reconciliation.
-
-Compares production read replica (truth), test read replica, and CDA.
-Designed for Databricks serverless using Spark SQL/DataFrames only.
-"""
-
 from datetime import datetime, timezone
 import uuid
 
