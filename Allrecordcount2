@@ -1,3 +1,11 @@
+# Databricks notebook source
+"""
+Guidewire three-way DDL/schema-drift reconciliation.
+
+Compares production read replica (truth), test read replica, and CDA.
+Designed for Databricks serverless using Spark SQL/DataFrames only.
+"""
+
 from datetime import datetime, timezone
 import uuid
 
@@ -131,8 +139,6 @@ prod_tables, prod_columns = read_metadata(PROD_CATALOG, PROD_SCHEMA, "PROD_RR")
 test_tables, test_columns = read_metadata(TEST_RR_CATALOG, TEST_RR_SCHEMA, "TEST_RR")
 cda_tables, cda_columns = read_metadata(CDA_CATALOG, CDA_SCHEMA, "CDA", cda=True)
 
-for df in [prod_tables, prod_columns, test_tables, test_columns, cda_tables, cda_columns]:
-    df.cache()
 
 # COMMAND ----------
 # TABLE PRESENCE
