@@ -1,3 +1,493 @@
-Thanks for the update, Hazel.
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Guidewire ODS — Three-Way DDL / Schema Drift Reconciliation
+# MAGIC **Read Replica PROD (`core`, production truth) vs Read Replica TST (`core_tst`) vs CDA (`core_tst_std001`)**
+# MAGIC
+# MAGIC Scope: **schema/DDL only** — no row data is read. Data reconciliation is a
+# MAGIC separate script by design (keeps this one fast, cheap, and safe to run
+# MAGIC daily on serverless compute against ~2,000 tables).
+# MAGIC
+# MAGIC ### Why this is fast at 2K-table scale
+# MAGIC Instead of calling `spark.table(...)` / `DESCRIBE` per table (thousands of
+# MAGIC individual catalog lookups), this pulls the **entire column list for all
+# MAGIC matching tables in one query per catalog** from
+# MAGIC `<catalog>.information_schema.columns`. That's 3 SQL queries total for the
+# MAGIC whole run, no matter whether you have 30 tables or 3,000. Everything after
+# MAGIC that is pure in-memory Python dict comparison on the driver — no data
+# MAGIC scanning, no shuffles, no RDD API, no cluster-specific config. This runs
+# MAGIC cleanly on **serverless compute**.
+# MAGIC
+# MAGIC ### Three-way logic
+# MAGIC - **PROD (`core`) is the source of truth.**
+# MAGIC - **TST (`core_tst`) is also Read Replica** and is manually schema-controlled
+# MAGIC   like PROD, so *any* difference from PROD is unexpected → treated as a
+# MAGIC   **FAIL**.
+# MAGIC - **CDA (`core_tst_std001`, `_cda` suffix)** is allowed to drift by design.
+# MAGIC   Extra columns are a **WARN**; a column *missing* from CDA that exists in
+# MAGIC   PROD, or a datatype conflict, is a **FAIL** (breaking, not just drift).
 
-We've given him a basic knowledge transfer session and asked him to familiarise himself with the overall architecture. As soon as he receives the required access, I've asked him to let me know, and I'll pass the information on to Tarun.
+# COMMAND ----------
+import json
+import logging
+import sys
+import uuid
+from collections import OrderedDict, Counter
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+from pyspark.sql.types import (
+    StructType, StructField, StringType, LongType, BooleanType, TimestampType
+)
+
+# COMMAND ----------
+# MAGIC %md ## 1. Configuration
+
+# COMMAND ----------
+@dataclass
+class DDLReconConfig:
+    # -- Three sources ------------------------------------------------------------
+    prod_catalog: str = "core"              # Read Replica PROD -- production truth
+    tst_catalog: str = "core_tst"           # Read Replica TST
+    cda_catalog: str = "core_tst_std001"    # CDA
+    prod_schema: str = "ods_views"
+    tst_schema: str = "ods_views"
+    cda_schema: str = "ods_views"
+    cda_table_suffix: str = "_cda"
+
+    # -- Table name filter (naming pattern) ----------------------------------------
+    # Domain -> table-name prefix. PROD and TST use the bare name; CDA is the
+    # same bare name + cda_table_suffix. Add domains here to extend coverage --
+    # no other code changes needed.
+    domain_prefixes: Dict[str, str] = field(default_factory=lambda: {
+        "policycenter": "vw_policycenter_current_p",
+        "billingcenter": "vw_billingcenter_current_b",
+        "claimcenter": "vw_claimcenter_current_c",
+    })
+
+    # Columns known to exist only in CDA by design (CDC metadata) -- never
+    # reported as drift.
+    cda_only_expected_columns: List[str] = field(default_factory=lambda: ["gwcbi___operation"])
+
+    # Loosen cosmetic type differences (e.g. varchar(n) vs string) that Unity
+    # Catalog metadata may report differently without being a real conflict.
+    normalize_types: bool = True
+
+    # -- Output ---------------------------------------------------------------------
+    output_catalog: str = "core_tst_std001"
+    output_schema: str = "testing_sb"
+    output_table: str = "gw_ddl_schema_drift_summary"
+    write_results: bool = True
+    results_mode: str = "append"   # append preserves daily history for trending
+
+    # -- Resilience -------------------------------------------------------------------
+    fail_run_if_error_rate_above: Optional[float] = None
+
+    def prod_schema_fqn(self) -> str:
+        return f"{self.prod_catalog}.{self.prod_schema}"
+
+    def tst_schema_fqn(self) -> str:
+        return f"{self.tst_catalog}.{self.tst_schema}"
+
+    def cda_schema_fqn(self) -> str:
+        return f"{self.cda_catalog}.{self.cda_schema}"
+
+    def output_table_fqn(self) -> str:
+        return f"{self.output_catalog}.{self.output_schema}.{self.output_table}"
+
+
+# COMMAND ----------
+# MAGIC %md ## 2. Logging
+
+# COMMAND ----------
+def get_logger(name: str = "gw_ddl_reconciliation") -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    return logger
+
+
+logger = get_logger()
+
+# COMMAND ----------
+# MAGIC %md ## 3. Bulk metadata fetch
+# MAGIC One `information_schema.columns` query per catalog, filtered by the
+# MAGIC configured naming pattern(s) at the SQL layer (`LIKE`) so we never pull
+# MAGIC more metadata than needed. Views and tables both show up here in Unity
+# MAGIC Catalog, so this works for the `vw_*` ODS views directly.
+
+# COMMAND ----------
+@dataclass
+class ColumnMeta:
+    data_type: str
+    is_nullable: bool
+    ordinal_position: int
+
+
+def _normalize_type(dtype: str, normalize: bool) -> str:
+    dtype = (dtype or "").lower().strip()
+    if not normalize:
+        return dtype
+    if dtype.startswith("varchar") or dtype.startswith("char"):
+        return "string"
+    if dtype.startswith("decimal") or dtype.startswith("numeric"):
+        return "decimal"  # ignore precision/scale drift; still catches decimal vs string etc.
+    return dtype
+
+
+def fetch_catalog_columns(spark, catalog: str, schema: str, prefixes: List[str],
+                           normalize_types: bool) -> Dict[str, "OrderedDict[str, ColumnMeta]"]:
+    """
+    Returns { table_name_lower: OrderedDict(column_name_lower -> ColumnMeta) }
+    for every table/view in catalog.schema whose name starts with any of the
+    given prefixes. Single metadata-only query -- no data is scanned.
+    """
+    prefix_conditions = " OR ".join(f"lower(table_name) LIKE '{p.lower()}%'" for p in prefixes)
+    query = f"""
+        SELECT lower(table_name) AS table_name, lower(column_name) AS column_name,
+               data_type, is_nullable, ordinal_position
+        FROM {catalog}.information_schema.columns
+        WHERE lower(table_schema) = lower('{schema}')
+          AND ({prefix_conditions})
+        ORDER BY table_name, ordinal_position
+    """
+    try:
+        rows = spark.sql(query).collect()
+    except Exception as e:
+        logger.error(f"Metadata fetch failed for {catalog}.{schema}: {e!r}")
+        return {}
+
+    result: Dict[str, "OrderedDict[str, ColumnMeta]"] = {}
+    for r in rows:
+        table_cols = result.setdefault(r["table_name"], OrderedDict())
+        table_cols[r["column_name"]] = ColumnMeta(
+            data_type=_normalize_type(r["data_type"], normalize_types),
+            is_nullable=(str(r["is_nullable"]).upper() == "YES"),
+            ordinal_position=r["ordinal_position"],
+        )
+    logger.info(f"{catalog}.{schema}: fetched metadata for {len(result)} table(s)")
+    return result
+
+
+# COMMAND ----------
+# MAGIC %md ## 4. Pairwise column comparison
+
+# COMMAND ----------
+@dataclass
+class PairComparison:
+    label: str                      # "TST" or "CDA"
+    exists_in_other: bool
+    missing_columns: List[str] = field(default_factory=list)      # in baseline (PROD), absent in other
+    additional_columns: List[str] = field(default_factory=list)   # in other, absent in baseline
+    datatype_mismatches: List[Tuple[str, str, str]] = field(default_factory=list)   # (col, prod_type, other_type)
+    nullability_mismatches: List[Tuple[str, bool, bool]] = field(default_factory=list)
+
+
+def compare_pair(baseline_cols: Dict[str, ColumnMeta], other_cols: Optional[Dict[str, ColumnMeta]],
+                  label: str, ignore_columns: Optional[set] = None) -> PairComparison:
+    ignore_columns = ignore_columns or set()
+    result = PairComparison(label=label, exists_in_other=other_cols is not None)
+    if other_cols is None:
+        return result
+
+    baseline_names = set(baseline_cols) - ignore_columns
+    other_names = set(other_cols) - ignore_columns
+
+    result.missing_columns = sorted(baseline_names - other_names)
+    result.additional_columns = sorted(other_names - baseline_names)
+
+    for col in sorted(baseline_names & other_names):
+        b, o = baseline_cols[col], other_cols[col]
+        if b.data_type != o.data_type:
+            result.datatype_mismatches.append((col, b.data_type, o.data_type))
+        if b.is_nullable != o.is_nullable:
+            result.nullability_mismatches.append((col, b.is_nullable, o.is_nullable))
+    return result
+
+
+# COMMAND ----------
+# MAGIC %md ## 5. Comment builder & status logic
+# MAGIC `comments` spells out every scenario explicitly: missing table, missing
+# MAGIC column, additional column, datatype change, nullability change -- tagged
+# MAGIC by which comparison (TST or CDA) it came from, ready for defect triage.
+
+# COMMAND ----------
+def _fmt_cols(cols: List[str]) -> str:
+    return ", ".join(c.upper() for c in cols) if cols else ""
+
+
+def _fmt_type_mismatches(items: List[Tuple[str, str, str]], prod_label: str, other_label: str) -> str:
+    return "; ".join(f"{c.upper()}: {prod_label}={p} vs {other_label}={o}" for c, p, o in items) if items else ""
+
+
+def _fmt_null_mismatches(items: List[Tuple[str, bool, bool]], prod_label: str, other_label: str) -> str:
+    return "; ".join(f"{c.upper()}: {prod_label}_nullable={p} vs {other_label}_nullable={o}" for c, p, o in items) if items else ""
+
+
+def _pair_comments(cmp: PairComparison, table_missing_msg: str) -> Tuple[List[str], str]:
+    """Returns (list_of_finding_texts, severity) where severity is FAIL/WARN/PASS/NA."""
+    if not cmp.exists_in_other:
+        return [table_missing_msg], "FAIL"
+
+    findings = []
+    severity = "PASS"
+
+    if cmp.missing_columns:
+        findings.append(f"[{cmp.label}] Missing column(s) (present in PROD, absent here): {_fmt_cols(cmp.missing_columns)}.")
+        severity = "FAIL"
+    if cmp.datatype_mismatches:
+        findings.append(f"[{cmp.label}] Datatype mismatch: {_fmt_type_mismatches(cmp.datatype_mismatches, 'PROD', cmp.label)}.")
+        severity = "FAIL"
+    if cmp.additional_columns:
+        tag = "allowed drift" if cmp.label == "CDA" else "unexpected -- TST should mirror PROD DDL"
+        findings.append(f"[{cmp.label}] Additional column(s) ({tag}): {_fmt_cols(cmp.additional_columns)}.")
+        if cmp.label != "CDA":
+            severity = "FAIL"
+        elif severity == "PASS":
+            severity = "WARN"
+    if cmp.nullability_mismatches:
+        findings.append(f"[{cmp.label}] Nullability differs: {_fmt_null_mismatches(cmp.nullability_mismatches, 'PROD', cmp.label)}.")
+        if severity == "PASS":
+            severity = "WARN"
+
+    if not findings:
+        findings.append(f"[{cmp.label}] Schema matches PROD exactly.")
+    return findings, severity
+
+
+_SEVERITY_RANK = {"PASS": 0, "WARN": 1, "FAIL": 2, "ERROR": 3}
+
+
+def _worse(a: str, b: str) -> str:
+    return a if _SEVERITY_RANK[a] >= _SEVERITY_RANK[b] else b
+
+
+# COMMAND ----------
+# MAGIC %md ## 6. Orchestrator
+
+# COMMAND ----------
+RESULT_SCHEMA = StructType([
+    StructField("run_id", StringType()),
+    StructField("run_timestamp", TimestampType()),
+    StructField("domain", StringType()),
+    StructField("table_base_name", StringType()),
+    StructField("prod_table", StringType()),
+    StructField("tst_table", StringType()),
+    StructField("cda_table", StringType()),
+    StructField("exists_in_prod", BooleanType()),
+    StructField("exists_in_tst", BooleanType()),
+    StructField("exists_in_cda", BooleanType()),
+    StructField("tst_vs_prod_status", StringType()),      # PASS | WARN | FAIL | N/A
+    StructField("cda_vs_prod_status", StringType()),      # PASS | WARN | FAIL | N/A
+    StructField("tst_missing_columns", StringType()),
+    StructField("tst_additional_columns", StringType()),
+    StructField("tst_datatype_mismatches", StringType()),
+    StructField("cda_missing_columns", StringType()),
+    StructField("cda_additional_columns", StringType()),
+    StructField("cda_datatype_mismatches", StringType()),
+    StructField("overall_status", StringType()),          # PASS | WARN | FAIL | ERROR
+    StructField("comments", StringType()),
+])
+
+
+def _build_table_row(domain: str, base_name: str, config: DDLReconConfig,
+                      prod_meta: Dict, tst_meta: Dict, cda_meta: Dict,
+                      run_id: str, run_ts) -> dict:
+    prod_cols = prod_meta.get(base_name)
+    tst_cols = tst_meta.get(base_name)
+    cda_table_name = f"{base_name}{config.cda_table_suffix}"
+    cda_cols = cda_meta.get(cda_table_name)
+
+    exists_prod, exists_tst, exists_cda = prod_cols is not None, tst_cols is not None, cda_cols is not None
+
+    row = dict(
+        run_id=run_id, run_timestamp=run_ts, domain=domain, table_base_name=base_name,
+        prod_table=base_name if exists_prod else None,
+        tst_table=base_name if exists_tst else None,
+        cda_table=cda_table_name if exists_cda else None,
+        exists_in_prod=exists_prod, exists_in_tst=exists_tst, exists_in_cda=exists_cda,
+    )
+
+    if not exists_prod:
+        # PROD is the production truth baseline. If it's absent there but
+        # present downstream, that's a "table not yet promoted / orphaned"
+        # scenario -- flagged, not compared column-by-column.
+        present_elsewhere = []
+        if exists_tst:
+            present_elsewhere.append("TST")
+        if exists_cda:
+            present_elsewhere.append("CDA")
+        comment = (f"Table not found in PROD (production truth) but exists in: {', '.join(present_elsewhere)}. "
+                   f"Cannot perform column-level comparison without a PROD baseline.") if present_elsewhere else \
+                  "Table not found in PROD, TST, or CDA (unexpected -- check naming pattern / discovery filter)."
+        row.update(
+            tst_vs_prod_status="N/A", cda_vs_prod_status="N/A",
+            tst_missing_columns=None, tst_additional_columns=None, tst_datatype_mismatches=None,
+            cda_missing_columns=None, cda_additional_columns=None, cda_datatype_mismatches=None,
+            overall_status="WARN", comments=comment,
+        )
+        return row
+
+    ignore = {c.lower() for c in config.cda_only_expected_columns}
+    tst_cmp = compare_pair(prod_cols, tst_cols, "TST")
+    cda_cmp = compare_pair(prod_cols, cda_cols, "CDA", ignore_columns=ignore)
+
+    tst_findings, tst_sev = _pair_comments(tst_cmp, "[TST] Table missing in Read Replica TST (unexpected -- PROD and TST should mirror each other).")
+    cda_findings, cda_sev = _pair_comments(cda_cmp, f"[CDA] Table missing in CDA (expected name: {cda_table_name.upper()}).")
+
+    overall = _worse(tst_sev, cda_sev)
+    comments = " ".join(tst_findings + cda_findings)
+
+    row.update(
+        tst_vs_prod_status=tst_sev, cda_vs_prod_status=cda_sev,
+        tst_missing_columns=_fmt_cols(tst_cmp.missing_columns) if exists_tst else None,
+        tst_additional_columns=_fmt_cols(tst_cmp.additional_columns) if exists_tst else None,
+        tst_datatype_mismatches=_fmt_type_mismatches(tst_cmp.datatype_mismatches, "PROD", "TST") if exists_tst else None,
+        cda_missing_columns=_fmt_cols(cda_cmp.missing_columns) if exists_cda else None,
+        cda_additional_columns=_fmt_cols(cda_cmp.additional_columns) if exists_cda else None,
+        cda_datatype_mismatches=_fmt_type_mismatches(cda_cmp.datatype_mismatches, "PROD", "CDA") if exists_cda else None,
+        overall_status=overall, comments=comments,
+    )
+    return row
+
+
+def run_ddl_reconciliation(spark, config: DDLReconConfig):
+    run_id = str(uuid.uuid4())
+    run_ts = datetime.utcnow()
+    logger.info(f"Starting DDL/schema-drift reconciliation run {run_id}")
+    logger.info(f"PROD={config.prod_schema_fqn()} | TST={config.tst_schema_fqn()} | CDA={config.cda_schema_fqn()}")
+
+    all_prefixes = list(config.domain_prefixes.values())
+
+    # 3 metadata-only queries for the entire run, regardless of table count.
+    prod_meta = fetch_catalog_columns(spark, config.prod_catalog, config.prod_schema, all_prefixes, config.normalize_types)
+    tst_meta = fetch_catalog_columns(spark, config.tst_catalog, config.tst_schema, all_prefixes, config.normalize_types)
+    cda_meta = fetch_catalog_columns(spark, config.cda_catalog, config.cda_schema, all_prefixes, config.normalize_types)
+
+    status_counts = Counter()
+    results: List[dict] = []
+
+    for domain, prefix in config.domain_prefixes.items():
+        prefix_lc = prefix.lower()
+        # PROD and TST are both Read Replica: a table ending in the CDA suffix
+        # there is not a genuine Read Replica table (stray/erroneous artifact)
+        # and must be excluded entirely -- only the CDA catalog's _cda tables
+        # are treated as CDA tables.
+        prod_tables = {
+            t for t in prod_meta
+            if t.startswith(prefix_lc) and not t.endswith(config.cda_table_suffix)
+        }
+        tst_tables = {
+            t for t in tst_meta
+            if t.startswith(prefix_lc) and not t.endswith(config.cda_table_suffix)
+        }
+        cda_base_tables = {
+            t[: -len(config.cda_table_suffix)] for t in cda_meta
+            if t.startswith(prefix_lc) and t.endswith(config.cda_table_suffix)
+        }
+        all_base_names = sorted(prod_tables | tst_tables | cda_base_tables)
+        logger.info(f"Domain '{domain}': {len(all_base_names)} distinct table(s) across all three sources "
+                    f"(PROD={len(prod_tables)}, TST={len(tst_tables)}, CDA={len(cda_base_tables)})")
+
+        stray_prod_cda = sorted(t for t in prod_meta if t.startswith(prefix_lc) and t.endswith(config.cda_table_suffix))
+        stray_tst_cda = sorted(t for t in tst_meta if t.startswith(prefix_lc) and t.endswith(config.cda_table_suffix))
+        if stray_prod_cda:
+            logger.warning(f"Domain '{domain}': {len(stray_prod_cda)} stray _cda-suffixed table(s) found in "
+                           f"PROD ({config.prod_catalog}) -- excluded from comparison: {stray_prod_cda}")
+        if stray_tst_cda:
+            logger.warning(f"Domain '{domain}': {len(stray_tst_cda)} stray _cda-suffixed table(s) found in "
+                           f"TST ({config.tst_catalog}) -- excluded from comparison: {stray_tst_cda}")
+
+        for base_name in all_base_names:
+            try:
+                row = _build_table_row(domain, base_name, config, prod_meta, tst_meta, cda_meta, run_id, run_ts)
+            except Exception as e:
+                logger.error(f"[ERROR] {domain}.{base_name}: {e!r}")
+                row = dict(
+                    run_id=run_id, run_timestamp=run_ts, domain=domain, table_base_name=base_name,
+                    prod_table=None, tst_table=None, cda_table=None,
+                    exists_in_prod=None, exists_in_tst=None, exists_in_cda=None,
+                    tst_vs_prod_status="N/A", cda_vs_prod_status="N/A",
+                    tst_missing_columns=None, tst_additional_columns=None, tst_datatype_mismatches=None,
+                    cda_missing_columns=None, cda_additional_columns=None, cda_datatype_mismatches=None,
+                    overall_status="ERROR", comments=f"Comparison failed: {e!r}",
+                )
+            status_counts[row["overall_status"]] += 1
+            results.append(row)
+
+    total = sum(status_counts.values())
+    logger.info("=" * 70)
+    logger.info(f"RUN {run_id} SUMMARY: {json.dumps(dict(status_counts))} (total={total})")
+    logger.info("=" * 70)
+
+    error_rate = status_counts.get("ERROR", 0) / total if total else 0.0
+    if config.fail_run_if_error_rate_above is not None and error_rate > config.fail_run_if_error_rate_above:
+        raise RuntimeError(f"DDL reconciliation error rate {error_rate:.1%} exceeded threshold "
+                            f"{config.fail_run_if_error_rate_above:.1%}")
+
+    summary_df = spark.createDataFrame(results, schema=RESULT_SCHEMA)
+
+    if config.write_results:
+        target = config.output_table_fqn()
+        try:
+            spark.sql(f"CREATE SCHEMA IF NOT EXISTS {config.output_catalog}.{config.output_schema}")
+            (summary_df.write.format("delta").mode(config.results_mode)
+                .option("mergeSchema", "true").saveAsTable(target))
+            logger.info(f"DDL reconciliation results written to {target} ({config.results_mode} mode)")
+        except Exception as e:
+            logger.error(f"Failed to persist results to {target}: {e!r}")
+
+    return summary_df
+
+
+# COMMAND ----------
+# MAGIC %md ## 7. Run
+# MAGIC Widgets for interactive runs or Databricks Job parameters for the daily
+# MAGIC scheduled run.
+
+# COMMAND ----------
+dbutils.widgets.text("prod_catalog", "core")
+dbutils.widgets.text("tst_catalog", "core_tst")
+dbutils.widgets.text("cda_catalog", "core_tst_std001")
+dbutils.widgets.text("output_schema", "testing_sb")
+dbutils.widgets.text("output_table", "gw_ddl_schema_drift_summary")
+dbutils.widgets.dropdown("write_results", "true", ["true", "false"])
+
+# COMMAND ----------
+from pyspark.sql import functions as F
+
+config = DDLReconConfig(
+    prod_catalog=dbutils.widgets.get("prod_catalog"),
+    tst_catalog=dbutils.widgets.get("tst_catalog"),
+    cda_catalog=dbutils.widgets.get("cda_catalog"),
+    output_schema=dbutils.widgets.get("output_schema"),
+    output_table=dbutils.widgets.get("output_table"),
+    write_results=(dbutils.widgets.get("write_results") == "true"),
+)
+
+summary_df = run_ddl_reconciliation(spark, config)
+display(summary_df)
+
+# COMMAND ----------
+# MAGIC %md ## 8. Triage view — everything that needs attention today
+
+# COMMAND ----------
+issues = summary_df.where(F.col("overall_status").isin("FAIL", "WARN", "ERROR")).orderBy(
+    F.col("overall_status").desc(), "domain", "table_base_name"
+)
+print(f"{issues.count()} table(s) flagged out of {summary_df.count()} compared.")
+display(issues.select(
+    "domain", "table_base_name", "exists_in_prod", "exists_in_tst", "exists_in_cda",
+    "tst_vs_prod_status", "cda_vs_prod_status", "overall_status", "comments"
+))
+
+# Uncomment to hard-fail the job on any FAIL/ERROR (e.g. for job-level alerting):
+# hard_failures = issues.where(F.col("overall_status").isin("FAIL", "ERROR")).count()
+# if hard_failures:
+#     raise Exception(f"DDL reconciliation found {hard_failures} failing table(s). See summary table for details.")
