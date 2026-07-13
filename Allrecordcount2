@@ -1,3 +1,9 @@
-Hi, just to let you know, I added Ruth's LV ID directly in Databricks for the demo URL Surojit shared, and she's able to access it now.
+Just to clarify, the Guidewire S3 retention policy and the data available in the ODS tables are two different things.
 
-Hope that's okay. If not, let me know and I'll revert it and follow the standard process. Also, could you share the process/form for getting an LV ID added to Databricks?
+The 180-day retention configured by the Guidewire source team applies only to the source files stored in S3. After 180 days, those files are deleted from S3 and are no longer available for reprocessing.
+
+The ODS is populated by our ingestion process. Once data is ingested into the ODS, it is not governed by the Guidewire S3 retention policy. As far as I'm aware, there is currently no ODS retention policy implemented on our side.
+
+Since this is the test environment, the earliest data you see in the ODS most likely reflects when ingestion into this environment started (or when the environment was initialized), rather than the 180-day S3 retention period.
+
+So, the absence of older data in the test ODS does not necessarily indicate that it was removed due to S3 retention. The S3 retention is managed by Guidewire and is outside the scope of our ingestion process.
