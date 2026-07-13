@@ -1,13 +1,7 @@
-CDC in CDA is derived from the SCD history, so the validation should focus on whether the CDC output correctly reflects the changes captured in SCD.
+As this is an Agile-based project, the Jira tasks created initially are intended to provide a high-level view of the testing activities required so that the overall effort can be estimated.
 
-Please check the following:
+Each story will be discussed in the sprint planning meeting, where we'll define the detailed scope of work for the current sprint, refine the acceptance criteria, and agree on the Definition of Done (DoD). Story point estimates are based on that discussion.
 
-Pick a few business keys from each available domain.
-Verify the first occurrence of a business key results in an INSERT.
-If the same business key has multiple SCD versions, verify each actual data change results in a corresponding UPDATE in the CDC output.
-Ensure no CDC event is generated when there is no change in business attributes.
-Verify the sequence of CDC events follows the SCD version/effective timestamp order.
-Check for any duplicate CDC events for the same change.
-If delete scenarios exist, verify they are represented as expected by the Guidewire CDC design.
+The current Jira tasks should be considered a high-level representation of our testing requirements. Please feel free to add or refine the details based on our daily discussions. During testing reviews, we'll verify that the completed work meets the agreed acceptance criteria and aligns with the overall test strategy.
 
-The objective is to confirm that every change captured in the SCD history is correctly represented in the derived CDC output.
+Additionally, some of the manual testing activities currently owned by Graham will be transferred to your backlog as part of the upcoming sprint planning.
