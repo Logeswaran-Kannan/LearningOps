@@ -1,4 +1,4 @@
- Databricks notebook source
+# Databricks notebook source
 # MAGIC %md
 # MAGIC # Guidewire ODS — Data Reconciliation (Read Replica TST vs CDA)
 # MAGIC Standalone from the DDL/schema-drift script by design — separate metadata
@@ -18,7 +18,7 @@
 # MAGIC Consistent with the DDL script: any table in `core_tst` ending in the CDA
 # MAGIC suffix is a stray artifact, not a genuine Read Replica table, and is
 # MAGIC excluded from discovery entirely.
- 
+
 # COMMAND ----------
 import json
 import logging
@@ -30,16 +30,16 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
- 
+
 from pyspark.sql import DataFrame, functions as F
 from pyspark.sql.window import Window
 from pyspark.sql.types import (
     StructType, StructField, StringType, LongType, DoubleType, BooleanType, TimestampType
 )
- 
+
 # COMMAND ----------
 # MAGIC %md ## 1. Configuration
- 
+
 # COMMAND ----------
 @dataclass
 class DataReconConfig:
@@ -48,13 +48,13 @@ class DataReconConfig:
     target_catalog: str = "core_tst_std001"      # CDA
     schema_name: str = "ods_views"
     target_table_suffix: str = "_cda"
- 
+
     domain_prefixes: Dict[str, str] = field(default_factory=lambda: {
         "policycenter": "vw_policycenter_current_p",
         "billingcenter": "vw_billingcenter_current_b",
         "claimcenter": "vw_claimcenter_current_c",
     })
- 
+
     # -- Column handling --------------------------------------------------------
     # Pipeline/audit columns expected to differ -- excluded from data compare.
     audit_columns: List[str] = field(default_factory=lambda: [
@@ -63,77 +63,77 @@ class DataReconConfig:
     ])
     # CDC metadata column that only exists in CDA -- fully ignored.
     cda_only_columns: List[str] = field(default_factory=lambda: ["gwcbi___operation"])
- 
+
     # Timestamp columns to search for (priority order) for the incremental filter.
     timestamp_filter_priority: List[str] = field(default_factory=lambda: ["updatetime", "createtime"])
- 
+
     # Candidate unique-key columns, in priority order, for join-based
     # column-level mismatch diagnosis. First one present on both sides wins.
     key_columns_priority: List[str] = field(default_factory=lambda: ["id", "publicid", "externalid"])
- 
+
     # -- Incremental filter window ------------------------------------------------
     lookback_days: int = 7
     filter_start_date: Optional[str] = None
     filter_end_date: Optional[str] = None
- 
+
     # -- Sampling (row counts routinely diverge: TST refreshes daily, CDA on demand)
     sample_size: int = 50_000
     sample_fraction_cap: float = 0.20
     min_sample_size: int = 1_000
     full_compare_row_limit: int = 20_000_000
     large_table_sample_size: int = 500_000
- 
+
     # When a table has NEITHER updatetime NOR createtime (so no incremental
     # filter can be applied), the full-vs-sample decision switches from
     # "do counts match" to a straight row-count threshold: small tables get
     # a full key-based compare regardless of count equality; larger tables
     # get sampled instead of risking a full unfiltered scan/join.
     no_timestamp_full_compare_row_threshold: int = 5_000
- 
+
     # -- Column-level diagnostics --------------------------------------------------
     max_example_rows_per_column: int = 3
     max_mismatched_columns_in_comment: int = 15
- 
+
     # Split each column mismatch into VALUE (genuinely different data) vs
     # FORMAT (same value, different representation -- case, whitespace,
     # trailing zeros) so formatting noise doesn't read as a real defect.
     detect_format_mismatches: bool = True
- 
+
     # -- Output ---------------------------------------------------------------------
     output_catalog: str = "core_tst_std001"
     output_schema: str = "testing_sb"
     output_table: str = "gw_data_reconciliation_summary"
     write_results: bool = True
     results_mode: str = "append"
- 
+
     # -- Resilience -------------------------------------------------------------------
     continue_on_error: bool = True
     max_table_retries: int = 1
     fail_run_if_error_rate_above: Optional[float] = None
- 
+
     def get_filter_window(self) -> Tuple[str, str]:
         if self.filter_start_date and self.filter_end_date:
             return self.filter_start_date, self.filter_end_date
         end = datetime.utcnow().date()
         start = end - timedelta(days=self.lookback_days)
         return start.isoformat(), (end + timedelta(days=1)).isoformat()
- 
+
     def source_schema_fqn(self) -> str:
         return f"{self.source_catalog}.{self.schema_name}"
- 
+
     def target_schema_fqn(self) -> str:
         return f"{self.target_catalog}.{self.schema_name}"
- 
+
     def output_table_fqn(self) -> str:
         return f"{self.output_catalog}.{self.output_schema}.{self.output_table}"
- 
+
     def excluded_from_compare(self) -> set:
         return {c.lower() for c in self.audit_columns} | {c.lower() for c in self.cda_only_columns}
- 
- 
+
+
 # COMMAND ----------
 # MAGIC %md ## 2. Logging & run metrics
- 
+
 # COMMAND ----------
 def get_logger(name: str = "gw_data_reconciliation") -> logging.Logger:
     logger = logging.getLogger(name)
@@ -146,11 +146,11 @@ def get_logger(name: str = "gw_data_reconciliation") -> logging.Logger:
     logger.addHandler(handler)
     logger.propagate = False
     return logger
- 
- 
+
+
 logger = get_logger()
- 
- 
+
+
 class RunMetrics:
     def __init__(self):
         self.run_id = str(uuid.uuid4())
@@ -159,23 +159,23 @@ class RunMetrics:
         self.status_counts = Counter()
         self.table_durations = {}
         self.errors = {}
- 
+
     def record_status(self, table_name: str, status: str):
         self.status_counts[status] += 1
- 
+
     def record_duration(self, table_name: str, seconds: float):
         self.table_durations[table_name] = seconds
- 
+
     def record_error(self, table_name: str, err: Exception):
         self.errors[table_name] = repr(err)
- 
+
     def finalize(self):
         self.finished_at = datetime.utcnow()
- 
+
     def error_rate(self) -> float:
         total = sum(self.status_counts.values())
         return 0.0 if total == 0 else self.status_counts.get("ERROR", 0) / total
- 
+
     def print_summary(self):
         logger.info("=" * 70)
         logger.info("DATA RECONCILIATION RUN SUMMARY")
@@ -189,8 +189,8 @@ class RunMetrics:
             "errors": self.errors,
         }, indent=2, default=str))
         logger.info("=" * 70)
- 
- 
+
+
 @contextmanager
 def timed(metrics: RunMetrics, table_name: str):
     start = time.time()
@@ -198,8 +198,8 @@ def timed(metrics: RunMetrics, table_name: str):
         yield
     finally:
         metrics.record_duration(table_name, round(time.time() - start, 2))
- 
- 
+
+
 # COMMAND ----------
 # MAGIC %md ## 3. Table discovery — bulk metadata, not per-table lookups
 # MAGIC Same approach as the DDL script: one `information_schema.columns` query
@@ -207,7 +207,7 @@ def timed(metrics: RunMetrics, table_name: str):
 # MAGIC table individually. This both discovers the table pairs *and* gives us
 # MAGIC the comparable-column list for free, so no separate schema pass is
 # MAGIC needed before the data compare.
- 
+
 # COMMAND ----------
 def fetch_catalog_columns(spark, catalog: str, schema: str, prefixes: List[str]) -> Dict[str, "OrderedDict[str, str]"]:
     """Returns { table_name_lower: OrderedDict(column_name_lower -> data_type) }."""
@@ -224,14 +224,14 @@ def fetch_catalog_columns(spark, catalog: str, schema: str, prefixes: List[str])
     except Exception as e:
         logger.error(f"Metadata fetch failed for {catalog}.{schema}: {e!r}")
         return {}
- 
+
     result: Dict[str, "OrderedDict[str, str]"] = {}
     for r in rows:
         result.setdefault(r["table_name"], OrderedDict())[r["column_name"]] = r["data_type"]
     logger.info(f"{catalog}.{schema}: fetched metadata for {len(result)} table(s)")
     return result
- 
- 
+
+
 @dataclass
 class TablePair:
     domain: str
@@ -242,8 +242,8 @@ class TablePair:
     comparable_columns: List[str]     # common columns, minus audit/CDC exclusions
     columns_only_in_source: List[str]
     columns_only_in_target: List[str]
- 
- 
+
+
 def discover_table_pairs(spark, config: DataReconConfig) -> Tuple[List[TablePair], List[str]]:
     """
     Returns (pairs_ready_to_compare, missing_in_target_table_names).
@@ -254,11 +254,11 @@ def discover_table_pairs(spark, config: DataReconConfig) -> Tuple[List[TablePair
     prefixes = list(config.domain_prefixes.values())
     source_meta = fetch_catalog_columns(spark, config.source_catalog, config.schema_name, prefixes)
     target_meta = fetch_catalog_columns(spark, config.target_catalog, config.schema_name, prefixes)
- 
+
     excluded = config.excluded_from_compare()
     pairs: List[TablePair] = []
     missing_in_target: List[str] = []
- 
+
     for domain, prefix in config.domain_prefixes.items():
         prefix_lc = prefix.lower()
         source_tables = sorted(
@@ -269,13 +269,13 @@ def discover_table_pairs(spark, config: DataReconConfig) -> Tuple[List[TablePair
         if stray:
             logger.warning(f"Domain '{domain}': {len(stray)} stray _cda-suffixed table(s) in "
                            f"{config.source_catalog} -- excluded from discovery: {stray}")
- 
+
         for src_table in source_tables:
             tgt_table = f"{src_table}{config.target_table_suffix}"
             if tgt_table not in target_meta:
                 missing_in_target.append(src_table)
                 continue
- 
+
             src_cols = set(source_meta[src_table]) - excluded
             tgt_cols = set(target_meta[tgt_table]) - excluded
             pairs.append(TablePair(
@@ -286,10 +286,10 @@ def discover_table_pairs(spark, config: DataReconConfig) -> Tuple[List[TablePair
                 columns_only_in_source=sorted(src_cols - tgt_cols),
                 columns_only_in_target=sorted(tgt_cols - src_cols),
             ))
- 
+
     return pairs, missing_in_target
- 
- 
+
+
 # COMMAND ----------
 # MAGIC %md ## 4. Data comparison — key-based, column-level diagnostics
 # MAGIC
@@ -306,7 +306,7 @@ def discover_table_pairs(spark, config: DataReconConfig) -> Tuple[List[TablePair
 # MAGIC    **FORMAT** (same value once trimmed/lower-cased/zero-stripped -- e.g.
 # MAGIC    `'Active'` vs `'active'`, `'123.50'` vs `'123.5'`) so formatting noise
 # MAGIC    doesn't get triaged as a real data defect.
- 
+
 # COMMAND ----------
 def _normalize_for_format_check(col):
     """Trim + lowercase + collapse whitespace + strip trailing zeros on plain
@@ -316,8 +316,8 @@ def _normalize_for_format_check(col):
     is_plain_decimal = s.rlike(r"^-?\d+\.\d+$")
     zero_stripped = F.regexp_replace(F.regexp_replace(s, r"0+$", ""), r"\.$", "")
     return F.when(is_plain_decimal, zero_stripped).otherwise(s)
- 
- 
+
+
 @dataclass
 class ColumnMismatch:
     column_name: str
@@ -325,8 +325,8 @@ class ColumnMismatch:
     value_mismatch_count: int = 0
     format_mismatch_count: int = 0
     examples: List[Tuple[str, str, str, str]] = field(default_factory=list)  # (key, source_value, target_value, mismatch_type)
- 
- 
+
+
 @dataclass
 class DataComparisonResult:
     source_row_count: int = 0
@@ -342,7 +342,7 @@ class DataComparisonResult:
     sample_size: Optional[int] = None
     column_mismatches: List[ColumnMismatch] = field(default_factory=list)
     hash_mismatch_count: Optional[int] = None
- 
+
     def has_value_mismatch(self) -> bool:
         """A real data defect: missing/extra rows, or a genuine VALUE-level
         column mismatch (not just formatting)."""
@@ -351,14 +351,14 @@ class DataComparisonResult:
         if self.rows_only_in_source or self.rows_only_in_target:
             return True
         return any(cm.value_mismatch_count > 0 for cm in self.column_mismatches)
- 
+
     def has_format_only_variance(self) -> bool:
         """Every observed difference is FORMAT (same value, different
         representation) with zero genuine VALUE mismatches -- non-blocking."""
         if self.comparison_mode == "FULL_HASH" or self.has_value_mismatch():
             return False
         return any(cm.format_mismatch_count > 0 for cm in self.column_mismatches)
- 
+
     def status(self) -> str:
         if self.comparison_mode == "SKIPPED":
             return "NOT_COMPARED"
@@ -367,28 +367,28 @@ class DataComparisonResult:
         if self.has_format_only_variance():
             return "FORMAT_VARIANCE"
         return "DATA_MATCH"
- 
- 
+
+
 def _pick_filter_column(df: DataFrame, config: DataReconConfig) -> Optional[str]:
     cols = {c.lower() for c in df.columns}
     for candidate in config.timestamp_filter_priority:
         if candidate in cols:
             return candidate
     return None
- 
- 
+
+
 def _resolve_actual_col(df: DataFrame, lower_name: str) -> str:
     return next((c for c in df.columns if c.lower() == lower_name), lower_name)
- 
- 
+
+
 def _apply_filter(df: DataFrame, filter_col: Optional[str], window: Tuple[str, str]) -> DataFrame:
     if not filter_col:
         return df
     start, end = window
     actual_col = _resolve_actual_col(df, filter_col)
     return df.where((F.col(actual_col) >= F.lit(start)) & (F.col(actual_col) < F.lit(end)))
- 
- 
+
+
 def _pick_key_column(source_df: DataFrame, target_df: DataFrame, comparable_cols: List[str],
                       config: DataReconConfig) -> Optional[str]:
     src_cols = {c.lower() for c in source_df.columns}
@@ -397,26 +397,34 @@ def _pick_key_column(source_df: DataFrame, target_df: DataFrame, comparable_cols
         if candidate in comparable_cols and candidate in src_cols and candidate in tgt_cols:
             return candidate
     return None
- 
- 
+
+
 def _column_level_diff(source_df: DataFrame, target_df: DataFrame, key_col: str,
                         compare_cols: List[str], config: DataReconConfig) -> Tuple[int, List[ColumnMismatch]]:
     key_src, key_tgt = _resolve_actual_col(source_df, key_col), _resolve_actual_col(target_df, key_col)
- 
+
     s_sel = [F.col(key_src).alias("__key__")] + [F.col(_resolve_actual_col(source_df, c)).alias(f"s__{c}") for c in compare_cols]
     t_sel = [F.col(key_tgt).alias("__key__")] + [F.col(_resolve_actual_col(target_df, c)).alias(f"t__{c}") for c in compare_cols]
     joined = source_df.select(*s_sel).join(target_df.select(*t_sel), on="__key__", how="inner")
     matched_row_count = joined.count()
     if matched_row_count == 0 or not compare_cols:
         return matched_row_count, []
- 
+
     def _mismatch_struct(c: str):
         s_col, t_col = F.col(f"s__{c}"), F.col(f"t__{c}")
-        raw_mismatch = ~s_col.eqNullSafe(t_col)
+        # Compare on the string-cast representation, not the raw typed
+        # columns. TST and CDA can (and do) disagree on a column's
+        # underlying Spark type -- comparing raw types directly can throw
+        # DATATYPE_MISMATCH.BINARY_OP_DIFF_TYPES (e.g. one side binary, the
+        # other string) and abort the whole table. Casting both sides to
+        # string first is universally comparable and still catches genuine
+        # value differences; type drift itself is the DDL script's job.
+        s_str, t_str = s_col.cast("string"), t_col.cast("string")
+        raw_mismatch = ~s_str.eqNullSafe(t_str)
         if config.detect_format_mismatches:
-            s_norm, t_norm = _normalize_for_format_check(s_col.cast("string")), _normalize_for_format_check(t_col.cast("string"))
+            s_norm, t_norm = _normalize_for_format_check(s_str), _normalize_for_format_check(t_str)
             # Both sides non-null and equal once normalized -> FORMAT; otherwise VALUE.
-            is_format = raw_mismatch & s_col.isNotNull() & t_col.isNotNull() & s_norm.eqNullSafe(t_norm)
+            is_format = raw_mismatch & s_str.isNotNull() & t_str.isNotNull() & s_norm.eqNullSafe(t_norm)
             mismatch_type = F.when(is_format, F.lit("FORMAT")).otherwise(F.lit("VALUE"))
         else:
             mismatch_type = F.lit("VALUE")
@@ -424,12 +432,12 @@ def _column_level_diff(source_df: DataFrame, target_df: DataFrame, key_col: str,
             raw_mismatch,
             F.struct(
                 F.lit(c).alias("column_name"),
-                s_col.cast("string").alias("source_value"),
-                t_col.cast("string").alias("target_value"),
+                s_str.alias("source_value"),
+                t_str.alias("target_value"),
                 mismatch_type.alias("mismatch_type"),
             ),
         )
- 
+
     mismatch_struct_exprs = [_mismatch_struct(c) for c in compare_cols]
     joined = joined.withColumn("__mismatches__", F.filter(F.array(*mismatch_struct_exprs), lambda x: x.isNotNull()))
     exploded = (
@@ -443,7 +451,7 @@ def _column_level_diff(source_df: DataFrame, target_df: DataFrame, key_col: str,
             F.col("m.mismatch_type").alias("mismatch_type"),
         )
     ).cache()
- 
+
     try:
         count_rows = (
             exploded.groupBy("column_name")
@@ -457,7 +465,7 @@ def _column_level_diff(source_df: DataFrame, target_df: DataFrame, key_col: str,
         counts = {r["column_name"]: (r["total_cnt"], r["value_cnt"], r["format_cnt"]) for r in count_rows}
         if not counts:
             return matched_row_count, []
- 
+
         w = Window.partitionBy("column_name").orderBy(F.monotonically_increasing_id())
         example_rows = (
             exploded.withColumn("rn", F.row_number().over(w))
@@ -470,7 +478,7 @@ def _column_level_diff(source_df: DataFrame, target_df: DataFrame, key_col: str,
             examples_by_col.setdefault(r["column_name"], []).append(
                 (r["key"], r["source_value"], r["target_value"], r["mismatch_type"])
             )
- 
+
         return matched_row_count, [
             ColumnMismatch(
                 column_name=col, mismatch_count=total, value_mismatch_count=val_cnt, format_mismatch_count=fmt_cnt,
@@ -480,21 +488,21 @@ def _column_level_diff(source_df: DataFrame, target_df: DataFrame, key_col: str,
         ]
     finally:
         exploded.unpersist()
- 
- 
+
+
 def _hash_df(df: DataFrame, columns: List[str]) -> DataFrame:
     actual_cols = [_resolve_actual_col(df, c) for c in columns]
     exprs = [F.coalesce(F.col(c).cast("string"), F.lit("\u0000NULL\u0000")) for c in sorted(actual_cols)]
     return df.select(F.sha2(F.concat_ws("||", *exprs), 256).alias("__row_hash__"))
- 
- 
+
+
 def compare_data(spark, pair: TablePair, config: DataReconConfig) -> DataComparisonResult:
     result = DataComparisonResult()
     comparable_cols = pair.comparable_columns
- 
+
     source_df_raw = spark.table(pair.source_fqn)
     target_df_raw = spark.table(pair.target_fqn)
- 
+
     filter_col = _pick_filter_column(source_df_raw, config)
     window = config.get_filter_window()
     if filter_col:
@@ -503,21 +511,18 @@ def compare_data(spark, pair: TablePair, config: DataReconConfig) -> DataCompari
         target_df = _apply_filter(target_df_raw, filter_col, window)
     else:
         source_df, target_df = source_df_raw, target_df_raw
- 
+
     if not comparable_cols:
         result.comparison_mode = "SKIPPED"
         return result
- 
+
     source_count, target_count = source_df.count(), target_df.count()
     result.source_row_count, result.target_row_count = source_count, target_count
-    if source_count == 0 and target_count == 0:
-        result.comparison_mode = "FULL_KEYED"
-        return result
- 
+
     key_col = _pick_key_column(source_df, target_df, comparable_cols, config)
     result.key_column = key_col
     non_key_compare_cols = [c for c in comparable_cols if c != key_col]
- 
+
     if key_col is None:
         result.comparison_mode = "FULL_HASH"
         src_hash, tgt_hash = _hash_df(source_df, comparable_cols), _hash_df(target_df, comparable_cols)
@@ -525,7 +530,19 @@ def compare_data(spark, pair: TablePair, config: DataReconConfig) -> DataCompari
         result.rows_only_in_source, result.rows_only_in_target = only_source, only_target
         result.hash_mismatch_count = only_source + only_target
         return result
- 
+
+    if source_count == 0 and target_count == 0:
+        result.comparison_mode = "FULL_KEYED"
+        return result
+
+    # Exactly one side is empty -> nothing meaningful to sample; every row on
+    # the non-empty side has no counterpart on the other side by definition.
+    if source_count == 0 or target_count == 0:
+        result.comparison_mode = "FULL_KEYED"
+        result.rows_only_in_source = source_count      # all of it, if target is the empty side
+        result.rows_only_in_target = target_count        # all of it, if source is the empty side
+        return result
+
     # Full-vs-sample decision:
     #  - Timestamp filter available -> use it as normal: full compare when the
     #    (already-filtered) counts match, sample when they don't.
@@ -537,7 +554,7 @@ def compare_data(spark, pair: TablePair, config: DataReconConfig) -> DataCompari
         do_full = (source_count == target_count) and (max(source_count, target_count) <= config.full_compare_row_limit)
     else:
         do_full = max(source_count, target_count) <= config.no_timestamp_full_compare_row_threshold
- 
+
     if do_full:
         result.comparison_mode = "FULL_KEYED"
         key_src_col, key_tgt_col = _resolve_actual_col(source_df, key_col), _resolve_actual_col(target_df, key_col)
@@ -546,7 +563,7 @@ def compare_data(spark, pair: TablePair, config: DataReconConfig) -> DataCompari
         matched_count, mismatches = _column_level_diff(source_df, target_df, key_col, non_key_compare_cols, config)
         result.matched_row_count, result.column_mismatches = matched_count, mismatches
         return result
- 
+
     # Row counts differ -> representative sample from Read Replica TST
     result.comparison_mode = "SAMPLE_KEYED"
     smaller_count = min(source_count, target_count) or 1
@@ -556,7 +573,7 @@ def compare_data(spark, pair: TablePair, config: DataReconConfig) -> DataCompari
     )
     sample_n = max(1, min(sample_n, source_count))
     result.sample_size = sample_n
- 
+
     key_src_col, key_tgt_col = _resolve_actual_col(source_df, key_col), _resolve_actual_col(target_df, key_col)
     fraction = min(1.0, sample_n / source_count * 1.5)
     sampled_keys = (source_df.select(key_src_col).distinct()
@@ -572,18 +589,18 @@ def compare_data(spark, pair: TablePair, config: DataReconConfig) -> DataCompari
         result.matched_row_count, result.column_mismatches = matched_count, mismatches
     finally:
         sampled_keys.unpersist()
- 
+
     return result
- 
- 
+
+
 # COMMAND ----------
 # MAGIC %md ## 5. Comment builder
- 
+
 # COMMAND ----------
 def _fmt_list(items) -> str:
     return ", ".join(str(i) for i in items) if items else ""
- 
- 
+
+
 def _fmt_column_mismatches(mismatches: List[ColumnMismatch], config: DataReconConfig, key_col: str) -> str:
     if not mismatches:
         return ""
@@ -600,13 +617,13 @@ def _fmt_column_mismatches(mismatches: List[ColumnMismatch], config: DataReconCo
     if remaining > 0:
         text += f" (+{remaining} more mismatched column(s) not shown)."
     return text
- 
- 
+
+
 def _build_comments(pair: TablePair, data_result: Optional[DataComparisonResult], table_status: str,
                      config: DataReconConfig) -> str:
     if table_status == "MISSING_IN_TARGET":
         return f"Table exists in Read Replica TST but was not found in CDA (expected name: {pair.source_table}_cda)."
- 
+
     parts = []
     if pair.columns_only_in_source:
         parts.append(f"{len(pair.columns_only_in_source)} column(s) in TST not comparable (absent in CDA, or excluded): "
@@ -614,16 +631,16 @@ def _build_comments(pair: TablePair, data_result: Optional[DataComparisonResult]
     if pair.columns_only_in_target:
         parts.append(f"{len(pair.columns_only_in_target)} column(s) in CDA not comparable (absent in TST, or excluded): "
                      f"{_fmt_list(pair.columns_only_in_target)}.")
- 
+
     if data_result:
         if data_result.comparison_mode == "SKIPPED":
             parts.append("No comparable common columns after exclusions -- data comparison skipped.")
             return " ".join(parts)
- 
+
         if data_result.source_row_count != data_result.target_row_count:
             parts.append(f"Row count mismatch (expected in this env): TST={data_result.source_row_count}, "
                          f"CDA={data_result.target_row_count}.")
- 
+
         if data_result.comparison_mode == "FULL_HASH":
             parts.append("No key column (id/publicid/externalid) found -- fell back to full-row hash compare; "
                          "column-level diagnostics unavailable for this table.")
@@ -634,25 +651,26 @@ def _build_comments(pair: TablePair, data_result: Optional[DataComparisonResult]
                 parts.append("All row hashes match.")
         else:
             mode_label = "Full" if data_result.comparison_mode == "FULL_KEYED" else f"Sample ({data_result.sample_size} keys)"
-            parts.append(f"{mode_label} key-based compare on {data_result.key_column.upper()}: "
+            key_label = data_result.key_column.upper() if data_result.key_column else "N/A (empty table)"
+            parts.append(f"{mode_label} key-based compare on {key_label}: "
                          f"{data_result.matched_row_count} matched row(s) checked.")
             if data_result.rows_only_in_source:
                 parts.append(f"{data_result.rows_only_in_source} key(s) present in TST but not found in CDA.")
             if data_result.comparison_mode == "FULL_KEYED" and data_result.rows_only_in_target:
                 parts.append(f"{data_result.rows_only_in_target} key(s) present in CDA but not found in TST.")
             if data_result.column_mismatches:
-                parts.append(_fmt_column_mismatches(data_result.column_mismatches, config, data_result.key_column))
+                parts.append(_fmt_column_mismatches(data_result.column_mismatches, config, data_result.key_column or "key"))
             elif data_result.matched_row_count:
                 parts.append("All compared columns match on matched rows.")
- 
-        if data_result.filter_applied:
+
+        if data_result.filter_applied and data_result.filter_column:
             parts.append(f"Incremental filter on {data_result.filter_column.upper()} window {data_result.filter_window}.")
         else:
             parts.append("No UPDATETIME/CREATETIME column found -- full table compared, no date filter.")
- 
+
     return " ".join(parts) if parts else "No issues detected."
- 
- 
+
+
 def _overall_status(table_status: str, data_status: str) -> str:
     if table_status in ("MISSING_IN_TARGET", "ERROR"):
         return "FAIL" if table_status == "MISSING_IN_TARGET" else "ERROR"
@@ -661,11 +679,11 @@ def _overall_status(table_status: str, data_status: str) -> str:
     if data_status in ("NOT_COMPARED", "FORMAT_VARIANCE"):
         return "WARN"
     return "PASS"
- 
- 
+
+
 # COMMAND ----------
 # MAGIC %md ## 6. Orchestrator
- 
+
 # COMMAND ----------
 RESULT_SCHEMA = StructType([
     StructField("run_id", StringType()),
@@ -693,8 +711,8 @@ RESULT_SCHEMA = StructType([
     StructField("duration_seconds", DoubleType()),
     StructField("comments", StringType()),
 ])
- 
- 
+
+
 def _reconcile_one(spark, pair: TablePair, config: DataReconConfig, run_id: str, run_ts) -> dict:
     start = time.time()
     data_result = compare_data(spark, pair, config)
@@ -704,7 +722,7 @@ def _reconcile_one(spark, pair: TablePair, config: DataReconConfig, run_id: str,
     value_issue_cols = [cm.column_name for cm in data_result.column_mismatches if cm.value_mismatch_count > 0]
     format_only_cols = [cm.column_name for cm in data_result.column_mismatches
                         if cm.value_mismatch_count == 0 and cm.format_mismatch_count > 0]
- 
+
     return dict(
         run_id=run_id, run_timestamp=run_ts, domain=pair.domain,
         source_table=pair.source_table, target_table=pair.target_table,
@@ -721,22 +739,22 @@ def _reconcile_one(spark, pair: TablePair, config: DataReconConfig, run_id: str,
         duration_seconds=round(time.time() - start, 2),
         comments=_build_comments(pair, data_result, "OK", config),
     )
- 
- 
+
+
 def run_data_reconciliation(spark, config: DataReconConfig):
     run_id = str(uuid.uuid4())
     run_ts = datetime.utcnow()
     metrics = RunMetrics()
     metrics.run_id = run_id
- 
+
     logger.info(f"Starting data reconciliation run {run_id}")
     logger.info(f"Source (TST): {config.source_schema_fqn()} | Target (CDA): {config.target_schema_fqn()}")
- 
+
     pairs, missing_in_target = discover_table_pairs(spark, config)
     logger.info(f"Discovered {len(pairs)} comparable table pair(s); {len(missing_in_target)} missing in CDA")
- 
+
     results: List[dict] = []
- 
+
     for src_table in missing_in_target:
         results.append(dict(
             run_id=run_id, run_timestamp=run_ts, domain=None, source_table=src_table,
@@ -749,7 +767,7 @@ def run_data_reconciliation(spark, config: DataReconConfig):
             comments=f"Table exists in Read Replica TST but was not found in CDA (expected name: {src_table}_cda).",
         ))
         metrics.record_status(src_table, "FAIL")
- 
+
     for pair in pairs:
         table_label = f"{pair.domain}.{pair.source_table}"
         attempts = 0
@@ -785,17 +803,17 @@ def run_data_reconciliation(spark, config: DataReconConfig):
                 if not config.continue_on_error:
                     raise
                 break
- 
+
     metrics.finalize()
     metrics.print_summary()
- 
+
     total = sum(metrics.status_counts.values())
     if config.fail_run_if_error_rate_above is not None and metrics.error_rate() > config.fail_run_if_error_rate_above:
         raise RuntimeError(f"Data reconciliation error rate {metrics.error_rate():.1%} exceeded threshold "
                             f"{config.fail_run_if_error_rate_above:.1%}")
- 
+
     summary_df = spark.createDataFrame(results, schema=RESULT_SCHEMA)
- 
+
     if config.write_results:
         target = config.output_table_fqn()
         try:
@@ -805,10 +823,10 @@ def run_data_reconciliation(spark, config: DataReconConfig):
             logger.info(f"Data reconciliation results written to {target} ({config.results_mode} mode)")
         except Exception as e:
             logger.error(f"Failed to persist results to {target}: {e!r}")
- 
+
     return summary_df
- 
- 
+
+
 # COMMAND ----------
 # MAGIC %md ## 7. Run
 # MAGIC Independent widgets/parameters from the DDL job -- schedule this as its
@@ -816,7 +834,7 @@ def run_data_reconciliation(spark, config: DataReconConfig):
 # MAGIC
 # MAGIC `filter_start_date`/`filter_end_date` take precedence when both are set
 # MAGIC (format `YYYY-MM-DD`); leave either blank to fall back to `lookback_days`.
- 
+
 # COMMAND ----------
 dbutils.widgets.text("source_catalog", "core_tst")
 dbutils.widgets.text("target_catalog", "core_tst_std001")
@@ -825,11 +843,11 @@ dbutils.widgets.text("filter_end_date", "")       # e.g. 2026-07-13 -- blank = u
 dbutils.widgets.text("lookback_days", "7")
 dbutils.widgets.text("sample_size", "50000")
 dbutils.widgets.dropdown("write_results", "true", ["true", "false"])
- 
+
 # COMMAND ----------
 _start = dbutils.widgets.get("filter_start_date").strip() or None
 _end = dbutils.widgets.get("filter_end_date").strip() or None
- 
+
 config = DataReconConfig(
     source_catalog=dbutils.widgets.get("source_catalog"),
     target_catalog=dbutils.widgets.get("target_catalog"),
@@ -839,15 +857,15 @@ config = DataReconConfig(
     sample_size=int(dbutils.widgets.get("sample_size")),
     write_results=(dbutils.widgets.get("write_results") == "true"),
 )
- 
+
 summary_df = run_data_reconciliation(spark, config)
 display(summary_df)
- 
+
 # COMMAND ----------
 # MAGIC %md ## 8. Triage view
 # MAGIC `value_mismatch_columns` = real issues to act on. `format_only_mismatch_columns`
 # MAGIC = same value, different representation -- worth a glance, not a defect.
- 
+
 # COMMAND ----------
 issues = summary_df.where(F.col("overall_status").isin("FAIL", "WARN", "ERROR")).orderBy(
     F.col("overall_status").desc(), F.col("mismatched_column_count").desc_nulls_last()
@@ -858,9 +876,8 @@ display(issues.select(
     "source_row_count", "target_row_count",
     "value_mismatch_columns", "format_only_mismatch_columns", "comments"
 ))
- 
+
 # Uncomment to hard-fail the job on any FAIL/ERROR (FORMAT_VARIANCE-only tables stay WARN, not blocking):
 # hard_failures = issues.where(F.col("overall_status").isin("FAIL", "ERROR")).count()
 # if hard_failures:
 #     raise Exception(f"Data reconciliation found {hard_failures} failing table(s). See summary table for details.")
- 
