@@ -1,13 +1,18 @@
-Just a small clarification on the current scope. At this stage, we already know there are schema and data differences between the Read Replica and CDA, so there isn't a need to validate those as part of this activity.
+Just to clarify the scope of this validation:
 
-The current objective is specifically to validate the **CDC logic** using a small set of sample policies.
+At this stage, there is no need to compare the overall schema or record counts between the Read Replica and CDA, as these are already being investigated separately.
 
-Could you please select a few sample policy records and verify the following:
+* The **schema differences** (missing/additional columns, data type differences, system columns, etc.) have already been identified through our DDL comparison automation and are currently under root cause analysis.
+* The **record counts** are also expected to differ at this stage because the Read Replica and CDA pipelines have **not yet been running in parallel**. Until both pipelines are executed against the same source data and within the same processing window, count mismatches are expected and cannot be treated as defects.
 
-* **Insert:** A newly created policy is reflected as an INSERT event in CDA.
-* **Update:** Changes to a policy generate the expected UPDATE event and the SCD version/history is maintained correctly.
-* **Delete:** A deleted or cancelled policy is represented correctly based on the Guidewire CDC design (delete event or delete indicator, as applicable).
-* Verify that the CDC events are generated in the correct sequence with the expected timestamps.
-* Confirm there are no missing or duplicate CDC events for the selected policy samples.
+For this activity, the focus is only on validating the **CDC business logic**.
 
-The purpose of this validation is to confirm that CDA is correctly deriving CDC events from the underlying SCD history for insert, update, and delete scenarios.
+Please select a few sample policy records and verify that:
+
+* A new policy generates an INSERT event.
+* Policy updates generate the expected UPDATE event and maintain the correct SCD history/version sequence.
+* Deleted or cancelled policies are represented correctly according to the Guidewire CDC design.
+* CDC events are generated in the correct order with the expected timestamps.
+* There are no missing or duplicate CDC events for the selected policy samples.
+
+The objective is to confirm that CDA is correctly deriving CDC events from the underlying SCD history, independent of the current schema and count reconciliation activities.
