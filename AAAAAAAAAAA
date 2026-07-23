@@ -1,18 +1,278 @@
-Just to clarify the scope of this validation:
+"""
+three_way_table_reconciliation.py
+==================================
 
-At this stage, there is no need to compare the overall schema or record counts between the Read Replica and CDA, as these are already being investigated separately.
+Reconciles the ODS view/table inventory across three catalogs:
 
-* The **schema differences** (missing/additional columns, data type differences, system columns, etc.) have already been identified through our DDL comparison automation and are currently under root cause analysis.
-* The **record counts** are also expected to differ at this stage because the Read Replica and CDA pipelines have **not yet been running in parallel**. Until both pipelines are executed against the same source data and within the same processing window, count mismatches are expected and cannot be treated as defects.
+    core              -> prod read-replica          (exclude _cda / _sa suffixed tables)
+    core_tst          -> test read-replica           (exclude _cda / _sa suffixed tables)
+    core_tst_std001   -> test CDA version             (keep ONLY _cda suffixed tables)
 
-For this activity, the focus is only on validating the **CDC business logic**.
+All three catalogs share schema `ods_views`. Only tables belonging to the three
+source systems below are considered; everything else in the schema is ignored.
 
-Please select a few sample policy records and verify that:
+    policycenter -> vw_policycenter_current_p_<table>[_cda|_sa]
+    billingcenter-> vw_billingcenter_current_b_<table>[_cda|_sa]
+    claimcenter  -> vw_claimcenter_current_c_<table>[_cda|_sa]
 
-* A new policy generates an INSERT event.
-* Policy updates generate the expected UPDATE event and maintain the correct SCD history/version sequence.
-* Deleted or cancelled policies are represented correctly according to the Guidewire CDC design.
-* CDC events are generated in the correct order with the expected timestamps.
-* There are no missing or duplicate CDC events for the selected policy samples.
+Output: one row per (source_system, base_table_name) with presence flags for
+each catalog, plus downstream-impact flag/table list sourced from Unity Catalog
+lineage (system.access.table_lineage).
 
-The objective is to confirm that CDA is correctly deriving CDC events from the underlying SCD history, independent of the current schema and count reconciliation activities.
+PERFORMANCE NOTES
+-----------------
+1. Table inventories come from information_schema.tables -> pure metadata,
+   no data scan, sub-second even for large catalogs.
+2. These inventories are tiny (typically a few hundred rows) so they are
+   broadcast-joined explicitly rather than left to AQE guesswork.
+3. Lineage lookup is filtered on partition/predicate columns
+   (source_table_catalog, source_table_schema, event_date) BEFORE any join,
+   since system.access.table_lineage can be very large.
+4. Only one lineage query is issued (not one per table) - aggregation is done
+   in Spark, not via row-by-row driver loops.
+"""
+
+from pyspark.sql import SparkSession, DataFrame, functions as F
+
+spark = SparkSession.builder.appName("ThreeWayTableReconciliation").getOrCreate()
+
+# ---------------------------------------------------------------------------
+# CONFIG - adjust to your environment
+# ---------------------------------------------------------------------------
+SCHEMA = "ods_views"
+
+CATALOGS = {
+    "core": "in_core",
+    "core_tst": "in_core_tst",
+    "core_tst_std001": "in_core_tst_std001",
+}
+
+SOURCE_SYSTEM_PREFIX = {
+    "policycenter": "vw_policycenter_current_p",
+    "billingcenter": "vw_billingcenter_current_b",
+    "claimcenter": "vw_claimcenter_current_c",
+}
+
+# how far back to look in lineage (days) - tune for perf vs completeness
+LINEAGE_LOOKBACK_DAYS = 180
+
+# where to persist the result
+OUTPUT_TABLE = "core.ods_recon.table_reconciliation_result"
+WRITE_MODE = "overwrite"  # or "merge" if you wire up a MERGE INTO instead
+
+
+# ---------------------------------------------------------------------------
+# STEP 1: Pull table inventory per catalog (metadata only)
+# ---------------------------------------------------------------------------
+def get_table_inventory(catalog: str) -> DataFrame:
+    return spark.sql(
+        f"""
+        SELECT table_catalog, table_schema, table_name
+        FROM {catalog}.information_schema.tables
+        WHERE table_schema = '{SCHEMA}'
+        """
+    )
+
+
+# ---------------------------------------------------------------------------
+# STEP 2: Enrich with source_system / base_table_name / suffix, filter to
+#          only the 3 known systems, using a single regex pass.
+# ---------------------------------------------------------------------------
+_PREFIX_ALTERNATION = "|".join(SOURCE_SYSTEM_PREFIX.values())
+_NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})_(.+?)(_cda|_sa)?$"
+
+# reverse lookup: prefix string -> source system name, pushed to executors as
+# a small broadcast-able mapping expression
+_prefix_to_system_expr = F.create_map(
+    *sum(([F.lit(v), F.lit(k)] for k, v in SOURCE_SYSTEM_PREFIX.items()), [])
+)
+
+
+def enrich_and_filter(df: DataFrame) -> DataFrame:
+    enriched = (
+        df.withColumn("matched_prefix", F.regexp_extract("table_name", _NAME_PATTERN, 1))
+        .withColumn("base_table_name", F.regexp_extract("table_name", _NAME_PATTERN, 2))
+        .withColumn("suffix", F.regexp_extract("table_name", _NAME_PATTERN, 3))
+        .filter(F.col("matched_prefix") != "")  # drop anything not matching the 3 systems
+        .withColumn("source_system", _prefix_to_system_expr[F.col("matched_prefix")])
+    )
+    return enriched
+
+
+def apply_catalog_rule(df: DataFrame, catalog: str) -> DataFrame:
+    """core / core_tst -> exclude _cda and _sa
+    core_tst_std001    -> keep only _cda
+    """
+    if catalog == "core_tst_std001":
+        return df.filter(F.col("suffix") == "_cda")
+    else:
+        return df.filter(~F.col("suffix").isin("_cda", "_sa"))
+
+
+# ---------------------------------------------------------------------------
+# STEP 3: Build per-catalog filtered inventories
+# ---------------------------------------------------------------------------
+catalog_frames = {}
+for catalog in CATALOGS:
+    raw = get_table_inventory(catalog)
+    enriched = enrich_and_filter(raw)
+    filtered = apply_catalog_rule(enriched, catalog).cache()
+    catalog_frames[catalog] = filtered
+
+core_df = catalog_frames["core"]
+core_tst_df = catalog_frames["core_tst"]
+core_std_df = catalog_frames["core_tst_std001"]
+
+# ---------------------------------------------------------------------------
+# STEP 4: 3-way full outer join on (source_system, base_table_name)
+#          these frames are small -> broadcast explicitly for perf.
+# ---------------------------------------------------------------------------
+def presence_frame(df: DataFrame, catalog: str, flag_col: str) -> DataFrame:
+    return (
+        df.select("source_system", "base_table_name", "table_name", "table_catalog")
+        .withColumnRenamed("table_name", f"{catalog}_table_name")
+        .withColumn(flag_col, F.lit("Y"))
+        .dropDuplicates(["source_system", "base_table_name"])
+    )
+
+
+core_p = presence_frame(core_df, "core", "in_core")
+core_tst_p = presence_frame(core_tst_df, "core_tst", "in_core_tst")
+core_std_p = presence_frame(core_std_df, "core_tst_std001", "in_core_tst_std001")
+
+reconciled = (
+    core_p.join(F.broadcast(core_tst_p), ["source_system", "base_table_name"], "full_outer")
+    .join(F.broadcast(core_std_p), ["source_system", "base_table_name"], "full_outer")
+    .fillna("N", subset=["in_core", "in_core_tst", "in_core_tst_std001"])
+)
+
+# ---------------------------------------------------------------------------
+# STEP 5: Downstream impact via Unity Catalog lineage (single query, filtered)
+# ---------------------------------------------------------------------------
+def get_downstream_lineage() -> DataFrame:
+    try:
+        catalogs_list = ",".join(f"'{c}'" for c in CATALOGS)
+        lineage = spark.sql(
+            f"""
+            SELECT
+                source_table_catalog,
+                source_table_schema,
+                source_table_name,
+                target_table_catalog,
+                target_table_schema,
+                target_table_name
+            FROM system.access.table_lineage
+            WHERE source_table_schema = '{SCHEMA}'
+              AND source_table_catalog IN ({catalogs_list})
+              AND event_date >= date_sub(current_date(), {LINEAGE_LOOKBACK_DAYS})
+              AND target_table_full_name IS NOT NULL
+            """
+        )
+        return lineage
+    except Exception as e:
+        print(f"[WARN] Could not read system.access.table_lineage: {e}")
+        return None
+
+
+lineage_df = get_downstream_lineage()
+
+if lineage_df is not None:
+    downstream_agg = (
+        lineage_df.withColumn(
+            "downstream_table_full_name",
+            F.concat_ws(".", "target_table_catalog", "target_table_schema", "target_table_name"),
+        )
+        .groupBy("source_table_catalog", "source_table_name")
+        .agg(
+            F.array_join(F.collect_set("downstream_table_full_name"), ", ").alias(
+                "downstream_tables_for_this_catalog"
+            )
+        )
+    )
+
+    # attach downstream info separately for each catalog's physical table name,
+    # then collapse to one row per (source_system, base_table_name)
+    def attach_downstream(catalog: str, table_name_col: str):
+        return (
+            reconciled.select("source_system", "base_table_name", table_name_col)
+            .filter(F.col(table_name_col).isNotNull())
+            .join(
+                downstream_agg,
+                (F.col(table_name_col) == downstream_agg.source_table_name)
+                & (F.lit(catalog) == downstream_agg.source_table_catalog),
+                "left",
+            )
+            .select(
+                "source_system",
+                "base_table_name",
+                F.col("downstream_tables_for_this_catalog").alias(f"downstream_{catalog}"),
+            )
+        )
+
+    dstream_core = attach_downstream("core", "core_table_name")
+    dstream_core_tst = attach_downstream("core_tst", "core_tst_table_name")
+    dstream_core_std = attach_downstream("core_tst_std001", "core_tst_std001_table_name")
+
+    reconciled = (
+        reconciled.join(dstream_core, ["source_system", "base_table_name"], "left")
+        .join(dstream_core_tst, ["source_system", "base_table_name"], "left")
+        .join(dstream_core_std, ["source_system", "base_table_name"], "left")
+        .withColumn(
+            "downstream_tables",
+            F.array_join(
+                F.array_distinct(
+                    F.filter(
+                        F.array(
+                            F.col("downstream_core"),
+                            F.col("downstream_core_tst"),
+                            F.col("downstream_core_tst_std001"),
+                        ),
+                        lambda x: x.isNotNull() & (x != ""),
+                    )
+                ),
+                " | ",
+            ),
+        )
+        .withColumn(
+            "downstream_impact",
+            F.when(F.length(F.col("downstream_tables")) > 0, F.lit("Y")).otherwise(F.lit("N")),
+        )
+        .drop("downstream_core", "downstream_core_tst", "downstream_core_tst_std001")
+    )
+else:
+    reconciled = reconciled.withColumn("downstream_impact", F.lit("N/A")).withColumn(
+        "downstream_tables", F.lit(None).cast("string")
+    )
+
+# ---------------------------------------------------------------------------
+# STEP 6: Final shape
+# ---------------------------------------------------------------------------
+final_df = reconciled.select(
+    F.col("source_system"),
+    F.col("base_table_name").alias("table_name"),
+    F.col("in_core"),
+    F.col("in_core_tst"),
+    F.col("in_core_tst_std001"),
+    F.col("downstream_impact"),
+    F.col("downstream_tables").alias("downstream_impacted_tables"),
+).orderBy("source_system", "table_name")
+
+final_df.cache()
+print(f"Reconciliation row count: {final_df.count()}")
+final_df.show(50, truncate=False)
+
+# ---------------------------------------------------------------------------
+# STEP 7: Persist result
+# ---------------------------------------------------------------------------
+(
+    final_df.write.mode(WRITE_MODE)
+    .option("mergeSchema", "true")
+    .saveAsTable(OUTPUT_TABLE)
+)
+
+print(f"Wrote reconciliation result to {OUTPUT_TABLE}")
+
+# cleanup cached frames
+for df in catalog_frames.values():
+    df.unpersist()
+final_df.unpersist()
