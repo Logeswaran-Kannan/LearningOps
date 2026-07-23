@@ -21,10 +21,19 @@ them column-by-column.
 
 Output grain: one row per (source_system, table_name, column_name)
 
-    ddl_status values:
-        MATCH                         - column exists in all 3 with identical type
-        TYPE_MISMATCH                 - column exists in all 3, type differs
-        MISSING_IN_<CATALOG>[,...]    - column absent in one or more catalogs
+    Strict 3-way match rule:
+        PASS = column present in core AND core_tst AND core_tst_std001,
+               AND the datatype signature is identical across all three.
+        FAIL = anything else (missing in any catalog, OR present
+               everywhere but datatype/length/precision/scale/nullability
+               differs).
+
+    Columns produced per row:
+        column_present_in_all   Y/N - is the column present in all 3 catalogs
+        datatype_match           Y/N/N/A - N/A when not present everywhere,
+                                  since there's nothing to compare
+        ddl_status                MATCH | TYPE_MISMATCH | MISSING_IN_<CATALOG>[,...]
+        reconciliation_status     PASS | FAIL  <- the single field to filter on
 
 Same run-history behaviour as the table reconciliation script:
     - every execution APPENDS (never overwrites history)
@@ -221,6 +230,13 @@ reconciled = (
 
 # ---------------------------------------------------------------------------
 # STEP 4: Compute ddl_status per column
+#
+#   Reconciliation rule (strict 3-way match):
+#     PASS  = column exists in core AND core_tst AND core_tst_std001,
+#             AND the datatype signature is IDENTICAL across all three.
+#     FAIL  = anything else - missing in one/more catalogs, OR present
+#             everywhere but with a differing datatype/length/precision/
+#             scale/nullability.
 # ---------------------------------------------------------------------------
 missing_catalogs_arr = F.array_distinct(
     F.filter(
@@ -233,16 +249,39 @@ missing_catalogs_arr = F.array_distinct(
     )
 )
 
+column_present_in_all = F.size(missing_catalogs_arr) == 0
+
 types_match = (
     (F.col("core_data_type") == F.col("core_tst_data_type"))
     & (F.col("core_tst_data_type") == F.col("core_tst_std001_data_type"))
 )
 
-reconciled = reconciled.withColumn(
-    "ddl_status",
-    F.when(F.size(missing_catalogs_arr) > 0, F.concat(F.lit("MISSING_IN_"), F.array_join(missing_catalogs_arr, ",")))
-    .when(types_match, F.lit("MATCH"))
-    .otherwise(F.lit("TYPE_MISMATCH")),
+reconciled = (
+    reconciled.withColumn(
+        "column_present_in_all",
+        F.when(column_present_in_all, F.lit("Y")).otherwise(F.lit("N")),
+    )
+    .withColumn(
+        # only meaningful once the column is present everywhere; otherwise N/A
+        # since there's nothing to compare
+        "datatype_match",
+        F.when(~column_present_in_all, F.lit("N/A"))
+        .when(types_match, F.lit("Y"))
+        .otherwise(F.lit("N")),
+    )
+    .withColumn(
+        "ddl_status",
+        F.when(
+            F.size(missing_catalogs_arr) > 0,
+            F.concat(F.lit("MISSING_IN_"), F.array_join(missing_catalogs_arr, ",")),
+        )
+        .when(types_match, F.lit("MATCH"))
+        .otherwise(F.lit("TYPE_MISMATCH")),
+    )
+    .withColumn(
+        "reconciliation_status",
+        F.when(column_present_in_all & types_match, F.lit("PASS")).otherwise(F.lit("FAIL")),
+    )
 )
 
 
@@ -265,7 +304,10 @@ final_df = (
         F.col("core_tst_data_type").alias("core_tst_data_type"),
         "in_core_tst_std001",
         F.col("core_tst_std001_data_type").alias("core_tst_std001_data_type"),
+        "column_present_in_all",
+        "datatype_match",
         "ddl_status",
+        "reconciliation_status",
     )
     .orderBy("source_system", "table_name", "ordinal_position", "column_name")
     .withColumn("run_id", F.lit(RUN_ID))
@@ -276,9 +318,9 @@ final_df = (
 
 final_df.cache()
 print(f"DDL reconciliation row count: {final_df.count()}")
-mismatch_count = final_df.filter(F.col("ddl_status") != "MATCH").count()
-print(f"Rows NOT matching (missing or type mismatch): {mismatch_count}")
-final_df.filter(F.col("ddl_status") != "MATCH").show(50, truncate=False)
+fail_count = final_df.filter(F.col("reconciliation_status") == "FAIL").count()
+print(f"FAIL rows (missing in a catalog OR present with a datatype mismatch): {fail_count}")
+final_df.filter(F.col("reconciliation_status") == "FAIL").show(50, truncate=False)
 
 
 # ---------------------------------------------------------------------------
