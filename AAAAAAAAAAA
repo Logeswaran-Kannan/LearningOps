@@ -20,11 +20,19 @@ table_name; only the "vw_<system>_current_" prefix is stripped.
 
     e.g. vw_billingcenter_current_bc_account_cda  ->  table_name = bc_account
 
+Every execution APPENDS a new snapshot (does not overwrite history). Each row
+is tagged with run_id / run_timestamp / run_date, and only the most recent
+run for a given calendar day is flagged is_latest_for_day = 'Y' (all earlier
+runs from that same day get flipped to 'N'). Rows older than RETENTION_DAYS
+are purged at the end of each run.
+
 Output columns:
     source_system, table_name,
-    in_core, in_core_tst, in_core_tst_std001   (Y/N presence flags)
-    downstream_impact                          (Y/N)
-    downstream_impacted_tables                 (pipe-delimited list, if any)
+    in_core, core_actual_table_name,
+    in_core_tst, core_tst_actual_table_name,
+    in_core_tst_std001, core_tst_std001_actual_table_name,
+    downstream_impact, downstream_impacted_tables,
+    run_id, run_timestamp, run_date, is_latest_for_day
 
 PERFORMANCE NOTES
 -----------------
@@ -36,8 +44,14 @@ PERFORMANCE NOTES
    (system.access.table_lineage can be huge - never query it per table).
 4. No collect()/driver-side loops over table lists - everything is done as
    Spark transformations so it scales with the cluster, not the driver.
+5. Output table is partitioned by run_date, so both the "mark latest" UPDATE
+   and the retention DELETE prune to a single partition instead of scanning
+   full history.
 """
 
+from datetime import datetime, timezone
+
+from delta.tables import DeltaTable
 from pyspark.sql import SparkSession, DataFrame, functions as F
 
 spark = SparkSession.builder.appName("ThreeWayTableReconciliation").getOrCreate()
@@ -58,9 +72,11 @@ SOURCE_SYSTEM_PREFIX = {
 # how far back to look in lineage (days) - tune for perf vs completeness
 LINEAGE_LOOKBACK_DAYS = 180
 
-# where to persist the result
+# how many days of run history to retain in the output table
+RETENTION_DAYS = 5
+
+# where to persist the result (history table - appended to every run, never overwritten wholesale)
 OUTPUT_TABLE = "core.ods_recon.table_reconciliation_result"
-WRITE_MODE = "overwrite"  # switch to a MERGE INTO if you need incremental history
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +253,12 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# STEP 6: Final shape
+# STEP 6: Final shape + run metadata
 # ---------------------------------------------------------------------------
+_run_dt = datetime.now(timezone.utc)
+RUN_ID = _run_dt.strftime("%Y%m%d_%H%M%S")  # unique per execution
+RUN_TIMESTAMP = _run_dt.isoformat()
+
 final_df = (
     reconciled.select(
         "source_system",
@@ -253,6 +273,10 @@ final_df = (
         "downstream_impacted_tables",
     )
     .orderBy("source_system", "table_name")
+    .withColumn("run_id", F.lit(RUN_ID))
+    .withColumn("run_timestamp", F.lit(RUN_TIMESTAMP).cast("timestamp"))
+    .withColumn("run_date", F.current_date())
+    .withColumn("is_latest_for_day", F.lit("Y"))  # flipped to 'N' for prior same-day runs below
 )
 
 final_df.cache()
@@ -261,10 +285,37 @@ final_df.show(50, truncate=False)
 
 
 # ---------------------------------------------------------------------------
-# STEP 7: Persist result
+# STEP 7: Persist result - append this run, mark it the latest for today,
+#          flip prior same-day runs to not-latest, purge old history
 # ---------------------------------------------------------------------------
-final_df.write.mode(WRITE_MODE).option("mergeSchema", "true").saveAsTable(OUTPUT_TABLE)
-print(f"Wrote reconciliation result to {OUTPUT_TABLE}")
+if spark.catalog.tableExists(OUTPUT_TABLE):
+    (
+        final_df.write.format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(OUTPUT_TABLE)
+    )
+else:
+    (
+        final_df.write.format("delta")
+        .mode("overwrite")
+        .partitionBy("run_date")
+        .saveAsTable(OUTPUT_TABLE)
+    )
+
+output_tbl = DeltaTable.forName(spark, OUTPUT_TABLE)
+
+# any other run(s) from today are no longer the latest
+output_tbl.update(
+    condition=f"run_date = current_date() AND run_id <> '{RUN_ID}'",
+    set={"is_latest_for_day": "'N'"},
+)
+
+# retention: drop rows older than RETENTION_DAYS (partition-pruned delete)
+output_tbl.delete(f"run_date < date_sub(current_date(), {RETENTION_DAYS})")
+
+print(f"Wrote reconciliation result to {OUTPUT_TABLE} (run_id={RUN_ID}, run_date={_run_dt.date()})")
+print(f"Rows older than {RETENTION_DAYS} days purged.")
 
 # cleanup cached frames
 for df in catalog_frames.values():
