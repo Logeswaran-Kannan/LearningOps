@@ -1,52 +1,48 @@
 """
-three_way_table_reconciliation.py
-==================================
+three_way_ddl_reconciliation.py
+================================
 
-Reconciles the ODS view/table inventory across three catalogs (schema
-`ods_views` in all three):
+Column-level (DDL) reconciliation across the same three catalogs used for
+the table-existence reconciliation, for the same source systems and the
+same filtering rules:
 
     core              -> prod read-replica   (EXCLUDE tables ending _cda / _sa)
     core_tst          -> test read-replica   (EXCLUDE tables ending _cda / _sa)
     core_tst_std001   -> test CDA version    (INCLUDE ONLY tables ending _cda)
 
-Only tables belonging to the three source systems below are considered;
-everything else in the schema is ignored. The 2-letter system code
-(pc_ / bc_ / cc_) is part of the table's identity and is KEPT in the output
-table_name; only the "vw_<system>_current_" prefix is stripped.
+    policycenter  -> vw_policycenter_current_pc_<n>[_cda|_sa]
+    billingcenter -> vw_billingcenter_current_bc_<n>[_cda|_sa]
+    claimcenter   -> vw_claimcenter_current_cc_<n>[_cda|_sa]
 
-    policycenter  -> vw_policycenter_current_pc_<name>[_cda|_sa]
-    billingcenter -> vw_billingcenter_current_bc_<name>[_cda|_sa]
-    claimcenter   -> vw_claimcenter_current_cc_<name>[_cda|_sa]
+For every table that survives the table-level filter, this script pulls its
+column list + data type signature (data_type, length, precision, scale,
+nullability) from information_schema.columns in each catalog and compares
+them column-by-column.
 
-    e.g. vw_billingcenter_current_bc_account_cda  ->  table_name = bc_account
+Output grain: one row per (source_system, table_name, column_name)
 
-Every execution APPENDS a new snapshot (does not overwrite history). Each row
-is tagged with run_id / run_timestamp / run_date, and only the most recent
-run for a given calendar day is flagged is_latest_for_day = 'Y' (all earlier
-runs from that same day get flipped to 'N'). Rows older than RETENTION_DAYS
-are purged at the end of each run.
+    ddl_status values:
+        MATCH                         - column exists in all 3 with identical type
+        TYPE_MISMATCH                 - column exists in all 3, type differs
+        MISSING_IN_<CATALOG>[,...]    - column absent in one or more catalogs
 
-Output columns:
-    source_system, table_name,
-    in_core, core_actual_table_name,
-    in_core_tst, core_tst_actual_table_name,
-    in_core_tst_std001, core_tst_std001_actual_table_name,
-    downstream_impact, downstream_impacted_tables,
-    run_id, run_timestamp, run_date, is_latest_for_day
+Same run-history behaviour as the table reconciliation script:
+    - every execution APPENDS (never overwrites history)
+    - only the latest run of a calendar day is flagged is_latest_for_day='Y'
+    - rows older than RETENTION_DAYS are purged each run
 
 PERFORMANCE NOTES
 -----------------
-1. Table inventories come from information_schema.tables -> metadata only,
-   no data scan, sub-second even on large catalogs.
-2. These inventories are small (a few hundred rows) so they're explicitly
-   broadcast-joined rather than left to AQE guesswork.
-3. Lineage is read ONCE, filtered on catalog/schema/date before any join
-   (system.access.table_lineage can be huge - never query it per table).
-4. No collect()/driver-side loops over table lists - everything is done as
-   Spark transformations so it scales with the cluster, not the driver.
-5. Output table is partitioned by run_date, so both the "mark latest" UPDATE
-   and the retention DELETE prune to a single partition instead of scanning
-   full history.
+1. Table inventory + column inventory both come from information_schema
+   -> metadata only, no data scan.
+2. information_schema.columns is read ONCE per catalog (not per table) and
+   then inner-joined against the already-filtered, small table list
+   (broadcast) to drop irrelevant tables/columns before any further work.
+3. The 3-way join is on (source_system, base_table_name, column_name) -
+   still small enough (typically thousands, not millions, of rows) to
+   broadcast the two smaller sides.
+4. Output table is partitioned by run_date, so the latest-flag UPDATE and
+   retention DELETE both prune to a single partition.
 """
 
 from datetime import datetime, timezone
@@ -54,10 +50,10 @@ from datetime import datetime, timezone
 from delta.tables import DeltaTable
 from pyspark.sql import SparkSession, DataFrame, functions as F
 
-spark = SparkSession.builder.appName("ThreeWayTableReconciliation").getOrCreate()
+spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
 
 # ---------------------------------------------------------------------------
-# CONFIG - adjust to your environment
+# CONFIG - keep in sync with the table-existence reconciliation script
 # ---------------------------------------------------------------------------
 SCHEMA = "ods_views"
 
@@ -69,46 +65,36 @@ SOURCE_SYSTEM_PREFIX = {
     "claimcenter": "vw_claimcenter_current_",
 }
 
-# how far back to look in lineage (days) - tune for perf vs completeness
-LINEAGE_LOOKBACK_DAYS = 180
-
 # how many days of run history to retain in the output table
 RETENTION_DAYS = 5
 
-# Table names to exclude from comparison entirely (match on the common
-# base_table_name, e.g. "bc_account", "pc_policy" - i.e. WITHOUT the
-# vw_<system>_current_ prefix and WITHOUT any _cda/_sa suffix).
-# Add to this list any time you need to drop a table from reconciliation.
+# Tables to exclude from DDL comparison entirely (match on base_table_name,
+# e.g. "bc_account" - same convention as the table-existence script).
 EXCLUDED_TABLES = [
     # "bc_account",
     # "pc_policyperiod",
 ]
 
-# where to persist the result (history table - appended to every run, never overwritten wholesale)
-OUTPUT_TABLE = "core.ods_recon.table_reconciliation_result"
+OUTPUT_TABLE = "core.ods_recon.ddl_reconciliation_result"
 
 
 # ---------------------------------------------------------------------------
-# STEP 1: Pull table inventory per catalog (metadata only, no data scan)
+# STEP 1: Table inventory per catalog (same filtering logic as the
+#          table-existence reconciliation script)
 # ---------------------------------------------------------------------------
 def get_table_inventory(catalog: str) -> DataFrame:
     return spark.sql(
         f"""
-        SELECT table_catalog, table_schema, table_name
+        SELECT table_name
         FROM {catalog}.information_schema.tables
         WHERE table_schema = '{SCHEMA}'
         """
     )
 
 
-# ---------------------------------------------------------------------------
-# STEP 2: Enrich with source_system / base_table_name / suffix via one regex
-# ---------------------------------------------------------------------------
 _PREFIX_ALTERNATION = "|".join(SOURCE_SYSTEM_PREFIX.values())
-# group1 = matched prefix, group2 = base name (keeps pc_/bc_/cc_), group3 = optional suffix
 _NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})(.+?)(_cda|_sa)?$"
 
-# prefix string -> source system name, as a Spark map expression (broadcast-friendly)
 _prefix_to_system_expr = F.create_map(
     *sum(([F.lit(v), F.lit(k)] for k, v in SOURCE_SYSTEM_PREFIX.items()), [])
 )
@@ -119,185 +105,184 @@ def enrich_and_filter(df: DataFrame) -> DataFrame:
         df.withColumn("matched_prefix", F.regexp_extract("table_name", _NAME_PATTERN, 1))
         .withColumn("base_table_name", F.regexp_extract("table_name", _NAME_PATTERN, 2))
         .withColumn("suffix", F.regexp_extract("table_name", _NAME_PATTERN, 3))
-        .filter(F.col("matched_prefix") != "")  # drop anything outside the 3 known systems
+        .filter(F.col("matched_prefix") != "")
         .withColumn("source_system", _prefix_to_system_expr[F.col("matched_prefix")])
     )
 
 
 def apply_catalog_rule(df: DataFrame, catalog: str) -> DataFrame:
-    """core / core_tst -> exclude _cda and _sa
-    core_tst_std001    -> keep ONLY _cda
-    """
     if catalog == "core_tst_std001":
         return df.filter(F.col("suffix") == "_cda")
     return df.filter(~F.col("suffix").isin("_cda", "_sa"))
 
 
-# ---------------------------------------------------------------------------
-# STEP 3: Build per-catalog filtered inventories
-# ---------------------------------------------------------------------------
-catalog_frames = {}
+table_frames = {}
 for catalog in CATALOGS:
     raw = get_table_inventory(catalog)
     enriched = enrich_and_filter(raw)
     rule_applied = apply_catalog_rule(enriched, catalog)
     excluded = rule_applied.filter(~F.col("base_table_name").isin(EXCLUDED_TABLES))
-    catalog_frames[catalog] = excluded.cache()
-
-core_df = catalog_frames["core"]
-core_tst_df = catalog_frames["core_tst"]
-core_std_df = catalog_frames["core_tst_std001"]
+    table_frames[catalog] = excluded.select("source_system", "base_table_name", "table_name").cache()
 
 
 # ---------------------------------------------------------------------------
-# STEP 4: 3-way full outer join on (source_system, base_table_name)
-#          inventories are small -> broadcast explicitly for perf
+# STEP 2: Column metadata per catalog, restricted to the filtered table list
 # ---------------------------------------------------------------------------
-def presence_frame(df: DataFrame, catalog: str, flag_col: str) -> DataFrame:
-    return (
-        df.select("source_system", "base_table_name", "table_name")
-        .withColumnRenamed("table_name", f"{catalog}_table_name")
-        .withColumn(flag_col, F.lit("Y"))
-        .dropDuplicates(["source_system", "base_table_name"])
+def get_column_inventory(catalog: str) -> DataFrame:
+    return spark.sql(
+        f"""
+        SELECT
+            table_name,
+            column_name,
+            ordinal_position,
+            data_type,
+            is_nullable,
+            character_maximum_length,
+            numeric_precision,
+            numeric_scale
+        FROM {catalog}.information_schema.columns
+        WHERE table_schema = '{SCHEMA}'
+        """
     )
 
 
-core_p = presence_frame(core_df, "core", "in_core")
-core_tst_p = presence_frame(core_tst_df, "core_tst", "in_core_tst")
-core_std_p = presence_frame(core_std_df, "core_tst_std001", "in_core_tst_std001")
+def build_catalog_column_frame(catalog: str) -> DataFrame:
+    cols = get_column_inventory(catalog)
+    tbls = table_frames[catalog]  # source_system, base_table_name, table_name
+
+    return (
+        cols.join(F.broadcast(tbls), "table_name", "inner")
+        .withColumn(
+            "data_type_signature",
+            F.concat_ws(
+                "|",
+                F.upper(F.col("data_type")),
+                F.coalesce(F.col("character_maximum_length").cast("string"), F.lit("")),
+                F.coalesce(F.col("numeric_precision").cast("string"), F.lit("")),
+                F.coalesce(F.col("numeric_scale").cast("string"), F.lit("")),
+                F.upper(F.col("is_nullable")),
+            ),
+        )
+        .select(
+            "source_system",
+            "base_table_name",
+            "table_name",
+            "column_name",
+            "ordinal_position",
+            "data_type_signature",
+        )
+    )
+
+
+core_cols = build_catalog_column_frame("core")
+core_tst_cols = build_catalog_column_frame("core_tst")
+core_std_cols = build_catalog_column_frame("core_tst_std001")
+
+
+# ---------------------------------------------------------------------------
+# STEP 3: 3-way join on (source_system, base_table_name, column_name)
+#          each side is per-catalog aliased so nothing collides on join
+# ---------------------------------------------------------------------------
+def col_presence_frame(df: DataFrame, catalog: str, flag_col: str) -> DataFrame:
+    return (
+        df.select(
+            "source_system",
+            "base_table_name",
+            "column_name",
+            F.col("table_name").alias(f"{catalog}_table_name"),
+            F.col("ordinal_position").alias(f"{catalog}_ordinal_position"),
+            F.col("data_type_signature").alias(f"{catalog}_data_type"),
+        )
+        .withColumn(flag_col, F.lit("Y"))
+        .dropDuplicates(["source_system", "base_table_name", "column_name"])
+    )
+
+
+core_cp = col_presence_frame(core_cols, "core", "in_core")
+core_tst_cp = col_presence_frame(core_tst_cols, "core_tst", "in_core_tst")
+core_std_cp = col_presence_frame(core_std_cols, "core_tst_std001", "in_core_tst_std001")
+
+join_keys = ["source_system", "base_table_name", "column_name"]
 
 reconciled = (
-    core_p.join(F.broadcast(core_tst_p), ["source_system", "base_table_name"], "full_outer")
-    .join(F.broadcast(core_std_p), ["source_system", "base_table_name"], "full_outer")
+    core_cp.join(F.broadcast(core_tst_cp), join_keys, "full_outer")
+    .join(F.broadcast(core_std_cp), join_keys, "full_outer")
     .fillna("N", subset=["in_core", "in_core_tst", "in_core_tst_std001"])
+    .withColumn(
+        "ordinal_position",
+        F.coalesce(
+            F.col("core_ordinal_position"),
+            F.col("core_tst_ordinal_position"),
+            F.col("core_tst_std001_ordinal_position"),
+        ),
+    )
 )
 
 
 # ---------------------------------------------------------------------------
-# STEP 5: Downstream impact via Unity Catalog lineage (single filtered query)
+# STEP 4: Compute ddl_status per column
 # ---------------------------------------------------------------------------
-def get_downstream_lineage():
-    try:
-        catalogs_list = ",".join(f"'{c}'" for c in CATALOGS)
-        return spark.sql(
-            f"""
-            SELECT
-                source_table_catalog,
-                source_table_name,
-                target_table_catalog,
-                target_table_schema,
-                target_table_name
-            FROM system.access.table_lineage
-            WHERE source_table_schema = '{SCHEMA}'
-              AND source_table_catalog IN ({catalogs_list})
-              AND event_date >= date_sub(current_date(), {LINEAGE_LOOKBACK_DAYS})
-              AND target_table_full_name IS NOT NULL
-            """
-        )
-    except Exception as e:
-        print(f"[WARN] Could not read system.access.table_lineage: {e}")
-        return None
-
-
-lineage_df = get_downstream_lineage()
-
-if lineage_df is not None:
-    downstream_agg = (
-        lineage_df.withColumn(
-            "downstream_table_full_name",
-            F.concat_ws(".", "target_table_catalog", "target_table_schema", "target_table_name"),
-        )
-        .groupBy("source_table_catalog", "source_table_name")
-        .agg(F.collect_set("downstream_table_full_name").alias("downstream_set"))
+missing_catalogs_arr = F.array_distinct(
+    F.filter(
+        F.array(
+            F.when(F.col("in_core") == "N", F.lit("CORE")),
+            F.when(F.col("in_core_tst") == "N", F.lit("CORE_TST")),
+            F.when(F.col("in_core_tst_std001") == "N", F.lit("CORE_TST_STD001")),
+        ),
+        lambda x: x.isNotNull(),
     )
+)
 
-    def attach_downstream(catalog: str, table_name_col: str) -> DataFrame:
-        return (
-            reconciled.select("source_system", "base_table_name", table_name_col)
-            .filter(F.col(table_name_col).isNotNull())
-            .join(
-                downstream_agg,
-                (F.col(table_name_col) == downstream_agg.source_table_name)
-                & (F.lit(catalog) == downstream_agg.source_table_catalog),
-                "left",
-            )
-            .select(
-                "source_system",
-                "base_table_name",
-                F.col("downstream_set").alias(f"downstream_{catalog}"),
-            )
-        )
+types_match = (
+    (F.col("core_data_type") == F.col("core_tst_data_type"))
+    & (F.col("core_tst_data_type") == F.col("core_tst_std001_data_type"))
+)
 
-    dstream_core = attach_downstream("core", "core_table_name")
-    dstream_core_tst = attach_downstream("core_tst", "core_tst_table_name")
-    dstream_core_std = attach_downstream("core_tst_std001", "core_tst_std001_table_name")
-
-    reconciled = (
-        reconciled.join(dstream_core, ["source_system", "base_table_name"], "left")
-        .join(dstream_core_tst, ["source_system", "base_table_name"], "left")
-        .join(dstream_core_std, ["source_system", "base_table_name"], "left")
-        .withColumn(
-            "downstream_impacted_tables",
-            F.array_join(
-                F.array_distinct(
-                    F.flatten(
-                        F.array(
-                            F.coalesce(F.col("downstream_core"), F.array()),
-                            F.coalesce(F.col("downstream_core_tst"), F.array()),
-                            F.coalesce(F.col("downstream_core_tst_std001"), F.array()),
-                        )
-                    )
-                ),
-                " | ",
-            ),
-        )
-        .withColumn(
-            "downstream_impact",
-            F.when(F.length(F.col("downstream_impacted_tables")) > 0, F.lit("Y")).otherwise(F.lit("N")),
-        )
-        .drop("downstream_core", "downstream_core_tst", "downstream_core_tst_std001")
-    )
-else:
-    reconciled = reconciled.withColumn("downstream_impact", F.lit("N/A")).withColumn(
-        "downstream_impacted_tables", F.lit(None).cast("string")
-    )
+reconciled = reconciled.withColumn(
+    "ddl_status",
+    F.when(F.size(missing_catalogs_arr) > 0, F.concat(F.lit("MISSING_IN_"), F.array_join(missing_catalogs_arr, ",")))
+    .when(types_match, F.lit("MATCH"))
+    .otherwise(F.lit("TYPE_MISMATCH")),
+)
 
 
 # ---------------------------------------------------------------------------
-# STEP 6: Final shape + run metadata
+# STEP 5: Final shape + run metadata
 # ---------------------------------------------------------------------------
 _run_dt = datetime.now(timezone.utc)
-RUN_ID = _run_dt.strftime("%Y%m%d_%H%M%S")  # unique per execution
+RUN_ID = _run_dt.strftime("%Y%m%d_%H%M%S")
 RUN_TIMESTAMP = _run_dt.isoformat()
 
 final_df = (
     reconciled.select(
         "source_system",
         F.col("base_table_name").alias("table_name"),
+        "column_name",
+        "ordinal_position",
         "in_core",
-        F.col("core_table_name").alias("core_actual_table_name"),
+        F.col("core_data_type").alias("core_data_type"),
         "in_core_tst",
-        F.col("core_tst_table_name").alias("core_tst_actual_table_name"),
+        F.col("core_tst_data_type").alias("core_tst_data_type"),
         "in_core_tst_std001",
-        F.col("core_tst_std001_table_name").alias("core_tst_std001_actual_table_name"),
-        "downstream_impact",
-        "downstream_impacted_tables",
+        F.col("core_tst_std001_data_type").alias("core_tst_std001_data_type"),
+        "ddl_status",
     )
-    .orderBy("source_system", "table_name")
+    .orderBy("source_system", "table_name", "ordinal_position", "column_name")
     .withColumn("run_id", F.lit(RUN_ID))
     .withColumn("run_timestamp", F.lit(RUN_TIMESTAMP).cast("timestamp"))
     .withColumn("run_date", F.current_date())
-    .withColumn("is_latest_for_day", F.lit("Y"))  # flipped to 'N' for prior same-day runs below
+    .withColumn("is_latest_for_day", F.lit("Y"))
 )
 
 final_df.cache()
-print(f"Reconciliation row count: {final_df.count()}")
-final_df.show(50, truncate=False)
+print(f"DDL reconciliation row count: {final_df.count()}")
+mismatch_count = final_df.filter(F.col("ddl_status") != "MATCH").count()
+print(f"Rows NOT matching (missing or type mismatch): {mismatch_count}")
+final_df.filter(F.col("ddl_status") != "MATCH").show(50, truncate=False)
 
 
 # ---------------------------------------------------------------------------
-# STEP 7: Persist result - append this run, mark it the latest for today,
-#          flip prior same-day runs to not-latest, purge old history
+# STEP 6: Persist - append this run, mark latest-for-day, purge old history
 # ---------------------------------------------------------------------------
 if spark.catalog.tableExists(OUTPUT_TABLE):
     (
@@ -316,19 +301,17 @@ else:
 
 output_tbl = DeltaTable.forName(spark, OUTPUT_TABLE)
 
-# any other run(s) from today are no longer the latest
 output_tbl.update(
     condition=f"run_date = current_date() AND run_id <> '{RUN_ID}'",
     set={"is_latest_for_day": "'N'"},
 )
 
-# retention: drop rows older than RETENTION_DAYS (partition-pruned delete)
 output_tbl.delete(f"run_date < date_sub(current_date(), {RETENTION_DAYS})")
 
-print(f"Wrote reconciliation result to {OUTPUT_TABLE} (run_id={RUN_ID}, run_date={_run_dt.date()})")
+print(f"Wrote DDL reconciliation result to {OUTPUT_TABLE} (run_id={RUN_ID}, run_date={_run_dt.date()})")
 print(f"Rows older than {RETENTION_DAYS} days purged.")
 
 # cleanup cached frames
-for df in catalog_frames.values():
+for df in table_frames.values():
     df.unpersist()
 final_df.unpersist()
