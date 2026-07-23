@@ -244,8 +244,11 @@ final_df = (
         "source_system",
         F.col("base_table_name").alias("table_name"),
         "in_core",
+        F.col("core_table_name").alias("core_actual_table_name"),
         "in_core_tst",
+        F.col("core_tst_table_name").alias("core_tst_actual_table_name"),
         "in_core_tst_std001",
+        F.col("core_tst_std001_table_name").alias("core_tst_std001_actual_table_name"),
         "downstream_impact",
         "downstream_impacted_tables",
     )
