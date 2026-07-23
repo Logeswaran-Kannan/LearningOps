@@ -1,15 +1,52 @@
 """
-diagnose_reconciliation.py
-===========================
-Run this BEFORE the full reconciliation script to find exactly where rows
-are being lost. It prints counts + samples at every stage, for every catalog.
+three_way_table_reconciliation.py
+==================================
+
+Reconciles the ODS view/table inventory across three catalogs (schema
+`ods_views` in all three):
+
+    core              -> prod read-replica   (EXCLUDE tables ending _cda / _sa)
+    core_tst          -> test read-replica   (EXCLUDE tables ending _cda / _sa)
+    core_tst_std001   -> test CDA version    (INCLUDE ONLY tables ending _cda)
+
+Only tables belonging to the three source systems below are considered;
+everything else in the schema is ignored. The 2-letter system code
+(pc_ / bc_ / cc_) is part of the table's identity and is KEPT in the output
+table_name; only the "vw_<system>_current_" prefix is stripped.
+
+    policycenter  -> vw_policycenter_current_pc_<name>[_cda|_sa]
+    billingcenter -> vw_billingcenter_current_bc_<name>[_cda|_sa]
+    claimcenter   -> vw_claimcenter_current_cc_<name>[_cda|_sa]
+
+    e.g. vw_billingcenter_current_bc_account_cda  ->  table_name = bc_account
+
+Output columns:
+    source_system, table_name,
+    in_core, in_core_tst, in_core_tst_std001   (Y/N presence flags)
+    downstream_impact                          (Y/N)
+    downstream_impacted_tables                 (pipe-delimited list, if any)
+
+PERFORMANCE NOTES
+-----------------
+1. Table inventories come from information_schema.tables -> metadata only,
+   no data scan, sub-second even on large catalogs.
+2. These inventories are small (a few hundred rows) so they're explicitly
+   broadcast-joined rather than left to AQE guesswork.
+3. Lineage is read ONCE, filtered on catalog/schema/date before any join
+   (system.access.table_lineage can be huge - never query it per table).
+4. No collect()/driver-side loops over table lists - everything is done as
+   Spark transformations so it scales with the cluster, not the driver.
 """
 
-from pyspark.sql import SparkSession, functions as F
+from pyspark.sql import SparkSession, DataFrame, functions as F
 
-spark = SparkSession.builder.appName("ReconDiagnostics").getOrCreate()
+spark = SparkSession.builder.appName("ThreeWayTableReconciliation").getOrCreate()
 
+# ---------------------------------------------------------------------------
+# CONFIG - adjust to your environment
+# ---------------------------------------------------------------------------
 SCHEMA = "ods_views"
+
 CATALOGS = ["core", "core_tst", "core_tst_std001"]
 
 SOURCE_SYSTEM_PREFIX = {
@@ -17,128 +54,216 @@ SOURCE_SYSTEM_PREFIX = {
     "billingcenter": "vw_billingcenter_current_",
     "claimcenter": "vw_claimcenter_current_",
 }
+
+# how far back to look in lineage (days) - tune for perf vs completeness
+LINEAGE_LOOKBACK_DAYS = 180
+
+# where to persist the result
+OUTPUT_TABLE = "core.ods_recon.table_reconciliation_result"
+WRITE_MODE = "overwrite"  # switch to a MERGE INTO if you need incremental history
+
+
+# ---------------------------------------------------------------------------
+# STEP 1: Pull table inventory per catalog (metadata only, no data scan)
+# ---------------------------------------------------------------------------
+def get_table_inventory(catalog: str) -> DataFrame:
+    return spark.sql(
+        f"""
+        SELECT table_catalog, table_schema, table_name
+        FROM {catalog}.information_schema.tables
+        WHERE table_schema = '{SCHEMA}'
+        """
+    )
+
+
+# ---------------------------------------------------------------------------
+# STEP 2: Enrich with source_system / base_table_name / suffix via one regex
+# ---------------------------------------------------------------------------
 _PREFIX_ALTERNATION = "|".join(SOURCE_SYSTEM_PREFIX.values())
+# group1 = matched prefix, group2 = base name (keeps pc_/bc_/cc_), group3 = optional suffix
 _NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})(.+?)(_cda|_sa)?$"
 
+# prefix string -> source system name, as a Spark map expression (broadcast-friendly)
+_prefix_to_system_expr = F.create_map(
+    *sum(([F.lit(v), F.lit(k)] for k, v in SOURCE_SYSTEM_PREFIX.items()), [])
+)
 
-def section(title):
-    print("\n" + "=" * 80)
-    print(title)
-    print("=" * 80)
 
-
-for catalog in CATALOGS:
-    section(f"CATALOG: {catalog}")
-
-    # --- Stage 0: can we even see the catalog / schema at all? ---
-    try:
-        schemas = spark.sql(f"SHOW SCHEMAS IN {catalog}").collect()
-        schema_names = [r[0] for r in schemas]
-        print(f"Schemas visible in {catalog}: {schema_names[:20]}"
-              f"{' ...' if len(schema_names) > 20 else ''}")
-        if SCHEMA not in schema_names and SCHEMA.lower() not in [s.lower() for s in schema_names]:
-            print(f"  !! '{SCHEMA}' NOT found in schema list for {catalog}. "
-                  f"Check spelling/case or permissions.")
-    except Exception as e:
-        print(f"  !! Could not run SHOW SCHEMAS on {catalog}: {e}")
-
-    # --- Stage 1: raw information_schema.tables row count ---
-    try:
-        raw = spark.sql(f"""
-            SELECT table_catalog, table_schema, table_name
-            FROM {catalog}.information_schema.tables
-            WHERE lower(table_schema) = lower('{SCHEMA}')
-        """)
-        raw_count = raw.count()
-        print(f"\nStage 1 - raw information_schema.tables count (case-insensitive schema match): {raw_count}")
-        if raw_count == 0:
-            print("  !! ZERO rows here. This means either:")
-            print("     - wrong catalog/schema name")
-            print("     - you don't have SELECT/USE privileges on this catalog's information_schema")
-            print("     - information_schema isn't populated for this catalog type "
-                  "(e.g. it's a foreign/external catalog, not Unity Catalog managed)")
-            # try SHOW TABLES as a fallback sanity check
-            try:
-                show_tbls = spark.sql(f"SHOW TABLES IN {catalog}.{SCHEMA}")
-                st_count = show_tbls.count()
-                print(f"  Fallback SHOW TABLES IN {catalog}.{SCHEMA} count: {st_count}")
-                show_tbls.show(10, truncate=False)
-            except Exception as e2:
-                print(f"  Fallback SHOW TABLES also failed: {e2}")
-            continue
-        else:
-            print("Sample table_name values (first 15):")
-            raw.select("table_name").show(15, truncate=False)
-    except Exception as e:
-        print(f"  !! information_schema query failed entirely: {e}")
-        continue
-
-    # --- Stage 2: regex prefix match count ---
-    enriched = (
-        raw.withColumn("matched_prefix", F.regexp_extract("table_name", _NAME_PATTERN, 1))
+def enrich_and_filter(df: DataFrame) -> DataFrame:
+    return (
+        df.withColumn("matched_prefix", F.regexp_extract("table_name", _NAME_PATTERN, 1))
         .withColumn("base_table_name", F.regexp_extract("table_name", _NAME_PATTERN, 2))
         .withColumn("suffix", F.regexp_extract("table_name", _NAME_PATTERN, 3))
+        .filter(F.col("matched_prefix") != "")  # drop anything outside the 3 known systems
+        .withColumn("source_system", _prefix_to_system_expr[F.col("matched_prefix")])
     )
-    matched_count = enriched.filter(F.col("matched_prefix") != "").count()
-    print(f"\nStage 2 - rows matching source-system prefix regex: {matched_count} / {raw_count}")
 
-    if matched_count == 0:
-        print("  !! ZERO regex matches. Your naming pattern differs from what the script assumes.")
-        print("     Assumed pattern: <prefix>_<base_name>[_cda|_sa]")
-        print(f"     Prefixes tried: {list(SOURCE_SYSTEM_PREFIX.values())}")
-        print("     Here are ALL table names in this schema so you can compare against the assumed prefixes:")
-        raw.select("table_name").distinct().show(200, truncate=False)
-        continue
-    else:
-        print("Sample matched rows (prefix / base_table_name / suffix):")
-        enriched.filter(F.col("matched_prefix") != "").select(
-            "table_name", "matched_prefix", "base_table_name", "suffix"
-        ).show(20, truncate=False)
 
-    # --- Stage 3: suffix distribution (to sanity-check _cda/_sa filtering) ---
-    print("\nStage 3 - suffix distribution among matched rows:")
-    enriched.filter(F.col("matched_prefix") != "").groupBy("suffix").count().show()
-
-    # --- Stage 4: after catalog-specific suffix rule ---
+def apply_catalog_rule(df: DataFrame, catalog: str) -> DataFrame:
+    """core / core_tst -> exclude _cda and _sa
+    core_tst_std001    -> keep ONLY _cda
+    """
     if catalog == "core_tst_std001":
-        after_rule = enriched.filter(F.col("suffix") == "_cda")
-        rule_desc = "keep only suffix == '_cda'"
-    else:
-        after_rule = enriched.filter(~F.col("suffix").isin("_cda", "_sa"))
-        rule_desc = "exclude suffix in ('_cda','_sa')"
+        return df.filter(F.col("suffix") == "_cda")
+    return df.filter(~F.col("suffix").isin("_cda", "_sa"))
 
-    after_count = after_rule.count()
-    print(f"\nStage 4 - after catalog rule ({rule_desc}): {after_count}")
-    if after_count == 0:
-        print(f"  !! ZERO rows after applying the {catalog} suffix rule. "
-              f"Look at the Stage 3 suffix distribution above -- "
-              f"if everything in {catalog} has suffix '_cda' or '_sa' (or none does), "
-              f"the rule may be inverted for your data, or the suffix isn't being captured "
-              f"by the regex the way you expect.")
-    else:
-        after_rule.select("table_name", "base_table_name", "suffix").show(20, truncate=False)
 
-section("DONE")
-print("""
-Common root causes for the full pipeline returning 0 rows, ranked by likelihood:
+# ---------------------------------------------------------------------------
+# STEP 3: Build per-catalog filtered inventories
+# ---------------------------------------------------------------------------
+catalog_frames = {}
+for catalog in CATALOGS:
+    raw = get_table_inventory(catalog)
+    enriched = enrich_and_filter(raw)
+    catalog_frames[catalog] = apply_catalog_rule(enriched, catalog).cache()
 
-1. Schema name case mismatch (e.g. 'ODS_VIEWS' vs 'ods_views') or the schema
-   living under a different catalog than expected -> Stage 1 will show 0.
+core_df = catalog_frames["core"]
+core_tst_df = catalog_frames["core_tst"]
+core_std_df = catalog_frames["core_tst_std001"]
 
-2. Prefix assumption wrong -- e.g. actual names might be
-   'vw_policycenter_current_p1_<name>' (extra char), or use a different
-   separator, or the '_current_' segment differs per environment
-   -> Stage 2 will show 0, and the full distinct table_name dump will reveal
-   the real pattern.
 
-3. The _cda/_sa filter rule inverted for your data -- e.g. core_tst_std001
-   tables might not literally end in '_cda' (could be '_CDA', or a prefix
-   like 'cda_' instead of a suffix) -> Stage 3/4 will show this clearly.
+# ---------------------------------------------------------------------------
+# STEP 4: 3-way full outer join on (source_system, base_table_name)
+#          inventories are small -> broadcast explicitly for perf
+# ---------------------------------------------------------------------------
+def presence_frame(df: DataFrame, catalog: str, flag_col: str) -> DataFrame:
+    return (
+        df.select("source_system", "base_table_name", "table_name")
+        .withColumnRenamed("table_name", f"{catalog}_table_name")
+        .withColumn(flag_col, F.lit("Y"))
+        .dropDuplicates(["source_system", "base_table_name"])
+    )
 
-4. Privilege issue: you can list schemas but not read information_schema.tables
-   rows (row-level ACLs / Unity Catalog permissions) -> Stage 1 exception or 0
-   despite SHOW TABLES working.
 
-Once you see which stage drops to 0, share that stage's output and I'll
-adjust the regex / filter logic in the main script accordingly.
-""")
+core_p = presence_frame(core_df, "core", "in_core")
+core_tst_p = presence_frame(core_tst_df, "core_tst", "in_core_tst")
+core_std_p = presence_frame(core_std_df, "core_tst_std001", "in_core_tst_std001")
+
+reconciled = (
+    core_p.join(F.broadcast(core_tst_p), ["source_system", "base_table_name"], "full_outer")
+    .join(F.broadcast(core_std_p), ["source_system", "base_table_name"], "full_outer")
+    .fillna("N", subset=["in_core", "in_core_tst", "in_core_tst_std001"])
+)
+
+
+# ---------------------------------------------------------------------------
+# STEP 5: Downstream impact via Unity Catalog lineage (single filtered query)
+# ---------------------------------------------------------------------------
+def get_downstream_lineage():
+    try:
+        catalogs_list = ",".join(f"'{c}'" for c in CATALOGS)
+        return spark.sql(
+            f"""
+            SELECT
+                source_table_catalog,
+                source_table_name,
+                target_table_catalog,
+                target_table_schema,
+                target_table_name
+            FROM system.access.table_lineage
+            WHERE source_table_schema = '{SCHEMA}'
+              AND source_table_catalog IN ({catalogs_list})
+              AND event_date >= date_sub(current_date(), {LINEAGE_LOOKBACK_DAYS})
+              AND target_table_full_name IS NOT NULL
+            """
+        )
+    except Exception as e:
+        print(f"[WARN] Could not read system.access.table_lineage: {e}")
+        return None
+
+
+lineage_df = get_downstream_lineage()
+
+if lineage_df is not None:
+    downstream_agg = (
+        lineage_df.withColumn(
+            "downstream_table_full_name",
+            F.concat_ws(".", "target_table_catalog", "target_table_schema", "target_table_name"),
+        )
+        .groupBy("source_table_catalog", "source_table_name")
+        .agg(F.collect_set("downstream_table_full_name").alias("downstream_set"))
+    )
+
+    def attach_downstream(catalog: str, table_name_col: str) -> DataFrame:
+        return (
+            reconciled.select("source_system", "base_table_name", table_name_col)
+            .filter(F.col(table_name_col).isNotNull())
+            .join(
+                downstream_agg,
+                (F.col(table_name_col) == downstream_agg.source_table_name)
+                & (F.lit(catalog) == downstream_agg.source_table_catalog),
+                "left",
+            )
+            .select(
+                "source_system",
+                "base_table_name",
+                F.col("downstream_set").alias(f"downstream_{catalog}"),
+            )
+        )
+
+    dstream_core = attach_downstream("core", "core_table_name")
+    dstream_core_tst = attach_downstream("core_tst", "core_tst_table_name")
+    dstream_core_std = attach_downstream("core_tst_std001", "core_tst_std001_table_name")
+
+    reconciled = (
+        reconciled.join(dstream_core, ["source_system", "base_table_name"], "left")
+        .join(dstream_core_tst, ["source_system", "base_table_name"], "left")
+        .join(dstream_core_std, ["source_system", "base_table_name"], "left")
+        .withColumn(
+            "downstream_impacted_tables",
+            F.array_join(
+                F.array_distinct(
+                    F.flatten(
+                        F.array(
+                            F.coalesce(F.col("downstream_core"), F.array()),
+                            F.coalesce(F.col("downstream_core_tst"), F.array()),
+                            F.coalesce(F.col("downstream_core_tst_std001"), F.array()),
+                        )
+                    )
+                ),
+                " | ",
+            ),
+        )
+        .withColumn(
+            "downstream_impact",
+            F.when(F.length(F.col("downstream_impacted_tables")) > 0, F.lit("Y")).otherwise(F.lit("N")),
+        )
+        .drop("downstream_core", "downstream_core_tst", "downstream_core_tst_std001")
+    )
+else:
+    reconciled = reconciled.withColumn("downstream_impact", F.lit("N/A")).withColumn(
+        "downstream_impacted_tables", F.lit(None).cast("string")
+    )
+
+
+# ---------------------------------------------------------------------------
+# STEP 6: Final shape
+# ---------------------------------------------------------------------------
+final_df = (
+    reconciled.select(
+        "source_system",
+        F.col("base_table_name").alias("table_name"),
+        "in_core",
+        "in_core_tst",
+        "in_core_tst_std001",
+        "downstream_impact",
+        "downstream_impacted_tables",
+    )
+    .orderBy("source_system", "table_name")
+)
+
+final_df.cache()
+print(f"Reconciliation row count: {final_df.count()}")
+final_df.show(50, truncate=False)
+
+
+# ---------------------------------------------------------------------------
+# STEP 7: Persist result
+# ---------------------------------------------------------------------------
+final_df.write.mode(WRITE_MODE).option("mergeSchema", "true").saveAsTable(OUTPUT_TABLE)
+print(f"Wrote reconciliation result to {OUTPUT_TABLE}")
+
+# cleanup cached frames
+for df in catalog_frames.values():
+    df.unpersist()
+final_df.unpersist()
