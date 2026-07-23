@@ -13,12 +13,12 @@ SCHEMA = "ods_views"
 CATALOGS = ["core", "core_tst", "core_tst_std001"]
 
 SOURCE_SYSTEM_PREFIX = {
-    "policycenter": "vw_policycenter_current_p",
-    "billingcenter": "vw_billingcenter_current_b",
-    "claimcenter": "vw_claimcenter_current_c",
+    "policycenter": "vw_policycenter_current_",
+    "billingcenter": "vw_billingcenter_current_",
+    "claimcenter": "vw_claimcenter_current_",
 }
 _PREFIX_ALTERNATION = "|".join(SOURCE_SYSTEM_PREFIX.values())
-_NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})_(.+?)(_cda|_sa)?$"
+_NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})(.+?)(_cda|_sa)?$"
 
 
 def section(title):
