@@ -75,6 +75,15 @@ LINEAGE_LOOKBACK_DAYS = 180
 # how many days of run history to retain in the output table
 RETENTION_DAYS = 5
 
+# Table names to exclude from comparison entirely (match on the common
+# base_table_name, e.g. "bc_account", "pc_policy" - i.e. WITHOUT the
+# vw_<system>_current_ prefix and WITHOUT any _cda/_sa suffix).
+# Add to this list any time you need to drop a table from reconciliation.
+EXCLUDED_TABLES = [
+    # "bc_account",
+    # "pc_policyperiod",
+]
+
 # where to persist the result (history table - appended to every run, never overwritten wholesale)
 OUTPUT_TABLE = "core.ods_recon.table_reconciliation_result"
 
@@ -131,7 +140,9 @@ catalog_frames = {}
 for catalog in CATALOGS:
     raw = get_table_inventory(catalog)
     enriched = enrich_and_filter(raw)
-    catalog_frames[catalog] = apply_catalog_rule(enriched, catalog).cache()
+    rule_applied = apply_catalog_rule(enriched, catalog)
+    excluded = rule_applied.filter(~F.col("base_table_name").isin(EXCLUDED_TABLES))
+    catalog_frames[catalog] = excluded.cache()
 
 core_df = catalog_frames["core"]
 core_tst_df = catalog_frames["core_tst"]
