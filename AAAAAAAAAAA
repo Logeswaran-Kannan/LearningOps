@@ -1,30 +1,458 @@
-SELECT
-    source_system,
-    table_name,
-    in_core,
-    in_core_tst,
-    in_core_tst_std001,
+"""
+three_way_ddl_reconciliation.py
+================================
 
-    -- present in all three catalogs
-    CASE WHEN in_core = 'Y' AND in_core_tst = 'Y' AND in_core_tst_std001 = 'Y'
-         THEN 'Y' ELSE 'N' END AS present_in_all_three,
+Column-level (DDL) reconciliation across the same three catalogs used for
+the table-existence reconciliation, for the same source systems and the
+same filtering rules:
 
-    -- only in production RR (core)
-    CASE WHEN in_core = 'Y' AND in_core_tst = 'N' AND in_core_tst_std001 = 'N'
-         THEN 'Y' ELSE 'N' END AS only_in_prod_rr,
+    core              -> prod read-replica   (EXCLUDE tables ending _cda / _sa)
+    core_tst          -> test read-replica   (EXCLUDE tables ending _cda / _sa)
+    core_tst_std001   -> test CDA version    (INCLUDE ONLY tables ending _cda)
 
-    -- only in test RR (core_tst)
-    CASE WHEN in_core = 'N' AND in_core_tst = 'Y' AND in_core_tst_std001 = 'N'
-         THEN 'Y' ELSE 'N' END AS only_in_test_rr,
+    policycenter  -> vw_policycenter_current_pc_<n>[_cda|_sa]
+    billingcenter -> vw_billingcenter_current_bc_<n>[_cda|_sa]
+    claimcenter   -> vw_claimcenter_current_cc_<n>[_cda|_sa]
 
-    -- only in CDA (core_tst_std001)
-    CASE WHEN in_core = 'N' AND in_core_tst = 'N' AND in_core_tst_std001 = 'Y'
-         THEN 'Y' ELSE 'N' END AS only_in_cda,
+COLUMN MATCHING IS CASE-INSENSITIVE
+------------------------------------
+Columns are joined across catalogs on LOWER(column_name), so e.g. core's
+"ACCOUNTID" and core_tst's "accountid" are recognised as the SAME column
+(not reported as missing on either side). The actual casing seen in each
+catalog is still preserved in per-catalog *_column_name output columns, and
+a pure-casing difference is called out explicitly in the `comments` column
+as its own issue type - separate from a genuine datatype/nullable/
+precision/position difference or a true absence in a catalog.
 
-    -- present in prod RR + test RR, but missing in CDA
-    CASE WHEN in_core = 'Y' AND in_core_tst = 'Y' AND in_core_tst_std001 = 'N'
-         THEN 'Y' ELSE 'N' END AS in_prod_and_test_rr_missing_in_cda
+Output grain: one row per (source_system, table_name, column_name)
 
-FROM core.ods_recon.table_reconciliation_result
-WHERE is_latest_for_day = 'Y'
-ORDER BY source_system, table_name;
+    Strict 3-way match rule:
+        PASS = column present in core AND core_tst AND core_tst_std001,
+               AND datatype, nullability, precision/length, casing, and
+               ordinal position all agree across all three.
+        FAIL = anything else.
+
+    `comments` lists every issue found on that row, e.g.:
+        "Column missing in core_tst_std001"
+        "Case mismatch: core=ACCOUNTID, core_tst=accountid, core_tst_std001=AccountId"
+        "Datatype mismatch: core=DECIMAL, core_tst=DECIMAL, core_tst_std001=VARCHAR"
+        "Precision/length mismatch: core=10,2, core_tst=10,0"
+        "Nullable mismatch: core=YES, core_tst=NO"
+        "Position mismatch: core=5, core_tst=7, core_tst_std001=5"
+    Multiple issues on the same row are pipe-separated in one string.
+
+Same run-history behaviour as the table reconciliation script:
+    - every execution APPENDS (never overwrites history)
+    - only the latest run of a calendar day is flagged is_latest_for_day='Y'
+    - rows older than RETENTION_DAYS are purged each run
+
+PERFORMANCE NOTES
+-----------------
+1. Table inventory + column inventory both come from information_schema
+   -> metadata only, no data scan.
+2. information_schema.columns is read ONCE per catalog (not per table) and
+   then inner-joined against the already-filtered, small table list
+   (broadcast) to drop irrelevant tables/columns before any further work.
+3. The 3-way join is on (source_system, base_table_name, lower(column_name))
+   - still small enough (typically thousands, not millions, of rows) to
+   broadcast the two smaller sides.
+4. Output table is partitioned by run_date, so the latest-flag UPDATE and
+   retention DELETE both prune to a single partition.
+"""
+
+from datetime import datetime, timezone
+
+from delta.tables import DeltaTable
+from pyspark.sql import SparkSession, DataFrame, functions as F
+
+spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
+
+# ---------------------------------------------------------------------------
+# CONFIG - keep in sync with the table-existence reconciliation script
+# ---------------------------------------------------------------------------
+SCHEMA = "ods_views"
+
+CATALOGS = ["core", "core_tst", "core_tst_std001"]
+
+SOURCE_SYSTEM_PREFIX = {
+    "policycenter": "vw_policycenter_current_",
+    "billingcenter": "vw_billingcenter_current_",
+    "claimcenter": "vw_claimcenter_current_",
+}
+
+# how many days of run history to retain in the output table
+RETENTION_DAYS = 5
+
+# Tables to exclude from DDL comparison entirely (match on base_table_name,
+# e.g. "bc_account" - same convention as the table-existence script).
+EXCLUDED_TABLES = [
+    # "bc_account",
+    # "pc_policyperiod",
+]
+
+OUTPUT_TABLE = "core.ods_recon.ddl_reconciliation_result"
+
+
+# ---------------------------------------------------------------------------
+# STEP 1: Table inventory per catalog (same filtering logic as the
+#          table-existence reconciliation script)
+# ---------------------------------------------------------------------------
+def get_table_inventory(catalog: str) -> DataFrame:
+    return spark.sql(
+        f"""
+        SELECT table_name
+        FROM {catalog}.information_schema.tables
+        WHERE table_schema = '{SCHEMA}'
+        """
+    )
+
+
+_PREFIX_ALTERNATION = "|".join(SOURCE_SYSTEM_PREFIX.values())
+_NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})(.+?)(_cda|_sa)?$"
+
+_prefix_to_system_expr = F.create_map(
+    *sum(([F.lit(v), F.lit(k)] for k, v in SOURCE_SYSTEM_PREFIX.items()), [])
+)
+
+
+def enrich_and_filter(df: DataFrame) -> DataFrame:
+    return (
+        df.withColumn("matched_prefix", F.regexp_extract("table_name", _NAME_PATTERN, 1))
+        .withColumn("base_table_name", F.regexp_extract("table_name", _NAME_PATTERN, 2))
+        .withColumn("suffix", F.regexp_extract("table_name", _NAME_PATTERN, 3))
+        .filter(F.col("matched_prefix") != "")
+        .withColumn("source_system", _prefix_to_system_expr[F.col("matched_prefix")])
+    )
+
+
+def apply_catalog_rule(df: DataFrame, catalog: str) -> DataFrame:
+    if catalog == "core_tst_std001":
+        return df.filter(F.col("suffix") == "_cda")
+    return df.filter(~F.col("suffix").isin("_cda", "_sa"))
+
+
+table_frames = {}
+for catalog in CATALOGS:
+    raw = get_table_inventory(catalog)
+    enriched = enrich_and_filter(raw)
+    rule_applied = apply_catalog_rule(enriched, catalog)
+    excluded = rule_applied.filter(~F.col("base_table_name").isin(EXCLUDED_TABLES))
+    table_frames[catalog] = excluded.select("source_system", "base_table_name", "table_name").cache()
+
+
+# ---------------------------------------------------------------------------
+# STEP 2: Column metadata per catalog, restricted to the filtered table list
+# ---------------------------------------------------------------------------
+def get_column_inventory(catalog: str) -> DataFrame:
+    return spark.sql(
+        f"""
+        SELECT
+            table_name,
+            column_name,
+            ordinal_position,
+            data_type,
+            is_nullable,
+            character_maximum_length,
+            numeric_precision,
+            numeric_scale
+        FROM {catalog}.information_schema.columns
+        WHERE table_schema = '{SCHEMA}'
+        """
+    )
+
+
+def build_catalog_column_frame(catalog: str) -> DataFrame:
+    cols = get_column_inventory(catalog)
+    tbls = table_frames[catalog]  # source_system, base_table_name, table_name
+
+    return (
+        cols.join(F.broadcast(tbls), "table_name", "inner")
+        .withColumn("column_key", F.lower(F.col("column_name")))  # case-insensitive join key
+        .withColumn("data_type_norm", F.upper(F.col("data_type")))
+        .withColumn("is_nullable_norm", F.upper(F.col("is_nullable")))
+        .withColumn(
+            "precision_sig",
+            F.concat_ws(
+                ",",
+                F.coalesce(F.col("character_maximum_length").cast("string"), F.lit("")),
+                F.coalesce(F.col("numeric_precision").cast("string"), F.lit("")),
+                F.coalesce(F.col("numeric_scale").cast("string"), F.lit("")),
+            ),
+        )
+        .select(
+            "source_system",
+            "base_table_name",
+            "column_key",
+            F.col("column_name"),
+            F.col("ordinal_position"),
+            F.col("data_type_norm").alias("data_type"),
+            F.col("is_nullable_norm").alias("is_nullable"),
+            "precision_sig",
+        )
+    )
+
+
+core_cols = build_catalog_column_frame("core")
+core_tst_cols = build_catalog_column_frame("core_tst")
+core_std_cols = build_catalog_column_frame("core_tst_std001")
+
+
+# ---------------------------------------------------------------------------
+# STEP 3: 3-way join on (source_system, base_table_name, column_key)
+#          each side is per-catalog aliased so nothing collides on join
+# ---------------------------------------------------------------------------
+def col_presence_frame(df: DataFrame, catalog: str, flag_col: str) -> DataFrame:
+    return (
+        df.select(
+            "source_system",
+            "base_table_name",
+            "column_key",
+            F.col("column_name").alias(f"{catalog}_column_name"),
+            F.col("ordinal_position").alias(f"{catalog}_ordinal_position"),
+            F.col("data_type").alias(f"{catalog}_data_type"),
+            F.col("is_nullable").alias(f"{catalog}_is_nullable"),
+            F.col("precision_sig").alias(f"{catalog}_precision_sig"),
+        )
+        .withColumn(flag_col, F.lit("Y"))
+        .dropDuplicates(["source_system", "base_table_name", "column_key"])
+    )
+
+
+core_cp = col_presence_frame(core_cols, "core", "in_core")
+core_tst_cp = col_presence_frame(core_tst_cols, "core_tst", "in_core_tst")
+core_std_cp = col_presence_frame(core_std_cols, "core_tst_std001", "in_core_tst_std001")
+
+join_keys = ["source_system", "base_table_name", "column_key"]
+
+reconciled = (
+    core_cp.join(F.broadcast(core_tst_cp), join_keys, "full_outer")
+    .join(F.broadcast(core_std_cp), join_keys, "full_outer")
+    .fillna("N", subset=["in_core", "in_core_tst", "in_core_tst_std001"])
+)
+
+
+# ---------------------------------------------------------------------------
+# STEP 4: Issue detection - one boolean + one formatted message per issue type
+# ---------------------------------------------------------------------------
+def distinct_present_count(*cols):
+    """Count of distinct non-null values among the given columns."""
+    return F.size(F.array_distinct(F.filter(F.array(*cols), lambda x: x.isNotNull())))
+
+
+def triplet_message(label, core_c, tst_c, std_c):
+    """'<label>: core=X, core_tst=Y, core_tst_std001=Z' - only present catalogs shown."""
+    parts = F.array_distinct(
+        F.filter(
+            F.array(
+                F.when(core_c.isNotNull(), F.concat(F.lit("core="), core_c.cast("string"))),
+                F.when(tst_c.isNotNull(), F.concat(F.lit("core_tst="), tst_c.cast("string"))),
+                F.when(std_c.isNotNull(), F.concat(F.lit("core_tst_std001="), std_c.cast("string"))),
+            ),
+            lambda x: x.isNotNull(),
+        )
+    )
+    return F.concat(F.lit(f"{label}: "), F.array_join(parts, ", "))
+
+
+missing_catalogs_arr = F.array_distinct(
+    F.filter(
+        F.array(
+            F.when(F.col("in_core") == "N", F.lit("core")),
+            F.when(F.col("in_core_tst") == "N", F.lit("core_tst")),
+            F.when(F.col("in_core_tst_std001") == "N", F.lit("core_tst_std001")),
+        ),
+        lambda x: x.isNotNull(),
+    )
+)
+column_present_in_all = F.size(missing_catalogs_arr) == 0
+
+case_mismatch = (
+    distinct_present_count(
+        F.col("core_column_name"), F.col("core_tst_column_name"), F.col("core_tst_std001_column_name")
+    )
+    > 1
+)
+datatype_mismatch = (
+    distinct_present_count(F.col("core_data_type"), F.col("core_tst_data_type"), F.col("core_tst_std001_data_type"))
+    > 1
+)
+nullable_mismatch = (
+    distinct_present_count(
+        F.col("core_is_nullable"), F.col("core_tst_is_nullable"), F.col("core_tst_std001_is_nullable")
+    )
+    > 1
+)
+precision_mismatch = (
+    distinct_present_count(
+        F.col("core_precision_sig"), F.col("core_tst_precision_sig"), F.col("core_tst_std001_precision_sig")
+    )
+    > 1
+)
+position_mismatch = (
+    distinct_present_count(
+        F.col("core_ordinal_position"), F.col("core_tst_ordinal_position"), F.col("core_tst_std001_ordinal_position")
+    )
+    > 1
+)
+
+reconciled = (
+    reconciled.withColumn("column_present_in_all", F.when(column_present_in_all, F.lit("Y")).otherwise(F.lit("N")))
+    .withColumn("case_match", F.when(~column_present_in_all, F.lit("N/A")).when(case_mismatch, F.lit("N")).otherwise(F.lit("Y")))
+    .withColumn("datatype_match", F.when(~column_present_in_all, F.lit("N/A")).when(datatype_mismatch, F.lit("N")).otherwise(F.lit("Y")))
+    .withColumn("nullable_match", F.when(~column_present_in_all, F.lit("N/A")).when(nullable_mismatch, F.lit("N")).otherwise(F.lit("Y")))
+    .withColumn("precision_match", F.when(~column_present_in_all, F.lit("N/A")).when(precision_mismatch, F.lit("N")).otherwise(F.lit("Y")))
+    .withColumn("position_match", F.when(~column_present_in_all, F.lit("N/A")).when(position_mismatch, F.lit("N")).otherwise(F.lit("Y")))
+)
+
+# ---------------------------------------------------------------------------
+# STEP 5: Build the detailed comments column - one clause per issue found
+# ---------------------------------------------------------------------------
+missing_comment = F.when(
+    F.size(missing_catalogs_arr) > 0,
+    F.concat(F.lit("Column missing in "), F.array_join(missing_catalogs_arr, ", ")),
+)
+
+case_comment = F.when(
+    column_present_in_all & case_mismatch,
+    triplet_message("Case mismatch", F.col("core_column_name"), F.col("core_tst_column_name"), F.col("core_tst_std001_column_name")),
+)
+datatype_comment = F.when(
+    column_present_in_all & datatype_mismatch,
+    triplet_message("Datatype mismatch", F.col("core_data_type"), F.col("core_tst_data_type"), F.col("core_tst_std001_data_type")),
+)
+nullable_comment = F.when(
+    column_present_in_all & nullable_mismatch,
+    triplet_message("Nullable mismatch", F.col("core_is_nullable"), F.col("core_tst_is_nullable"), F.col("core_tst_std001_is_nullable")),
+)
+precision_comment = F.when(
+    column_present_in_all & precision_mismatch,
+    triplet_message("Precision/length mismatch", F.col("core_precision_sig"), F.col("core_tst_precision_sig"), F.col("core_tst_std001_precision_sig")),
+)
+position_comment = F.when(
+    column_present_in_all & position_mismatch,
+    triplet_message("Position mismatch", F.col("core_ordinal_position"), F.col("core_tst_ordinal_position"), F.col("core_tst_std001_ordinal_position")),
+)
+
+all_ok_comment = F.when(
+    column_present_in_all & ~case_mismatch & ~datatype_mismatch & ~nullable_mismatch & ~precision_mismatch & ~position_mismatch,
+    F.lit("OK - matches in all three"),
+)
+
+reconciled = reconciled.withColumn(
+    "comments",
+    F.array_join(
+        F.array_distinct(
+            F.filter(
+                F.array(
+                    missing_comment,
+                    case_comment,
+                    datatype_comment,
+                    nullable_comment,
+                    precision_comment,
+                    position_comment,
+                    all_ok_comment,
+                ),
+                lambda x: x.isNotNull(),
+            )
+        ),
+        " | ",
+    ),
+).withColumn(
+    "reconciliation_status",
+    F.when(
+        column_present_in_all
+        & ~case_mismatch
+        & ~datatype_mismatch
+        & ~nullable_mismatch
+        & ~precision_mismatch
+        & ~position_mismatch,
+        F.lit("PASS"),
+    ).otherwise(F.lit("FAIL")),
+)
+
+
+# ---------------------------------------------------------------------------
+# STEP 6: Final shape + run metadata
+# ---------------------------------------------------------------------------
+_run_dt = datetime.now(timezone.utc)
+RUN_ID = _run_dt.strftime("%Y%m%d_%H%M%S")
+RUN_TIMESTAMP = _run_dt.isoformat()
+
+final_df = (
+    reconciled.select(
+        "source_system",
+        F.col("base_table_name").alias("table_name"),
+        F.coalesce(
+            F.col("core_column_name"), F.col("core_tst_column_name"), F.col("core_tst_std001_column_name")
+        ).alias("column_name"),
+        "in_core",
+        F.col("core_column_name").alias("core_column_name"),
+        F.col("core_data_type").alias("core_data_type"),
+        F.col("core_ordinal_position").alias("core_ordinal_position"),
+        "in_core_tst",
+        F.col("core_tst_column_name").alias("core_tst_column_name"),
+        F.col("core_tst_data_type").alias("core_tst_data_type"),
+        F.col("core_tst_ordinal_position").alias("core_tst_ordinal_position"),
+        "in_core_tst_std001",
+        F.col("core_tst_std001_column_name").alias("core_tst_std001_column_name"),
+        F.col("core_tst_std001_data_type").alias("core_tst_std001_data_type"),
+        F.col("core_tst_std001_ordinal_position").alias("core_tst_std001_ordinal_position"),
+        "column_present_in_all",
+        "case_match",
+        "datatype_match",
+        "nullable_match",
+        "precision_match",
+        "position_match",
+        "comments",
+        "reconciliation_status",
+    )
+    .orderBy("source_system", "table_name", "core_ordinal_position", "column_name")
+    .withColumn("run_id", F.lit(RUN_ID))
+    .withColumn("run_timestamp", F.lit(RUN_TIMESTAMP).cast("timestamp"))
+    .withColumn("run_date", F.current_date())
+    .withColumn("is_latest_for_day", F.lit("Y"))
+)
+
+final_df.cache()
+print(f"DDL reconciliation row count: {final_df.count()}")
+fail_count = final_df.filter(F.col("reconciliation_status") == "FAIL").count()
+print(f"FAIL rows: {fail_count}")
+final_df.filter(F.col("reconciliation_status") == "FAIL").select(
+    "source_system", "table_name", "column_name", "comments"
+).show(50, truncate=False)
+
+
+# ---------------------------------------------------------------------------
+# STEP 7: Persist - append this run, mark latest-for-day, purge old history
+# ---------------------------------------------------------------------------
+if spark.catalog.tableExists(OUTPUT_TABLE):
+    (
+        final_df.write.format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(OUTPUT_TABLE)
+    )
+else:
+    (
+        final_df.write.format("delta")
+        .mode("overwrite")
+        .partitionBy("run_date")
+        .saveAsTable(OUTPUT_TABLE)
+    )
+
+output_tbl = DeltaTable.forName(spark, OUTPUT_TABLE)
+
+output_tbl.update(
+    condition=f"run_date = current_date() AND run_id <> '{RUN_ID}'",
+    set={"is_latest_for_day": "'N'"},
+)
+
+output_tbl.delete(f"run_date < date_sub(current_date(), {RETENTION_DAYS})")
+
+print(f"Wrote DDL reconciliation result to {OUTPUT_TABLE} (run_id={RUN_ID}, run_date={_run_dt.date()})")
+print(f"Rows older than {RETENTION_DAYS} days purged.")
+
+# cleanup cached frames
+for df in table_frames.values():
+    df.unpersist()
+final_df.unpersist()
