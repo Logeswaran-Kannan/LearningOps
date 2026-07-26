@@ -1,536 +1,78 @@
-"""
-count_reconciliation.py
-========================
-Row-COUNT reconciliation between core_tst (test read-replica) and
-core_tst_std001 (test CDA) - schema ods_views.
-
-CLASSIFICATION (per table, checked on BOTH catalogs - a column only counts
-if it exists on both sides, otherwise it can't be used as a fair two-sided
-filter). Checked in this priority order, first match wins:
-
-    1. updatetime        -> method = TIMESTAMP_UPDATETIME
-    2. createtime         -> method = TIMESTAMP_CREATETIME
-    3. eventtimestamp     -> method = TIMESTAMP_EVENTTIMESTAMP
-    4. AZURE_LOAD_DATE    -> method = LOAD_DATE_AZURE
-    5. none of the above  -> method = FULL_COUNT_ONLY
-       (no usable column to isolate "today's" rows - only a full-table
-       count comparison is possible for these)
-
-DAILY WINDOW
-    Fixed batch window: yesterday BATCH_CUTOFF_HOUR:00 -> today
-    BATCH_CUTOFF_HOUR:00 (default 3 AM -> 3 AM), not a rolling N-day
-    lookback. Applied to whichever column the table was classified on
-    (methods 1-4 above). FULL_COUNT_ONLY tables have no windowed count -
-    only the full count is compared for them.
-
-"% LOADED TODAY" KPI
-    For every table classified with a usable filter column (methods 1-4),
-    loaded_today = 'Y' if the windowed count is > 0 on EITHER side, else 'N'.
-    Rolled up to a %-loaded figure per source_system (domain) and overall.
-    FULL_COUNT_ONLY tables are excluded from this KPI (there's no daily
-    window to measure "loaded today" against) - they're still reconciled,
-    just via full-count comparison only, and reported separately.
-
-TEAMS ALERT
-    A summary Adaptive Card is posted to TEAMS_WEBHOOK_URL (a Power
-    Automate Workflow trigger URL) after every run, covering: overall
-    %-loaded, per-domain %-loaded, and the list of tables with issues.
-    NOTE: the exact JSON envelope a Workflow trigger expects depends on how
-    that specific flow was built. This sends the standard "Adaptive Card via
-    webhook" shape (type: message + attachments), which is the most common
-    setup - verify it against your actual flow and adjust build_teams_card()
-    / the request body if your flow expects a different schema.
-
-Same run-history behaviour as the other scripts: append every run, flag
-only the latest run of the day (is_latest_for_day), purge rows older than
-RETENTION_DAYS.
-
-PERFORMANCE NOTES
-------------------
-1. Table + column inventory come from information_schema -> metadata only.
-2. Full counts AND windowed counts are each gathered via a SINGLE UNION ALL
-   query per catalog (not one query per table).
-3. Output table partitioned by run_date for cheap latest-flag/retention.
-"""
-
-import json
-from datetime import datetime, timezone
-
-from delta.tables import DeltaTable
-from pyspark.sql import SparkSession, DataFrame, functions as F
-
-spark = SparkSession.builder.appName("CountReconciliation").getOrCreate()
-
-# ---------------------------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------------------------
-SCHEMA = "ods_views"
-CATALOG_TEST_RR = "core_tst"
-CATALOG_CDA = "core_tst_std001"
-CATALOGS = [CATALOG_TEST_RR, CATALOG_CDA]
-
-SOURCE_SYSTEM_PREFIX = {
-    "policycenter": "vw_policycenter_current_",
-    "billingcenter": "vw_billingcenter_current_",
-    "claimcenter": "vw_claimcenter_current_",
-}
-
-# priority-ordered candidate columns - first one found (on BOTH sides) wins
-TIMESTAMP_CANDIDATES_IN_ORDER = ["updatetime", "createtime", "eventtimestamp"]
-LOAD_DATE_CANDIDATE = "azure_load_date"  # matched case-insensitively
-
-BATCH_CUTOFF_HOUR = 3  # daily window = yesterday HH:00 -> today HH:00
-
-RETENTION_DAYS = 5
-EXCLUDED_TABLES = [
-    # "bc_account",
-]
-
-OUTPUT_TABLE = "core.ods_recon.count_reconciliation_result"
-DOMAIN_SUMMARY_TABLE = "core.ods_recon.count_reconciliation_domain_summary"
-
-# set this to your Power Automate Workflow trigger URL to enable alerting;
-# leave as None / empty to skip sending
-TEAMS_WEBHOOK_URL = None  # e.g. "https://prod-00.westus.logic.azure.com/workflows/...."
-TEAMS_ALERT_MODE = "ALWAYS"  # "ALWAYS" (daily digest even if all OK) or "ON_ISSUE_ONLY"
-TEAMS_TOP_N_ISSUES = 15  # cap how many problem tables list individually in the card
-
-
-# ---------------------------------------------------------------------------
-# STEP 1: Table inventory per catalog (same filtering rules as other scripts)
-# ---------------------------------------------------------------------------
-def get_table_inventory(catalog: str) -> DataFrame:
-    return spark.sql(
-        f"""
-        SELECT table_name
-        FROM {catalog}.information_schema.tables
-        WHERE table_schema = '{SCHEMA}'
-        """
-    )
-
-
-_PREFIX_ALTERNATION = "|".join(SOURCE_SYSTEM_PREFIX.values())
-_NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})(.+?)(_cda|_sa)?$"
-_prefix_to_system_expr = F.create_map(
-    *sum(([F.lit(v), F.lit(k)] for k, v in SOURCE_SYSTEM_PREFIX.items()), [])
-)
-
-
-def enrich_and_filter(df: DataFrame) -> DataFrame:
-    return (
-        df.withColumn("matched_prefix", F.regexp_extract("table_name", _NAME_PATTERN, 1))
-        .withColumn("base_table_name", F.regexp_extract("table_name", _NAME_PATTERN, 2))
-        .withColumn("suffix", F.regexp_extract("table_name", _NAME_PATTERN, 3))
-        .filter(F.col("matched_prefix") != "")
-        .withColumn("source_system", _prefix_to_system_expr[F.col("matched_prefix")])
-    )
-
-
-def apply_catalog_rule(df: DataFrame, catalog: str) -> DataFrame:
-    if catalog == CATALOG_CDA:
-        return df.filter(F.col("suffix") == "_cda")
-    return df.filter(~F.col("suffix").isin("_cda", "_sa"))
-
-
-table_frames = {}
-for catalog in CATALOGS:
-    raw = get_table_inventory(catalog)
-    enriched = enrich_and_filter(raw)
-    rule_applied = apply_catalog_rule(enriched, catalog)
-    excluded = rule_applied.filter(~F.col("base_table_name").isin(EXCLUDED_TABLES))
-    table_frames[catalog] = excluded.select("source_system", "base_table_name", "table_name").cache()
-
-rr_rows_all = table_frames[CATALOG_TEST_RR].collect()
-cda_rows_all = table_frames[CATALOG_CDA].collect()
-rr_phys = {(r["source_system"], r["base_table_name"]): r["table_name"] for r in rr_rows_all}
-cda_phys = {(r["source_system"], r["base_table_name"]): r["table_name"] for r in cda_rows_all}
-
-common_keys = sorted(set(rr_phys.keys()) & set(cda_phys.keys()))
-missing_only_rr = sorted(set(rr_phys.keys()) - set(cda_phys.keys()))
-missing_only_cda = sorted(set(cda_phys.keys()) - set(rr_phys.keys()))
-
-
-# ---------------------------------------------------------------------------
-# STEP 2: Classify every common table by its usable date/load column
-# ---------------------------------------------------------------------------
-def get_columns(catalog: str) -> DataFrame:
-    return spark.sql(
-        f"""
-        SELECT table_name, column_name
-        FROM {catalog}.information_schema.columns
-        WHERE table_schema = '{SCHEMA}'
-        """
-    )
-
-
-rr_cols_rows = get_columns(CATALOG_TEST_RR).collect()
-cda_cols_rows = get_columns(CATALOG_CDA).collect()
-phys_to_key_rr = {v: k for k, v in rr_phys.items()}
-phys_to_key_cda = {v: k for k, v in cda_phys.items()}
-
-
-def columns_by_key(rows, phys_to_key):
-    result = {}
-    for r in rows:
-        key = phys_to_key.get(r["table_name"])
-        if key is None:
-            continue
-        result.setdefault(key, {})[r["column_name"].lower()] = r["column_name"]  # lower -> actual case
-    return result
-
-
-rr_columns_by_key = columns_by_key(rr_cols_rows, phys_to_key_rr)
-cda_columns_by_key = columns_by_key(cda_cols_rows, phys_to_key_cda)
-
-_METHOD_LABELS = {
-    "updatetime": "TIMESTAMP_UPDATETIME",
-    "createtime": "TIMESTAMP_CREATETIME",
-    "eventtimestamp": "TIMESTAMP_EVENTTIMESTAMP",
-    LOAD_DATE_CANDIDATE: "LOAD_DATE_AZURE",
-}
-
-table_plans = {}
-for key in common_keys:
-    rr_cols = rr_columns_by_key.get(key, {})
-    cda_cols = cda_columns_by_key.get(key, {})
-
-    chosen_col_lower = None
-    for candidate in TIMESTAMP_CANDIDATES_IN_ORDER + [LOAD_DATE_CANDIDATE]:
-        if candidate in rr_cols and candidate in cda_cols:
-            chosen_col_lower = candidate
-            break
-
-    if chosen_col_lower:
-        table_plans[key] = {
-            "method": _METHOD_LABELS[chosen_col_lower],
-            "rr_col": rr_cols[chosen_col_lower],
-            "cda_col": cda_cols[chosen_col_lower],
-        }
-    else:
-        table_plans[key] = {"method": "FULL_COUNT_ONLY", "rr_col": None, "cda_col": None}
-
-
-# ---------------------------------------------------------------------------
-# STEP 3: Build ONE UNION ALL query per catalog for full counts, and ONE per
-#          catalog for windowed counts (fixed 3AM-3AM batch window)
-# ---------------------------------------------------------------------------
-def build_full_count_query(catalog: str, keys: list, phys_lookup: dict) -> str:
-    parts = [
-        f"""SELECT '{k[0]}' AS source_system, '{k[1]}' AS table_name, COUNT(*) AS row_count
-            FROM {catalog}.{SCHEMA}.{phys_lookup[k]}"""
-        for k in keys
-    ]
-    return " UNION ALL ".join(parts) if parts else None
-
-
-WINDOW_END_EXPR = f"timestamp(concat(current_date(), ' {BATCH_CUTOFF_HOUR:02d}:00:00'))"
-WINDOW_START_EXPR = f"timestamp(concat(date_sub(current_date(), 1), ' {BATCH_CUTOFF_HOUR:02d}:00:00'))"
-
-
-def build_windowed_count_query(catalog: str, keys: list, phys_lookup: dict, side: str) -> str:
-    parts = []
-    for k in keys:
-        plan = table_plans[k]
-        if plan["method"] == "FULL_COUNT_ONLY":
-            continue
-        col = plan["rr_col"] if side == "rr" else plan["cda_col"]
-        parts.append(
-            f"""SELECT '{k[0]}' AS source_system, '{k[1]}' AS table_name, COUNT(*) AS row_count
-                FROM {catalog}.{SCHEMA}.{phys_lookup[k]}
-                WHERE `{col}` >= {WINDOW_START_EXPR} AND `{col}` < {WINDOW_END_EXPR}"""
-        )
-    return " UNION ALL ".join(parts) if parts else None
-
-
-full_count_rr_df = spark.sql(build_full_count_query(CATALOG_TEST_RR, common_keys, rr_phys)).withColumnRenamed(
-    "row_count", "full_count_core_tst"
-)
-full_count_cda_df = spark.sql(build_full_count_query(CATALOG_CDA, common_keys, cda_phys)).withColumnRenamed(
-    "row_count", "full_count_core_tst_std001"
-)
-
-windowed_rr_query = build_windowed_count_query(CATALOG_TEST_RR, common_keys, rr_phys, "rr")
-windowed_cda_query = build_windowed_count_query(CATALOG_CDA, common_keys, cda_phys, "cda")
-
-windowed_rr_df = (
-    spark.sql(windowed_rr_query).withColumnRenamed("row_count", "windowed_count_core_tst")
-    if windowed_rr_query
-    else None
-)
-windowed_cda_df = (
-    spark.sql(windowed_cda_query).withColumnRenamed("row_count", "windowed_count_core_tst_std001")
-    if windowed_cda_query
-    else None
-)
-
-
-# ---------------------------------------------------------------------------
-# STEP 4: Assemble final result
-# ---------------------------------------------------------------------------
-plan_rows = [(k[0], k[1], table_plans[k]["method"]) for k in common_keys]
-plan_df = spark.createDataFrame(plan_rows, "source_system STRING, table_name STRING, classification_method STRING")
-
-result = (
-    plan_df.join(F.broadcast(full_count_rr_df), ["source_system", "table_name"], "left")
-    .join(F.broadcast(full_count_cda_df), ["source_system", "table_name"], "left")
-)
-
-if windowed_rr_df is not None:
-    result = result.join(F.broadcast(windowed_rr_df), ["source_system", "table_name"], "left")
-else:
-    result = result.withColumn("windowed_count_core_tst", F.lit(None).cast("long"))
-
-if windowed_cda_df is not None:
-    result = result.join(F.broadcast(windowed_cda_df), ["source_system", "table_name"], "left")
-else:
-    result = result.withColumn("windowed_count_core_tst_std001", F.lit(None).cast("long"))
-
-is_windowed_method = F.col("classification_method") != "FULL_COUNT_ONLY"
-full_count_diff = F.col("full_count_core_tst") - F.col("full_count_core_tst_std001")
-windowed_count_diff = F.col("windowed_count_core_tst") - F.col("windowed_count_core_tst_std001")
-
-result = (
-    result.withColumn("full_count_diff", full_count_diff)
-    .withColumn("windowed_count_diff", F.when(is_windowed_method, windowed_count_diff).otherwise(F.lit(None).cast("long")))
-    .withColumn(
-        "loaded_today",
-        F.when(~is_windowed_method, F.lit("N/A"))
-        .when((F.col("windowed_count_core_tst") > 0) | (F.col("windowed_count_core_tst_std001") > 0), F.lit("Y"))
-        .otherwise(F.lit("N")),
-    )
-    .withColumn(
-        "issue_summary",
-        F.when((full_count_diff != 0) & is_windowed_method & (windowed_count_diff != 0), F.lit("ROW_COUNT_MISMATCH_FULL+WINDOW"))
-        .when(full_count_diff != 0, F.lit("ROW_COUNT_MISMATCH_FULL"))
-        .when(is_windowed_method & (windowed_count_diff != 0), F.lit("ROW_COUNT_MISMATCH_WINDOW"))
-        .otherwise(F.lit("OK")),
-    )
-    .withColumn(
-        "comments",
-        F.concat_ws(
-            " | ",
-            F.when(
-                full_count_diff != 0,
-                F.concat(
-                    F.lit("Full count mismatch: core_tst="),
-                    F.col("full_count_core_tst").cast("string"),
-                    F.lit(", core_tst_std001="),
-                    F.col("full_count_core_tst_std001").cast("string"),
-                ),
-            ),
-            F.when(
-                is_windowed_method & (windowed_count_diff != 0),
-                F.concat(
-                    F.lit(f"Batch window ({BATCH_CUTOFF_HOUR:02d}:00 yesterday - {BATCH_CUTOFF_HOUR:02d}:00 today) count mismatch: core_tst="),
-                    F.col("windowed_count_core_tst").cast("string"),
-                    F.lit(", core_tst_std001="),
-                    F.col("windowed_count_core_tst_std001").cast("string"),
-                ),
-            ),
-        ),
-    )
-)
-
-# tables missing entirely on one side get their own rows too
-if missing_only_rr or missing_only_cda:
-    missing_rows = (
-        [(k[0], k[1], "N/A", None, None, None, None, None, None, "N/A", "TABLE_MISSING_IN_CORE_TST_STD001", "Table not present in core_tst_std001") for k in missing_only_rr]
-        + [(k[0], k[1], "N/A", None, None, None, None, None, None, "N/A", "TABLE_MISSING_IN_CORE_TST", "Table not present in core_tst") for k in missing_only_cda]
-    )
-    missing_df = spark.createDataFrame(
-        missing_rows,
-        "source_system STRING, table_name STRING, classification_method STRING, "
-        "full_count_core_tst LONG, full_count_core_tst_std001 LONG, full_count_diff LONG, "
-        "windowed_count_core_tst LONG, windowed_count_core_tst_std001 LONG, windowed_count_diff LONG, "
-        "loaded_today STRING, issue_summary STRING, comments STRING",
-    )
-    result = result.unionByName(missing_df)
-
-
-# ---------------------------------------------------------------------------
-# STEP 5: Final shape + run metadata
-# ---------------------------------------------------------------------------
-_run_dt = datetime.now(timezone.utc)
-RUN_ID = _run_dt.strftime("%Y%m%d_%H%M%S")
-RUN_TIMESTAMP = _run_dt.isoformat()
-
-final_df = (
-    result.select(
-        "source_system",
-        "table_name",
-        "classification_method",
-        "full_count_core_tst",
-        "full_count_core_tst_std001",
-        "full_count_diff",
-        "windowed_count_core_tst",
-        "windowed_count_core_tst_std001",
-        "windowed_count_diff",
-        "loaded_today",
-        "issue_summary",
-        "comments",
-    )
-    .orderBy("source_system", "table_name")
-    .withColumn("run_id", F.lit(RUN_ID))
-    .withColumn("run_timestamp", F.lit(RUN_TIMESTAMP).cast("timestamp"))
-    .withColumn("run_date", F.current_date())
-    .withColumn("is_latest_for_day", F.lit("Y"))
-)
-
-final_df.cache()
-print(f"Count reconciliation row count: {final_df.count()}")
-print("Breakdown by issue_summary:")
-final_df.groupBy("issue_summary").count().orderBy(F.desc("count")).show(20, truncate=False)
-print("Breakdown by classification_method:")
-final_df.groupBy("classification_method").count().orderBy(F.desc("count")).show(20, truncate=False)
-
-
-# ---------------------------------------------------------------------------
-# STEP 6: Domain-level (+ overall) %-loaded-today summary
-# ---------------------------------------------------------------------------
-eligible = final_df.filter(F.col("loaded_today") != "N/A")
-
-domain_summary = eligible.groupBy("source_system").agg(
-    F.count("*").alias("eligible_tables"),
-    F.sum(F.when(F.col("loaded_today") == "Y", 1).otherwise(0)).alias("tables_loaded_today"),
-    F.sum(F.when(F.col("issue_summary") != "OK", 1).otherwise(0)).alias("tables_with_issues"),
-)
-overall_summary = eligible.agg(
-    F.lit("ALL").alias("source_system"),
-    F.count("*").alias("eligible_tables"),
-    F.sum(F.when(F.col("loaded_today") == "Y", 1).otherwise(0)).alias("tables_loaded_today"),
-    F.sum(F.when(F.col("issue_summary") != "OK", 1).otherwise(0)).alias("tables_with_issues"),
-)
-
-domain_summary_final = (
-    domain_summary.unionByName(overall_summary)
-    .withColumn("pct_loaded_today", F.round(100.0 * F.col("tables_loaded_today") / F.col("eligible_tables"), 1))
-    .withColumn("pct_ok", F.round(100.0 * (F.col("eligible_tables") - F.col("tables_with_issues")) / F.col("eligible_tables"), 1))
-    .withColumn("run_id", F.lit(RUN_ID))
-    .withColumn("run_timestamp", F.lit(RUN_TIMESTAMP).cast("timestamp"))
-    .withColumn("run_date", F.current_date())
-    .withColumn("is_latest_for_day", F.lit("Y"))
-)
-
-domain_summary_final.cache()
-print("Domain-level %-loaded-today summary:")
-domain_summary_final.orderBy(F.when(F.col("source_system") == "ALL", 1).otherwise(0), "source_system").show(20, truncate=False)
-
-
-# ---------------------------------------------------------------------------
-# STEP 7: Persist both outputs (append + latest-flag + retention)
-# ---------------------------------------------------------------------------
-def persist(df, output_table, partition_col="run_date"):
-    if spark.catalog.tableExists(output_table):
-        df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(output_table)
-    else:
-        df.write.format("delta").mode("overwrite").partitionBy(partition_col).saveAsTable(output_table)
-    tbl = DeltaTable.forName(spark, output_table)
-    tbl.update(condition=f"run_date = current_date() AND run_id <> '{RUN_ID}'", set={"is_latest_for_day": "'N'"})
-    tbl.delete(f"run_date < date_sub(current_date(), {RETENTION_DAYS})")
-
-
-persist(final_df, OUTPUT_TABLE)
-persist(domain_summary_final, DOMAIN_SUMMARY_TABLE)
-print(f"Wrote {OUTPUT_TABLE} and {DOMAIN_SUMMARY_TABLE} (run_id={RUN_ID}, run_date={_run_dt.date()})")
-
-
-# ---------------------------------------------------------------------------
-# STEP 8: Teams alert
-# ---------------------------------------------------------------------------
-def build_teams_card(final_df, domain_summary_final, run_date_str):
-    overall = [r for r in domain_summary_final.collect() if r["source_system"] == "ALL"][0]
-    domain_rows = sorted(
-        [r for r in domain_summary_final.collect() if r["source_system"] != "ALL"],
-        key=lambda r: r["source_system"],
-    )
-    issue_rows = (
-        final_df.filter(F.col("issue_summary") != "OK")
-        .select("source_system", "table_name", "issue_summary", "comments")
-        .orderBy("source_system", "table_name")
-        .limit(TEAMS_TOP_N_ISSUES)
-        .collect()
-    )
-    total_issues = final_df.filter(F.col("issue_summary") != "OK").count()
-
-    color = "good" if total_issues == 0 else ("warning" if total_issues < 5 else "attention")
-
-    body = [
-        {
-            "type": "TextBlock",
-            "text": f"Count Reconciliation - {run_date_str}",
-            "weight": "Bolder",
-            "size": "Medium",
-        },
-        {
-            "type": "TextBlock",
-            "text": f"Overall: {overall['pct_loaded_today']}% of eligible tables loaded today | "
-            f"{overall['pct_ok']}% passing | {total_issues} table(s) with issues",
-            "wrap": True,
-            "color": color,
-        },
-        {"type": "TextBlock", "text": "By domain:", "weight": "Bolder", "spacing": "Medium"},
-    ]
-    domain_facts = [
-        {"title": r["source_system"], "value": f"{r['pct_loaded_today']}% loaded, {r['pct_ok']}% ok"}
-        for r in domain_rows
-    ]
-    body.append({"type": "FactSet", "facts": domain_facts})
-
-    if issue_rows:
-        body.append({"type": "TextBlock", "text": "Tables with issues (top {}):".format(len(issue_rows)), "weight": "Bolder", "spacing": "Medium"})
-        for r in issue_rows:
-            body.append(
-                {
-                    "type": "TextBlock",
-                    "text": f"**{r['source_system']} / {r['table_name']}** - {r['issue_summary']}: {r['comments']}",
-                    "wrap": True,
-                    "size": "Small",
-                }
-            )
-        if total_issues > len(issue_rows):
-            body.append(
-                {"type": "TextBlock", "text": f"...and {total_issues - len(issue_rows)} more.", "size": "Small", "isSubtle": True}
-            )
-
-    card = {
+etting up the Workflow (one-time)
+In the Teams channel you want alerts posted to, click ... next to the channel name → Workflows.
+Search for and select "Post to a channel when a webhook request is received."
+Authenticate, then choose the Team and Channel to post into → Add workflow.
+It'll generate a unique HTTP POST URL — copy that into TEAMS_WEBHOOK_URL in the script.
+This is the step that matters: open the flow in Power Automate (Workflows app → your flow → Edit), expand the "When a Teams webhook request is received" trigger, and use "Use sample payload to generate schema." Paste in the contents of teams_workflow_sample_payload.json above. This teaches the trigger that the request body has an attachments array — without this, the auto-generated "for each attachment" / "post card" steps downstream will fail with a null-array error even though your actual POST is fine.
+Power Automate should auto-build the rest of the flow (a "for each" over attachments → "post card in a chat or channel," referencing the card content dynamically). Save it.
+Test: run the script once with TEAMS_WEBHOOK_URL set, or just curl -X POST -H "Content-Type: application/json" -d @teams_workflow_sample_payload.json "<your-url>" — should post the card immediately.
+
+One thing worth knowing going in: this trigger type explicitly does not support actionable buttons ("actions" blocks) in the card — only display content works. My card doesn't use any, so you're fine as-is, but if you later want "Acknowledge" / "View table" buttons on the alert, that won't work through this webhook trigger and would need a different setup (an actual bot registration).
+
+Teams workflow sample payload
+Code · JSON 
+
+
+
+{
+  "type": "message",
+  "attachments": [
+    {
+      "contentType": "application/vnd.microsoft.card.adaptive",
+      "content": {
         "type": "AdaptiveCard",
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "version": "1.4",
-        "body": body,
+        "body": [
+          {
+            "type": "TextBlock",
+            "text": "Count Reconciliation - 2026-07-26",
+            "weight": "Bolder",
+            "size": "Medium"
+          },
+          {
+            "type": "TextBlock",
+            "text": "Overall: 92.5% of eligible tables loaded today | 96.0% passing | 4 table(s) with issues",
+            "wrap": true,
+            "color": "warning"
+          },
+          {
+            "type": "TextBlock",
+            "text": "By domain:",
+            "weight": "Bolder",
+            "spacing": "Medium"
+          },
+          {
+            "type": "FactSet",
+            "facts": [
+              {
+                "title": "policycenter",
+                "value": "90.0% loaded, 95.0% ok"
+              },
+              {
+                "title": "billingcenter",
+                "value": "95.0% loaded, 97.0% ok"
+              },
+              {
+                "title": "claimcenter",
+                "value": "92.0% loaded, 96.0% ok"
+              }
+            ]
+          },
+          {
+            "type": "TextBlock",
+            "text": "Tables with issues (top 4):",
+            "weight": "Bolder",
+            "spacing": "Medium"
+          },
+          {
+            "type": "TextBlock",
+            "text": "**billingcenter / bc_account** - ROW_COUNT_MISMATCH_WINDOW: Batch window (03:00 yesterday - 03:00 today) count mismatch: core_tst=150, core_tst_std001=142",
+            "wrap": true,
+            "size": "Small"
+          }
+        ]
+      }
     }
-    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "content": card}]}
-
-
-def send_teams_alert():
-    if not TEAMS_WEBHOOK_URL:
-        print("TEAMS_WEBHOOK_URL not set - skipping Teams alert.")
-        return
-    total_issues = final_df.filter(F.col("issue_summary") != "OK").count()
-    if TEAMS_ALERT_MODE == "ON_ISSUE_ONLY" and total_issues == 0:
-        print("No issues found and TEAMS_ALERT_MODE=ON_ISSUE_ONLY - skipping Teams alert.")
-        return
-
-    try:
-        import requests
-    except ImportError:
-        print("[WARN] 'requests' package not available - cannot send Teams alert. "
-              "Install with: %pip install requests")
-        return
-
-    payload = build_teams_card(final_df, domain_summary_final, str(_run_dt.date()))
-    try:
-        resp = requests.post(TEAMS_WEBHOOK_URL, data=json.dumps(payload), headers={"Content-Type": "application/json"}, timeout=30)
-        if resp.status_code >= 300:
-            print(f"[WARN] Teams webhook returned {resp.status_code}: {resp.text[:500]}")
-        else:
-            print("Teams alert sent.")
-    except Exception as e:
-        print(f"[WARN] Failed to send Teams alert: {e}")
-
-
-send_teams_alert()
-
-for df in table_frames.values():
-    df.unpersist()
-final_df.unpersist()
-domain_summary_final.unpersist()
+  ]
+}
