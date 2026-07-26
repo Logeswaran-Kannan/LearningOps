@@ -22,14 +22,17 @@ Columns are joined across catalogs on LOWER(column_name), so e.g. core's
 catalog is still preserved in per-catalog *_column_name output columns, and
 a pure-casing difference is called out explicitly in the `comments` column
 as its own issue type - separate from a genuine datatype/nullable/
-precision/position difference or a true absence in a catalog.
+precision/position difference or a true absence in a catalog. Ordinal
+position is carried through for reference only and is NOT compared - column
+order has no downstream impact since consumers select by name, not position.
 
 Output grain: one row per (source_system, table_name, column_name)
 
     Strict 3-way match rule:
         PASS = column present in core AND core_tst AND core_tst_std001,
-               AND datatype, nullability, precision/length, casing, and
-               ordinal position all agree across all three.
+               AND datatype, nullability, precision/length, and casing all
+               agree across all three. Ordinal position is NOT part of the
+               pass/fail criteria (see note below).
         FAIL = anything else.
 
     `comments` lists every issue found on that row, e.g.:
@@ -288,12 +291,11 @@ precision_mismatch = (
     )
     > 1
 )
-position_mismatch = (
-    distinct_present_count(
-        F.col("core_ordinal_position"), F.col("core_tst_ordinal_position"), F.col("core_tst_std001_ordinal_position")
-    )
-    > 1
-)
+# NOTE: ordinal position is intentionally NOT compared. Column order in a
+# view/table has no downstream impact (consumers select by name, not
+# position), so a position difference is not treated as a reconciliation
+# issue. core_ordinal_position / core_tst_ordinal_position / etc. are still
+# carried through to the output purely for reference.
 
 reconciled = (
     reconciled.withColumn("column_present_in_all", F.when(column_present_in_all, F.lit("Y")).otherwise(F.lit("N")))
@@ -301,7 +303,6 @@ reconciled = (
     .withColumn("datatype_match", F.when(~column_present_in_all, F.lit("N/A")).when(datatype_mismatch, F.lit("N")).otherwise(F.lit("Y")))
     .withColumn("nullable_match", F.when(~column_present_in_all, F.lit("N/A")).when(nullable_mismatch, F.lit("N")).otherwise(F.lit("Y")))
     .withColumn("precision_match", F.when(~column_present_in_all, F.lit("N/A")).when(precision_mismatch, F.lit("N")).otherwise(F.lit("Y")))
-    .withColumn("position_match", F.when(~column_present_in_all, F.lit("N/A")).when(position_mismatch, F.lit("N")).otherwise(F.lit("Y")))
 )
 
 # ---------------------------------------------------------------------------
@@ -328,15 +329,12 @@ precision_comment = F.when(
     column_present_in_all & precision_mismatch,
     triplet_message("Precision/length mismatch", F.col("core_precision_sig"), F.col("core_tst_precision_sig"), F.col("core_tst_std001_precision_sig")),
 )
-position_comment = F.when(
-    column_present_in_all & position_mismatch,
-    triplet_message("Position mismatch", F.col("core_ordinal_position"), F.col("core_tst_ordinal_position"), F.col("core_tst_std001_ordinal_position")),
-)
 
 all_ok_comment = F.when(
-    column_present_in_all & ~case_mismatch & ~datatype_mismatch & ~nullable_mismatch & ~precision_mismatch & ~position_mismatch,
+    column_present_in_all & ~case_mismatch & ~datatype_mismatch & ~nullable_mismatch & ~precision_mismatch,
     F.lit("OK - matches in all three"),
 )
+
 
 reconciled = reconciled.withColumn(
     "comments",
@@ -349,7 +347,6 @@ reconciled = reconciled.withColumn(
                     datatype_comment,
                     nullable_comment,
                     precision_comment,
-                    position_comment,
                     all_ok_comment,
                 ),
                 lambda x: x.isNotNull(),
@@ -364,8 +361,7 @@ reconciled = reconciled.withColumn(
         & ~case_mismatch
         & ~datatype_mismatch
         & ~nullable_mismatch
-        & ~precision_mismatch
-        & ~position_mismatch,
+        & ~precision_mismatch,
         F.lit("PASS"),
     ).otherwise(F.lit("FAIL")),
 )
@@ -402,7 +398,6 @@ final_df = (
         "datatype_match",
         "nullable_match",
         "precision_match",
-        "position_match",
         "comments",
         "reconciliation_status",
     )
