@@ -1,81 +1,73 @@
 """
-three_way_ddl_reconciliation.py
-================================
+count_reconciliation.py
+========================
+Row-COUNT reconciliation between core_tst (test read-replica) and
+core_tst_std001 (test CDA) - schema ods_views.
 
-Column-level (DDL) reconciliation across the same three catalogs used for
-the table-existence reconciliation, for the same source systems and the
-same filtering rules:
+CLASSIFICATION (per table, checked on BOTH catalogs - a column only counts
+if it exists on both sides, otherwise it can't be used as a fair two-sided
+filter). Checked in this priority order, first match wins:
 
-    core              -> prod read-replica   (EXCLUDE tables ending _cda / _sa)
-    core_tst          -> test read-replica   (EXCLUDE tables ending _cda / _sa)
-    core_tst_std001   -> test CDA version    (INCLUDE ONLY tables ending _cda)
+    1. updatetime        -> method = TIMESTAMP_UPDATETIME
+    2. createtime         -> method = TIMESTAMP_CREATETIME
+    3. eventtimestamp     -> method = TIMESTAMP_EVENTTIMESTAMP
+    4. AZURE_LOAD_DATE    -> method = LOAD_DATE_AZURE
+    5. none of the above  -> method = FULL_COUNT_ONLY
+       (no usable column to isolate "today's" rows - only a full-table
+       count comparison is possible for these)
 
-    policycenter  -> vw_policycenter_current_pc_<n>[_cda|_sa]
-    billingcenter -> vw_billingcenter_current_bc_<n>[_cda|_sa]
-    claimcenter   -> vw_claimcenter_current_cc_<n>[_cda|_sa]
+DAILY WINDOW
+    Fixed batch window: yesterday BATCH_CUTOFF_HOUR:00 -> today
+    BATCH_CUTOFF_HOUR:00 (default 3 AM -> 3 AM), not a rolling N-day
+    lookback. Applied to whichever column the table was classified on
+    (methods 1-4 above). FULL_COUNT_ONLY tables have no windowed count -
+    only the full count is compared for them.
 
-COLUMN MATCHING IS CASE-INSENSITIVE
-------------------------------------
-Columns are joined across catalogs on LOWER(column_name), so e.g. core's
-"ACCOUNTID" and core_tst's "accountid" are recognised as the SAME column
-(not reported as missing on either side). The actual casing seen in each
-catalog is still preserved in per-catalog *_column_name output columns, and
-a pure-casing difference is called out explicitly in the `comments` column
-as its own issue type - separate from a genuine datatype/nullable/
-precision/position difference or a true absence in a catalog. Ordinal
-position is carried through for reference only and is NOT compared - column
-order has no downstream impact since consumers select by name, not position.
+"% LOADED TODAY" KPI
+    For every table classified with a usable filter column (methods 1-4),
+    loaded_today = 'Y' if the windowed count is > 0 on EITHER side, else 'N'.
+    Rolled up to a %-loaded figure per source_system (domain) and overall.
+    FULL_COUNT_ONLY tables are excluded from this KPI (there's no daily
+    window to measure "loaded today" against) - they're still reconciled,
+    just via full-count comparison only, and reported separately.
 
-Output grain: one row per (source_system, table_name, column_name)
+TEAMS ALERT
+    A summary Adaptive Card is posted to TEAMS_WEBHOOK_URL (a Power
+    Automate Workflow trigger URL) after every run, covering: overall
+    %-loaded, per-domain %-loaded, and the list of tables with issues.
+    NOTE: the exact JSON envelope a Workflow trigger expects depends on how
+    that specific flow was built. This sends the standard "Adaptive Card via
+    webhook" shape (type: message + attachments), which is the most common
+    setup - verify it against your actual flow and adjust build_teams_card()
+    / the request body if your flow expects a different schema.
 
-    Strict 3-way match rule:
-        PASS = column present in core AND core_tst AND core_tst_std001,
-               AND datatype, nullability, precision/length, and casing all
-               agree across all three. Ordinal position is NOT part of the
-               pass/fail criteria (see note below).
-        FAIL = anything else.
-
-    `comments` lists every issue found on that row, e.g.:
-        "Column missing in core_tst_std001"
-        "Case mismatch: core=ACCOUNTID, core_tst=accountid, core_tst_std001=AccountId"
-        "Datatype mismatch: core=DECIMAL, core_tst=DECIMAL, core_tst_std001=VARCHAR"
-        "Precision/length mismatch: core=10,2, core_tst=10,0"
-        "Nullable mismatch: core=YES, core_tst=NO"
-        "Position mismatch: core=5, core_tst=7, core_tst_std001=5"
-    Multiple issues on the same row are pipe-separated in one string.
-
-Same run-history behaviour as the table reconciliation script:
-    - every execution APPENDS (never overwrites history)
-    - only the latest run of a calendar day is flagged is_latest_for_day='Y'
-    - rows older than RETENTION_DAYS are purged each run
+Same run-history behaviour as the other scripts: append every run, flag
+only the latest run of the day (is_latest_for_day), purge rows older than
+RETENTION_DAYS.
 
 PERFORMANCE NOTES
------------------
-1. Table inventory + column inventory both come from information_schema
-   -> metadata only, no data scan.
-2. information_schema.columns is read ONCE per catalog (not per table) and
-   then inner-joined against the already-filtered, small table list
-   (broadcast) to drop irrelevant tables/columns before any further work.
-3. The 3-way join is on (source_system, base_table_name, lower(column_name))
-   - still small enough (typically thousands, not millions, of rows) to
-   broadcast the two smaller sides.
-4. Output table is partitioned by run_date, so the latest-flag UPDATE and
-   retention DELETE both prune to a single partition.
+------------------
+1. Table + column inventory come from information_schema -> metadata only.
+2. Full counts AND windowed counts are each gathered via a SINGLE UNION ALL
+   query per catalog (not one query per table).
+3. Output table partitioned by run_date for cheap latest-flag/retention.
 """
 
+import json
 from datetime import datetime, timezone
 
 from delta.tables import DeltaTable
 from pyspark.sql import SparkSession, DataFrame, functions as F
 
-spark = SparkSession.builder.appName("ThreeWayDDLReconciliation").getOrCreate()
+spark = SparkSession.builder.appName("CountReconciliation").getOrCreate()
 
 # ---------------------------------------------------------------------------
-# CONFIG - keep in sync with the table-existence reconciliation script
+# CONFIG
 # ---------------------------------------------------------------------------
 SCHEMA = "ods_views"
-
-CATALOGS = ["core", "core_tst", "core_tst_std001"]
+CATALOG_TEST_RR = "core_tst"
+CATALOG_CDA = "core_tst_std001"
+CATALOGS = [CATALOG_TEST_RR, CATALOG_CDA]
 
 SOURCE_SYSTEM_PREFIX = {
     "policycenter": "vw_policycenter_current_",
@@ -83,34 +75,29 @@ SOURCE_SYSTEM_PREFIX = {
     "claimcenter": "vw_claimcenter_current_",
 }
 
-# how many days of run history to retain in the output table
-RETENTION_DAYS = 5
+# priority-ordered candidate columns - first one found (on BOTH sides) wins
+TIMESTAMP_CANDIDATES_IN_ORDER = ["updatetime", "createtime", "eventtimestamp"]
+LOAD_DATE_CANDIDATE = "azure_load_date"  # matched case-insensitively
 
-# Tables to exclude from DDL comparison entirely (match on base_table_name,
-# e.g. "bc_account" - same convention as the table-existence script).
+BATCH_CUTOFF_HOUR = 3  # daily window = yesterday HH:00 -> today HH:00
+
+RETENTION_DAYS = 5
 EXCLUDED_TABLES = [
     # "bc_account",
-    # "pc_policyperiod",
 ]
 
-# Columns to exclude from comparison entirely, wherever they appear (any
-# table, any catalog) - e.g. Guidewire CDC/bulk-load technical columns that
-# will never matter for reconciliation. Matched case-insensitively.
-# Add to this list any time you need to drop a column from comparison.
-EXCLUDED_COLUMNS = [
-    # "gwcbi___operation",
-    # "gwcbi___seqval",
-    # "gwcbi___lsn",
-    # "gwcbi___timestamp",
-]
-_EXCLUDED_COLUMNS_LOWER = [c.lower() for c in EXCLUDED_COLUMNS]
+OUTPUT_TABLE = "core.ods_recon.count_reconciliation_result"
+DOMAIN_SUMMARY_TABLE = "core.ods_recon.count_reconciliation_domain_summary"
 
-OUTPUT_TABLE = "core.ods_recon.ddl_reconciliation_result"
+# set this to your Power Automate Workflow trigger URL to enable alerting;
+# leave as None / empty to skip sending
+TEAMS_WEBHOOK_URL = None  # e.g. "https://prod-00.westus.logic.azure.com/workflows/...."
+TEAMS_ALERT_MODE = "ALWAYS"  # "ALWAYS" (daily digest even if all OK) or "ON_ISSUE_ONLY"
+TEAMS_TOP_N_ISSUES = 15  # cap how many problem tables list individually in the card
 
 
 # ---------------------------------------------------------------------------
-# STEP 1: Table inventory per catalog (same filtering logic as the
-#          table-existence reconciliation script)
+# STEP 1: Table inventory per catalog (same filtering rules as other scripts)
 # ---------------------------------------------------------------------------
 def get_table_inventory(catalog: str) -> DataFrame:
     return spark.sql(
@@ -124,7 +111,6 @@ def get_table_inventory(catalog: str) -> DataFrame:
 
 _PREFIX_ALTERNATION = "|".join(SOURCE_SYSTEM_PREFIX.values())
 _NAME_PATTERN = rf"^({_PREFIX_ALTERNATION})(.+?)(_cda|_sa)?$"
-
 _prefix_to_system_expr = F.create_map(
     *sum(([F.lit(v), F.lit(k)] for k, v in SOURCE_SYSTEM_PREFIX.items()), [])
 )
@@ -141,7 +127,7 @@ def enrich_and_filter(df: DataFrame) -> DataFrame:
 
 
 def apply_catalog_rule(df: DataFrame, catalog: str) -> DataFrame:
-    if catalog == "core_tst_std001":
+    if catalog == CATALOG_CDA:
         return df.filter(F.col("suffix") == "_cda")
     return df.filter(~F.col("suffix").isin("_cda", "_sa"))
 
@@ -154,385 +140,236 @@ for catalog in CATALOGS:
     excluded = rule_applied.filter(~F.col("base_table_name").isin(EXCLUDED_TABLES))
     table_frames[catalog] = excluded.select("source_system", "base_table_name", "table_name").cache()
 
+rr_rows_all = table_frames[CATALOG_TEST_RR].collect()
+cda_rows_all = table_frames[CATALOG_CDA].collect()
+rr_phys = {(r["source_system"], r["base_table_name"]): r["table_name"] for r in rr_rows_all}
+cda_phys = {(r["source_system"], r["base_table_name"]): r["table_name"] for r in cda_rows_all}
+
+common_keys = sorted(set(rr_phys.keys()) & set(cda_phys.keys()))
+missing_only_rr = sorted(set(rr_phys.keys()) - set(cda_phys.keys()))
+missing_only_cda = sorted(set(cda_phys.keys()) - set(rr_phys.keys()))
+
 
 # ---------------------------------------------------------------------------
-# STEP 2: Column metadata per catalog, restricted to the filtered table list
+# STEP 2: Classify every common table by its usable date/load column
 # ---------------------------------------------------------------------------
-def get_column_inventory(catalog: str) -> DataFrame:
+def get_columns(catalog: str) -> DataFrame:
     return spark.sql(
         f"""
-        SELECT
-            table_name,
-            column_name,
-            ordinal_position,
-            data_type,
-            is_nullable,
-            character_maximum_length,
-            numeric_precision,
-            numeric_scale
+        SELECT table_name, column_name
         FROM {catalog}.information_schema.columns
         WHERE table_schema = '{SCHEMA}'
         """
     )
 
 
-def build_catalog_column_frame(catalog: str) -> DataFrame:
-    cols = get_column_inventory(catalog)
-    tbls = table_frames[catalog]  # source_system, base_table_name, table_name
-
-    return (
-        cols.join(F.broadcast(tbls), "table_name", "inner")
-        .withColumn("column_key", F.lower(F.col("column_name")))  # case-insensitive join key
-        .filter(~F.col("column_key").isin(_EXCLUDED_COLUMNS_LOWER))
-        .withColumn("data_type_norm", F.upper(F.col("data_type")))
-        .withColumn("is_nullable_norm", F.upper(F.col("is_nullable")))
-        .withColumn(
-            "precision_sig",
-            F.concat_ws(
-                ",",
-                F.coalesce(F.col("character_maximum_length").cast("string"), F.lit("")),
-                F.coalesce(F.col("numeric_precision").cast("string"), F.lit("")),
-                F.coalesce(F.col("numeric_scale").cast("string"), F.lit("")),
-            ),
-        )
-        .select(
-            "source_system",
-            "base_table_name",
-            "column_key",
-            F.col("column_name"),
-            F.col("ordinal_position"),
-            F.col("data_type_norm").alias("data_type"),
-            F.col("is_nullable_norm").alias("is_nullable"),
-            "precision_sig",
-        )
-    )
+rr_cols_rows = get_columns(CATALOG_TEST_RR).collect()
+cda_cols_rows = get_columns(CATALOG_CDA).collect()
+phys_to_key_rr = {v: k for k, v in rr_phys.items()}
+phys_to_key_cda = {v: k for k, v in cda_phys.items()}
 
 
-core_cols = build_catalog_column_frame("core")
-core_tst_cols = build_catalog_column_frame("core_tst")
-core_std_cols = build_catalog_column_frame("core_tst_std001")
+def columns_by_key(rows, phys_to_key):
+    result = {}
+    for r in rows:
+        key = phys_to_key.get(r["table_name"])
+        if key is None:
+            continue
+        result.setdefault(key, {})[r["column_name"].lower()] = r["column_name"]  # lower -> actual case
+    return result
+
+
+rr_columns_by_key = columns_by_key(rr_cols_rows, phys_to_key_rr)
+cda_columns_by_key = columns_by_key(cda_cols_rows, phys_to_key_cda)
+
+_METHOD_LABELS = {
+    "updatetime": "TIMESTAMP_UPDATETIME",
+    "createtime": "TIMESTAMP_CREATETIME",
+    "eventtimestamp": "TIMESTAMP_EVENTTIMESTAMP",
+    LOAD_DATE_CANDIDATE: "LOAD_DATE_AZURE",
+}
+
+table_plans = {}
+for key in common_keys:
+    rr_cols = rr_columns_by_key.get(key, {})
+    cda_cols = cda_columns_by_key.get(key, {})
+
+    chosen_col_lower = None
+    for candidate in TIMESTAMP_CANDIDATES_IN_ORDER + [LOAD_DATE_CANDIDATE]:
+        if candidate in rr_cols and candidate in cda_cols:
+            chosen_col_lower = candidate
+            break
+
+    if chosen_col_lower:
+        table_plans[key] = {
+            "method": _METHOD_LABELS[chosen_col_lower],
+            "rr_col": rr_cols[chosen_col_lower],
+            "cda_col": cda_cols[chosen_col_lower],
+        }
+    else:
+        table_plans[key] = {"method": "FULL_COUNT_ONLY", "rr_col": None, "cda_col": None}
 
 
 # ---------------------------------------------------------------------------
-# STEP 3: 3-way join on (source_system, base_table_name, column_key)
-#          each side is per-catalog aliased so nothing collides on join
+# STEP 3: Build ONE UNION ALL query per catalog for full counts, and ONE per
+#          catalog for windowed counts (fixed 3AM-3AM batch window)
 # ---------------------------------------------------------------------------
-def col_presence_frame(df: DataFrame, catalog: str, flag_col: str) -> DataFrame:
-    return (
-        df.select(
-            "source_system",
-            "base_table_name",
-            "column_key",
-            F.col("column_name").alias(f"{catalog}_column_name"),
-            F.col("ordinal_position").alias(f"{catalog}_ordinal_position"),
-            F.col("data_type").alias(f"{catalog}_data_type"),
-            F.col("is_nullable").alias(f"{catalog}_is_nullable"),
-            F.col("precision_sig").alias(f"{catalog}_precision_sig"),
+def build_full_count_query(catalog: str, keys: list, phys_lookup: dict) -> str:
+    parts = [
+        f"""SELECT '{k[0]}' AS source_system, '{k[1]}' AS table_name, COUNT(*) AS row_count
+            FROM {catalog}.{SCHEMA}.{phys_lookup[k]}"""
+        for k in keys
+    ]
+    return " UNION ALL ".join(parts) if parts else None
+
+
+WINDOW_END_EXPR = f"timestamp(concat(current_date(), ' {BATCH_CUTOFF_HOUR:02d}:00:00'))"
+WINDOW_START_EXPR = f"timestamp(concat(date_sub(current_date(), 1), ' {BATCH_CUTOFF_HOUR:02d}:00:00'))"
+
+
+def build_windowed_count_query(catalog: str, keys: list, phys_lookup: dict, side: str) -> str:
+    parts = []
+    for k in keys:
+        plan = table_plans[k]
+        if plan["method"] == "FULL_COUNT_ONLY":
+            continue
+        col = plan["rr_col"] if side == "rr" else plan["cda_col"]
+        parts.append(
+            f"""SELECT '{k[0]}' AS source_system, '{k[1]}' AS table_name, COUNT(*) AS row_count
+                FROM {catalog}.{SCHEMA}.{phys_lookup[k]}
+                WHERE `{col}` >= {WINDOW_START_EXPR} AND `{col}` < {WINDOW_END_EXPR}"""
         )
-        .withColumn(flag_col, F.lit("Y"))
-        .dropDuplicates(["source_system", "base_table_name", "column_key"])
-    )
+    return " UNION ALL ".join(parts) if parts else None
 
 
-core_cp = col_presence_frame(core_cols, "core", "in_core")
-core_tst_cp = col_presence_frame(core_tst_cols, "core_tst", "in_core_tst")
-core_std_cp = col_presence_frame(core_std_cols, "core_tst_std001", "in_core_tst_std001")
-
-join_keys = ["source_system", "base_table_name", "column_key"]
-
-reconciled = (
-    core_cp.join(F.broadcast(core_tst_cp), join_keys, "full_outer")
-    .join(F.broadcast(core_std_cp), join_keys, "full_outer")
-    .fillna("N", subset=["in_core", "in_core_tst", "in_core_tst_std001"])
+full_count_rr_df = spark.sql(build_full_count_query(CATALOG_TEST_RR, common_keys, rr_phys)).withColumnRenamed(
+    "row_count", "full_count_core_tst"
+)
+full_count_cda_df = spark.sql(build_full_count_query(CATALOG_CDA, common_keys, cda_phys)).withColumnRenamed(
+    "row_count", "full_count_core_tst_std001"
 )
 
-# ---------------------------------------------------------------------------
-# STEP 3b: Table-level presence (independent of any single column) - lets us
-#          tell "table doesn't exist in this catalog at all" (every column
-#          missing for that reason) apart from "table exists here, but THIS
-#          particular column is genuinely absent" (a real drift issue).
-# ---------------------------------------------------------------------------
-def table_presence_frame(catalog: str, flag_col: str) -> DataFrame:
-    return (
-        table_frames[catalog]
-        .select("source_system", "base_table_name")
-        .distinct()
-        .withColumn(flag_col, F.lit("Y"))
-    )
+windowed_rr_query = build_windowed_count_query(CATALOG_TEST_RR, common_keys, rr_phys, "rr")
+windowed_cda_query = build_windowed_count_query(CATALOG_CDA, common_keys, cda_phys, "cda")
 
-
-table_presence = (
-    table_presence_frame("core", "table_present_in_core")
-    .join(
-        F.broadcast(table_presence_frame("core_tst", "table_present_in_core_tst")),
-        ["source_system", "base_table_name"],
-        "full_outer",
-    )
-    .join(
-        F.broadcast(table_presence_frame("core_tst_std001", "table_present_in_core_tst_std001")),
-        ["source_system", "base_table_name"],
-        "full_outer",
-    )
-    .fillna(
-        "N",
-        subset=["table_present_in_core", "table_present_in_core_tst", "table_present_in_core_tst_std001"],
-    )
+windowed_rr_df = (
+    spark.sql(windowed_rr_query).withColumnRenamed("row_count", "windowed_count_core_tst")
+    if windowed_rr_query
+    else None
+)
+windowed_cda_df = (
+    spark.sql(windowed_cda_query).withColumnRenamed("row_count", "windowed_count_core_tst_std001")
+    if windowed_cda_query
+    else None
 )
 
-reconciled = reconciled.join(F.broadcast(table_presence), ["source_system", "base_table_name"], "left")
-
 
 # ---------------------------------------------------------------------------
-# STEP 4: Issue detection - one boolean + one formatted message per issue type
+# STEP 4: Assemble final result
 # ---------------------------------------------------------------------------
-def distinct_present_count(*cols):
-    """Count of distinct non-null values among the given columns."""
-    return F.size(F.array_distinct(F.filter(F.array(*cols), lambda x: x.isNotNull())))
+plan_rows = [(k[0], k[1], table_plans[k]["method"]) for k in common_keys]
+plan_df = spark.createDataFrame(plan_rows, "source_system STRING, table_name STRING, classification_method STRING")
 
-
-def triplet_message(label, core_c, tst_c, std_c):
-    """'<label>: core=X, core_tst=Y, core_tst_std001=Z' - only present catalogs shown."""
-    parts = F.array_distinct(
-        F.filter(
-            F.array(
-                F.when(core_c.isNotNull(), F.concat(F.lit("core="), core_c.cast("string"))),
-                F.when(tst_c.isNotNull(), F.concat(F.lit("core_tst="), tst_c.cast("string"))),
-                F.when(std_c.isNotNull(), F.concat(F.lit("core_tst_std001="), std_c.cast("string"))),
-            ),
-            lambda x: x.isNotNull(),
-        )
-    )
-    return F.concat(F.lit(f"{label}: "), F.array_join(parts, ", "))
-
-
-missing_catalogs_arr = F.array_distinct(
-    F.filter(
-        F.array(
-            F.when(F.col("in_core") == "N", F.lit("core")),
-            F.when(F.col("in_core_tst") == "N", F.lit("core_tst")),
-            F.when(F.col("in_core_tst_std001") == "N", F.lit("core_tst_std001")),
-        ),
-        lambda x: x.isNotNull(),
-    )
+result = (
+    plan_df.join(F.broadcast(full_count_rr_df), ["source_system", "table_name"], "left")
+    .join(F.broadcast(full_count_cda_df), ["source_system", "table_name"], "left")
 )
-column_present_in_all = F.size(missing_catalogs_arr) == 0
 
-# Of the catalogs where this column is missing, split by WHY:
-#   - the whole table doesn't exist there (not a column-level issue at all)
-#   - the table DOES exist there, but this specific column is genuinely absent
-table_missing_catalogs_arr = F.array_distinct(
-    F.filter(
-        F.array(
-            F.when((F.col("in_core") == "N") & (F.col("table_present_in_core") == "N"), F.lit("core")),
-            F.when((F.col("in_core_tst") == "N") & (F.col("table_present_in_core_tst") == "N"), F.lit("core_tst")),
+if windowed_rr_df is not None:
+    result = result.join(F.broadcast(windowed_rr_df), ["source_system", "table_name"], "left")
+else:
+    result = result.withColumn("windowed_count_core_tst", F.lit(None).cast("long"))
+
+if windowed_cda_df is not None:
+    result = result.join(F.broadcast(windowed_cda_df), ["source_system", "table_name"], "left")
+else:
+    result = result.withColumn("windowed_count_core_tst_std001", F.lit(None).cast("long"))
+
+is_windowed_method = F.col("classification_method") != "FULL_COUNT_ONLY"
+full_count_diff = F.col("full_count_core_tst") - F.col("full_count_core_tst_std001")
+windowed_count_diff = F.col("windowed_count_core_tst") - F.col("windowed_count_core_tst_std001")
+
+result = (
+    result.withColumn("full_count_diff", full_count_diff)
+    .withColumn("windowed_count_diff", F.when(is_windowed_method, windowed_count_diff).otherwise(F.lit(None).cast("long")))
+    .withColumn(
+        "loaded_today",
+        F.when(~is_windowed_method, F.lit("N/A"))
+        .when((F.col("windowed_count_core_tst") > 0) | (F.col("windowed_count_core_tst_std001") > 0), F.lit("Y"))
+        .otherwise(F.lit("N")),
+    )
+    .withColumn(
+        "issue_summary",
+        F.when((full_count_diff != 0) & is_windowed_method & (windowed_count_diff != 0), F.lit("ROW_COUNT_MISMATCH_FULL+WINDOW"))
+        .when(full_count_diff != 0, F.lit("ROW_COUNT_MISMATCH_FULL"))
+        .when(is_windowed_method & (windowed_count_diff != 0), F.lit("ROW_COUNT_MISMATCH_WINDOW"))
+        .otherwise(F.lit("OK")),
+    )
+    .withColumn(
+        "comments",
+        F.concat_ws(
+            " | ",
             F.when(
-                (F.col("in_core_tst_std001") == "N") & (F.col("table_present_in_core_tst_std001") == "N"),
-                F.lit("core_tst_std001"),
+                full_count_diff != 0,
+                F.concat(
+                    F.lit("Full count mismatch: core_tst="),
+                    F.col("full_count_core_tst").cast("string"),
+                    F.lit(", core_tst_std001="),
+                    F.col("full_count_core_tst_std001").cast("string"),
+                ),
             ),
-        ),
-        lambda x: x.isNotNull(),
-    )
-)
-column_missing_catalogs_arr = F.array_distinct(
-    F.filter(
-        F.array(
-            F.when((F.col("in_core") == "N") & (F.col("table_present_in_core") == "Y"), F.lit("core")),
-            F.when((F.col("in_core_tst") == "N") & (F.col("table_present_in_core_tst") == "Y"), F.lit("core_tst")),
             F.when(
-                (F.col("in_core_tst_std001") == "N") & (F.col("table_present_in_core_tst_std001") == "Y"),
-                F.lit("core_tst_std001"),
+                is_windowed_method & (windowed_count_diff != 0),
+                F.concat(
+                    F.lit(f"Batch window ({BATCH_CUTOFF_HOUR:02d}:00 yesterday - {BATCH_CUTOFF_HOUR:02d}:00 today) count mismatch: core_tst="),
+                    F.col("windowed_count_core_tst").cast("string"),
+                    F.lit(", core_tst_std001="),
+                    F.col("windowed_count_core_tst_std001").cast("string"),
+                ),
             ),
         ),
-        lambda x: x.isNotNull(),
     )
 )
-table_missing_here = F.size(table_missing_catalogs_arr) > 0
-column_genuinely_missing = F.size(column_missing_catalogs_arr) > 0
 
-case_mismatch = (
-    distinct_present_count(
-        F.col("core_column_name"), F.col("core_tst_column_name"), F.col("core_tst_std001_column_name")
+# tables missing entirely on one side get their own rows too
+if missing_only_rr or missing_only_cda:
+    missing_rows = (
+        [(k[0], k[1], "N/A", None, None, None, None, None, None, "N/A", "TABLE_MISSING_IN_CORE_TST_STD001", "Table not present in core_tst_std001") for k in missing_only_rr]
+        + [(k[0], k[1], "N/A", None, None, None, None, None, None, "N/A", "TABLE_MISSING_IN_CORE_TST", "Table not present in core_tst") for k in missing_only_cda]
     )
-    > 1
-)
-datatype_mismatch = (
-    distinct_present_count(F.col("core_data_type"), F.col("core_tst_data_type"), F.col("core_tst_std001_data_type"))
-    > 1
-)
-nullable_mismatch = (
-    distinct_present_count(
-        F.col("core_is_nullable"), F.col("core_tst_is_nullable"), F.col("core_tst_std001_is_nullable")
+    missing_df = spark.createDataFrame(
+        missing_rows,
+        "source_system STRING, table_name STRING, classification_method STRING, "
+        "full_count_core_tst LONG, full_count_core_tst_std001 LONG, full_count_diff LONG, "
+        "windowed_count_core_tst LONG, windowed_count_core_tst_std001 LONG, windowed_count_diff LONG, "
+        "loaded_today STRING, issue_summary STRING, comments STRING",
     )
-    > 1
-)
-precision_mismatch = (
-    distinct_present_count(
-        F.col("core_precision_sig"), F.col("core_tst_precision_sig"), F.col("core_tst_std001_precision_sig")
-    )
-    > 1
-)
-# NOTE: ordinal position is intentionally NOT compared. Column order in a
-# view/table has no downstream impact (consumers select by name, not
-# position), so a position difference is not treated as a reconciliation
-# issue. core_ordinal_position / core_tst_ordinal_position / etc. are still
-# carried through to the output purely for reference.
-
-reconciled = (
-    reconciled.withColumn("column_present_in_all", F.when(column_present_in_all, F.lit("Y")).otherwise(F.lit("N")))
-    .withColumn("case_match", F.when(~column_present_in_all, F.lit("N/A")).when(case_mismatch, F.lit("N")).otherwise(F.lit("Y")))
-    .withColumn("datatype_match", F.when(~column_present_in_all, F.lit("N/A")).when(datatype_mismatch, F.lit("N")).otherwise(F.lit("Y")))
-    .withColumn("nullable_match", F.when(~column_present_in_all, F.lit("N/A")).when(nullable_mismatch, F.lit("N")).otherwise(F.lit("Y")))
-    .withColumn("precision_match", F.when(~column_present_in_all, F.lit("N/A")).when(precision_mismatch, F.lit("N")).otherwise(F.lit("Y")))
-)
-
-# ---------------------------------------------------------------------------
-# STEP 5: Build the detailed comments column - one clause per issue found
-# ---------------------------------------------------------------------------
-table_missing_comment = F.when(
-    table_missing_here,
-    F.concat(
-        F.lit("Table not present in "),
-        F.array_join(table_missing_catalogs_arr, ", "),
-        F.lit(" (all columns of this table are absent there for that reason)"),
-    ),
-)
-column_missing_comment = F.when(
-    column_genuinely_missing,
-    F.concat(
-        F.lit("Column missing in "),
-        F.array_join(column_missing_catalogs_arr, ", "),
-        F.lit(" even though the table exists there"),
-    ),
-)
-
-case_comment = F.when(
-    column_present_in_all & case_mismatch,
-    triplet_message("Case mismatch", F.col("core_column_name"), F.col("core_tst_column_name"), F.col("core_tst_std001_column_name")),
-)
-datatype_comment = F.when(
-    column_present_in_all & datatype_mismatch,
-    triplet_message("Datatype mismatch", F.col("core_data_type"), F.col("core_tst_data_type"), F.col("core_tst_std001_data_type")),
-)
-nullable_comment = F.when(
-    column_present_in_all & nullable_mismatch,
-    triplet_message("Nullable mismatch", F.col("core_is_nullable"), F.col("core_tst_is_nullable"), F.col("core_tst_std001_is_nullable")),
-)
-precision_comment = F.when(
-    column_present_in_all & precision_mismatch,
-    triplet_message("Precision/length mismatch", F.col("core_precision_sig"), F.col("core_tst_precision_sig"), F.col("core_tst_std001_precision_sig")),
-)
-
-all_ok_comment = F.when(
-    column_present_in_all & ~case_mismatch & ~datatype_mismatch & ~nullable_mismatch & ~precision_mismatch,
-    F.lit("OK - matches in all three"),
-)
-
-
-reconciled = reconciled.withColumn(
-    "comments",
-    F.array_join(
-        F.array_distinct(
-            F.filter(
-                F.array(
-                    table_missing_comment,
-                    column_missing_comment,
-                    case_comment,
-                    datatype_comment,
-                    nullable_comment,
-                    precision_comment,
-                    all_ok_comment,
-                ),
-                lambda x: x.isNotNull(),
-            )
-        ),
-        " | ",
-    ),
-).withColumn(
-    # compact high-level tag, e.g. "CASE", "CASE/DATATYPE", "CASE/DATATYPE/PRECISION",
-    # "TABLE_MISSING", "COLUMN_MISSING", or "OK" - meant for quick
-    # scanning/grouping/filtering, unlike the full free-text `comments` column
-    # above.
-    #
-    # TABLE_MISSING = the whole table doesn't exist in one (or more) of the
-    #                  catalogs - every column of that table shows this for
-    #                  the same underlying reason, so group/filter these out
-    #                  separately from real column-level drift.
-    # COLUMN_MISSING = the table exists in all relevant catalogs, but this
-    #                   specific column doesn't - a genuine drift issue.
-    "issue_summary",
-    F.when(table_missing_here & ~column_genuinely_missing, F.lit("TABLE_MISSING"))
-    .when(table_missing_here & column_genuinely_missing, F.lit("TABLE_MISSING+COLUMN_MISSING"))
-    .when(~column_present_in_all, F.lit("COLUMN_MISSING"))
-    .when(
-        ~case_mismatch & ~datatype_mismatch & ~nullable_mismatch & ~precision_mismatch,
-        F.lit("OK"),
-    )
-    .otherwise(
-        F.array_join(
-            F.filter(
-                F.array(
-                    F.when(case_mismatch, F.lit("CASE")),
-                    F.when(datatype_mismatch, F.lit("DATATYPE")),
-                    F.when(nullable_mismatch, F.lit("NULLABLE")),
-                    F.when(precision_mismatch, F.lit("PRECISION")),
-                ),
-                lambda x: x.isNotNull(),
-            ),
-            "/",
-        )
-    ),
-).withColumn(
-    "reconciliation_status",
-    F.when(
-        column_present_in_all
-        & ~case_mismatch
-        & ~datatype_mismatch
-        & ~nullable_mismatch
-        & ~precision_mismatch,
-        F.lit("PASS"),
-    ).otherwise(F.lit("FAIL")),
-)
+    result = result.unionByName(missing_df)
 
 
 # ---------------------------------------------------------------------------
-# STEP 6: Final shape + run metadata
+# STEP 5: Final shape + run metadata
 # ---------------------------------------------------------------------------
 _run_dt = datetime.now(timezone.utc)
 RUN_ID = _run_dt.strftime("%Y%m%d_%H%M%S")
 RUN_TIMESTAMP = _run_dt.isoformat()
 
 final_df = (
-    reconciled.select(
+    result.select(
         "source_system",
-        F.col("base_table_name").alias("table_name"),
-        F.coalesce(
-            F.col("core_column_name"), F.col("core_tst_column_name"), F.col("core_tst_std001_column_name")
-        ).alias("column_name"),
-        F.col("table_present_in_core"),
-        "in_core",
-        F.col("core_column_name").alias("core_column_name"),
-        F.col("core_data_type").alias("core_data_type"),
-        F.col("core_ordinal_position").alias("core_ordinal_position"),
-        F.col("table_present_in_core_tst"),
-        "in_core_tst",
-        F.col("core_tst_column_name").alias("core_tst_column_name"),
-        F.col("core_tst_data_type").alias("core_tst_data_type"),
-        F.col("core_tst_ordinal_position").alias("core_tst_ordinal_position"),
-        F.col("table_present_in_core_tst_std001"),
-        "in_core_tst_std001",
-        F.col("core_tst_std001_column_name").alias("core_tst_std001_column_name"),
-        F.col("core_tst_std001_data_type").alias("core_tst_std001_data_type"),
-        F.col("core_tst_std001_ordinal_position").alias("core_tst_std001_ordinal_position"),
-        "column_present_in_all",
-        "case_match",
-        "datatype_match",
-        "nullable_match",
-        "precision_match",
+        "table_name",
+        "classification_method",
+        "full_count_core_tst",
+        "full_count_core_tst_std001",
+        "full_count_diff",
+        "windowed_count_core_tst",
+        "windowed_count_core_tst_std001",
+        "windowed_count_diff",
+        "loaded_today",
         "issue_summary",
         "comments",
-        "reconciliation_status",
     )
-    .orderBy("source_system", "table_name", "core_ordinal_position", "column_name")
+    .orderBy("source_system", "table_name")
     .withColumn("run_id", F.lit(RUN_ID))
     .withColumn("run_timestamp", F.lit(RUN_TIMESTAMP).cast("timestamp"))
     .withColumn("run_date", F.current_date())
@@ -540,48 +377,160 @@ final_df = (
 )
 
 final_df.cache()
-print(f"DDL reconciliation row count: {final_df.count()}")
+print(f"Count reconciliation row count: {final_df.count()}")
 print("Breakdown by issue_summary:")
 final_df.groupBy("issue_summary").count().orderBy(F.desc("count")).show(20, truncate=False)
-
-real_issues = final_df.filter(~F.col("issue_summary").isin("OK", "TABLE_MISSING"))
-print(f"Rows needing attention (excludes OK and pure TABLE_MISSING noise): {real_issues.count()}")
-real_issues.select("source_system", "table_name", "column_name", "issue_summary", "comments").show(
-    50, truncate=False
-)
+print("Breakdown by classification_method:")
+final_df.groupBy("classification_method").count().orderBy(F.desc("count")).show(20, truncate=False)
 
 
 # ---------------------------------------------------------------------------
-# STEP 7: Persist - append this run, mark latest-for-day, purge old history
+# STEP 6: Domain-level (+ overall) %-loaded-today summary
 # ---------------------------------------------------------------------------
-if spark.catalog.tableExists(OUTPUT_TABLE):
-    (
-        final_df.write.format("delta")
-        .mode("append")
-        .option("mergeSchema", "true")
-        .saveAsTable(OUTPUT_TABLE)
-    )
-else:
-    (
-        final_df.write.format("delta")
-        .mode("overwrite")
-        .partitionBy("run_date")
-        .saveAsTable(OUTPUT_TABLE)
-    )
+eligible = final_df.filter(F.col("loaded_today") != "N/A")
 
-output_tbl = DeltaTable.forName(spark, OUTPUT_TABLE)
-
-output_tbl.update(
-    condition=f"run_date = current_date() AND run_id <> '{RUN_ID}'",
-    set={"is_latest_for_day": "'N'"},
+domain_summary = eligible.groupBy("source_system").agg(
+    F.count("*").alias("eligible_tables"),
+    F.sum(F.when(F.col("loaded_today") == "Y", 1).otherwise(0)).alias("tables_loaded_today"),
+    F.sum(F.when(F.col("issue_summary") != "OK", 1).otherwise(0)).alias("tables_with_issues"),
+)
+overall_summary = eligible.agg(
+    F.lit("ALL").alias("source_system"),
+    F.count("*").alias("eligible_tables"),
+    F.sum(F.when(F.col("loaded_today") == "Y", 1).otherwise(0)).alias("tables_loaded_today"),
+    F.sum(F.when(F.col("issue_summary") != "OK", 1).otherwise(0)).alias("tables_with_issues"),
 )
 
-output_tbl.delete(f"run_date < date_sub(current_date(), {RETENTION_DAYS})")
+domain_summary_final = (
+    domain_summary.unionByName(overall_summary)
+    .withColumn("pct_loaded_today", F.round(100.0 * F.col("tables_loaded_today") / F.col("eligible_tables"), 1))
+    .withColumn("pct_ok", F.round(100.0 * (F.col("eligible_tables") - F.col("tables_with_issues")) / F.col("eligible_tables"), 1))
+    .withColumn("run_id", F.lit(RUN_ID))
+    .withColumn("run_timestamp", F.lit(RUN_TIMESTAMP).cast("timestamp"))
+    .withColumn("run_date", F.current_date())
+    .withColumn("is_latest_for_day", F.lit("Y"))
+)
 
-print(f"Wrote DDL reconciliation result to {OUTPUT_TABLE} (run_id={RUN_ID}, run_date={_run_dt.date()})")
-print(f"Rows older than {RETENTION_DAYS} days purged.")
+domain_summary_final.cache()
+print("Domain-level %-loaded-today summary:")
+domain_summary_final.orderBy(F.when(F.col("source_system") == "ALL", 1).otherwise(0), "source_system").show(20, truncate=False)
 
-# cleanup cached frames
+
+# ---------------------------------------------------------------------------
+# STEP 7: Persist both outputs (append + latest-flag + retention)
+# ---------------------------------------------------------------------------
+def persist(df, output_table, partition_col="run_date"):
+    if spark.catalog.tableExists(output_table):
+        df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(output_table)
+    else:
+        df.write.format("delta").mode("overwrite").partitionBy(partition_col).saveAsTable(output_table)
+    tbl = DeltaTable.forName(spark, output_table)
+    tbl.update(condition=f"run_date = current_date() AND run_id <> '{RUN_ID}'", set={"is_latest_for_day": "'N'"})
+    tbl.delete(f"run_date < date_sub(current_date(), {RETENTION_DAYS})")
+
+
+persist(final_df, OUTPUT_TABLE)
+persist(domain_summary_final, DOMAIN_SUMMARY_TABLE)
+print(f"Wrote {OUTPUT_TABLE} and {DOMAIN_SUMMARY_TABLE} (run_id={RUN_ID}, run_date={_run_dt.date()})")
+
+
+# ---------------------------------------------------------------------------
+# STEP 8: Teams alert
+# ---------------------------------------------------------------------------
+def build_teams_card(final_df, domain_summary_final, run_date_str):
+    overall = [r for r in domain_summary_final.collect() if r["source_system"] == "ALL"][0]
+    domain_rows = sorted(
+        [r for r in domain_summary_final.collect() if r["source_system"] != "ALL"],
+        key=lambda r: r["source_system"],
+    )
+    issue_rows = (
+        final_df.filter(F.col("issue_summary") != "OK")
+        .select("source_system", "table_name", "issue_summary", "comments")
+        .orderBy("source_system", "table_name")
+        .limit(TEAMS_TOP_N_ISSUES)
+        .collect()
+    )
+    total_issues = final_df.filter(F.col("issue_summary") != "OK").count()
+
+    color = "good" if total_issues == 0 else ("warning" if total_issues < 5 else "attention")
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"Count Reconciliation - {run_date_str}",
+            "weight": "Bolder",
+            "size": "Medium",
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Overall: {overall['pct_loaded_today']}% of eligible tables loaded today | "
+            f"{overall['pct_ok']}% passing | {total_issues} table(s) with issues",
+            "wrap": True,
+            "color": color,
+        },
+        {"type": "TextBlock", "text": "By domain:", "weight": "Bolder", "spacing": "Medium"},
+    ]
+    domain_facts = [
+        {"title": r["source_system"], "value": f"{r['pct_loaded_today']}% loaded, {r['pct_ok']}% ok"}
+        for r in domain_rows
+    ]
+    body.append({"type": "FactSet", "facts": domain_facts})
+
+    if issue_rows:
+        body.append({"type": "TextBlock", "text": "Tables with issues (top {}):".format(len(issue_rows)), "weight": "Bolder", "spacing": "Medium"})
+        for r in issue_rows:
+            body.append(
+                {
+                    "type": "TextBlock",
+                    "text": f"**{r['source_system']} / {r['table_name']}** - {r['issue_summary']}: {r['comments']}",
+                    "wrap": True,
+                    "size": "Small",
+                }
+            )
+        if total_issues > len(issue_rows):
+            body.append(
+                {"type": "TextBlock", "text": f"...and {total_issues - len(issue_rows)} more.", "size": "Small", "isSubtle": True}
+            )
+
+    card = {
+        "type": "AdaptiveCard",
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "version": "1.4",
+        "body": body,
+    }
+    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "content": card}]}
+
+
+def send_teams_alert():
+    if not TEAMS_WEBHOOK_URL:
+        print("TEAMS_WEBHOOK_URL not set - skipping Teams alert.")
+        return
+    total_issues = final_df.filter(F.col("issue_summary") != "OK").count()
+    if TEAMS_ALERT_MODE == "ON_ISSUE_ONLY" and total_issues == 0:
+        print("No issues found and TEAMS_ALERT_MODE=ON_ISSUE_ONLY - skipping Teams alert.")
+        return
+
+    try:
+        import requests
+    except ImportError:
+        print("[WARN] 'requests' package not available - cannot send Teams alert. "
+              "Install with: %pip install requests")
+        return
+
+    payload = build_teams_card(final_df, domain_summary_final, str(_run_dt.date()))
+    try:
+        resp = requests.post(TEAMS_WEBHOOK_URL, data=json.dumps(payload), headers={"Content-Type": "application/json"}, timeout=30)
+        if resp.status_code >= 300:
+            print(f"[WARN] Teams webhook returned {resp.status_code}: {resp.text[:500]}")
+        else:
+            print("Teams alert sent.")
+    except Exception as e:
+        print(f"[WARN] Failed to send Teams alert: {e}")
+
+
+send_teams_alert()
+
 for df in table_frames.values():
     df.unpersist()
 final_df.unpersist()
+domain_summary_final.unpersist()
