@@ -93,6 +93,18 @@ EXCLUDED_TABLES = [
     # "pc_policyperiod",
 ]
 
+# Columns to exclude from comparison entirely, wherever they appear (any
+# table, any catalog) - e.g. Guidewire CDC/bulk-load technical columns that
+# will never matter for reconciliation. Matched case-insensitively.
+# Add to this list any time you need to drop a column from comparison.
+EXCLUDED_COLUMNS = [
+    # "gwcbi___operation",
+    # "gwcbi___seqval",
+    # "gwcbi___lsn",
+    # "gwcbi___timestamp",
+]
+_EXCLUDED_COLUMNS_LOWER = [c.lower() for c in EXCLUDED_COLUMNS]
+
 OUTPUT_TABLE = "core.ods_recon.ddl_reconciliation_result"
 
 
@@ -171,6 +183,7 @@ def build_catalog_column_frame(catalog: str) -> DataFrame:
     return (
         cols.join(F.broadcast(tbls), "table_name", "inner")
         .withColumn("column_key", F.lower(F.col("column_name")))  # case-insensitive join key
+        .filter(~F.col("column_key").isin(_EXCLUDED_COLUMNS_LOWER))
         .withColumn("data_type_norm", F.upper(F.col("data_type")))
         .withColumn("is_nullable_norm", F.upper(F.col("is_nullable")))
         .withColumn(
@@ -233,6 +246,41 @@ reconciled = (
     .fillna("N", subset=["in_core", "in_core_tst", "in_core_tst_std001"])
 )
 
+# ---------------------------------------------------------------------------
+# STEP 3b: Table-level presence (independent of any single column) - lets us
+#          tell "table doesn't exist in this catalog at all" (every column
+#          missing for that reason) apart from "table exists here, but THIS
+#          particular column is genuinely absent" (a real drift issue).
+# ---------------------------------------------------------------------------
+def table_presence_frame(catalog: str, flag_col: str) -> DataFrame:
+    return (
+        table_frames[catalog]
+        .select("source_system", "base_table_name")
+        .distinct()
+        .withColumn(flag_col, F.lit("Y"))
+    )
+
+
+table_presence = (
+    table_presence_frame("core", "table_present_in_core")
+    .join(
+        F.broadcast(table_presence_frame("core_tst", "table_present_in_core_tst")),
+        ["source_system", "base_table_name"],
+        "full_outer",
+    )
+    .join(
+        F.broadcast(table_presence_frame("core_tst_std001", "table_present_in_core_tst_std001")),
+        ["source_system", "base_table_name"],
+        "full_outer",
+    )
+    .fillna(
+        "N",
+        subset=["table_present_in_core", "table_present_in_core_tst", "table_present_in_core_tst_std001"],
+    )
+)
+
+reconciled = reconciled.join(F.broadcast(table_presence), ["source_system", "base_table_name"], "left")
+
 
 # ---------------------------------------------------------------------------
 # STEP 4: Issue detection - one boolean + one formatted message per issue type
@@ -268,6 +316,38 @@ missing_catalogs_arr = F.array_distinct(
     )
 )
 column_present_in_all = F.size(missing_catalogs_arr) == 0
+
+# Of the catalogs where this column is missing, split by WHY:
+#   - the whole table doesn't exist there (not a column-level issue at all)
+#   - the table DOES exist there, but this specific column is genuinely absent
+table_missing_catalogs_arr = F.array_distinct(
+    F.filter(
+        F.array(
+            F.when((F.col("in_core") == "N") & (F.col("table_present_in_core") == "N"), F.lit("core")),
+            F.when((F.col("in_core_tst") == "N") & (F.col("table_present_in_core_tst") == "N"), F.lit("core_tst")),
+            F.when(
+                (F.col("in_core_tst_std001") == "N") & (F.col("table_present_in_core_tst_std001") == "N"),
+                F.lit("core_tst_std001"),
+            ),
+        ),
+        lambda x: x.isNotNull(),
+    )
+)
+column_missing_catalogs_arr = F.array_distinct(
+    F.filter(
+        F.array(
+            F.when((F.col("in_core") == "N") & (F.col("table_present_in_core") == "Y"), F.lit("core")),
+            F.when((F.col("in_core_tst") == "N") & (F.col("table_present_in_core_tst") == "Y"), F.lit("core_tst")),
+            F.when(
+                (F.col("in_core_tst_std001") == "N") & (F.col("table_present_in_core_tst_std001") == "Y"),
+                F.lit("core_tst_std001"),
+            ),
+        ),
+        lambda x: x.isNotNull(),
+    )
+)
+table_missing_here = F.size(table_missing_catalogs_arr) > 0
+column_genuinely_missing = F.size(column_missing_catalogs_arr) > 0
 
 case_mismatch = (
     distinct_present_count(
@@ -308,9 +388,21 @@ reconciled = (
 # ---------------------------------------------------------------------------
 # STEP 5: Build the detailed comments column - one clause per issue found
 # ---------------------------------------------------------------------------
-missing_comment = F.when(
-    F.size(missing_catalogs_arr) > 0,
-    F.concat(F.lit("Column missing in "), F.array_join(missing_catalogs_arr, ", ")),
+table_missing_comment = F.when(
+    table_missing_here,
+    F.concat(
+        F.lit("Table not present in "),
+        F.array_join(table_missing_catalogs_arr, ", "),
+        F.lit(" (all columns of this table are absent there for that reason)"),
+    ),
+)
+column_missing_comment = F.when(
+    column_genuinely_missing,
+    F.concat(
+        F.lit("Column missing in "),
+        F.array_join(column_missing_catalogs_arr, ", "),
+        F.lit(" even though the table exists there"),
+    ),
 )
 
 case_comment = F.when(
@@ -342,7 +434,8 @@ reconciled = reconciled.withColumn(
         F.array_distinct(
             F.filter(
                 F.array(
-                    missing_comment,
+                    table_missing_comment,
+                    column_missing_comment,
                     case_comment,
                     datatype_comment,
                     nullable_comment,
@@ -356,10 +449,20 @@ reconciled = reconciled.withColumn(
     ),
 ).withColumn(
     # compact high-level tag, e.g. "CASE", "CASE/DATATYPE", "CASE/DATATYPE/PRECISION",
-    # "MISSING", or "OK" - meant for quick scanning/grouping/filtering, unlike the
-    # full free-text `comments` column above.
+    # "TABLE_MISSING", "COLUMN_MISSING", or "OK" - meant for quick
+    # scanning/grouping/filtering, unlike the full free-text `comments` column
+    # above.
+    #
+    # TABLE_MISSING = the whole table doesn't exist in one (or more) of the
+    #                  catalogs - every column of that table shows this for
+    #                  the same underlying reason, so group/filter these out
+    #                  separately from real column-level drift.
+    # COLUMN_MISSING = the table exists in all relevant catalogs, but this
+    #                   specific column doesn't - a genuine drift issue.
     "issue_summary",
-    F.when(~column_present_in_all, F.lit("MISSING"))
+    F.when(table_missing_here & ~column_genuinely_missing, F.lit("TABLE_MISSING"))
+    .when(table_missing_here & column_genuinely_missing, F.lit("TABLE_MISSING+COLUMN_MISSING"))
+    .when(~column_present_in_all, F.lit("COLUMN_MISSING"))
     .when(
         ~case_mismatch & ~datatype_mismatch & ~nullable_mismatch & ~precision_mismatch,
         F.lit("OK"),
@@ -405,14 +508,17 @@ final_df = (
         F.coalesce(
             F.col("core_column_name"), F.col("core_tst_column_name"), F.col("core_tst_std001_column_name")
         ).alias("column_name"),
+        F.col("table_present_in_core"),
         "in_core",
         F.col("core_column_name").alias("core_column_name"),
         F.col("core_data_type").alias("core_data_type"),
         F.col("core_ordinal_position").alias("core_ordinal_position"),
+        F.col("table_present_in_core_tst"),
         "in_core_tst",
         F.col("core_tst_column_name").alias("core_tst_column_name"),
         F.col("core_tst_data_type").alias("core_tst_data_type"),
         F.col("core_tst_ordinal_position").alias("core_tst_ordinal_position"),
+        F.col("table_present_in_core_tst_std001"),
         "in_core_tst_std001",
         F.col("core_tst_std001_column_name").alias("core_tst_std001_column_name"),
         F.col("core_tst_std001_data_type").alias("core_tst_std001_data_type"),
@@ -435,11 +541,14 @@ final_df = (
 
 final_df.cache()
 print(f"DDL reconciliation row count: {final_df.count()}")
-fail_count = final_df.filter(F.col("reconciliation_status") == "FAIL").count()
-print(f"FAIL rows: {fail_count}")
-final_df.filter(F.col("reconciliation_status") == "FAIL").select(
-    "source_system", "table_name", "column_name", "comments"
-).show(50, truncate=False)
+print("Breakdown by issue_summary:")
+final_df.groupBy("issue_summary").count().orderBy(F.desc("count")).show(20, truncate=False)
+
+real_issues = final_df.filter(~F.col("issue_summary").isin("OK", "TABLE_MISSING"))
+print(f"Rows needing attention (excludes OK and pure TABLE_MISSING noise): {real_issues.count()}")
+real_issues.select("source_system", "table_name", "column_name", "issue_summary", "comments").show(
+    50, truncate=False
+)
 
 
 # ---------------------------------------------------------------------------
