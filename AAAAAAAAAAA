@@ -355,6 +355,30 @@ reconciled = reconciled.withColumn(
         " | ",
     ),
 ).withColumn(
+    # compact high-level tag, e.g. "CASE", "CASE/DATATYPE", "CASE/DATATYPE/PRECISION",
+    # "MISSING", or "OK" - meant for quick scanning/grouping/filtering, unlike the
+    # full free-text `comments` column above.
+    "issue_summary",
+    F.when(~column_present_in_all, F.lit("MISSING"))
+    .when(
+        ~case_mismatch & ~datatype_mismatch & ~nullable_mismatch & ~precision_mismatch,
+        F.lit("OK"),
+    )
+    .otherwise(
+        F.array_join(
+            F.filter(
+                F.array(
+                    F.when(case_mismatch, F.lit("CASE")),
+                    F.when(datatype_mismatch, F.lit("DATATYPE")),
+                    F.when(nullable_mismatch, F.lit("NULLABLE")),
+                    F.when(precision_mismatch, F.lit("PRECISION")),
+                ),
+                lambda x: x.isNotNull(),
+            ),
+            "/",
+        )
+    ),
+).withColumn(
     "reconciliation_status",
     F.when(
         column_present_in_all
@@ -398,6 +422,7 @@ final_df = (
         "datatype_match",
         "nullable_match",
         "precision_match",
+        "issue_summary",
         "comments",
         "reconciliation_status",
     )
