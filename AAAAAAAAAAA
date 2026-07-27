@@ -1,78 +1,15 @@
-etting up the Workflow (one-time)
-In the Teams channel you want alerts posted to, click ... next to the channel name → Workflows.
-Search for and select "Post to a channel when a webhook request is received."
-Authenticate, then choose the Team and Channel to post into → Add workflow.
-It'll generate a unique HTTP POST URL — copy that into TEAMS_WEBHOOK_URL in the script.
-This is the step that matters: open the flow in Power Automate (Workflows app → your flow → Edit), expand the "When a Teams webhook request is received" trigger, and use "Use sample payload to generate schema." Paste in the contents of teams_workflow_sample_payload.json above. This teaches the trigger that the request body has an attachments array — without this, the auto-generated "for each attachment" / "post card" steps downstream will fail with a null-array error even though your actual POST is fine.
-Power Automate should auto-build the rest of the flow (a "for each" over attachments → "post card in a chat or channel," referencing the card content dynamically). Save it.
-Test: run the script once with TEAMS_WEBHOOK_URL set, or just curl -X POST -H "Content-Type: application/json" -d @teams_workflow_sample_payload.json "<your-url>" — should post the card immediately.
-
-One thing worth knowing going in: this trigger type explicitly does not support actionable buttons ("actions" blocks) in the card — only display content works. My card doesn't use any, so you're fine as-is, but if you later want "Acknowledge" / "View table" buttons on the alert, that won't work through this webhook trigger and would need a different setup (an actual bot registration).
-
-Teams workflow sample payload
-Code · JSON 
+Thanks, that makes sense. I can see why the original validation was introduced as a safeguard to ensure we didn't accidentally process data from an outdated or incorrect CDA epoch following a redeployment, infrastructure change, or recovery activity. I think there is still value in retaining that validation, but instead of failing the job, automatically resolving the latest epoch would make the process more resilient. It would also be useful to understand what triggers these epoch changes on the Guidewire side (e.g. redeployment, infrastructure changes, recovery activities, etc.) so we know whether they are expected operational events or something that requires investigation.
 
 
+A better approach would be:
 
-{
-  "type": "message",
-  "attachments": [
-    {
-      "contentType": "application/vnd.microsoft.card.adaptive",
-      "content": {
-        "type": "AdaptiveCard",
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "version": "1.4",
-        "body": [
-          {
-            "type": "TextBlock",
-            "text": "Count Reconciliation - 2026-07-26",
-            "weight": "Bolder",
-            "size": "Medium"
-          },
-          {
-            "type": "TextBlock",
-            "text": "Overall: 92.5% of eligible tables loaded today | 96.0% passing | 4 table(s) with issues",
-            "wrap": true,
-            "color": "warning"
-          },
-          {
-            "type": "TextBlock",
-            "text": "By domain:",
-            "weight": "Bolder",
-            "spacing": "Medium"
-          },
-          {
-            "type": "FactSet",
-            "facts": [
-              {
-                "title": "policycenter",
-                "value": "90.0% loaded, 95.0% ok"
-              },
-              {
-                "title": "billingcenter",
-                "value": "95.0% loaded, 97.0% ok"
-              },
-              {
-                "title": "claimcenter",
-                "value": "92.0% loaded, 96.0% ok"
-              }
-            ]
-          },
-          {
-            "type": "TextBlock",
-            "text": "Tables with issues (top 4):",
-            "weight": "Bolder",
-            "spacing": "Medium"
-          },
-          {
-            "type": "TextBlock",
-            "text": "**billingcenter / bc_account** - ROW_COUNT_MISMATCH_WINDOW: Batch window (03:00 yesterday - 03:00 today) count mismatch: core_tst=150, core_tst_std001=142",
-            "wrap": true,
-            "size": "Small"
-          }
-        ]
-      }
-    }
-  ]
-}
+Query Guidewire for the latest epoch at the start of every run.
+If it differs from the cached/configured value:
+Log that the epoch changed.
+Update the cached value.
+Continue processing.
+Raise an informational alert so the team knows Guidewire changed the epoch.
+
+This preserves the original safety objective while avoiding unnecessary pipeline failures.
+
+So Paul's original design wasn't wrong—it reflected a defensive engineering principle: never continue processing if you're unsure you're reading from the correct source.
