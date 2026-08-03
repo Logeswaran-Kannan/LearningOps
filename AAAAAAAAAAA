@@ -1,81 +1,45 @@
-Hi all,
-
-As part of the three-way schema/table reconciliation work (core prod RR, core_tst test RR, core_tst_std001 test CDA), we've completed the DDL-level comparison and found some findings worth a group discussion before we decide on a remediation approach.
-
-Headline: of ~23,800 columns compared between test RR and test CDA, only ~8% pass with zero issues. The two biggest categories are casing differences (~68% of columns touched) and datatype/precision differences (~27%) - the latter is the one that actually matters for data correctness.
-
-Simon's initial digging found that production intentionally uses DOUBLE for a set of numeric columns where test uses INT/LONG - so this isn't just drift, it's two environments built to different standards, and neither RR version lines up with the CDA test version either. Before we touch anything, we want to align on: which direction to standardize (test to match prod, or vice versa), and what the downstream Silver-layer impact would be either way.
-
-I've put together a short background doc (attached) with the full numbers and a proposed agenda, plus a dashboard summarizing the reconciliation results. Could we grab 30 minutes this week to walk through it together and agree on next steps?
-
-Let me know what times work.
-
-Thanks,
+Without implementing a lag-day logic, the reconciliation evaluates all records immediately. As a result, some recent records may initially appear as missing if they have not yet reached the downstream flow. In subsequent reconciliation runs, previously unmatched records are checked again and updated if a matching record is found. This means the latest day's reconciliation may temporarily show a lower match rate, but it improves automatically as late-arriving records are processed.
 
 
-# DDL Reconciliation — Background for Walkthrough
+From a reconciliation perspective, the impact is mainly on how we interpret the results, not on the matching itself.
 
-## What this is
-Automated column-level (DDL) comparison between `core_tst` (test read-replica)
-and `core_tst_std001` (test CDA), covering PolicyCenter, BillingCenter, and
-ClaimCenter views under `ods_views`. For every column that exists in either
-catalog, we check: does it exist in both, does the casing match, does the
-datatype/nullability/precision match. Column order (ordinal position) is
-intentionally excluded — it has no downstream impact since consumers select
-by name, not position.
+Our reconciliation process searches for a matching record within a ±15-day window and stores the actual time difference (diff_days, diff_hours, diff_minutes, abs_diff_hours). So the reconciliation engine itself is not dependent on a lag-day rule.
 
-A column only counts as fully reconciled (`OK`) if it's present in both
-catalogs with identical name casing, datatype, nullability, and precision/length.
+Without implementing a lag-day wait:
 
-## Current results (last run)
-**23,785 columns compared. 1,997 (8.4%) fully match (`OK`).**
+A record that has not yet arrived in the downstream flow at the time of today's run will initially appear as MISSING_IN_FLOW.
+If that same record arrives later (for example, 6 or 12 hours later), the next day's reconciliation run will find it and update the status to MATCHED_IN_FLOW, along with the actual time difference.
 
-| Issue tag | Count | % of total | What it means |
-|---|---|---|---|
-| CASE | 8,997 | 37.8% | Same column, same everything else — only the letter casing differs |
-| TABLE_MISSING | 4,312 | 18.1% | The whole table is absent in one catalog — not a column-level issue |
-| CASE/DATATYPE | 3,978 | 16.7% | Casing differs AND the datatype differs |
-| CASE/DATATYPE/PRECISION | 2,454 | 10.3% | Casing, datatype, AND length/precision all differ |
-| OK | 1,997 | 8.4% | Fully matches |
-| CASE/PRECISION | 654 | 2.7% | Casing and length/precision differ, datatype matches |
-| COLUMN_MISSING | 653 | 2.7% | Table exists on both sides, but this specific column doesn't |
-| NULLABLE | 593 | 2.5% | Nullability differs (e.g. NOT NULL on one side, nullable on the other) |
-| PRECISION | 80 | 0.3% | Only length/precision differs |
-| DATATYPE | 55 | 0.2% | Only the datatype differs |
-| TABLE_MISSING + COLUMN_MISSING | 12 | 0.05% | Edge case: table missing on one side, and a different column missing on the other |
+Therefore, the reconciliation result becomes eventually consistent over successive runs.
 
-## The headline pattern
-**67.6% of all columns (16,083) involve a `CASE` mismatch** — either alone or
-combined with another issue. This dwarfs every other category and is very
-unlikely to be 16,000 unrelated bugs. It looks like a systemic naming
-transform applied during CDA generation (e.g. a consistent upper/lowercase
-convention), not a data-quality defect per table.
+The only impact is that the dashboard for the most recent day may temporarily show a slightly lower reconciliation percentage until late-arriving records are picked up in the next execution.
 
-**If casing is treated as expected/cosmetic rather than a failure**, the
-picture changes substantially:
-- Effective "real issue" columns (genuine datatype/nullable/precision drift
-  or missing table/column, with casing set aside): **~7,704 (32.4%)**
-- Of those, `TABLE_MISSING` (4,312) is the single largest real category —
-  worth its own investigation thread, since it's a presence issue at the
-  table level, not a column-definition issue.
+Since we already capture the actual arrival difference (abs_diff_hours), we can calculate SLA compliance directly in the reporting layer, for example:
 
-## Open questions for the group
-1. **Is the CASE pattern expected?** Can someone confirm whether CDA is
-   known to apply a naming-convention transform, and if so, whether that's
-   by design or worth aligning to match source casing.
-2. **Should `CASE`-only mismatches count toward "FAIL," or be reported
-   separately as informational?** This affects how the dashboard's headline
-   pass-rate number should be read/communicated going forward.
-3. **Who owns `TABLE_MISSING` (4,312 columns, ~18%)?** This is really a
-   table-existence gap (see the companion table-reconciliation output),
-   worth triaging as its own workstream since it's large and distinct from
-   column-definition drift.
-4. **Prioritization for the remaining real issues** (`DATATYPE`, `NULLABLE`,
-   `PRECISION`, `COLUMN_MISSING`, and combinations) — these are the smaller
-   but more likely genuine-bug categories worth root-causing first.
+matched within 24 hours
+matched after 24 hours
+matched after 48 hours
 
-## What's next
-Walk through the dashboard live, drill into a sample of `TABLE_MISSING` and
-`COLUMN_MISSING` rows together, and agree on how `CASE` should be classified
-going forward so the reconciliation reporting reflects what the team
-actually considers a defect.
+without adding additional complexity to the reconciliation logic itself.
+
+Example
+Run Date	CSV Record	Flow Arrival	Initial Result	Next Run Result
+10 Feb	9 Feb 23:50	Not arrived yet	MISSING_IN_FLOW	—
+11 Feb	Same record	Arrived at 10 Feb 08:15	—	MATCHED_IN_FLOW (abs_diff_hours = 8.4)
+
+So, although the 10 Feb dashboard temporarily shows one missing record, the 11 Feb run automatically corrects it.
+
+Trade-off
+
+Advantages of not using lag-day logic
+
+Simpler reconciliation process.
+No special waiting or exclusion rules.
+All SLA calculations can be derived from abs_diff_hours.
+Easier to maintain and explain.
+
+Consideration
+
+The latest day's dashboard may show a small number of temporary misses until the next reconciliation run. These are corrected automatically on subsequent runs.
+
+For this reason, I think the simpler design is appropriate, provided stakeholders understand that the most recent day's reconciliation is provisional and will stabilize after the next scheduled run.
