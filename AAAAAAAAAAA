@@ -1,45 +1,34 @@
-Without implementing a lag-day logic, the reconciliation evaluates all records immediately. As a result, some recent records may initially appear as missing if they have not yet reached the downstream flow. In subsequent reconciliation runs, previously unmatched records are checked again and updated if a matching record is found. This means the latest day's reconciliation may temporarily show a lower match rate, but it improves automatically as late-arriving records are processed.
+# --- READ-ONLY: just peek at dev Event Hub data ---
 
+EHubConnectionString = dbutils.secrets.get(
+    scope="Azure-secret-key-vault",
+    key="pts-mqs-bicoe-eventhub"
+)
 
-From a reconciliation perspective, the impact is mainly on how we interpret the results, not on the matching itself.
+EH_NAMESPACE = "ap-pric-npd-uks-evhn-001"
+EH_KAFKA_TOPIC = "mqs-bicoe-pts"
 
-Our reconciliation process searches for a matching record within a ±15-day window and stores the actual time difference (diff_days, diff_hours, diff_minutes, abs_diff_hours). So the reconciliation engine itself is not dependent on a lag-day rule.
+bootstrap_servers = f"{EH_NAMESPACE}.servicebus.windows.net:9093"
+sasl_config = (
+    f'kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required '
+    f'username="$ConnectionString" password="{EHubConnectionString}";'
+)
 
-Without implementing a lag-day wait:
+# Batch read - just grabs a snapshot, doesn't start any streaming job
+df = (
+    spark.read
+    .format("kafka")
+    .option("kafka.bootstrap.servers", bootstrap_servers)
+    .option("subscribe", EH_KAFKA_TOPIC)
+    .option("kafka.sasl.mechanism", "PLAIN")
+    .option("kafka.security.protocol", "SASL_SSL")
+    .option("kafka.sasl.jaas.config", sasl_config)
+    .option("startingOffsets", "earliest")
+    .option("endingOffsets", "latest")
+    .load()
+)
 
-A record that has not yet arrived in the downstream flow at the time of today's run will initially appear as MISSING_IN_FLOW.
-If that same record arrives later (for example, 6 or 12 hours later), the next day's reconciliation run will find it and update the status to MATCHED_IN_FLOW, along with the actual time difference.
+# convert to human-readable text
+readable_df = df.selectExpr("CAST(value AS STRING) as message", "timestamp")
 
-Therefore, the reconciliation result becomes eventually consistent over successive runs.
-
-The only impact is that the dashboard for the most recent day may temporarily show a slightly lower reconciliation percentage until late-arriving records are picked up in the next execution.
-
-Since we already capture the actual arrival difference (abs_diff_hours), we can calculate SLA compliance directly in the reporting layer, for example:
-
-matched within 24 hours
-matched after 24 hours
-matched after 48 hours
-
-without adding additional complexity to the reconciliation logic itself.
-
-Example
-Run Date	CSV Record	Flow Arrival	Initial Result	Next Run Result
-10 Feb	9 Feb 23:50	Not arrived yet	MISSING_IN_FLOW	—
-11 Feb	Same record	Arrived at 10 Feb 08:15	—	MATCHED_IN_FLOW (abs_diff_hours = 8.4)
-
-So, although the 10 Feb dashboard temporarily shows one missing record, the 11 Feb run automatically corrects it.
-
-Trade-off
-
-Advantages of not using lag-day logic
-
-Simpler reconciliation process.
-No special waiting or exclusion rules.
-All SLA calculations can be derived from abs_diff_hours.
-Easier to maintain and explain.
-
-Consideration
-
-The latest day's dashboard may show a small number of temporary misses until the next reconciliation run. These are corrected automatically on subsequent runs.
-
-For this reason, I think the simpler design is appropriate, provided stakeholders understand that the most recent day's reconciliation is provisional and will stabilize after the next scheduled run.
+display(readable_df)
