@@ -1,29 +1,22 @@
 # ============================================================
-# READ DEV EVENT HUB FROM START OF CURRENT DAY
-#
-# Read-only:
-# - No Delta table write
-# - No permanent checkpoint
-# - No changes to the existing development ingestion code
-# - Reads historical messages from 00:00 today plus new messages
+# READ ALL CURRENTLY RETAINED MESSAGES FROM DEV EVENT HUB
+# No Delta table write
+# No production checkpoint
+# Stops automatically after available messages are processed
 # ============================================================
 
-from pyspark.sql.functions import (
-    col,
-    current_timestamp,
-    expr
-)
+from pyspark.sql.functions import col, current_timestamp, expr
 
 # ------------------------------------------------------------
-# 1. Confirm that the notebook is running in DEV
+# 1. Confirm DEV environment
 # ------------------------------------------------------------
 
 catalog = spark.sql("SELECT current_catalog()").collect()[0][0]
 
 if catalog != "core_bld":
     raise ValueError(
-        f"This script is intended only for DEV catalog 'core_bld'. "
-        f"Current catalog is '{catalog}'."
+        f"This script is for DEV only. "
+        f"Expected catalog 'core_bld', but current catalog is '{catalog}'."
     )
 
 # ------------------------------------------------------------
@@ -50,35 +43,7 @@ sasl_config = (
 )
 
 # ------------------------------------------------------------
-# 3. Calculate today's start time as Unix epoch milliseconds
-#
-# This uses the Databricks/Spark session timezone.
-# Example:
-# 2026-08-03 00:00:00 -> epoch milliseconds
-# ------------------------------------------------------------
-
-starting_timestamp = spark.sql(
-    """
-    SELECT CAST(
-        unix_timestamp(date_trunc('DAY', current_timestamp())) * 1000
-        AS STRING
-    ) AS starting_timestamp
-    """
-).collect()[0]["starting_timestamp"]
-
-start_of_day_readable = spark.sql(
-    """
-    SELECT date_trunc('DAY', current_timestamp()) AS start_of_day
-    """
-).collect()[0]["start_of_day"]
-
-print(f"Current catalog     : {catalog}")
-print(f"Event Hub topic     : {eventhub_topic}")
-print(f"Reading messages from: {start_of_day_readable}")
-print(f"Starting timestamp  : {starting_timestamp}")
-
-# ------------------------------------------------------------
-# 4. Read Event Hub from the beginning of today
+# 3. Read all messages still available in Event Hub retention
 # ------------------------------------------------------------
 
 raw_eventhub_df = (
@@ -89,14 +54,14 @@ raw_eventhub_df = (
     .option("kafka.sasl.mechanism", "PLAIN")
     .option("kafka.security.protocol", "SASL_SSL")
     .option("kafka.sasl.jaas.config", sasl_config)
-    .option("startingTimestamp", starting_timestamp)
+    .option("startingOffsets", "earliest")
     .option("includeHeaders", "true")
     .option("failOnDataLoss", "false")
     .load()
 )
 
 # ------------------------------------------------------------
-# 5. Convert payload and headers into readable format
+# 4. Convert message fields into readable format
 # ------------------------------------------------------------
 
 readable_eventhub_df = (
@@ -109,11 +74,11 @@ readable_eventhub_df = (
             map_from_entries(
                 transform(
                     headers,
-                    header -> struct(
-                        header.key,
+                    x -> struct(
+                        x.key,
                         regexp_replace(
-                            CAST(header.value AS STRING),
-                            '[^a-zA-Z0-9_@.:-]',
+                            CAST(x.value AS STRING),
+                            '[^a-zA-Z0-9_-]',
                             ''
                         )
                     )
@@ -127,21 +92,60 @@ readable_eventhub_df = (
         col("partition"),
         col("offset").cast("long").alias("offset"),
         col("key").cast("string").alias("messageKey"),
-        col("headers"),
         col("value").cast("string").alias("payload"),
+        col("headers"),
         current_timestamp().alias("readTimestamp")
-    )
-    .orderBy(
-        col("enqueuedTime").desc(),
-        col("partition"),
-        col("offset").desc()
     )
 )
 
 # ------------------------------------------------------------
-# 6. Display historical messages from today and new messages
+# 5. Load all currently retained messages into temporary memory
 #
-# Stop the stream manually after completing the investigation.
+# trigger(availableNow=True):
+# - Processes everything currently available
+# - Stops automatically when complete
+#
+# The checkpoint is temporary and separate from development code.
 # ------------------------------------------------------------
 
-display(readable_eventhub_df)
+temporary_checkpoint = (
+    f"/tmp/eventhub_readonly/"
+    f"{eventhub_topic}_{spark.sparkContext.applicationId}"
+)
+
+query = (
+    readable_eventhub_df
+    .writeStream
+    .format("memory")
+    .queryName("dev_eventhub_all_messages")
+    .outputMode("append")
+    .option("checkpointLocation", temporary_checkpoint)
+    .trigger(availableNow=True)
+    .start()
+)
+
+# Wait until all currently retained messages are processed
+query.awaitTermination()
+
+# ------------------------------------------------------------
+# 6. Display all messages
+# ------------------------------------------------------------
+
+all_messages_df = spark.sql(
+    """
+    SELECT
+        enqueuedTime,
+        partition,
+        offset,
+        messageKey,
+        payload,
+        headers,
+        readTimestamp
+    FROM dev_eventhub_all_messages
+    ORDER BY enqueuedTime, partition, offset
+    """
+)
+
+display(all_messages_df)
+
+print(f"Total messages read: {all_messages_df.count()}")
