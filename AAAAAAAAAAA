@@ -1,34 +1,39 @@
-# --- READ-ONLY: just peek at dev Event Hub data ---
+# --- READ-ONLY peek at DEV Event Hub, using your team's proven kafka_reader config ---
 
+# Dev / core_bld credentials
 EHubConnectionString = dbutils.secrets.get(
     scope="Azure-secret-key-vault",
     key="pts-mqs-bicoe-eventhub"
 )
-
 EH_NAMESPACE = "ap-pric-npd-uks-evhn-001"
-EH_KAFKA_TOPIC = "mqs-bicoe-pts"
+topic_name = "mqs-bicoe-pts"
 
 bootstrap_servers = f"{EH_NAMESPACE}.servicebus.windows.net:9093"
-sasl_config = (
+eh_sasl = (
     f'kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required '
     f'username="$ConnectionString" password="{EHubConnectionString}";'
 )
 
-# Batch read - just grabs a snapshot, doesn't start any streaming job
-df = (
-    spark.read
+kafka_reader = (
+    spark.readStream
     .format("kafka")
     .option("kafka.bootstrap.servers", bootstrap_servers)
-    .option("subscribe", EH_KAFKA_TOPIC)
+    .option("subscribe", topic_name)
     .option("kafka.sasl.mechanism", "PLAIN")
     .option("kafka.security.protocol", "SASL_SSL")
-    .option("kafka.sasl.jaas.config", sasl_config)
+    .option("kafka.sasl.jaas.config", eh_sasl)
+    .option("includeHeaders", "true")
     .option("startingOffsets", "earliest")
-    .option("endingOffsets", "latest")
-    .load()
 )
 
-# convert to human-readable text
-readable_df = df.selectExpr("CAST(value AS STRING) as message", "timestamp")
+eh_peek = (
+    kafka_reader.load()
+    .selectExpr(
+        "CAST(value AS STRING) as Payload",
+        "timestamp as enqueuedTime",
+        "offset",
+        "partition"
+    )
+)
 
-display(readable_df)
+display(eh_peek)   # live-updating table — just click the "Cancel" / stop icon on the cell when you've seen enough
