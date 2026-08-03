@@ -1,17 +1,119 @@
-import socket
-try:
-    s = socket.create_connection(("ap-pric-npd-uks-evhn-001.servicebus.windows.net", 9093), timeout=10)
-    print("✅ Connection OK")
-    s.close()
-except Exception as e:
-    print("❌ Connection FAILED:", e)
+# ============================================================
+# READ DEV AZURE EVENT HUB DATA ONLY
+# No table write, no checkpoint, no impact to existing pipeline
+# ============================================================
 
+from pyspark.sql.functions import (
+    col,
+    current_timestamp,
+    regexp_replace,
+    map_from_entries,
+    transform,
+    struct,
+    expr
+)
 
+# ------------------------------------------------------------
+# 1. DEV Event Hub configuration
+# ------------------------------------------------------------
 
+catalog = spark.sql("SELECT current_catalog()").collect()[0][0]
 
-EHubConnectionString = dbutils.secrets.get(
+if catalog != "core_bld":
+    raise ValueError(
+        f"This script is intended for the DEV catalog 'core_bld'. "
+        f"Current catalog is '{catalog}'."
+    )
+
+eventhub_connection_string = dbutils.secrets.get(
     scope="Azure-secret-key-vault",
     key="pts-mqs-bicoe-eventhub"
 )
-print("Length:", len(EHubConnectionString))
-print("Starts correctly:", EHubConnectionString.startswith("Endpoint=sb://"))
+
+eventhub_topic = "mqs-bicoe-pts"
+eventhub_namespace = "ap-pric-npd-uks-evhn-001"
+
+bootstrap_servers = (
+    f"{eventhub_namespace}.servicebus.windows.net:9093"
+)
+
+sasl_config = (
+    "kafkashaded.org.apache.kafka.common.security.plain."
+    "PlainLoginModule required "
+    'username="$ConnectionString" '
+    f'password="{eventhub_connection_string}";'
+)
+
+# ------------------------------------------------------------
+# 2. Read new messages from DEV Event Hub
+#
+# startingOffsets = latest:
+# Reads only messages arriving after this stream starts.
+#
+# Change latest to earliest only when historical messages
+# are required. Earliest may read a large volume of data.
+# ------------------------------------------------------------
+
+raw_eventhub_df = (
+    spark.readStream
+    .format("kafka")
+    .option("kafka.bootstrap.servers", bootstrap_servers)
+    .option("subscribe", eventhub_topic)
+    .option("kafka.sasl.mechanism", "PLAIN")
+    .option("kafka.security.protocol", "SASL_SSL")
+    .option("kafka.sasl.jaas.config", sasl_config)
+    .option("startingOffsets", "latest")
+    .option("includeHeaders", "true")
+    .option("failOnDataLoss", "false")
+    .load()
+)
+
+# ------------------------------------------------------------
+# 3. Convert Kafka/Event Hub fields into readable format
+# ------------------------------------------------------------
+
+readable_eventhub_df = (
+    raw_eventhub_df
+    .withColumnRenamed("timestamp", "enqueuedTime")
+    .withColumn(
+        "headers",
+        expr(
+            """
+            map_from_entries(
+                transform(
+                    headers,
+                    x -> struct(
+                        x.key,
+                        regexp_replace(
+                            CAST(x.value AS STRING),
+                            '[^a-zA-Z0-9_-]',
+                            ''
+                        )
+                    )
+                )
+            )
+            """
+        )
+    )
+    .select(
+        col("enqueuedTime"),
+        col("partition"),
+        col("offset").cast("long").alias("offset"),
+        col("key").cast("string").alias("messageKey"),
+        col("value").cast("string").alias("payload"),
+        col("headers"),
+        current_timestamp().alias("readTimestamp")
+    )
+)
+
+# ------------------------------------------------------------
+# 4. Display the stream
+#
+# This does not write to a table and does not use the existing
+# ingestion checkpoint.
+#
+# Run the cell and then send a DEV Event Hub message.
+# Stop the display stream manually after testing.
+# ------------------------------------------------------------
+
+display(readable_eventhub_df)
