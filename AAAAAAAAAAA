@@ -1,39 +1,17 @@
-# --- READ-ONLY peek at DEV Event Hub, using your team's proven kafka_reader config ---
+import socket
+try:
+    s = socket.create_connection(("ap-pric-npd-uks-evhn-001.servicebus.windows.net", 9093), timeout=10)
+    print("✅ Connection OK")
+    s.close()
+except Exception as e:
+    print("❌ Connection FAILED:", e)
 
-# Dev / core_bld credentials
+
+
+
 EHubConnectionString = dbutils.secrets.get(
     scope="Azure-secret-key-vault",
     key="pts-mqs-bicoe-eventhub"
 )
-EH_NAMESPACE = "ap-pric-npd-uks-evhn-001"
-topic_name = "mqs-bicoe-pts"
-
-bootstrap_servers = f"{EH_NAMESPACE}.servicebus.windows.net:9093"
-eh_sasl = (
-    f'kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required '
-    f'username="$ConnectionString" password="{EHubConnectionString}";'
-)
-
-kafka_reader = (
-    spark.readStream
-    .format("kafka")
-    .option("kafka.bootstrap.servers", bootstrap_servers)
-    .option("subscribe", topic_name)
-    .option("kafka.sasl.mechanism", "PLAIN")
-    .option("kafka.security.protocol", "SASL_SSL")
-    .option("kafka.sasl.jaas.config", eh_sasl)
-    .option("includeHeaders", "true")
-    .option("startingOffsets", "earliest")
-)
-
-eh_peek = (
-    kafka_reader.load()
-    .selectExpr(
-        "CAST(value AS STRING) as Payload",
-        "timestamp as enqueuedTime",
-        "offset",
-        "partition"
-    )
-)
-
-display(eh_peek)   # live-updating table — just click the "Cancel" / stop icon on the cell when you've seen enough
+print("Length:", len(EHubConnectionString))
+print("Starts correctly:", EHubConnectionString.startswith("Endpoint=sb://"))
