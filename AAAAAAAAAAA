@@ -1,3 +1,25 @@
 if response.status_code in (200, 202):
                 print("  Webhook sent successfully.")
                 return True
+
+
+if is_daily_health_window():
+        print("Daily health window — sending morning summary...")
+        brand_summaries = []
+        for brand in EXPECTED_BRANDS:
+            brand_summaries.append({
+                "brand"        : brand,
+                "status"       : current_status,
+                "breaches"     : get_overnight_breach_count(brand),
+                "last_interval": settled_interval
+            })
+        daily_payload, daily_size = enforce_size_limit(daily_health_card(brand_summaries), dashboard_url=DASHBOARD_URL)
+        print(f"  Daily card size: {daily_size} bytes")
+        send_webhook(daily_payload)
+        print("Daily health card sent.")
+
+
+if payload:
+        payload, final_size = enforce_size_limit(payload, dashboard_url=DASHBOARD_URL)
+        print(f"  Final payload size: {final_size} bytes")
+        sent = send_webhook(payload)
