@@ -1,151 +1,18 @@
-# ============================================================
-# READ ALL CURRENTLY RETAINED MESSAGES FROM DEV EVENT HUB
-# No Delta table write
-# No production checkpoint
-# Stops automatically after available messages are processed
-# ============================================================
-
-from pyspark.sql.functions import col, current_timestamp, expr
-
-# ------------------------------------------------------------
-# 1. Confirm DEV environment
-# ------------------------------------------------------------
-
-catalog = spark.sql("SELECT current_catalog()").collect()[0][0]
-
-if catalog != "core_bld":
-    raise ValueError(
-        f"This script is for DEV only. "
-        f"Expected catalog 'core_bld', but current catalog is '{catalog}'."
-    )
-
-# ------------------------------------------------------------
-# 2. DEV Event Hub configuration
-# ------------------------------------------------------------
-
-eventhub_connection_string = dbutils.secrets.get(
-    scope="Azure-secret-key-vault",
-    key="pts-mqs-bicoe-eventhub"
-)
-
-eventhub_topic = "mqs-bicoe-pts"
-eventhub_namespace = "ap-pric-npd-uks-evhn-001"
-
-bootstrap_servers = (
-    f"{eventhub_namespace}.servicebus.windows.net:9093"
-)
-
-sasl_config = (
-    "kafkashaded.org.apache.kafka.common.security.plain."
-    "PlainLoginModule required "
-    'username="$ConnectionString" '
-    f'password="{eventhub_connection_string}";'
-)
-
-# ------------------------------------------------------------
-# 3. Read all messages still available in Event Hub retention
-# ------------------------------------------------------------
-
-raw_eventhub_df = (
-    spark.readStream
-    .format("kafka")
-    .option("kafka.bootstrap.servers", bootstrap_servers)
-    .option("subscribe", eventhub_topic)
-    .option("kafka.sasl.mechanism", "PLAIN")
-    .option("kafka.security.protocol", "SASL_SSL")
-    .option("kafka.sasl.jaas.config", sasl_config)
-    .option("startingOffsets", "earliest")
-    .option("includeHeaders", "true")
-    .option("failOnDataLoss", "false")
-    .load()
-)
-
-# ------------------------------------------------------------
-# 4. Convert message fields into readable format
-# ------------------------------------------------------------
-
-readable_eventhub_df = (
-    raw_eventhub_df
-    .withColumnRenamed("timestamp", "enqueuedTime")
-    .withColumn(
-        "headers",
-        expr(
-            """
-            map_from_entries(
-                transform(
-                    headers,
-                    x -> struct(
-                        x.key,
-                        regexp_replace(
-                            CAST(x.value AS STRING),
-                            '[^a-zA-Z0-9_-]',
-                            ''
-                        )
-                    )
-                )
-            )
-            """
-        )
-    )
-    .select(
-        col("enqueuedTime"),
-        col("partition"),
-        col("offset").cast("long").alias("offset"),
-        col("key").cast("string").alias("messageKey"),
-        col("value").cast("string").alias("payload"),
-        col("headers"),
-        current_timestamp().alias("readTimestamp")
-    )
-)
-
-# ------------------------------------------------------------
-# 5. Load all currently retained messages into temporary memory
-#
-# trigger(availableNow=True):
-# - Processes everything currently available
-# - Stops automatically when complete
-#
-# The checkpoint is temporary and separate from development code.
-# ------------------------------------------------------------
-
-temporary_checkpoint = (
-    f"/tmp/eventhub_readonly/"
-    f"{eventhub_topic}_{spark.sparkContext.applicationId}"
-)
-
-query = (
-    readable_eventhub_df
-    .writeStream
-    .format("memory")
-    .queryName("dev_eventhub_all_messages")
-    .outputMode("append")
-    .option("checkpointLocation", temporary_checkpoint)
-    .trigger(availableNow=True)
-    .start()
-)
-
-# Wait until all currently retained messages are processed
-query.awaitTermination()
-
-# ------------------------------------------------------------
-# 6. Display all messages
-# ------------------------------------------------------------
-
-all_messages_df = spark.sql(
-    """
-    SELECT
-        enqueuedTime,
-        partition,
-        offset,
-        messageKey,
-        payload,
-        headers,
-        readTimestamp
-    FROM dev_eventhub_all_messages
-    ORDER BY enqueuedTime, partition, offset
-    """
-)
-
-display(all_messages_df)
-
-print(f"Total messages read: {all_messages_df.count()}")
+curl -X POST "<YOUR_NEW_WORKFLOW_URL>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "message",
+    "attachments": [
+      {
+        "contentType": "application/vnd.microsoft.card.adaptive",
+        "content": {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          "type": "AdaptiveCard",
+          "version": "1.2",
+          "body": [
+            { "type": "TextBlock", "text": "Test card", "weight": "Bolder", "size": "Large" }
+          ]
+        }
+      }
+    ]
+  }'
