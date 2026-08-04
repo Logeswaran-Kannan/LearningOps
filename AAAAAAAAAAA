@@ -1,95 +1,48 @@
-"""
-Quick test script for a Microsoft Teams Workflow webhook
-(the "Send webhook alerts to a channel" workflow trigger).
-
-Usage:
-    python test_teams_webhook.py
-or inside a Databricks notebook: just run the cell.
-"""
-
-import json
-import requests
-
 # ==============================================================
-# CONFIG — paste your new Workflow HTTP POST URL here
+# SIZE GUARD — Teams hard limit is ~28,672 bytes
 # ==============================================================
-WEBHOOK_URL = "PASTE_YOUR_NEW_WORKFLOW_URL_HERE"
+TEAMS_MAX_BYTES = 26000
 
+def payload_size(payload) -> int:
+    return len(json.dumps(payload).encode("utf-8"))
 
-def build_test_card():
-    """Minimal Adaptive Card to confirm the webhook + rendering works."""
-    return {
-        "type": "message",
-        "attachments": [
-            {
-                "contentType": "application/vnd.microsoft.card.adaptive",
-                "content": {
-                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "type": "AdaptiveCard",
-                    "version": "1.4",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": "✅ Test message from Python",
-                            "weight": "Bolder",
-                            "size": "Large",
-                            "wrap": True
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": "If you can see this in Teams, the webhook is working correctly.",
-                            "wrap": True,
-                            "size": "Medium"
-                        },
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {"title": "Source:", "value": "test_teams_webhook.py"},
-                                {"title": "Status:", "value": "OK"}
-                            ]
-                        }
-                    ]
-                }
-            }
-        ]
-    }
+def enforce_size_limit(payload, max_bytes=TEAMS_MAX_BYTES, dashboard_url=None):
+    size = payload_size(payload)
+    if size <= max_bytes:
+        return payload, size
 
+    print(f"  Card size {size} bytes exceeds {max_bytes} — trimming detail rows")
+    body = payload["attachments"][0]["content"]["body"]
 
-def test_webhook(url, payload):
-    print("Sending test payload...")
-    print(f"Payload size: {len(json.dumps(payload).encode('utf-8'))} bytes\n")
+    trimmed = [b for b in body if b.get("type") != "ColumnSet"]
+    trimmed.append({
+        "type": "TextBlock",
+        "text": "⚠ Full per-flow breakdown omitted — payload too large for Teams. See dashboard for details.",
+        "wrap": True, "size": "Small", "isSubtle": True
+    })
+    payload["attachments"][0]["content"]["body"] = trimmed
+    size = payload_size(payload)
+    if size <= max_bytes:
+        print(f"  Trimmed to {size} bytes — OK")
+        return payload, size
 
-    try:
-        response = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            data=json.dumps(payload),
-            timeout=30
-        )
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed: {e}")
-        return False
-
-    print(f"HTTP Status: {response.status_code}")
-    print(f"Response body: {response.text[:500]}")
-
-    # New Teams Workflow webhooks commonly return 202, not 200
-    if response.status_code in (200, 202):
-        print("\nSUCCESS — check your Teams channel for the message.")
-        return True
-    else:
-        print("\nFAILED — see status code / body above.")
-        print("Common causes:")
-        print(" - 400: malformed JSON or unsupported card schema")
-        print(" - 401/403: webhook URL invalid, expired, or workflow disabled")
-        print(" - 404: URL copied incorrectly / workflow deleted")
-        print(" - 429: rate limited (too many requests/sec)")
-        return False
-
-
-if __name__ == "__main__":
-    if "PASTE_YOUR_NEW_WORKFLOW_URL_HERE" in WEBHOOK_URL:
-        raise ValueError("Set WEBHOOK_URL to your actual Teams Workflow URL before running.")
-
-    card = build_test_card()
-    test_webhook(WEBHOOK_URL, card)
+    print(f"  Still {size} bytes after trim — collapsing to summary only")
+    header = next((b for b in body if b.get("type") == "Container"), body[0])
+    minimal = [
+        header,
+        {
+            "type": "TextBlock",
+            "text": "⚠ Alert details omitted — payload exceeded Teams size limit even after trimming. Check the dashboard.",
+            "wrap": True, "size": "Small", "isSubtle": True
+        }
+    ]
+    if dashboard_url:
+        minimal.append({
+            "type": "TextBlock",
+            "text": f"Dashboard: {dashboard_url}",
+            "wrap": True, "size": "Small", "isSubtle": True
+        })
+    payload["attachments"][0]["content"]["body"] = minimal
+    size = payload_size(payload)
+    print(f"  Final size: {size} bytes")
+    return payload, size
