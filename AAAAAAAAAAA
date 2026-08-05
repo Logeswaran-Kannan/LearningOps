@@ -30,6 +30,9 @@
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    StructType, StructField, StringType, LongType, DoubleType
+)
 import time
 import traceback
 
@@ -70,6 +73,24 @@ RESULT_TABLE = "core_tst.default.radar_duplicate_check_results"
 
 # How many example duplicate keys to pull back per table (kept small on purpose)
 SAMPLE_LIMIT = 20
+
+# Explicit schema for the summary output. createDataFrame() can't infer a
+# type for a column that is None across every row (e.g. 'error' when nothing
+# failed), so we spell it out instead of relying on inference.
+RESULT_SCHEMA = StructType([
+    StructField("Layer", StringType(), True),
+    StructField("messagetype", StringType(), True),
+    StructField("table", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("check_type", StringType(), True),
+    StructField("period_checked", StringType(), True),
+    StructField("total_count", LongType(), True),
+    StructField("duplicate_group_count", LongType(), True),
+    StructField("duplicate_row_count", LongType(), True),
+    StructField("duplicate_pct", DoubleType(), True),
+    StructField("runtime_sec", DoubleType(), True),
+    StructField("error", StringType(), True),
+])
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +218,7 @@ def check_table(row):
         "duplicate_group_count": None,
         "duplicate_row_count": None,
         "duplicate_pct": None,
-        "runtime_sec": None,
+        "runtime_sec": 0.0,
         "error": None,
     }
     sample = None
@@ -280,7 +301,7 @@ def run_all(layer_filter=None, write_results=True):
         samples[table_name] = sample
         _print_result(res)
 
-    summary_df = spark.createDataFrame(results)
+    summary_df = spark.createDataFrame(results, schema=RESULT_SCHEMA)
 
     if write_results:
         summary_df.write.mode("append").saveAsTable(RESULT_TABLE)
