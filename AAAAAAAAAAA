@@ -1,25 +1,296 @@
-if response.status_code in (200, 202):
-                print("  Webhook sent successfully.")
-                return True
+# =============================================================================
+# Duplicate Check Framework  -  driven by control table `radarlivetableinput`
+# =============================================================================
+# WHAT THIS DOES
+# ---------------------------------------------------------------------------
+# 1. Reads radarlivetableinput, keeps only rows where include = 'Y'.
+# 2. Optionally filters to specific Layer(s) for the run (LAYER_FILTER below,
+#    or pass a list into run_all()).
+# 3. For each table:
+#       - Resolves full table name from catalog_ts.Schema.Tablename_Test
+#       - Filters rows using filter_timestamp column + startdt/enddt
+#         (falls back to a FULL table scan if no start/end is available)
+#       - bronze / pricingviews layers -> exact duplicate check on `payload`,
+#         keyed by headers['messageType'] + headers['MQSQuoteId']
+#       - all other layers -> generic duplicate check on every column
+#         EXCEPT the ones listed in exclude_column
+# 4. Prints + persists a detailed summary: period checked, total count,
+#    duplicate group count, duplicate row count, duplicate %, runtime, etc.
+#
+# PERFORMANCE NOTES
+# ---------------------------------------------------------------------------
+# - Uses sha2() hashing over the comparison columns + groupBy instead of a
+#   full self-join, which is far cheaper at scale.
+# - Filters (time window) are applied BEFORE hashing/grouping so predicate
+#   pushdown / partition pruning kicks in on Delta tables.
+# - AQE + skew join handling enabled via spark.conf below.
+# - Only a small bounded sample of duplicate keys is collect()'ed to the
+#   driver, never full duplicate row sets.
+# =============================================================================
+
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+import time
+import traceback
+
+spark = SparkSession.builder.appName("DuplicateCheckFramework").getOrCreate()
+
+# Performance-friendly Spark settings
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
+spark.conf.set("spark.sql.shuffle.partitions", "auto")
+
+# ---------------------------------------------------------------------------
+# CONFIG - adjust these
+# ---------------------------------------------------------------------------
+
+# Fully qualified name of your control table, e.g. "my_catalog.control.radarlivetableinput"
+CONTROL_TABLE = "radarlivetableinput"
+
+# Layers that get the special "exact payload duplicate" check instead of the
+# generic exclude-column check.
+PAYLOAD_DEDUP_LAYERS = {"bronze", "pricingviews"}
+
+# Global fallback date range, used ONLY if a control row's own startdt/enddt
+# are blank. Leave both None to force a FULL scan whenever a row has no
+# start/end set (this is the current state of your screenshot - startdt/enddt
+# are empty, so today it will run FULL for everything unless you fill these
+# in, or fill the columns in the control table itself).
+DEFAULT_START_DT = None   # e.g. "2026-08-01"
+DEFAULT_END_DT   = None   # e.g. "2026-08-05"
+
+# Layer-wise filter for this run. Leave [] to run every layer marked Y.
+# e.g. ["bronze", "silverish"]
+LAYER_FILTER = []
+
+# Where the run summary gets appended
+RESULT_TABLE = "radar_duplicate_check_results"
+
+# How many example duplicate keys to pull back per table (kept small on purpose)
+SAMPLE_LIMIT = 20
 
 
-if is_daily_health_window():
-        print("Daily health window — sending morning summary...")
-        brand_summaries = []
-        for brand in EXPECTED_BRANDS:
-            brand_summaries.append({
-                "brand"        : brand,
-                "status"       : current_status,
-                "breaches"     : get_overnight_breach_count(brand),
-                "last_interval": settled_interval
-            })
-        daily_payload, daily_size = enforce_size_limit(daily_health_card(brand_summaries), dashboard_url=DASHBOARD_URL)
-        print(f"  Daily card size: {daily_size} bytes")
-        send_webhook(daily_payload)
-        print("Daily health card sent.")
+# ---------------------------------------------------------------------------
+# CONTROL TABLE HELPERS
+# ---------------------------------------------------------------------------
+
+def get_control_rows(layer_filter=None):
+    df = spark.table(CONTROL_TABLE).filter(F.col("include") == "Y")
+    if layer_filter:
+        df = df.filter(F.col("Layer").isin(layer_filter))
+    return df.collect()
 
 
-if payload:
-        payload, final_size = enforce_size_limit(payload, dashboard_url=DASHBOARD_URL)
-        print(f"  Final payload size: {final_size} bytes")
-        sent = send_webhook(payload)
+def resolve_table_name(row):
+    catalog = (row["catalog_ts"] or "").strip()
+    schema = (row["Schema"] or "").strip()
+    table = (row["Tablename_Test"] or "").strip()
+    parts = [p for p in (catalog, schema, table) if p]
+    return ".".join(parts)
+
+
+def get_comparison_columns(df, exclude_col_str):
+    """All columns of df, minus whatever is listed in exclude_column (comma separated)."""
+    excluded = set()
+    if exclude_col_str:
+        excluded = {c.strip() for c in exclude_col_str.split(",") if c.strip()}
+    return [c for c in df.columns if c not in excluded]
+
+
+def apply_time_filter(df, filter_col, start_dt, end_dt):
+    """
+    Filters df on filter_col between start_dt/end_dt when both are supplied.
+    Falls back to a FULL scan (no filter) when the column or the bounds
+    are missing - as requested, hardcode-for-now / full-check-otherwise.
+    Returns (filtered_df, period_label_for_reporting)
+    """
+    if not filter_col or filter_col not in df.columns:
+        return df, "FULL (no filter_timestamp column set)"
+
+    if not start_dt or not end_dt:
+        return df, "FULL (no start/end date available)"
+
+    filtered = df.filter(
+        (F.col(filter_col) >= F.lit(start_dt)) & (F.col(filter_col) <= F.lit(end_dt))
+    )
+    return filtered, f"{start_dt} to {end_dt}  (on column '{filter_col}')"
+
+
+# ---------------------------------------------------------------------------
+# DUPLICATE CHECK LOGIC
+# ---------------------------------------------------------------------------
+
+def run_standard_dup_check(df, comparison_cols):
+    """
+    Generic check: hash all comparison columns together, group by the hash,
+    anything with count > 1 is a duplicate group.
+    """
+    hash_expr = F.sha2(
+        F.concat_ws(
+            "||",
+            *[F.coalesce(F.col(c).cast("string"), F.lit("~NULL~")) for c in comparison_cols],
+        ),
+        256,
+    )
+    hashed = df.withColumn("_dup_hash", hash_expr)
+
+    grouped = hashed.groupBy("_dup_hash").agg(F.count(F.lit(1)).alias("_cnt"))
+    dup_groups = grouped.filter(F.col("_cnt") > 1)
+
+    dup_group_count = dup_groups.count()
+    dup_row_sum = dup_groups.agg(F.sum("_cnt")).collect()[0][0]
+    dup_row_count = int(dup_row_sum) if dup_row_sum else 0
+
+    sample = (
+        hashed.join(dup_groups, on="_dup_hash", how="inner")
+        .select(*comparison_cols)
+        .limit(SAMPLE_LIMIT)
+    )
+    return dup_group_count, dup_row_count, sample
+
+
+def run_payload_dup_check(df):
+    """
+    Special check for bronze / pricingviews layers:
+    exact duplicate on `payload`, keyed by headers['messageType'] and
+    headers['MQSQuoteId']. Assumes `headers` is a map/struct column - adjust
+    getItem -> getField if headers is a StructType in your schema.
+    """
+    required = {"payload", "headers"}
+    if not required.issubset(set(df.columns)):
+        raise ValueError(f"Expected columns {required}, but table has {df.columns}")
+
+    working = (
+        df.withColumn("_msg_type", F.col("headers").getItem("messageType"))
+          .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
+          .withColumn("_payload_hash", F.sha2(F.col("payload").cast("string"), 256))
+    )
+
+    grouped = working.groupBy("_msg_type", "_quote_id", "_payload_hash").agg(
+        F.count(F.lit(1)).alias("_cnt")
+    )
+    dup_groups = grouped.filter(F.col("_cnt") > 1)
+
+    dup_group_count = dup_groups.count()
+    dup_row_sum = dup_groups.agg(F.sum("_cnt")).collect()[0][0]
+    dup_row_count = int(dup_row_sum) if dup_row_sum else 0
+
+    sample = dup_groups.select("_msg_type", "_quote_id", "_cnt").limit(SAMPLE_LIMIT)
+    return dup_group_count, dup_row_count, sample
+
+
+# ---------------------------------------------------------------------------
+# PER-TABLE RUNNER
+# ---------------------------------------------------------------------------
+
+def check_table(row):
+    result = {
+        "Layer": row["Layer"],
+        "messagetype": row["messagetype"],
+        "table": resolve_table_name(row),
+        "status": "SUCCESS",
+        "check_type": None,
+        "period_checked": None,
+        "total_count": None,
+        "duplicate_group_count": None,
+        "duplicate_row_count": None,
+        "duplicate_pct": None,
+        "runtime_sec": None,
+        "error": None,
+    }
+    sample = None
+    t0 = time.time()
+    try:
+        full_table_name = result["table"]
+        if not full_table_name:
+            raise ValueError("catalog_ts / Schema / Tablename_Test missing in control row")
+
+        df = spark.table(full_table_name)
+
+        start_dt = row["startdt"] or DEFAULT_START_DT
+        end_dt = row["enddt"] or DEFAULT_END_DT
+
+        filtered_df, period_label = apply_time_filter(df, row["filter_timestamp"], start_dt, end_dt)
+        filtered_df = filtered_df.cache()
+        total_count = filtered_df.count()
+
+        layer = (row["Layer"] or "").strip().lower()
+        if layer in PAYLOAD_DEDUP_LAYERS:
+            dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
+            check_type = "payload_exact_dup (headers.messageType + headers.MQSQuoteId)"
+        else:
+            comparison_cols = get_comparison_columns(filtered_df, row["exclude_column"])
+            dup_group_count, dup_row_count, sample = run_standard_dup_check(filtered_df, comparison_cols)
+            check_type = f"full_row_dup (compared {len(comparison_cols)} cols, excluded rest)"
+
+        result.update({
+            "check_type": check_type,
+            "period_checked": period_label,
+            "total_count": total_count,
+            "duplicate_group_count": dup_group_count,
+            "duplicate_row_count": dup_row_count,
+            "duplicate_pct": round((dup_row_count / total_count) * 100, 4) if total_count else 0.0,
+        })
+
+        filtered_df.unpersist()
+
+    except Exception as e:
+        result["status"] = "FAILED"
+        result["error"] = str(e)
+        traceback.print_exc()
+
+    result["runtime_sec"] = round(time.time() - t0, 2)
+    return result, sample
+
+
+def _print_result(r):
+    print(f"Status            : {r['status']}")
+    if r["status"] == "FAILED":
+        print(f"Error             : {r['error']}")
+        print(f"Runtime (sec)     : {r['runtime_sec']}")
+        return
+    print(f"Check type        : {r['check_type']}")
+    print(f"Period checked    : {r['period_checked']}")
+    print(f"Total rows        : {r['total_count']}")
+    print(f"Duplicate groups  : {r['duplicate_group_count']}")
+    print(f"Duplicate rows    : {r['duplicate_row_count']}")
+    print(f"Duplicate %       : {r['duplicate_pct']}%")
+    print(f"Runtime (sec)     : {r['runtime_sec']}")
+
+
+# ---------------------------------------------------------------------------
+# MAIN ENTRY POINT
+# ---------------------------------------------------------------------------
+
+def run_all(layer_filter=None, write_results=True):
+    layer_filter = layer_filter or LAYER_FILTER or None
+    control_rows = get_control_rows(layer_filter)
+    print(f"Found {len(control_rows)} table(s) with include='Y'"
+          + (f" for layer(s) {layer_filter}" if layer_filter else " across all layers"))
+
+    results = []
+    samples = {}
+    for row in control_rows:
+        table_name = resolve_table_name(row)
+        print(f"\n--- Checking [{row['Layer']}] {table_name} ---")
+        res, sample = check_table(row)
+        results.append(res)
+        samples[table_name] = sample
+        _print_result(res)
+
+    summary_df = spark.createDataFrame(results)
+
+    if write_results:
+        summary_df.write.mode("append").saveAsTable(RESULT_TABLE)
+        print(f"\nSummary appended to {RESULT_TABLE}")
+
+    try:
+        display(summary_df)  # noqa: F821  - Databricks notebook display()
+    except NameError:
+        summary_df.show(truncate=False)
+
+    return summary_df, samples
+
+
+if __name__ == "__main__":
+    run_all()
