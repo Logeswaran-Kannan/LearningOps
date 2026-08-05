@@ -19,13 +19,21 @@
 #
 # PERFORMANCE NOTES
 # ---------------------------------------------------------------------------
-# - Uses sha2() hashing over the comparison columns + groupBy instead of a
-#   full self-join, which is far cheaper at scale.
-# - Filters (time window) are applied BEFORE hashing/grouping so predicate
-#   pushdown / partition pruning kicks in on Delta tables.
-# - AQE + skew join handling enabled via spark.conf below.
-# - Only a small bounded sample of duplicate keys is collect()'ed to the
-#   driver, never full duplicate row sets.
+# - Projects (select) down to only the columns being compared BEFORE caching
+#   - on a wide table this is the single biggest win, since it cuts how much
+#   columnar data actually gets read off disk / object storage.
+# - Uses sha2() hashing + groupBy instead of a full self-join.
+# - total_count, duplicate_group_count and duplicate_row_count are all
+#   computed in ONE aggregation action over the (small, already-shuffled)
+#   grouped dataframe, instead of three separate actions.
+# - The sample of duplicate rows is fetched by pulling a handful of
+#   duplicate keys to the driver and filtering with isin(), NOT by shuffle-
+#   joining the full grouped result back onto the raw data.
+# - Filters (time window) are applied BEFORE projection/hashing so predicate
+#   pushdown / partition pruning kicks in on Delta tables. For daily runs at
+#   this volume, make sure the source Delta table is partitioned or
+#   Z-ORDERed on the filter_timestamp column - pushdown can only skip files
+#   it doesn't have to, it can't skip files that aren't clustered by date.
 # =============================================================================
 
 from pyspark.sql import SparkSession
@@ -161,11 +169,33 @@ def build_readable_sql(table_name, columns_list, filter_col, start_dt, end_dt, f
 # DUPLICATE CHECK LOGIC
 # ---------------------------------------------------------------------------
 
+def _grouped_stats(grouped_df, count_col="_cnt"):
+    """
+    Single-pass aggregation over an already-grouped (small) dataframe to get
+    total row count, duplicate group count and duplicate row count in ONE
+    action - instead of calling .count() / .agg(sum) separately, which
+    forces Spark to re-read the shuffle output multiple times.
+    """
+    stats = grouped_df.agg(
+        F.sum(count_col).alias("total_count"),
+        F.sum(F.when(F.col(count_col) > 1, 1).otherwise(0)).alias("dup_group_count"),
+        F.sum(F.when(F.col(count_col) > 1, F.col(count_col)).otherwise(0)).alias("dup_row_count"),
+    ).collect()[0]
+    return (
+        int(stats["total_count"] or 0),
+        int(stats["dup_group_count"] or 0),
+        int(stats["dup_row_count"] or 0),
+    )
+
+
 def run_standard_dup_check(df, comparison_cols):
     """
-    Generic check: hash all comparison columns together, group by the hash,
-    anything with count > 1 is a duplicate group.
+    Generic check: project down to ONLY the comparison columns first (cheap
+    columnar read), hash them together, group by the hash. One shuffle,
+    one aggregation action for all the stats.
     """
+    narrowed = df.select(*comparison_cols).cache()
+
     hash_expr = F.sha2(
         F.concat_ws(
             "||",
@@ -173,21 +203,29 @@ def run_standard_dup_check(df, comparison_cols):
         ),
         256,
     )
-    hashed = df.withColumn("_dup_hash", hash_expr)
+    hashed = narrowed.withColumn("_dup_hash", hash_expr)
+    grouped = hashed.groupBy("_dup_hash").agg(F.count(F.lit(1)).alias("_cnt")).cache()
 
-    grouped = hashed.groupBy("_dup_hash").agg(F.count(F.lit(1)).alias("_cnt"))
-    dup_groups = grouped.filter(F.col("_cnt") > 1)
+    total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
 
-    dup_group_count = dup_groups.count()
-    dup_row_sum = dup_groups.agg(F.sum("_cnt")).collect()[0][0]
-    dup_row_count = int(dup_row_sum) if dup_row_sum else 0
+    sample = narrowed.limit(0)
+    if dup_group_count:
+        # pull a handful of duplicate hash keys to the driver, then filter
+        # with isin() - a broadcast-style filter, no shuffle join needed
+        dup_hashes = [
+            r["_dup_hash"]
+            for r in grouped.filter(F.col("_cnt") > 1).select("_dup_hash").limit(SAMPLE_LIMIT).collect()
+        ]
+        if dup_hashes:
+            sample = (
+                hashed.filter(F.col("_dup_hash").isin(dup_hashes))
+                .select(*comparison_cols)
+                .limit(SAMPLE_LIMIT)
+            )
 
-    sample = (
-        hashed.join(dup_groups, on="_dup_hash", how="inner")
-        .select(*comparison_cols)
-        .limit(SAMPLE_LIMIT)
-    )
-    return dup_group_count, dup_row_count, sample
+    grouped.unpersist()
+    narrowed.unpersist()
+    return total_count, dup_group_count, dup_row_count, sample
 
 
 def run_payload_dup_check(df):
@@ -201,23 +239,28 @@ def run_payload_dup_check(df):
     if not required.issubset(set(df.columns)):
         raise ValueError(f"Expected columns {required}, but table has {df.columns}")
 
-    working = (
-        df.withColumn("_msg_type", F.col("headers").getItem("messageType"))
-          .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
-          .withColumn("_payload_hash", F.sha2(F.col("payload").cast("string"), 256))
-    )
+    narrowed = df.select("headers", "payload").cache()
 
+    working = (
+        narrowed.withColumn("_msg_type", F.col("headers").getItem("messageType"))
+                .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
+                .withColumn("_payload_hash", F.sha2(F.col("payload").cast("string"), 256))
+    )
     grouped = working.groupBy("_msg_type", "_quote_id", "_payload_hash").agg(
         F.count(F.lit(1)).alias("_cnt")
+    ).cache()
+
+    total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
+
+    sample = (
+        grouped.filter(F.col("_cnt") > 1)
+        .select("_msg_type", "_quote_id", "_cnt")
+        .limit(SAMPLE_LIMIT)
     )
-    dup_groups = grouped.filter(F.col("_cnt") > 1)
 
-    dup_group_count = dup_groups.count()
-    dup_row_sum = dup_groups.agg(F.sum("_cnt")).collect()[0][0]
-    dup_row_count = int(dup_row_sum) if dup_row_sum else 0
-
-    sample = dup_groups.select("_msg_type", "_quote_id", "_cnt").limit(SAMPLE_LIMIT)
-    return dup_group_count, dup_row_count, sample
+    grouped.unpersist()
+    narrowed.unpersist()
+    return total_count, dup_group_count, dup_row_count, sample
 
 
 # ---------------------------------------------------------------------------
@@ -256,18 +299,18 @@ def check_table(row):
 
         filtered_df, period_label = apply_time_filter(df, row["filter_timestamp"], start_dt, end_dt)
         filter_applied = not period_label.startswith("FULL")
-        filtered_df = filtered_df.cache()
-        total_count = filtered_df.count()
 
         layer = (row["Layer"] or "").strip().lower()
         if layer in PAYLOAD_DEDUP_LAYERS:
-            dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
+            total_count, dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
             check_type = "payload_exact_dup (headers.messageType + headers.MQSQuoteId)"
             sql_columns = ["headers['messageType']", "headers['MQSQuoteId']", "payload"]
             columns_checked = ",".join(sql_columns)
         else:
             comparison_cols = get_comparison_columns(filtered_df, row["exclude_column"])
-            dup_group_count, dup_row_count, sample = run_standard_dup_check(filtered_df, comparison_cols)
+            total_count, dup_group_count, dup_row_count, sample = run_standard_dup_check(
+                filtered_df, comparison_cols
+            )
             check_type = f"full_row_dup (compared {len(comparison_cols)} cols, excluded rest)"
             sql_columns = comparison_cols
             columns_checked = ",".join(comparison_cols)
@@ -286,8 +329,6 @@ def check_table(row):
             "duplicate_row_count": dup_row_count,
             "duplicate_pct": round((dup_row_count / total_count) * 100, 4) if total_count else 0.0,
         })
-
-        filtered_df.unpersist()
 
     except Exception as e:
         result["status"] = "FAILED"
