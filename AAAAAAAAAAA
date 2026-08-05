@@ -65,8 +65,9 @@ spark = SparkSession.builder.appName("DuplicateCheckFramework").getOrCreate()
 CONTROL_TABLE = "core_bld.default.radarlivetableinput"
 
 # Layers that get the special "exact payload duplicate" check instead of the
-# generic exclude-column check.
-PAYLOAD_DEDUP_LAYERS = {"bronze", "pricingviews"}
+# generic exclude-column check. payload (string) + headers (map<string,string>)
+# are present on landing, bronze, and pricingviews tables.
+PAYLOAD_DEDUP_LAYERS = {"landing", "bronze", "pricingviews"}
 # Global fallback date range, used ONLY if a control row's own startdt/enddt
 # are blank.
 # TEMPORARY: defaulted to "today, full day" in timestamp format so the
@@ -301,8 +302,12 @@ def check_table(row):
 
         df = spark.table(full_table_name)
 
-        start_dt = row["startdt"] or DEFAULT_START_DT
-        end_dt = row["enddt"] or DEFAULT_END_DT
+        # TEMPORARY: ignore the control table's own startdt/enddt columns and
+        # always take the date range from the script-level defaults below.
+        # Revert to `row["startdt"] or DEFAULT_START_DT` (and enddt) once the
+        # control table is meant to drive per-table windows again.
+        start_dt = DEFAULT_START_DT
+        end_dt = DEFAULT_END_DT
 
         filtered_df, period_label = apply_time_filter(df, row["filter_timestamp"], start_dt, end_dt)
         filter_applied = not period_label.startswith("FULL")
@@ -317,12 +322,22 @@ def check_table(row):
         print(f"    Rows in scope  : {pre_check_count}")
 
         layer = (row["Layer"] or "").strip().lower()
-        if layer in PAYLOAD_DEDUP_LAYERS:
+        payload_cols_present = {"payload", "headers"}.issubset(set(filtered_df.columns))
+
+        if layer in PAYLOAD_DEDUP_LAYERS and payload_cols_present:
             total_count, dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
             check_type = "payload_exact_dup (headers.messageType + headers.MQSQuoteId)"
             sql_columns = ["headers['messageType']", "headers['MQSQuoteId']", "payload"]
             columns_checked = ",".join(sql_columns)
         else:
+            if layer in PAYLOAD_DEDUP_LAYERS and not payload_cols_present:
+                # This table is flagged for the payload-based check but its
+                # actual schema doesn't have payload/headers - fall back to
+                # the standard exclude-column check instead of failing the
+                # whole table outright.
+                print(f"    NOTE: {full_table_name} has no 'payload'/'headers' columns "
+                      f"(has {filtered_df.columns}). Falling back to the standard "
+                      f"exclude-column duplicate check for this table.")
             comparison_cols = get_comparison_columns(filtered_df, row["exclude_column"])
             total_count, dup_group_count, dup_row_count, sample = run_standard_dup_check(
                 filtered_df, comparison_cols
