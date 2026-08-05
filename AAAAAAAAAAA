@@ -35,17 +35,19 @@ import traceback
 
 spark = SparkSession.builder.appName("DuplicateCheckFramework").getOrCreate()
 
-# Performance-friendly Spark settings
-spark.conf.set("spark.sql.adaptive.enabled", "true")
-spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
-spark.conf.set("spark.sql.shuffle.partitions", "auto")
+# NOTE: no spark.conf.set(...) calls here on purpose. Serverless compute
+# (Databricks Serverless SQL/Jobs) locks down most spark.sql.* confs
+# (adaptive execution, shuffle partitions, etc. are already managed for you
+# and setting them raises "configuration ... is not available"). The
+# hash+groupBy approach below is written to perform well under serverless
+# defaults without needing manual tuning.
 
 # ---------------------------------------------------------------------------
 # CONFIG - adjust these
 # ---------------------------------------------------------------------------
 
-# Fully qualified name of your control table, e.g. "my_catalog.control.radarlivetableinput"
-CONTROL_TABLE = "radarlivetableinput"
+# Fully qualified name of your control table
+CONTROL_TABLE = "core_tst.default.radarlivetableinput"
 
 # Layers that get the special "exact payload duplicate" check instead of the
 # generic exclude-column check.
@@ -64,7 +66,7 @@ DEFAULT_END_DT   = None   # e.g. "2026-08-05"
 LAYER_FILTER = []
 
 # Where the run summary gets appended
-RESULT_TABLE = "radar_duplicate_check_results"
+RESULT_TABLE = "core_tst.default.radar_duplicate_check_results"
 
 # How many example duplicate keys to pull back per table (kept small on purpose)
 SAMPLE_LIMIT = 20
