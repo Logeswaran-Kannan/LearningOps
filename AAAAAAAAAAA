@@ -50,7 +50,7 @@ spark = SparkSession.builder.appName("DuplicateCheckFramework").getOrCreate()
 # ---------------------------------------------------------------------------
 
 # Fully qualified name of your control table
-CONTROL_TABLE = "core_tst.default.radarlivetableinput"
+CONTROL_TABLE = "core_bld.default.radarlivetableinput"
 
 # Layers that get the special "exact payload duplicate" check instead of the
 # generic exclude-column check.
@@ -66,10 +66,10 @@ DEFAULT_END_DT   = None   # e.g. "2026-08-05"
 
 # Layer-wise filter for this run. Leave [] to run every layer marked Y.
 # e.g. ["bronze", "silverish"]
-LAYER_FILTER = []
+LAYER_FILTER = ["landing", "bronze"]
 
 # Where the run summary gets appended
-RESULT_TABLE = "core_tst.default.radar_duplicate_check_results"
+RESULT_TABLE = "core_bld.default.radar_duplicate_check_results"
 
 # How many example duplicate keys to pull back per table (kept small on purpose)
 SAMPLE_LIMIT = 20
@@ -105,7 +105,7 @@ def get_control_rows(layer_filter=None):
 
 
 def resolve_table_name(row):
-    catalog = (row["catalog_ts"] or "").strip()
+    catalog = (row["catalog_tst"] or "").strip()
     schema = (row["Schema"] or "").strip()
     table = (row["Tablename_Test"] or "").strip()
     parts = [p for p in (catalog, schema, table) if p]
@@ -210,7 +210,7 @@ def check_table(row):
     result = {
         "Layer": row["Layer"],
         "messagetype": row["messagetype"],
-        "table": resolve_table_name(row),
+        "table": None,
         "status": "SUCCESS",
         "check_type": None,
         "period_checked": None,
@@ -224,7 +224,8 @@ def check_table(row):
     sample = None
     t0 = time.time()
     try:
-        full_table_name = result["table"]
+        full_table_name = resolve_table_name(row)
+        result["table"] = full_table_name
         if not full_table_name:
             raise ValueError("catalog_ts / Schema / Tablename_Test missing in control row")
 
