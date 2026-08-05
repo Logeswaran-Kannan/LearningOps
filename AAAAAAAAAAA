@@ -7,7 +7,7 @@
 # 2. Optionally filters to specific Layer(s) for the run (LAYER_FILTER below,
 #    or pass a list into run_all()).
 # 3. For each table:
-#       - Resolves full table name from catalog_ts.Schema.Tablename_Test
+#       - Resolves full table name from catalog_tst.Schema.Tablename_Test
 #       - Filters rows using filter_timestamp column + startdt/enddt
 #         (falls back to a FULL table scan if no start/end is available)
 #       - bronze / pricingviews layers -> exact duplicate check on `payload`,
@@ -33,6 +33,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, LongType, DoubleType
 )
+from datetime import datetime
 import time
 import traceback
 
@@ -55,14 +56,15 @@ CONTROL_TABLE = "core_bld.default.radarlivetableinput"
 # Layers that get the special "exact payload duplicate" check instead of the
 # generic exclude-column check.
 PAYLOAD_DEDUP_LAYERS = {"bronze", "pricingviews"}
-
 # Global fallback date range, used ONLY if a control row's own startdt/enddt
-# are blank. Leave both None to force a FULL scan whenever a row has no
-# start/end set (this is the current state of your screenshot - startdt/enddt
-# are empty, so today it will run FULL for everything unless you fill these
-# in, or fill the columns in the control table itself).
-DEFAULT_START_DT = None   # e.g. "2026-08-01"
-DEFAULT_END_DT   = None   # e.g. "2026-08-05"
+# are blank.
+# TEMPORARY: defaulted to "today, full day" in timestamp format so the
+# script has a sane window to run against while startdt/enddt are still
+# empty in the control table. Once you populate startdt/enddt per row (or
+# want a real full-scan fallback again), set these back to None.
+_today_str = datetime.now().strftime("%Y-%m-%d")
+DEFAULT_START_DT = f"{_today_str} 00:00:00.000000"
+DEFAULT_END_DT = f"{_today_str} 23:59:59.999999"
 
 # Layer-wise filter for this run. Leave [] to run every layer marked Y.
 # e.g. ["bronze", "silverish"]
@@ -83,6 +85,8 @@ RESULT_SCHEMA = StructType([
     StructField("table", StringType(), True),
     StructField("status", StringType(), True),
     StructField("check_type", StringType(), True),
+    StructField("columns_checked", StringType(), True),
+    StructField("duplicate_check_sql", StringType(), True),
     StructField("period_checked", StringType(), True),
     StructField("total_count", LongType(), True),
     StructField("duplicate_group_count", LongType(), True),
@@ -137,6 +141,20 @@ def apply_time_filter(df, filter_col, start_dt, end_dt):
         (F.col(filter_col) >= F.lit(start_dt)) & (F.col(filter_col) <= F.lit(end_dt))
     )
     return filtered, f"{start_dt} to {end_dt}  (on column '{filter_col}')"
+
+
+def build_readable_sql(table_name, columns_list, filter_col, start_dt, end_dt, filter_applied):
+    """
+    Builds a plain, human-readable SELECT statement showing exactly which
+    columns were compared for the duplicate check and which filter window
+    was applied - for sharing with others, NOT executed anywhere in this
+    script.
+    """
+    select_cols = ", ".join(columns_list)
+    sql = f"SELECT {select_cols} FROM {table_name}"
+    if filter_applied and filter_col and start_dt and end_dt:
+        sql += f" WHERE {filter_col} BETWEEN '{start_dt}' AND '{end_dt}'"
+    return sql
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +231,8 @@ def check_table(row):
         "table": None,
         "status": "SUCCESS",
         "check_type": None,
+        "columns_checked": None,
+        "duplicate_check_sql": None,
         "period_checked": None,
         "total_count": None,
         "duplicate_group_count": None,
@@ -235,6 +255,7 @@ def check_table(row):
         end_dt = row["enddt"] or DEFAULT_END_DT
 
         filtered_df, period_label = apply_time_filter(df, row["filter_timestamp"], start_dt, end_dt)
+        filter_applied = not period_label.startswith("FULL")
         filtered_df = filtered_df.cache()
         total_count = filtered_df.count()
 
@@ -242,13 +263,23 @@ def check_table(row):
         if layer in PAYLOAD_DEDUP_LAYERS:
             dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
             check_type = "payload_exact_dup (headers.messageType + headers.MQSQuoteId)"
+            sql_columns = ["headers['messageType']", "headers['MQSQuoteId']", "payload"]
+            columns_checked = ",".join(sql_columns)
         else:
             comparison_cols = get_comparison_columns(filtered_df, row["exclude_column"])
             dup_group_count, dup_row_count, sample = run_standard_dup_check(filtered_df, comparison_cols)
             check_type = f"full_row_dup (compared {len(comparison_cols)} cols, excluded rest)"
+            sql_columns = comparison_cols
+            columns_checked = ",".join(comparison_cols)
+
+        duplicate_check_sql = build_readable_sql(
+            full_table_name, sql_columns, row["filter_timestamp"], start_dt, end_dt, filter_applied
+        )
 
         result.update({
             "check_type": check_type,
+            "columns_checked": columns_checked,
+            "duplicate_check_sql": duplicate_check_sql,
             "period_checked": period_label,
             "total_count": total_count,
             "duplicate_group_count": dup_group_count,
@@ -274,6 +305,8 @@ def _print_result(r):
         print(f"Runtime (sec)     : {r['runtime_sec']}")
         return
     print(f"Check type        : {r['check_type']}")
+    print(f"Columns checked   : {r['columns_checked']}")
+    print(f"Shareable SQL     : {r['duplicate_check_sql']}")
     print(f"Period checked    : {r['period_checked']}")
     print(f"Total rows        : {r['total_count']}")
     print(f"Duplicate groups  : {r['duplicate_group_count']}")
