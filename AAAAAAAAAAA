@@ -10,7 +10,8 @@
 #       - Resolves full table name from catalog_prd.Schema.Tablename_Prod
 #       - Filters rows using filter_timestamp column + startdt/enddt
 #         (falls back to a FULL table scan if no start/end is available)
-#       - bronze / pricingviews layers -> exact duplicate check on `payload`,
+#       - landing / bronze / pricingviews layers -> exact duplicate check on
+#         `Payload`,
 #         keyed by headers['messageType'] + headers['MQSQuoteId']
 #       - all other layers -> generic duplicate check on every column
 #         EXCEPT the ones listed in exclude_column
@@ -194,69 +195,71 @@ def _grouped_stats(grouped_df, count_col="_cnt"):
 
 def run_standard_dup_check(df, comparison_cols):
     """
-    Generic check: project down to ONLY the comparison columns first (cheap
-    columnar read), hash them together, group by the hash. One shuffle,
-    one aggregation action for all the stats.
+    Generic check: project down to ONLY the comparison columns, hash them
+    together, group by the hash. Only the small, hash-reduced `grouped`
+    result gets cached - never the raw comparison columns themselves, since
+    those can carry large text (e.g. a payload column) that blows up memory
+    at multi-million-row volumes for no benefit (it's only read once anyway).
     """
-    narrowed = df.select(*comparison_cols).cache()
-    grouped = None
+    hash_expr = F.xxhash64(
+        *[F.coalesce(F.col(c).cast("string"), F.lit("~NULL~")) for c in comparison_cols]
+    )
+    hashed = df.select(*comparison_cols).withColumn("_dup_hash", hash_expr)
+    grouped = hashed.groupBy("_dup_hash").agg(F.count(F.lit(1)).alias("_cnt")).cache()
     try:
-        hash_expr = F.xxhash64(
-            *[F.coalesce(F.col(c).cast("string"), F.lit("~NULL~")) for c in comparison_cols]
-        )
-        hashed = narrowed.withColumn("_dup_hash", hash_expr)
-        grouped = hashed.groupBy("_dup_hash").agg(F.count(F.lit(1)).alias("_cnt")).cache()
-
         total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
 
-        sample = narrowed.limit(0)
+        sample = df.select(*comparison_cols).limit(0)
         if dup_group_count:
-            # pull a handful of duplicate hash keys to the driver, then filter
-            # with isin() - a broadcast-style filter, no shuffle join needed
+            # pull a handful of duplicate hash keys to the driver, then do a
+            # SECOND targeted pass over the (uncached) source to fetch the
+            # sample rows - trades one extra lightweight scan for not
+            # holding the full raw data in memory.
             dup_hashes = [
                 r["_dup_hash"]
                 for r in grouped.filter(F.col("_cnt") > 1).select("_dup_hash").limit(SAMPLE_LIMIT).collect()
             ]
             if dup_hashes:
                 sample = (
-                    hashed.filter(F.col("_dup_hash").isin(dup_hashes))
+                    df.select(*comparison_cols)
+                    .withColumn("_dup_hash", hash_expr)
+                    .filter(F.col("_dup_hash").isin(dup_hashes))
                     .select(*comparison_cols)
                     .limit(SAMPLE_LIMIT)
                 )
         return total_count, dup_group_count, dup_row_count, sample
     finally:
-        # ALWAYS release cached memory, even if something above raised -
-        # a cache left behind on exception is how a batch of many tables
-        # slowly accumulates memory pressure and eventually crashes Spark
-        # several tables later.
-        if grouped is not None:
-            grouped.unpersist()
-        narrowed.unpersist()
+        grouped.unpersist()
 
 
 def run_payload_dup_check(df):
     """
-    Special check for bronze / pricingviews layers:
-    exact duplicate on `payload`, keyed by headers['messageType'] and
-    headers['MQSQuoteId']. Assumes `headers` is a map/struct column - adjust
-    getItem -> getField if headers is a StructType in your schema.
+    Special check for landing / bronze / pricingviews layers:
+    exact duplicate on `Payload`, keyed by headers['messageType'] and
+    headers['MQSQuoteId']. Assumes `headers` is a map<string,string> column.
+
+    Only the grouped (hash + count) result is cached - the raw `payload`
+    text is never cached, since caching the full payload column at
+    multi-million-row volumes is what actually causes memory pressure, not
+    the (small, capped) sample step.
     """
-    required = {"payload", "headers"}
+    required = {"Payload", "headers"}
     if not required.issubset(set(df.columns)):
         raise ValueError(f"Expected columns {required}, but table has {df.columns}")
 
-    narrowed = df.select("headers", "payload").cache()
-    grouped = None
-    try:
-        working = (
-            narrowed.withColumn("_msg_type", F.col("headers").getItem("messageType"))
-                    .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
-                    .withColumn("_payload_hash", F.xxhash64(F.col("payload").cast("string")))
+    def _with_keys(d):
+        return (
+            d.select("headers", "Payload")
+             .withColumn("_msg_type", F.col("headers").getItem("messageType"))
+             .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
+             .withColumn("_payload_hash", F.xxhash64(F.col("Payload").cast("string")))
         )
-        grouped = working.groupBy("_msg_type", "_quote_id", "_payload_hash").agg(
-            F.count(F.lit(1)).alias("_cnt")
-        ).cache()
 
+    working = _with_keys(df)
+    grouped = working.groupBy("_msg_type", "_quote_id", "_payload_hash").agg(
+        F.count(F.lit(1)).alias("_cnt")
+    ).cache()
+    try:
         total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
 
         sample = (
@@ -266,9 +269,7 @@ def run_payload_dup_check(df):
         )
         return total_count, dup_group_count, dup_row_count, sample
     finally:
-        if grouped is not None:
-            grouped.unpersist()
-        narrowed.unpersist()
+        grouped.unpersist()
 
 
 # ---------------------------------------------------------------------------
@@ -322,12 +323,12 @@ def check_table(row):
         print(f"    Rows in scope  : {pre_check_count}")
 
         layer = (row["Layer"] or "").strip().lower()
-        payload_cols_present = {"payload", "headers"}.issubset(set(filtered_df.columns))
+        payload_cols_present = {"Payload", "headers"}.issubset(set(filtered_df.columns))
 
         if layer in PAYLOAD_DEDUP_LAYERS and payload_cols_present:
             total_count, dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
             check_type = "payload_exact_dup (headers.messageType + headers.MQSQuoteId)"
-            sql_columns = ["headers['messageType']", "headers['MQSQuoteId']", "payload"]
+            sql_columns = ["headers['messageType']", "headers['MQSQuoteId']", "Payload"]
             columns_checked = ",".join(sql_columns)
         else:
             if layer in PAYLOAD_DEDUP_LAYERS and not payload_cols_present:
@@ -335,7 +336,7 @@ def check_table(row):
                 # actual schema doesn't have payload/headers - fall back to
                 # the standard exclude-column check instead of failing the
                 # whole table outright.
-                print(f"    NOTE: {full_table_name} has no 'payload'/'headers' columns "
+                print(f"    NOTE: {full_table_name} has no 'Payload'/'headers' columns "
                       f"(has {filtered_df.columns}). Falling back to the standard "
                       f"exclude-column duplicate check for this table.")
             comparison_cols = get_comparison_columns(filtered_df, row["exclude_column"])
