@@ -7,7 +7,7 @@
 # 2. Optionally filters to specific Layer(s) for the run (LAYER_FILTER below,
 #    or pass a list into run_all()).
 # 3. For each table:
-#       - Resolves full table name from catalog_tst.Schema.Tablename_Test
+#       - Resolves full table name from catalog_prd.Schema.Tablename_Prod
 #       - Filters rows using filter_timestamp column + startdt/enddt
 #         (falls back to a FULL table scan if no start/end is available)
 #       - bronze / pricingviews layers -> exact duplicate check on `payload`,
@@ -22,7 +22,10 @@
 # - Projects (select) down to only the columns being compared BEFORE caching
 #   - on a wide table this is the single biggest win, since it cuts how much
 #   columnar data actually gets read off disk / object storage.
-# - Uses sha2() hashing + groupBy instead of a full self-join.
+# - Uses xxhash64() + groupBy instead of a full self-join. xxhash64 is a
+#   non-cryptographic hash built for exactly this kind of high-throughput
+#   fingerprinting - it's substantially cheaper per row than sha2(), and we
+#   don't need cryptographic collision-resistance for a duplicate check.
 # - total_count, duplicate_group_count and duplicate_row_count are all
 #   computed in ONE aggregation action over the (small, already-shuffled)
 #   grouped dataframe, instead of three separate actions.
@@ -117,9 +120,9 @@ def get_control_rows(layer_filter=None):
 
 
 def resolve_table_name(row):
-    catalog = (row["catalog_tst"] or "").strip()
+    catalog = (row["catalog_prd"] or "").strip()
     schema = (row["Schema"] or "").strip()
-    table = (row["Tablename_Test"] or "").strip()
+    table = (row["Tablename_Prod"] or "").strip()
     parts = [p for p in (catalog, schema, table) if p]
     return ".".join(parts)
 
@@ -195,37 +198,39 @@ def run_standard_dup_check(df, comparison_cols):
     one aggregation action for all the stats.
     """
     narrowed = df.select(*comparison_cols).cache()
+    grouped = None
+    try:
+        hash_expr = F.xxhash64(
+            *[F.coalesce(F.col(c).cast("string"), F.lit("~NULL~")) for c in comparison_cols]
+        )
+        hashed = narrowed.withColumn("_dup_hash", hash_expr)
+        grouped = hashed.groupBy("_dup_hash").agg(F.count(F.lit(1)).alias("_cnt")).cache()
 
-    hash_expr = F.sha2(
-        F.concat_ws(
-            "||",
-            *[F.coalesce(F.col(c).cast("string"), F.lit("~NULL~")) for c in comparison_cols],
-        ),
-        256,
-    )
-    hashed = narrowed.withColumn("_dup_hash", hash_expr)
-    grouped = hashed.groupBy("_dup_hash").agg(F.count(F.lit(1)).alias("_cnt")).cache()
+        total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
 
-    total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
-
-    sample = narrowed.limit(0)
-    if dup_group_count:
-        # pull a handful of duplicate hash keys to the driver, then filter
-        # with isin() - a broadcast-style filter, no shuffle join needed
-        dup_hashes = [
-            r["_dup_hash"]
-            for r in grouped.filter(F.col("_cnt") > 1).select("_dup_hash").limit(SAMPLE_LIMIT).collect()
-        ]
-        if dup_hashes:
-            sample = (
-                hashed.filter(F.col("_dup_hash").isin(dup_hashes))
-                .select(*comparison_cols)
-                .limit(SAMPLE_LIMIT)
-            )
-
-    grouped.unpersist()
-    narrowed.unpersist()
-    return total_count, dup_group_count, dup_row_count, sample
+        sample = narrowed.limit(0)
+        if dup_group_count:
+            # pull a handful of duplicate hash keys to the driver, then filter
+            # with isin() - a broadcast-style filter, no shuffle join needed
+            dup_hashes = [
+                r["_dup_hash"]
+                for r in grouped.filter(F.col("_cnt") > 1).select("_dup_hash").limit(SAMPLE_LIMIT).collect()
+            ]
+            if dup_hashes:
+                sample = (
+                    hashed.filter(F.col("_dup_hash").isin(dup_hashes))
+                    .select(*comparison_cols)
+                    .limit(SAMPLE_LIMIT)
+                )
+        return total_count, dup_group_count, dup_row_count, sample
+    finally:
+        # ALWAYS release cached memory, even if something above raised -
+        # a cache left behind on exception is how a batch of many tables
+        # slowly accumulates memory pressure and eventually crashes Spark
+        # several tables later.
+        if grouped is not None:
+            grouped.unpersist()
+        narrowed.unpersist()
 
 
 def run_payload_dup_check(df):
@@ -240,27 +245,29 @@ def run_payload_dup_check(df):
         raise ValueError(f"Expected columns {required}, but table has {df.columns}")
 
     narrowed = df.select("headers", "payload").cache()
+    grouped = None
+    try:
+        working = (
+            narrowed.withColumn("_msg_type", F.col("headers").getItem("messageType"))
+                    .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
+                    .withColumn("_payload_hash", F.xxhash64(F.col("payload").cast("string")))
+        )
+        grouped = working.groupBy("_msg_type", "_quote_id", "_payload_hash").agg(
+            F.count(F.lit(1)).alias("_cnt")
+        ).cache()
 
-    working = (
-        narrowed.withColumn("_msg_type", F.col("headers").getItem("messageType"))
-                .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
-                .withColumn("_payload_hash", F.sha2(F.col("payload").cast("string"), 256))
-    )
-    grouped = working.groupBy("_msg_type", "_quote_id", "_payload_hash").agg(
-        F.count(F.lit(1)).alias("_cnt")
-    ).cache()
+        total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
 
-    total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
-
-    sample = (
-        grouped.filter(F.col("_cnt") > 1)
-        .select("_msg_type", "_quote_id", "_cnt")
-        .limit(SAMPLE_LIMIT)
-    )
-
-    grouped.unpersist()
-    narrowed.unpersist()
-    return total_count, dup_group_count, dup_row_count, sample
+        sample = (
+            grouped.filter(F.col("_cnt") > 1)
+            .select("_msg_type", "_quote_id", "_cnt")
+            .limit(SAMPLE_LIMIT)
+        )
+        return total_count, dup_group_count, dup_row_count, sample
+    finally:
+        if grouped is not None:
+            grouped.unpersist()
+        narrowed.unpersist()
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +297,7 @@ def check_table(row):
         full_table_name = resolve_table_name(row)
         result["table"] = full_table_name
         if not full_table_name:
-            raise ValueError("catalog_ts / Schema / Tablename_Test missing in control row")
+            raise ValueError("catalog_prd / Schema / Tablename_Prod missing in control row")
 
         df = spark.table(full_table_name)
 
@@ -299,6 +306,15 @@ def check_table(row):
 
         filtered_df, period_label = apply_time_filter(df, row["filter_timestamp"], start_dt, end_dt)
         filter_applied = not period_label.startswith("FULL")
+
+        # STEP 1: count + display the filtered row count BEFORE running the
+        # (much more expensive) duplicate comparison. This is a cheap,
+        # metadata-friendly action on Delta/Parquet, gives an early sanity
+        # check on volume, and leaves a checkpoint in the logs even if the
+        # dedup step itself fails or Spark dies partway through the run.
+        pre_check_count = filtered_df.count()
+        print(f"    Period checked : {period_label}")
+        print(f"    Rows in scope  : {pre_check_count}")
 
         layer = (row["Layer"] or "").strip().lower()
         if layer in PAYLOAD_DEDUP_LAYERS:
@@ -362,6 +378,11 @@ def _print_result(r):
 
 def run_all(layer_filter=None, write_results=True):
     layer_filter = layer_filter or LAYER_FILTER or None
+
+    # Safety net: release anything left cached in memory by a prior
+    # partial/crashed run before this one starts.
+    spark.catalog.clearCache()
+
     control_rows = get_control_rows(layer_filter)
     print(f"Found {len(control_rows)} table(s) with include='Y'"
           + (f" for layer(s) {layer_filter}" if layer_filter else " across all layers"))
@@ -376,11 +397,18 @@ def run_all(layer_filter=None, write_results=True):
         samples[table_name] = sample
         _print_result(res)
 
+        if write_results:
+            # Write THIS table's result the moment it's ready, instead of
+            # batching everything and writing once at the end. If Spark
+            # dies on table 40 of 100, tables 1-39 are already saved and
+            # you don't lose the whole run's progress.
+            row_df = spark.createDataFrame([res], schema=RESULT_SCHEMA)
+            row_df.write.mode("append").saveAsTable(RESULT_TABLE)
+
     summary_df = spark.createDataFrame(results, schema=RESULT_SCHEMA)
 
     if write_results:
-        summary_df.write.mode("append").saveAsTable(RESULT_TABLE)
-        print(f"\nSummary appended to {RESULT_TABLE}")
+        print(f"\nAll results appended incrementally to {RESULT_TABLE}")
 
     try:
         display(summary_df)  # noqa: F821  - Databricks notebook display()
