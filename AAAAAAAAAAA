@@ -45,9 +45,10 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, LongType, DoubleType
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import traceback
+import uuid
 
 spark = SparkSession.builder.appName("DuplicateCheckFramework").getOrCreate()
 
@@ -69,15 +70,13 @@ CONTROL_TABLE = "core_bld.default.radarlivetableinput"
 # generic exclude-column check. payload (string) + headers (map<string,string>)
 # are present on landing, bronze, and pricingviews tables.
 PAYLOAD_DEDUP_LAYERS = {"landing", "bronze", "pricingviews"}
-# Global fallback date range, used ONLY if a control row's own startdt/enddt
-# are blank.
-# TEMPORARY: defaulted to "today, full day" in timestamp format so the
-# script has a sane window to run against while startdt/enddt are still
-# empty in the control table. Once you populate startdt/enddt per row (or
-# want a real full-scan fallback again), set these back to None.
-_today_str = datetime.now().strftime("%Y-%m-%d")
-DEFAULT_START_DT = f"{_today_str} 00:00:00.000000"
-DEFAULT_END_DT = f"{_today_str} 23:59:59.999999"
+# Global fallback date range. Defaults to YESTERDAY, full day, in timestamp
+# format. If you want per-table windows from the control table's own
+# startdt/enddt columns instead, set BOTH of these back to None - the
+# per-table check below then falls back to the control table's values.
+_yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+DEFAULT_START_DT = f"{_yesterday_str} 00:00:00.000000"
+DEFAULT_END_DT = f"{_yesterday_str} 23:59:59.999999"
 
 # Layer-wise filter for this run. Leave [] to run every layer marked Y.
 # e.g. ["bronze", "silverish"]
@@ -85,6 +84,9 @@ LAYER_FILTER = ["landing", "bronze"]
 
 # Where the run summary gets appended
 RESULT_TABLE = "core_bld.default.radar_duplicate_check_results"
+
+# How many calendar days of run history to keep in RESULT_TABLE.
+RETENTION_DAYS = 3
 
 # How many example duplicate keys to pull back per table (kept small on purpose)
 SAMPLE_LIMIT = 20
@@ -107,6 +109,9 @@ RESULT_SCHEMA = StructType([
     StructField("duplicate_pct", DoubleType(), True),
     StructField("runtime_sec", DoubleType(), True),
     StructField("error", StringType(), True),
+    StructField("run_id", StringType(), True),
+    StructField("run_date", StringType(), True),
+    StructField("is_latest_run", StringType(), True),
 ])
 
 
@@ -129,31 +134,55 @@ def resolve_table_name(row):
     return ".".join(parts)
 
 
+def find_column(df, name):
+    """
+    Case-insensitive column lookup. The same logical column can be spelled
+    'Payload' in one table and 'PAYLOAD' in another (or 'filter_timestamp'
+    values may not match the actual column's case) - this resolves the
+    control table's given name to whatever case that specific table
+    actually uses. Returns None if no match.
+    """
+    if not name:
+        return None
+    target = name.strip().lower()
+    for c in df.columns:
+        if c.lower() == target:
+            return c
+    return None
+
+
 def get_comparison_columns(df, exclude_col_str):
-    """All columns of df, minus whatever is listed in exclude_column (comma separated)."""
-    excluded = set()
+    """
+    All columns of df, minus whatever is listed in exclude_column (comma
+    separated). Matching is case-insensitive for the same reason as
+    find_column() above - exclude_column entries may not match the actual
+    column casing in every table.
+    """
+    excluded_lower = set()
     if exclude_col_str:
-        excluded = {c.strip() for c in exclude_col_str.split(",") if c.strip()}
-    return [c for c in df.columns if c not in excluded]
+        excluded_lower = {c.strip().lower() for c in exclude_col_str.split(",") if c.strip()}
+    return [c for c in df.columns if c.lower() not in excluded_lower]
 
 
 def apply_time_filter(df, filter_col, start_dt, end_dt):
     """
     Filters df on filter_col between start_dt/end_dt when both are supplied.
+    filter_col is resolved case-insensitively against df's actual columns.
     Falls back to a FULL scan (no filter) when the column or the bounds
-    are missing - as requested, hardcode-for-now / full-check-otherwise.
-    Returns (filtered_df, period_label_for_reporting)
+    are missing.
+    Returns (filtered_df, period_label_for_reporting, actual_column_name_or_None)
     """
-    if not filter_col or filter_col not in df.columns:
-        return df, "FULL (no filter_timestamp column set)"
+    actual_col = find_column(df, filter_col)
+    if not actual_col:
+        return df, "FULL (no filter_timestamp column found on this table)", None
 
     if not start_dt or not end_dt:
-        return df, "FULL (no start/end date available)"
+        return df, "FULL (no start/end date available)", actual_col
 
     filtered = df.filter(
-        (F.col(filter_col) >= F.lit(start_dt)) & (F.col(filter_col) <= F.lit(end_dt))
+        (F.col(actual_col) >= F.lit(start_dt)) & (F.col(actual_col) <= F.lit(end_dt))
     )
-    return filtered, f"{start_dt} to {end_dt}  (on column '{filter_col}')"
+    return filtered, f"{start_dt} to {end_dt}  (on column '{actual_col}')", actual_col
 
 
 def build_readable_sql(table_name, columns_list, filter_col, start_dt, end_dt, filter_applied):
@@ -243,16 +272,20 @@ def run_payload_dup_check(df):
     multi-million-row volumes is what actually causes memory pressure, not
     the (small, capped) sample step.
     """
-    required = {"Payload", "headers"}
-    if not required.issubset(set(df.columns)):
-        raise ValueError(f"Expected columns {required}, but table has {df.columns}")
+    payload_col = find_column(df, "Payload")
+    headers_col = find_column(df, "headers")
+    if not payload_col or not headers_col:
+        raise ValueError(
+            f"Expected columns like 'Payload' and 'headers' (case-insensitive), "
+            f"but table has {df.columns}"
+        )
 
     def _with_keys(d):
         return (
-            d.select("headers", "Payload")
-             .withColumn("_msg_type", F.col("headers").getItem("messageType"))
-             .withColumn("_quote_id", F.col("headers").getItem("MQSQuoteId"))
-             .withColumn("_payload_hash", F.xxhash64(F.col("Payload").cast("string")))
+            d.select(headers_col, payload_col)
+             .withColumn("_msg_type", F.col(headers_col).getItem("messageType"))
+             .withColumn("_quote_id", F.col(headers_col).getItem("MQSQuoteId"))
+             .withColumn("_payload_hash", F.xxhash64(F.col(payload_col).cast("string")))
         )
 
     working = _with_keys(df)
@@ -303,14 +336,15 @@ def check_table(row):
 
         df = spark.table(full_table_name)
 
-        # TEMPORARY: ignore the control table's own startdt/enddt columns and
-        # always take the date range from the script-level defaults below.
-        # Revert to `row["startdt"] or DEFAULT_START_DT` (and enddt) once the
-        # control table is meant to drive per-table windows again.
-        start_dt = DEFAULT_START_DT
-        end_dt = DEFAULT_END_DT
+        # Script-level default (yesterday) takes priority when set; if you
+        # clear DEFAULT_START_DT/DEFAULT_END_DT (set both to None), this
+        # falls back to the control table's own startdt/enddt for that row.
+        start_dt = DEFAULT_START_DT if DEFAULT_START_DT else row["startdt"]
+        end_dt = DEFAULT_END_DT if DEFAULT_END_DT else row["enddt"]
 
-        filtered_df, period_label = apply_time_filter(df, row["filter_timestamp"], start_dt, end_dt)
+        filtered_df, period_label, actual_filter_col = apply_time_filter(
+            df, row["filter_timestamp"], start_dt, end_dt
+        )
         filter_applied = not period_label.startswith("FULL")
 
         # STEP 1: count + display the filtered row count BEFORE running the
@@ -323,19 +357,21 @@ def check_table(row):
         print(f"    Rows in scope  : {pre_check_count}")
 
         layer = (row["Layer"] or "").strip().lower()
-        payload_cols_present = {"Payload", "headers"}.issubset(set(filtered_df.columns))
+        payload_col = find_column(filtered_df, "Payload")
+        headers_col = find_column(filtered_df, "headers")
+        payload_cols_present = bool(payload_col and headers_col)
 
         if layer in PAYLOAD_DEDUP_LAYERS and payload_cols_present:
             total_count, dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
             check_type = "payload_exact_dup (headers.messageType + headers.MQSQuoteId)"
-            sql_columns = ["headers['messageType']", "headers['MQSQuoteId']", "Payload"]
+            sql_columns = [f"{headers_col}['messageType']", f"{headers_col}['MQSQuoteId']", payload_col]
             columns_checked = ",".join(sql_columns)
         else:
             if layer in PAYLOAD_DEDUP_LAYERS and not payload_cols_present:
                 # This table is flagged for the payload-based check but its
-                # actual schema doesn't have payload/headers - fall back to
-                # the standard exclude-column check instead of failing the
-                # whole table outright.
+                # actual schema doesn't have payload/headers (in any case) -
+                # fall back to the standard exclude-column check instead of
+                # failing the whole table outright.
                 print(f"    NOTE: {full_table_name} has no 'Payload'/'headers' columns "
                       f"(has {filtered_df.columns}). Falling back to the standard "
                       f"exclude-column duplicate check for this table.")
@@ -348,7 +384,7 @@ def check_table(row):
             columns_checked = ",".join(comparison_cols)
 
         duplicate_check_sql = build_readable_sql(
-            full_table_name, sql_columns, row["filter_timestamp"], start_dt, end_dt, filter_applied
+            full_table_name, sql_columns, actual_filter_col, start_dt, end_dt, filter_applied
         )
 
         result.update({
@@ -392,6 +428,28 @@ def _print_result(r):
 # MAIN ENTRY POINT
 # ---------------------------------------------------------------------------
 
+def _finalize_run(run_id, run_date, touched_tables):
+    """
+    After a run completes:
+    1. Marks any EARLIER rows for the SAME tables on the SAME run_date
+       (different run_id) as no longer the latest run.
+    2. Purges result rows older than RETENTION_DAYS calendar days.
+    """
+    if touched_tables:
+        table_list_sql = ", ".join("'" + t.replace("'", "''") + "'" for t in touched_tables)
+        spark.sql(f"""
+            UPDATE {RESULT_TABLE}
+            SET is_latest_run = 'N'
+            WHERE run_date = '{run_date}'
+              AND run_id <> '{run_id}'
+              AND table IN ({table_list_sql})
+        """)
+
+    cutoff_date = (datetime.now() - timedelta(days=RETENTION_DAYS - 1)).strftime("%Y-%m-%d")
+    spark.sql(f"DELETE FROM {RESULT_TABLE} WHERE run_date < '{cutoff_date}'")
+    print(f"Retention: kept run_date >= {cutoff_date} ({RETENTION_DAYS} day(s)) in {RESULT_TABLE}")
+
+
 def run_all(layer_filter=None, write_results=True):
     layer_filter = layer_filter or LAYER_FILTER or None
 
@@ -399,9 +457,13 @@ def run_all(layer_filter=None, write_results=True):
     # partial/crashed run before this one starts.
     spark.catalog.clearCache()
 
+    run_id = str(uuid.uuid4())
+    run_date = datetime.now().strftime("%Y-%m-%d")
+
     control_rows = get_control_rows(layer_filter)
     print(f"Found {len(control_rows)} table(s) with include='Y'"
           + (f" for layer(s) {layer_filter}" if layer_filter else " across all layers"))
+    print(f"Run ID: {run_id}  |  Run date: {run_date}")
 
     results = []
     samples = {}
@@ -409,6 +471,9 @@ def run_all(layer_filter=None, write_results=True):
         table_name = resolve_table_name(row)
         print(f"\n--- Checking [{row['Layer']}] {table_name} ---")
         res, sample = check_table(row)
+        res["run_id"] = run_id
+        res["run_date"] = run_date
+        res["is_latest_run"] = "Y"
         results.append(res)
         samples[table_name] = sample
         _print_result(res)
@@ -424,7 +489,9 @@ def run_all(layer_filter=None, write_results=True):
     summary_df = spark.createDataFrame(results, schema=RESULT_SCHEMA)
 
     if write_results:
-        print(f"\nAll results appended incrementally to {RESULT_TABLE}")
+        touched_tables = [r["table"] for r in results if r.get("table")]
+        _finalize_run(run_id, run_date, touched_tables)
+        print(f"All results appended incrementally to {RESULT_TABLE}")
 
     try:
         display(summary_df)  # noqa: F821  - Databricks notebook display()
