@@ -1,8 +1,3 @@
-Backfill completeness – all records diverted to the alternate table during the 4-day issue period are successfully moved/reprocessed into the actual target table.
-No data loss / no duplicates – reconcile record counts using the business/message ID between diverted data and final target data.
-Data correctness – validate that the header attributes are populated from the correct section of the payload and that the remaining payload is not accidentally changed or truncated.
-Historical + live continuity – confirm the backfilled data joins correctly with the data already present before the incident and with new incoming streaming data after restart, with no gaps or overlaps.
-Timestamp/order validation – confirm original event timestamps, ingestion timestamps where applicable, and sequencing are handled correctly during backfill.
-Downstream data validation – verify the backfilled records flow into the immediate downstream tables/views/jobs in the same way as normal streaming records.
-Downstream reconciliation – compare expected versus actual records at key downstream points, particularly where the header attributes are used for filtering, routing, transformation, or business logic.
-Business-impact smoke test – select a few representative recovered records and trace them end-to-end through the important downstream process/report/reconciliation to confirm they behave exactly like normal records.
+Got it, I understand the approach now. You are first getting the normal PTS streaming running through ehubstream and DLTs, and then introducing the cleaned/backfill data into the same flow.
+
+My first checkpoint from the testing side will be to validate the cleaned data going into ehubstream — mainly the record count/completeness and that the header is corrected as expected. Then I can follow those records downstream to check for any missing or duplicate data.
