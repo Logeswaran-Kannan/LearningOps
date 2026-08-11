@@ -70,13 +70,25 @@ CONTROL_TABLE = "core_bld.default.radarlivetableinput"
 # generic exclude-column check. payload (string) + headers (map<string,string>)
 # are present on landing, bronze, and pricingviews tables.
 PAYLOAD_DEDUP_LAYERS = {"landing", "bronze", "pricingviews"}
-# Global fallback date range. Defaults to YESTERDAY, full day, in timestamp
-# format. If you want per-table windows from the control table's own
-# startdt/enddt columns instead, set BOTH of these back to None - the
-# per-table check below then falls back to the control table's values.
-_yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-DEFAULT_START_DT = f"{_yesterday_str} 00:00:00.000000"
-DEFAULT_END_DT = f"{_yesterday_str} 23:59:59.999999"
+
+# Per-table extras for the payload check: these tables get an ADDITIONAL
+# column folded into the payload duplicate key, on top of the standard
+# headers['messageType'] + headers['MQSQuoteId']. Keyed by Tablename_Prod,
+# lowercased (matched case-insensitively against the control table's value).
+EXTRA_PAYLOAD_KEY_COLUMNS = {
+    "dlt_rating_response_uw_results": ["TierName"],
+    "vw_rating_response_uw_results": ["TierName"],
+}
+
+# Global fallback date range. TESTING: currently set to the last 10 days
+# (today-10 through yesterday, full days) so a test run has enough volume
+# to look at. Revert to a single day (or None/None for a full scan) once
+# testing is done - see the two lines below.
+_window_days = 10
+_start_date_str = (datetime.now() - timedelta(days=_window_days)).strftime("%Y-%m-%d")
+_end_date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+DEFAULT_START_DT = f"{_start_date_str} 00:00:00.000000"
+DEFAULT_END_DT = f"{_end_date_str} 23:59:59.999999"
 
 # Layer-wise filter for this run. Leave [] to run every layer marked Y.
 # e.g. ["bronze", "silverish"]
@@ -261,17 +273,22 @@ def run_standard_dup_check(df, comparison_cols):
         grouped.unpersist()
 
 
-def run_payload_dup_check(df):
+def run_payload_dup_check(df, extra_key_cols=None):
     """
     Special check for landing / bronze / pricingviews layers:
-    exact duplicate on `Payload`, keyed by headers['messageType'] and
-    headers['MQSQuoteId']. Assumes `headers` is a map<string,string> column.
+    exact duplicate on `Payload`, keyed by headers['messageType'],
+    headers['MQSQuoteId'], and optionally extra_key_cols - additional
+    columns (already resolved to their actual case by the caller) folded
+    into the duplicate key for specific tables. Assumes `headers` is a
+    map<string,string> column.
 
-    Only the grouped (hash + count) result is cached - the raw `payload`
+    Only the grouped (hash + count) result is cached - the raw `Payload`
     text is never cached, since caching the full payload column at
     multi-million-row volumes is what actually causes memory pressure, not
     the (small, capped) sample step.
     """
+    extra_key_cols = extra_key_cols or []
+
     payload_col = find_column(df, "Payload")
     headers_col = find_column(df, "headers")
     if not payload_col or not headers_col:
@@ -281,23 +298,23 @@ def run_payload_dup_check(df):
         )
 
     def _with_keys(d):
-        return (
-            d.select(headers_col, payload_col)
+        base = (
+            d.select(headers_col, payload_col, *extra_key_cols)
              .withColumn("_msg_type", F.col(headers_col).getItem("messageType"))
              .withColumn("_quote_id", F.col(headers_col).getItem("MQSQuoteId"))
              .withColumn("_payload_hash", F.xxhash64(F.col(payload_col).cast("string")))
         )
+        return base
 
     working = _with_keys(df)
-    grouped = working.groupBy("_msg_type", "_quote_id", "_payload_hash").agg(
-        F.count(F.lit(1)).alias("_cnt")
-    ).cache()
+    group_cols = ["_msg_type", "_quote_id"] + extra_key_cols + ["_payload_hash"]
+    grouped = working.groupBy(*group_cols).agg(F.count(F.lit(1)).alias("_cnt")).cache()
     try:
         total_count, dup_group_count, dup_row_count = _grouped_stats(grouped)
 
         sample = (
             grouped.filter(F.col("_cnt") > 1)
-            .select("_msg_type", "_quote_id", "_cnt")
+            .select(*group_cols, "_cnt")
             .limit(SAMPLE_LIMIT)
         )
         return total_count, dup_group_count, dup_row_count, sample
@@ -362,9 +379,29 @@ def check_table(row):
         payload_cols_present = bool(payload_col and headers_col)
 
         if layer in PAYLOAD_DEDUP_LAYERS and payload_cols_present:
-            total_count, dup_group_count, dup_row_count, sample = run_payload_dup_check(filtered_df)
-            check_type = "payload_exact_dup (headers.messageType + headers.MQSQuoteId)"
-            sql_columns = [f"{headers_col}['messageType']", f"{headers_col}['MQSQuoteId']", payload_col]
+            # Resolve any per-table extra key columns (e.g. TierName) to
+            # their actual case on this table; skip gracefully if missing.
+            table_key = (row["Tablename_Prod"] or "").strip().lower()
+            extra_cols_wanted = EXTRA_PAYLOAD_KEY_COLUMNS.get(table_key, [])
+            resolved_extra_cols = []
+            for c in extra_cols_wanted:
+                actual = find_column(filtered_df, c)
+                if actual:
+                    resolved_extra_cols.append(actual)
+                else:
+                    print(f"    NOTE: extra key column '{c}' not found on {full_table_name} "
+                          f"(has {filtered_df.columns}); skipping it for this table's payload check.")
+
+            total_count, dup_group_count, dup_row_count, sample = run_payload_dup_check(
+                filtered_df, extra_key_cols=resolved_extra_cols
+            )
+            extra_label = "".join(f" + {c}" for c in resolved_extra_cols)
+            check_type = f"payload_exact_dup (headers.messageType + headers.MQSQuoteId{extra_label})"
+            sql_columns = (
+                [f"{headers_col}['messageType']", f"{headers_col}['MQSQuoteId']"]
+                + resolved_extra_cols
+                + [payload_col]
+            )
             columns_checked = ",".join(sql_columns)
         else:
             if layer in PAYLOAD_DEDUP_LAYERS and not payload_cols_present:
