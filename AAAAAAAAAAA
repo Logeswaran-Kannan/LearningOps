@@ -1,7 +1,21 @@
-Thanks Phil, happy to attend the meeting in your place.
+Normal flow: PSU Event Hub → core_tst.mqs_athn_mtr.ehubstream → Bronze → Silverish → Raw Enrichment
 
-It will be useful to understand the Guidewire Audit Data capability in more detail, particularly how the Audit KPIs are generated, the level of granularity available, how configurable the metrics are, and how the relevant processing window/watermark is identified to support reconciliation.
+Recovery flow: Backup/cleaned data core.radar_live.ehubstream_cleaned → same downstream Bronze → Silverish → Raw Enrichment
 
-I'll also try to understand the expected delivery and operational flow and capture any points that need further clarification.
+So when he asks “Do we have a proper testing plan yet?”, your data-focused test plan can be:
 
-Thanks for the background — this is helpful context ahead of the meeting.
+First checkpoint – identify and reconcile both data sets
+Get the count/unique message IDs coming from PSU.
+Get the count/unique message IDs from the cleaned backup data.
+Confirm both populations can be identified separately in TST.
+Validate the recovered data
+Check that the header fields that caused the original failure are now correctly populated.
+Compare a sample against the cleaned source.
+Reconcile through each layer
+Cleaned/PSU source → Bronze → Silverish → Raw Enrichment.
+Identify any missing or unexpectedly rejected records.
+Duplicate/overlap check
+This is particularly important now because TST contains PSU + backup data.
+Check whether the same business/message ID exists from both sources and whether this causes duplication downstream.
+Downstream impact
+Confirm recovered records are processed exactly like normal records and the downstream transformations/filtering haven't been affected.
