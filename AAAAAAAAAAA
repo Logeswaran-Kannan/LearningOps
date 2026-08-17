@@ -1,21 +1,138 @@
-Normal flow: PSU Event Hub → core_tst.mqs_athn_mtr.ehubstream → Bronze → Silverish → Raw Enrichment
+DROP TABLE IF EXISTS tmp_table_counts;
 
-Recovery flow: Backup/cleaned data core.radar_live.ehubstream_cleaned → same downstream Bronze → Silverish → Raw Enrichment
+CREATE TEMP TABLE tmp_table_counts
+(
+    table_name      text,
+    filter_column   text,
+    count_type      text,
+    record_count    bigint
+);
 
-So when he asks “Do we have a proper testing plan yet?”, your data-focused test plan can be:
+DO $$
+DECLARE
+    v_table      text;
+    v_schema     text := 'public';   -- CHANGE SCHEMA IF REQUIRED
+    v_column     text;
+    v_count      bigint;
 
-First checkpoint – identify and reconcile both data sets
-Get the count/unique message IDs coming from PSU.
-Get the count/unique message IDs from the cleaned backup data.
-Confirm both populations can be identified separately in TST.
-Validate the recovered data
-Check that the header fields that caused the original failure are now correctly populated.
-Compare a sample against the cleaned source.
-Reconcile through each layer
-Cleaned/PSU source → Bronze → Silverish → Raw Enrichment.
-Identify any missing or unexpectedly rejected records.
-Duplicate/overlap check
-This is particularly important now because TST contains PSU + backup data.
-Check whether the same business/message ID exists from both sources and whether this causes duplication downstream.
-Downstream impact
-Confirm recovered records are processed exactly like normal records and the downstream transformations/filtering haven't been affected.
+    -- ADD YOUR TABLE NAMES HERE
+    v_tables text[] := ARRAY[
+        'table1',
+        'table2',
+        'table3',
+        'table4'
+    ];
+
+BEGIN
+
+    FOREACH v_table IN ARRAY v_tables
+    LOOP
+
+        v_column := NULL;
+        v_count  := 0;
+
+        /*
+        -------------------------------------------------------
+        1. Check for updatetime column
+        -------------------------------------------------------
+        */
+        SELECT column_name
+        INTO v_column
+        FROM information_schema.columns
+        WHERE table_schema = v_schema
+          AND table_name = v_table
+          AND lower(column_name) = 'updatetime'
+        LIMIT 1;
+
+
+        /*
+        -------------------------------------------------------
+        2. If updatetime does not exist, check createtime
+        -------------------------------------------------------
+        */
+        IF v_column IS NULL THEN
+
+            SELECT column_name
+            INTO v_column
+            FROM information_schema.columns
+            WHERE table_schema = v_schema
+              AND table_name = v_table
+              AND lower(column_name) = 'createtime'
+            LIMIT 1;
+
+        END IF;
+
+
+        /*
+        -------------------------------------------------------
+        3. Timestamp column available
+        -------------------------------------------------------
+        */
+        IF v_column IS NOT NULL THEN
+
+            EXECUTE format(
+                'SELECT count(*)
+                   FROM %I.%I
+                  WHERE %I >= timestamp %L
+                    AND %I <  timestamp %L',
+                v_schema,
+                v_table,
+                v_column,
+                '2026-08-16 03:00:00',
+                v_column,
+                '2026-08-17 03:00:00'
+            )
+            INTO v_count;
+
+            INSERT INTO tmp_table_counts
+            VALUES
+            (
+                v_table,
+                v_column,
+                'DATE_FILTERED',
+                v_count
+            );
+
+
+        /*
+        -------------------------------------------------------
+        4. No updatetime / createtime - full count
+        -------------------------------------------------------
+        */
+        ELSE
+
+            EXECUTE format(
+                'SELECT count(*) FROM %I.%I',
+                v_schema,
+                v_table
+            )
+            INTO v_count;
+
+            INSERT INTO tmp_table_counts
+            VALUES
+            (
+                v_table,
+                NULL,
+                'FULL_COUNT',
+                v_count
+            );
+
+        END IF;
+
+    END LOOP;
+
+END $$;
+
+
+/*
+-----------------------------------------------------------
+Final Result
+-----------------------------------------------------------
+*/
+SELECT
+    table_name,
+    filter_column,
+    count_type,
+    record_count
+FROM tmp_table_counts
+ORDER BY table_name;
