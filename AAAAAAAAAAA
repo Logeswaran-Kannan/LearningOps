@@ -1,7 +1,6 @@
-I think for this backfill we can keep the approach simple and go with option A for now.
 
-Recon already has the known source-file completeness issue, with the fix planned for the 20th, and currently the recon figures are not being actively used. Also, as the backfill covers 30 Jul–4 Aug and the recon scan window is ±15 days, some of the earlier backfill dates will anyway fall outside the current window.
+delta_path = "s3://<bucket>/<path>/pc_address/"
 
-Rather than introducing an additional change to TimeEnqueued/recon logic just for this recovery, I suggest we proceed with the backfill using the altered TimeEnqueued and capture the reconciliation difference as a **known gap/limitation**.
+df = spark.read.format("delta").load(delta_path)
 
-From testing, we can focus the sign-off on validating the backfill end-to-end through ehubstream → Bronze → Silver → downstream, including completeness, duplicates/orphans and downstream impact.
+df.printSchema()
