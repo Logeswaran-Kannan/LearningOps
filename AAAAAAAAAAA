@@ -4,3 +4,17 @@ delta_path = "s3://<bucket>/<path>/pc_address/"
 df = spark.read.format("delta").load(delta_path)
 
 df.printSchema()
+
+
+df = (
+    spark.read
+         .format("delta")
+         .load(delta_path)
+)
+
+
+# ==========================================
+# Show complete schema
+# ==========================================
+
+df.printSchema()
