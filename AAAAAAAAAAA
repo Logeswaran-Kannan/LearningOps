@@ -1,20 +1,7 @@
-
-delta_path = "s3://<bucket>/<path>/pc_address/"
-
-df = spark.read.format("delta").load(delta_path)
-
-df.printSchema()
-
-
-df = (
-    spark.read
-         .format("delta")
-         .load(delta_path)
-)
-
-
-# ==========================================
-# Show complete schema
-# ==========================================
-
-df.printSchema()
+SELECT
+    gwcbi__payload_ts_ms,
+    timestamp_millis(gwcbi__payload_ts_ms) AS payload_timestamp,
+    gwcbi__connector_ts_ms,
+    timestamp_millis(gwcbi__connector_ts_ms) AS connector_timestamp
+FROM core_tst_std001.gw_cda_clone.gwcda_cc_history_clone
+WHERE id IN (144107, 144108);
