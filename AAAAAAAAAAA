@@ -1,7 +1,5 @@
-SELECT
-    gwcbi__payload_ts_ms,
-    timestamp_millis(gwcbi__payload_ts_ms) AS payload_timestamp,
-    gwcbi__connector_ts_ms,
-    timestamp_millis(gwcbi__connector_ts_ms) AS connector_timestamp
-FROM core_tst_std001.gw_cda_clone.gwcda_cc_history_clone
-WHERE id IN (144107, 144108);
+Hi Nat, I wanted to follow up on Jeevitha’s role in the RADAR project. I’ve just returned from my India vacation and wanted to check where things currently stand and get your advice on how we should proceed.
+
+As her current last working day is 30th September, I’ll need to update Hazel/client accordingly. If we need to look for a replacement, we should also start planning soon to allow enough time for KT and a smooth transition.
+
+Please let me know your thoughts on how you’d like me to proceed. Thanks!
