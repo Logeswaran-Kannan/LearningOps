@@ -1,16 +1,31 @@
-Subject: Update on Jeevitha – RADAR
-
-Hi Hazel,
-
-Just wanted to keep you updated regarding Jeevitha.
-
-I’ve now been informed that Jeevitha is planning to take up a new opportunity outside Cognizant. While I was away, there were some internal discussions around possible retention options, but I understand the decision now is to move ahead with a replacement.
-
-Her last working day is currently planned for 30th September. We’re looking at suitable profiles internally, and I’ll coordinate from our side and share the relevant options with you shortly.
-
-Given the timeline, I’ll also make sure we have the right KT and handover in place to keep the transition as smooth as possible for the RADAR team.
-
-Just wanted to keep you updated. Happy to catch up on Teams if you’d like to discuss anything.
-
-Thanks,
-[Your Name]
+%sql
+WITH ehub AS (
+  SELECT DISTINCT
+         trim(headers['MQSQuoteId']) AS mqsQuoteId,
+         headers['brand']            AS brand
+  FROM core_tst.mqs_athn_mtr.ehubstream
+  WHERE cast(enqueuedTime AS date) = '2026-09-21'
+    AND headers['messageType'] = 'mqs-quote-request'
+),
+csv AS (
+  SELECT DISTINCT trim(mqsQuoteId) AS mqsQuoteId
+  FROM core_bld.radar_live.reconciliation_csv_source
+  WHERE mqsQuoteId IS NOT NULL
+  -- AND cast(<csv_date_column> AS date) = '2026-09-21'   -- add if the CSV has a date column
+)
+SELECT
+  coalesce(e.brand, 'NOT IN EHUB')                                         AS brand,
+  count(DISTINCT e.mqsQuoteId)                                             AS ehub_count,
+  count(DISTINCT c.mqsQuoteId)                                             AS csv_count,
+  count(DISTINCT CASE WHEN e.mqsQuoteId IS NOT NULL
+                       AND c.mqsQuoteId IS NOT NULL THEN e.mqsQuoteId END) AS matched_count,
+  count(DISTINCT CASE WHEN c.mqsQuoteId IS NULL THEN e.mqsQuoteId END)     AS in_ehub_not_in_csv,
+  count(DISTINCT CASE WHEN e.mqsQuoteId IS NULL THEN c.mqsQuoteId END)     AS in_csv_not_in_ehub,
+  round(100.0 * count(DISTINCT CASE WHEN e.mqsQuoteId IS NOT NULL
+                                     AND c.mqsQuoteId IS NOT NULL THEN e.mqsQuoteId END)
+        / nullif(count(DISTINCT e.mqsQuoteId), 0), 2)                      AS match_pct
+FROM ehub e
+FULL OUTER JOIN csv c
+  ON e.mqsQuoteId = c.mqsQuoteId
+GROUP BY coalesce(e.brand, 'NOT IN EHUB')
+ORDER BY brand;
