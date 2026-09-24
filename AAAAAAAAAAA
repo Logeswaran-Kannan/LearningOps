@@ -1,21 +1,13 @@
-%sql
-WITH missing AS (
-  SELECT DISTINCT trim(c.mqsQuoteId) AS id
-  FROM core_bld.radar_live.reconciliation_csv_source c
-  LEFT JOIN core_tst.mqs_athn_mtr.ehubstream e
-    ON trim(c.mqsQuoteId) = trim(e.headers['MQSQuoteId'])
-   AND cast(e.enqueuedTime AS date) = '2026-09-21'
-   AND e.headers['messageType'] = 'mqs-quote-request'
-  WHERE e.headers['MQSQuoteId'] IS NULL
-    AND c.mqsQuoteId IS NOT NULL
-)
-SELECT
-  cast(e.enqueuedTime AS date)  AS ehub_date,
-  e.headers['messageType']      AS messageType,
-  e.headers['brand']            AS brand,
-  count(DISTINCT m.id)          AS quote_count
-FROM missing m
-LEFT JOIN core_tst.mqs_athn_mtr.ehubstream e
-  ON m.id = trim(e.headers['MQSQuoteId'])
-GROUP BY 1, 2, 3
-ORDER BY quote_count DESC;
+agree that, since there is no change to the structure of the data or the normal way messages are posted to BICoE, we don't need to perform full downstream ingestion testing for every EMQS scenario. For the EMQS/Mule recovery change, successful arrival in the BICoE Event Hub can be the main validation point.
+
+From the BICoE side, though, we'd like to cover the three scenarios as follows:
+
+1. Event Hub failure / Blob recovery
+
+Take the known messages that failed initial Event Hub delivery and were stored in Blob.
+After the overnight/retry job, confirm that all expected BICoE messages are visible in our Event Hub.
+Confirm the recovered messages have the expected message type/content.
+Also check that the replay doesn't route messages that BICoE shouldn't receive, particularly core-request.
+For a small sample, we'll validate that the recovered messages can continue through the existing BICoE processing successfully.
+
+For the 10 Blob-replay samples already shared, I can currently account for 9 on the BICoE side, so I'd like to trace the remaining one as part of this scenario.
