@@ -1,9 +1,17 @@
-Just want to confirm my understanding of this negative scenario.
+Thanks for confirming that the duplicate behaviour in the earlier test was applicable to the QWD Event Hub, as QWD remained valid while the BICoE configuration was invalid.
 
-BICoE/S-layer configuration was made invalid, so BICoE messages could not be published to the BICoE Event Hub and were moved to Blob as expected.
+Could we please perform the same negative scenario in reverse for BICoE?
 
-QWD configuration remained valid, so QWD messages were successfully published to the QWD Event Hub. However, for some messages the acknowledgement was not received within the 30-second window, so they were also moved to Blob. When those messages are reprocessed from Blob, the expectation is that they will be published to QWD again and therefore create duplicates in the QWD Event Hub.
+This time:
 
-Can you confirm that the duplicate behaviour mentioned in the defect is specifically expected in the QWD Event Hub, and not in the BICoE Event Hub for this scenario?
+Keep the BICoE Event Hub configuration valid.
+Make the QWD configuration invalid.
+Generate a controlled set of messages.
+Simulate the condition where the message is successfully published to BICoE but the acknowledgement is not received within the 30-second window, resulting in the message also being written to Blob.
+Reprocess those Blob messages.
 
-Also, can you confirm whether the same acknowledgement-timeout situation can occur on the BICoE path — i.e. BICoE successfully receives a message, but Mule doesn't receive the acknowledgement within 30 seconds and therefore also puts that message into Blob?”
+From the BICoE side, we then want to verify whether the original message + reprocessed message results in duplicates in the BICoE Event Hub, using the same MQS ID/message ID for comparison.
+
+Please also share the sample MQS IDs and the timing of the original publish and Blob reprocessing so that we can validate both occurrences against the BICoE enqueuedTime.
+
+This will allow us to confirm the duplicate behaviour specifically for the BICoE path, rather than inferring it from the QWD test.
