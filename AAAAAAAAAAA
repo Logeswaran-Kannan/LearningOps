@@ -1,13 +1,18 @@
-agree that, since there is no change to the structure of the data or the normal way messages are posted to BICoE, we don't need to perform full downstream ingestion testing for every EMQS scenario. For the EMQS/Mule recovery change, successful arrival in the BICoE Event Hub can be the main validation point.
+BICoE scope – MQS Release 1.3 performance testing
+Validate normal MQS traffic + Blob replay traffic together at production-like volume.
+Confirm BICoE Event Hub can receive the replayed messages without message loss, abnormal lag or backlog.
+Confirm replay does not introduce duplicates.
+Confirm only BICoE's expected message types are received during replay. In particular, core_request, which is intended for the Workday flow, should not be populated into the BICoE Event Hub during reprocessing.
+Validate that the replayed messages can continue through the BICoE ingestion pipeline without failures or abnormal processing delay.
+After the load/replay finishes, confirm the pipeline catches up and returns to its normal processing state.
+What the BICoE developer should monitor
 
-From the BICoE side, though, we'd like to cover the three scenarios as follows:
+During the performance run, I would ask the BICoE developer to capture:
 
-1. Event Hub failure / Blob recovery
+Event Hub: incoming message volume/rate, consumer lag/backlog, throttling/errors and whether throughput changes significantly when Blob replay starts.
 
-Take the known messages that failed initial Event Hub delivery and were stored in Blob.
-After the overnight/retry job, confirm that all expected BICoE messages are visible in our Event Hub.
-Confirm the recovered messages have the expected message type/content.
-Also check that the replay doesn't route messages that BICoE shouldn't receive, particularly core-request.
-For a small sample, we'll validate that the recovered messages can continue through the existing BICoE processing successfully.
+BICoE ingestion: processing throughput, failed/rejected messages, exceptions, retry behaviour, processing latency and whether the streaming jobs remain healthy.
 
-For the 10 Blob-replay samples already shared, I can currently account for 9 on the BICoE side, so I'd like to trace the remaining one as part of this scenario.
+Data validation: counts before/during/after replay, duplicate message IDs/quote IDs, missing expected replay samples, and a breakdown by message type to prove that unwanted types such as core_request have not entered BICoE.
+
+Recovery: once replay stops, how long BICoE takes to clear any accumulated backlog and return to its normal processing level.
