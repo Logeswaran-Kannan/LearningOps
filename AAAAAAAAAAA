@@ -5,118 +5,53 @@ WITH base AS (
         headers['MQSQuoteId'] AS mqs_quote_id,
         headers['messageType'] AS message_type,
         headers['quoteStep'] AS quote_step,
-        TO_DATE(headers['quoteDate']) AS quote_date
+        TO_DATE(headers['quoteDate']) AS quote_date,
+
+        COUNT(*) OVER (
+            PARTITION BY
+                headers['MQSQuoteId'],
+                headers['messageType']
+        ) AS occurrence_count
+
     FROM core.mqs_athn_mtr.ehubstream
-    WHERE headers['quoteDate'] IS NOT NULL
-      AND headers['MQSQuoteId'] IS NOT NULL
-)
+    WHERE headers['MQSQuoteId'] IS NOT NULL
+),
 
-SELECT
-    enqueue_date,
-    COUNT(*) AS total_messages,
-
-    SUM(CASE
-        WHEN DATEDIFF(enqueue_date, quote_date) = 0 THEN 1 ELSE 0
-    END) AS same_day,
-
-    SUM(CASE
-        WHEN DATEDIFF(enqueue_date, quote_date) = 1 THEN 1 ELSE 0
-    END) AS one_day_late,
-
-    SUM(CASE
-        WHEN DATEDIFF(enqueue_date, quote_date) = 2 THEN 1 ELSE 0
-    END) AS two_days_late,
-
-    SUM(CASE
-        WHEN DATEDIFF(enqueue_date, quote_date) >= 3 THEN 1 ELSE 0
-    END) AS three_plus_days_late,
-
-    ROUND(
-        100.0 * SUM(
-            CASE WHEN DATEDIFF(enqueue_date, quote_date) > 0 THEN 1 ELSE 0 END
-        ) / COUNT(*),
-        4
-    ) AS delayed_pct
-
-FROM base
-GROUP BY enqueue_date
-ORDER BY enqueue_date;
-
-----------------
-
-
-WITH base AS (
+daily AS (
     SELECT
-        DATE(enqueuedTime) AS enqueue_date,
-        headers['messageType'] AS message_type,
-        TO_DATE(headers['quoteDate']) AS quote_date
-    FROM core.mqs_athn_mtr.ehubstream
-    WHERE headers['quoteDate'] IS NOT NULL
-)
+        enqueue_date,
 
-SELECT
-    enqueue_date,
-    message_type,
-    COUNT(*) AS total_messages,
+        COUNT(*) AS total_messages,
 
-    SUM(
-        CASE
-            WHEN DATEDIFF(enqueue_date, quote_date) > 0
-            THEN 1 ELSE 0
-        END
-    ) AS delayed_messages,
+        SUM(
+            CASE WHEN occurrence_count > 1
+            THEN 1 ELSE 0 END
+        ) AS repeated_message_candidates,
 
-    ROUND(
-        100.0 * SUM(
+        SUM(
             CASE
                 WHEN DATEDIFF(enqueue_date, quote_date) > 0
                 THEN 1 ELSE 0
             END
-        ) / COUNT(*),
-        2
-    ) AS delayed_pct
+        ) AS delayed_messages,
 
-FROM base
-GROUP BY enqueue_date, message_type
-ORDER BY enqueue_date, delayed_messages DESC;
+        SUM(
+            CASE
+                WHEN occurrence_count > 1
+                 AND DATEDIFF(enqueue_date, quote_date) > 0
+                THEN 1 ELSE 0
+            END
+        ) AS delayed_and_repeated
 
------------
-
-
-WITH base AS (
-    SELECT
-        headers['MQSQuoteId'] AS mqs_quote_id,
-        headers['messageType'] AS message_type,
-        headers['quoteStep'] AS quote_step,
-        TO_DATE(headers['quoteDate']) AS quote_date,
-        enqueuedTime,
-        DATE(enqueuedTime) AS enqueue_date
-    FROM core.mqs_athn_mtr.ehubstream
-    WHERE headers['MQSQuoteId'] IS NOT NULL
+    FROM base
+    GROUP BY enqueue_date
 )
 
-SELECT
-    mqs_quote_id,
-    message_type,
+SELECT *,
+    ROUND(
+        100.0 * delayed_and_repeated / total_messages,
+        4
+    ) AS suspected_replay_pct
 
-    COUNT(*) AS occurrence_count,
-    COUNT(DISTINCT quote_step) AS distinct_quote_steps,
-    COUNT(DISTINCT enqueue_date) AS distinct_enqueue_dates,
-
-    MIN(enqueuedTime) AS first_arrival,
-    MAX(enqueuedTime) AS last_arrival,
-
-    COLLECT_SET(quote_step) AS quote_steps,
-    COLLECT_SET(CAST(enqueue_date AS STRING)) AS enqueue_dates,
-    COLLECT_SET(CAST(quote_date AS STRING)) AS quote_dates
-
-FROM base
-GROUP BY
-    mqs_quote_id,
-    message_type
-
-HAVING COUNT(*) > 1
-ORDER BY occurrence_count DESC;
-
-
-----------
+FROM daily
+ORDER BY enqueue_date;
