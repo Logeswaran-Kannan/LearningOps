@@ -1,17 +1,8 @@
-Thanks for confirming that the duplicate behaviour in the earlier test was applicable to the QWD Event Hub, as QWD remained valid while the BICoE configuration was invalid.
+BICoE – Current Open Items / Observations
 
-Could we please perform the same negative scenario in reverse for BICoE?
+Blob replay – 9/10 records received: For the controlled set of 10 MQS IDs confirmed as reprocessed from Blob, BICoE could identify only 9 records in the Event Hub. The remaining MQS ID still needs end-to-end tracing to understand where it was lost/not visible.
+BICoE duplicate scenario – not yet reproduced: The ACK-timeout condition was observed on the QWD path, where a successfully published message was also written to Blob. The reverse test was attempted for BICoE, but the timeout did not occur. Upstream analysis is required to identify the timeout trigger and reproduce the same condition for BICoE so we can validate duplicate behaviour.
+stop-quote message – observation only: During the BICoE testing window, we did not receive the expected stop-quote message. Ashutosh has clarified that this is due to the test data not generating/providing the message, rather than an issue with the processing/recovery flow. Therefore, this is currently recorded as a test-data coverage observation rather than a processing defect.
+Downstream replay handling: BICoE developer validation is required to confirm how replayed/reprocessed messages are handled through Silverish/Silver and dim_audit_rate_permission, particularly around duplicate handling and replay timestamps.
 
-This time:
-
-Keep the BICoE Event Hub configuration valid.
-Make the QWD configuration invalid.
-Generate a controlled set of messages.
-Simulate the condition where the message is successfully published to BICoE but the acknowledgement is not received within the 30-second window, resulting in the message also being written to Blob.
-Reprocess those Blob messages.
-
-From the BICoE side, we then want to verify whether the original message + reprocessed message results in duplicates in the BICoE Event Hub, using the same MQS ID/message ID for comparison.
-
-Please also share the sample MQS IDs and the timing of the original publish and Blob reprocessing so that we can validate both occurrences against the BICoE enqueuedTime.
-
-This will allow us to confirm the duplicate behaviour specifically for the BICoE path, rather than inferring it from the QWD test.
+For the upstream call, the main two actual open items are 9/10 replay completeness and reproducing the BICoE ACK-timeout/duplicate scenario. The stop-quote point should be mentioned separately as a test-data limitation/observation, not an upstream defect.
