@@ -1,8 +1,5 @@
-BICoE – Current Open Items / Observations
+Thanks Jamie, that clarifies Observation 3. If STOP-QUOTE was not generated as part of the automation run, then the fact that we didn't see it in BICoE is a test-data coverage limitation rather than a processing issue.
 
-Blob replay – 9/10 records received: For the controlled set of 10 MQS IDs confirmed as reprocessed from Blob, BICoE could identify only 9 records in the Event Hub. The remaining MQS ID still needs end-to-end tracing to understand where it was lost/not visible.
-BICoE duplicate scenario – not yet reproduced: The ACK-timeout condition was observed on the QWD path, where a successfully published message was also written to Blob. The reverse test was attempted for BICoE, but the timeout did not occur. Upstream analysis is required to identify the timeout trigger and reproduce the same condition for BICoE so we can validate duplicate behaviour.
-stop-quote message – observation only: During the BICoE testing window, we did not receive the expected stop-quote message. Ashutosh has clarified that this is due to the test data not generating/providing the message, rather than an issue with the processing/recovery flow. Therefore, this is currently recorded as a test-data coverage observation rather than a processing defect.
-Downstream replay handling: BICoE developer validation is required to confirm how replayed/reprocessed messages are handled through Silverish/Silver and dim_audit_rate_permission, particularly around duplicate handling and replay timestamps.
+From BICoE perspective, I don't think we need to specifically generate a STOP-QUOTE through Blob for SIT, provided the Blob recovery/reprocessing mechanism is generic across the BICoE message types and there is no message-type-specific handling introduced by this change.
 
-For the upstream call, the main two actual open items are 9/10 replay completeness and reproducing the BICoE ACK-timeout/duplicate scenario. The stop-quote point should be mentioned separately as a test-data limitation/observation, not an upstream defect.
+We can record this as a known test coverage limitation
