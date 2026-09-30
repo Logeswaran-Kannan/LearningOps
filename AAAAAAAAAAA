@@ -1,57 +1,40 @@
-WITH base AS (
-    SELECT
-        DATE(enqueuedTime) AS enqueue_date,
-        enqueuedTime,
-        headers['MQSQuoteId'] AS mqs_quote_id,
-        headers['messageType'] AS message_type,
-        headers['quoteStep'] AS quote_step,
-        TO_DATE(headers['quoteDate']) AS quote_date,
+Subject: MQS 1.3 SIT – BICoE Observations and Remaining Validation
 
-        COUNT(*) OVER (
-            PARTITION BY
-                headers['MQSQuoteId'],
-                headers['messageType']
-        ) AS occurrence_count
+Hi Team,
 
-    FROM core.mqs_athn_mtr.ehubstream
-    WHERE headers['MQSQuoteId'] IS NOT NULL
-),
+Sharing the current BICoE view of the MQS 1.3 SIT testing and the remaining observations we would like to close/understand before completing the lower-environment testing.
 
-daily AS (
-    SELECT
-        enqueue_date,
+What is working
 
-        COUNT(*) AS total_messages,
+The earlier issue where core_request was replayed into the BICoE Event Hub, although it belongs to the QWD/Working Data flow, has now been retested in SIT and is working as expected. The replay is now respecting the intended BICoE/QWD routing.
 
-        SUM(
-            CASE WHEN occurrence_count > 1
-            THEN 1 ELSE 0 END
-        ) AS repeated_message_candidates,
+Observation 1 – Blob replay completeness – needs confirmation
 
-        SUM(
-            CASE
-                WHEN DATEDIFF(enqueue_date, quote_date) > 0
-                THEN 1 ELSE 0
-            END
-        ) AS delayed_messages,
+For the controlled set of 10 MQS IDs confirmed as reprocessed from Blob, BICoE was able to identify 9/10 records in the Event Hub.
 
-        SUM(
-            CASE
-                WHEN occurrence_count > 1
-                 AND DATEDIFF(enqueue_date, quote_date) > 0
-                THEN 1 ELSE 0
-            END
-        ) AS delayed_and_repeated
+The remaining MQS ID still needs end-to-end tracing to understand why it is not visible on the BICoE side, despite being reported as processed from the Blob batch. Could Mule/Ash please help confirm the path/status of this record?
 
-    FROM base
-    GROUP BY enqueue_date
-)
+Observation 2 – Timeout/replay duplicate behaviour – request to validate in SIT
 
-SELECT *,
-    ROUND(
-        100.0 * delayed_and_repeated / total_messages,
-        4
-    ) AS suspected_replay_pct
+Initially, we considered validating this further during performance testing because the ACK-timeout condition could not be reproduced consistently for BICoE. However, after reviewing the patterns already present in Production, I think it would be better to validate this in a controlled lower-environment scenario if possible.
 
-FROM daily
-ORDER BY enqueue_date;
+We are seeing a few variations in Production:
+
+Same-day replay: the same message can arrive multiple times on the same day — in some samples approximately 10 times. BICoE's existing deduplication is able to handle this pattern.
+Cross-day replay: the original message is received on one day and the replayed copy arrives on a subsequent day with a new Event Hub enqueuedTime. This is more concerning because the existing BICoE deduplication does not necessarily identify it as the same event, allowing duplicates to progress into DLT/Silverish.
+Same MQSQuoteId + messageType with different quoteStep: we have also identified Production samples where the same Quote/Message Type combination appears with more than one quoteStep. This can similarly bypass the current deduplication behaviour.
+
+The cross-day scenario is the main reason we would like Observation 2 exercised in SIT rather than relying only on performance testing. We need to understand the expected Mule/MQS behaviour when an Event Hub publish succeeds but the acknowledgement times out, the message subsequently enters Blob, and replay occurs later.
+
+Could Mule/Ash please confirm whether we can reproduce this in a controlled manner in SIT and validate what happens to the original and replayed message? I am happy to provide additional Production samples covering the different patterns above if useful.
+
+Observation 3 – STOP-QUOTE coverage – lower priority / non-blocking
+
+STOP-QUOTE was not generated in the current automation test data, so we could not validate a STOP-QUOTE flowing through Blob replay.
+
+We understand this requires a more specific test-data scenario and therefore don't see it as a release blocker at this stage. However, considering the Production patterns we are now reviewing, it would be useful for the Mule/MQS team to confirm whether there is any message-type-specific behaviour around STOP-QUOTE/replay that requires further investigation.
+
+So from the BICoE side, the main remaining focus is Observation 1 (9/10 replay completeness) and particularly Observation 2 (controlled timeout/replay behaviour). Observation 3 can remain a lower-priority coverage item unless the upstream investigation identifies a specific risk.
+
+Thanks,
+Loges
