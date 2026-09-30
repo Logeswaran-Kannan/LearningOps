@@ -1,1 +1,143 @@
-Wishing you all the very best for your next chapter. It’s been a pleasure working with you, and I really appreciate the commitment and effort you showed, especially after returning from maternity leave and getting back into everything so quickly. Your dedication has been genuinely appreciated. Wishing you continued success and all the very best for the future. Keep in touch!
+                     BICoE / MQS – PRODUCTION TIMELINE
+
+ BEFORE 29 JUL
+      │
+      │  BASELINE / KNOWN ISSUES
+      │  • Orphans ~0.01% – known MQS data-loss issue
+      │  • 6 message types in BICoE scope
+      │  • Precomp-request NOT yet ingested
+      │  • Ingestion duplicates <0.0001%
+      │  • Separate Quote Request source duplication ~5%
+      │  • >99.9% Quote Date = BICoE ingestion date
+      │  • Reconciliation already had known Athena file limitations
+      │
+      ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ 29 JUL – MQS RELEASE                                       │
+ │                                                             │
+ │  ① MQS data-loss / orphan mitigation goes live             │
+ │  ② Precomp-request added as BICoE's 7th message type       │
+ └─────────────────────────────────────────────────────────────┘
+      │
+      ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ 30 JUL – BICoE INGESTION INCIDENT                          │
+ │                                                             │
+ │ • Precomp pipeline switched on                              │
+ │ • Unexpected MQS header change breaks BICoE ingestion      │
+ │ • Incoming stream diverted to temporary table to avoid loss│
+ │ • Source hotfix applied for forward-going messages         │
+ │                                                             │
+ │ During recovery/reprocessing:                              │
+ │ • BICoE deduplication gap identified                       │
+ │ • Duplicate data accidentally progressed into Bronze       │
+ │ • Some enrichment data subsequently processed twice        │
+ └─────────────────────────────────────────────────────────────┘
+      │
+      │ BICoE strengthens header-based deduplication
+      │ and starts temporary-data recovery
+      ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ 3 AUG – MAJOR VOLUME / DATA QUALITY EVENT                  │
+ │                                                             │
+ │ • Temporary data processing into Silver begins             │
+ │ • Nate observes ~70m incoming messages vs ~5m normal max   │
+ │ • Reason for the volume surge not established              │
+ │                                                             │
+ │ BICoE impact:                                               │
+ │ • Orphans: 92.53%                                          │
+ │ • Forward reconciliation: ~45%                             │
+ └─────────────────────────────────────────────────────────────┘
+      │
+      ▼
+ EARLY / MID AUG
+      │
+      │ • One-off duplicate cleanup undertaken
+      │ • Enrichment duplicate impact identified
+      │ • Normal ingestion stabilises
+      │ • But reason for 3 Aug source/EH surge remains open
+      │
+      ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ 2 SEP – SECOND MAJOR INCIDENT                              │
+ │                                                             │
+ │ • Large number of MQS → Event Hub timeout errors           │
+ │ • Mule logs show BICoE EH HTTP POST "Timeout exceeded"     │
+ │ • Cosmos DB throttling also reported                       │
+ │ • Pricing LRT file activity also reported                  │
+ │                                                             │
+ │ BICoE impact:                                               │
+ │ • Orphans: 69.92%                                          │
+ │ • Forward reconciliation: 54.51%                           │
+ └─────────────────────────────────────────────────────────────┘
+      │
+      ▼
+ 3 SEP
+      │
+      │ • Orphans return to ~0.02%
+      │ • Forward reconciliation returns to 99.99%
+      │
+      ▼
+ 7–8 SEP approx.
+      │
+      │ MULE / UPSTREAM MITIGATION
+      │ • Retry/token handling changes
+      │ • Blob operation/error handling changes
+      │
+      ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ POST-INCIDENT PRODUCTION OBSERVATIONS                      │
+ │                                                             │
+ │ ① core_request replayed into BICoE although intended       │
+ │    for QWD                                                  │
+ │                                                             │
+ │ ② Same message sometimes received many times on same day   │
+ │    → existing BICoE deduplication handles this             │
+ │                                                             │
+ │ ③ Original Day 1 + Blob replay Day 2/3                     │
+ │    → different enqueuedTime                                │
+ │    → current deduplication may NOT remove it               │
+ │    → duplicate can reach DLT / Silverish                   │
+ │                                                             │
+ │ ④ Same MQSQuoteId + messageType sometimes appears with     │
+ │    multiple quoteSteps                                     │
+ │    → can also bypass current deduplication                 │
+ └─────────────────────────────────────────────────────────────┘
+      │
+      ▼
+ CURRENT SIT / RELEASE 1.3 TESTING
+      │
+      │ • ACK-timeout behaviour demonstrated on QWD
+      │
+      │   EH publish succeeds
+      │          ↓
+      │   ACK not received within 30 sec
+      │          ↓
+      │   message also goes to Blob
+      │          ↓
+      │   replay
+      │          ↓
+      │   potential duplicate
+      │
+      │ • Same condition not yet reproducible for BICoE in SIT
+      │ • Exact timeout trigger still under investigation
+      │
+      ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ 29 SEP – NEW PRODUCTION OBSERVATION                        │
+ │                                                             │
+ │ • Another reprocessing / volume pattern observed           │
+ │ • Same quotes/messages seen being processed again          │
+ │ • Pattern needs comparison with 2 Sep incident             │
+ │ • Current explanation does not yet fully explain all       │
+ │   BICoE observations                                       │
+ └─────────────────────────────────────────────────────────────┘
+      │
+      ▼
+                CURRENT INVESTIGATION
+      │
+      ├── Are old Quote Dates arriving on later enqueue dates?
+      ├── Do those records cluster around volume spikes?
+      ├── Are same Quote + Message Type combinations repeated?
+      ├── Are Blob replays contributing additional EH volume?
+      └── Is replay behaviour contributing to BICoE throttling?
