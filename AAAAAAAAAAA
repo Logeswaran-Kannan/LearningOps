@@ -1,8 +1,1 @@
-Hi Andrew, yes — that’s the approach I was thinking.  
-For the test environment, we’ll take the MQS Quote IDs generated from Athena TEST and use those as the controlled population. We’ll then check that the same Quote IDs are present in:
-1. MQS PSU
-2. BiCoE
-3. The reconciliation file
-This means we’ll only compare the Athena TEST-originated records and ignore the additional NFT/DEV traffic coming into the shared MQS PSU environment.
-For those TEST Quote IDs, we’ll validate that there are no missing records and that the expected AZ Motor and Britannia records reconcile correctly.
-The overall reconciliation count may still show mismatches because of the shared environment, but for sign-off we’ll focus on whether the Athena TEST subset reconciles as expected.
+Observation 2, cross-day duplicate replays are already happening in production since around the 8th of September. BICoE's current deduplication won't catch these once they arrive outside the one-minute watermark. MQS 1.3 fix doesn't address this. So we've raised it as an incident. The open question is whether DVLA processing is impacted. If DVLA is affected, we may need to raise severity, if not, we'll continue monitoring at lower severity. Observation 2A, same MQSQuoteId plus messageType but different quoteStep, seen only in production so far, not reproduced in PTS. It may be a source data defect but can have the same downstream effect by bypassing current deduplication. We need to understand if and how 1.3 impacts this. Observation 3, backlog replay throughput. Currently no confirmed SLA for end-to-end reprocessing. With partial reprocessing, reconciliation remains incomplete, so downstream consumers may not see a full quote picture. Ash has suggested increasing batch frequency or parallel processing, but we don't yet have a confirmed decision. So for today, we need a decision on 2 and 3 or a steer from Arindom and Ash.
