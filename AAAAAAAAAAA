@@ -1,1 +1,48 @@
-Observation 2, cross-day duplicate replays are already happening in production since around the 8th of September. BICoE's current deduplication won't catch these once they arrive outside the one-minute watermark. MQS 1.3 fix doesn't address this. So we've raised it as an incident. The open question is whether DVLA processing is impacted. If DVLA is affected, we may need to raise severity, if not, we'll continue monitoring at lower severity. Observation 2A, same MQSQuoteId plus messageType but different quoteStep, seen only in production so far, not reproduced in PTS. It may be a source data defect but can have the same downstream effect by bypassing current deduplication. We need to understand if and how 1.3 impacts this. Observation 3, backlog replay throughput. Currently no confirmed SLA for end-to-end reprocessing. With partial reprocessing, reconciliation remains incomplete, so downstream consumers may not see a full quote picture. Ash has suggested increasing batch frequency or parallel processing, but we don't yet have a confirmed decision. So for today, we need a decision on 2 and 3 or a steer from Arindom and Ash.
+Hi Team,
+
+I wanted to highlight a Production issue we have been investigating in BICoE relating to duplicate/replayed MQS messages.
+
+We started observing this behaviour from **8 September**. At this stage, we have not confirmed whether the start of the issue correlates to a specific MQS release or upstream change, so this needs to be investigated as part of the incident.
+
+The occurrence rate is currently low — approximately **0.005% on average** across the affected message types — but the concern is the behaviour itself and the potential downstream impact.
+
+The affected message types observed so far include **quote request, precomp request/response, rating request/response and Ledger ID**. We have not observed the same pattern for **STOP-QUOTE** so far.
+
+There are two main patterns we are seeing:
+
+**1. Cross-day replay duplicates**
+
+The original MQS message is received and processed on one day, and the same message is subsequently received again on a later day, typically with a different Event Hub `enqueuedTime`.
+
+BICoE's current ingestion deduplication is designed to handle duplicate messages arriving within the existing short deduplication window. A replay arriving on a later day falls outside that window and can therefore progress further downstream as an additional record.
+
+**2. Same MQSQuoteId + messageType with different quoteStep**
+
+We are also seeing cases where the same `MQSQuoteId` and `messageType` combination is received with different `quoteStep` values.
+
+This is not a duplicate pattern we currently expect from the source and is therefore being treated as a potential **source-side data/processing defect**. From the BICoE perspective, however, it can have a similar downstream effect because the records are not removed by the current ingestion deduplication logic.
+
+### Potential impact
+
+Because these scenarios are not covered by the existing BICoE deduplication mechanism, duplicate records can potentially progress into the downstream BICoE datasets and views.
+
+As a result, the **Pricing RT team may see duplicate quote records**, including associated enrichment data, depending on how those records progress through the downstream processing.
+
+We are currently verifying whether these records also have any impact on the **DLA/DVLA processing path**. This is an important part of the impact assessment — if the issue is affecting DVLA processing, we may need to treat the incident with a higher severity.
+
+An additional point is that the Production pattern appears to have **stopped from around 30 September**. We do not yet know what upstream code/configuration change may have caused the behaviour to stop, so we would like MQS/Mule to confirm whether any release or fix was introduced around that time.
+
+Given that this behaviour was present in Production from **8 September to approximately 30 September**, and the underlying cause has not yet been confirmed, I think we should formally **raise and track this as an incident**.
+
+The immediate actions we need are to:
+
+- Confirm the upstream cause of both Production patterns and whether they relate to any MQS/Mule release or processing change.
+- Confirm what changed around **30 September**, when the pattern appears to have stopped.
+- Complete the BICoE assessment of the downstream impact, particularly the **DLA/DVLA and Pricing RT flows**.
+- Confirm whether the MQS 1.3 changes already address either of these scenarios, or whether an additional fix/control is required.
+- Continue Production monitoring to identify any recurrence.
+
+Although the current percentage is small, the main concern is that these are **unexpected source patterns which bypass the existing BICoE ingestion deduplication**, so we need to understand the root cause and downstream impact rather than relying only on the current volume.
+
+Thanks,  
+Logesh
