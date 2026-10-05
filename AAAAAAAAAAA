@@ -1,1 +1,8 @@
-Yeah, that’s what I was explaining above. We’ll do the validation by filtering on the Athena TEST MQS Quote IDs and compare those against the reconciliation/BICoE data. We’ll let you know the outcome once the validation is complete.
+Hi Andrew, yes — that’s the approach I was thinking.  
+For the test environment, we’ll take the MQS Quote IDs generated from Athena TEST and use those as the controlled population. We’ll then check that the same Quote IDs are present in:
+1. MQS PSU
+2. BiCoE
+3. The reconciliation file
+This means we’ll only compare the Athena TEST-originated records and ignore the additional NFT/DEV traffic coming into the shared MQS PSU environment.
+For those TEST Quote IDs, we’ll validate that there are no missing records and that the expected AZ Motor and Britannia records reconcile correctly.
+The overall reconciliation count may still show mismatches because of the shared environment, but for sign-off we’ll focus on whether the Athena TEST subset reconciles as expected.
