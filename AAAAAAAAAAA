@@ -1,15 +1,7 @@
-Hi Ben / Peter,
-
-Thanks for highlighting this security concern and for sharing the CI/CD guidance.
-
-We already have an ongoing clean-up activity within Radar Live to standardise our monitoring notebooks, bring them under source control, and migrate all monitoring processes into the standard CI/CD deployment process.
-
-So far, we have successfully migrated approximately 60% of the monitoring processes, including Reconciliation, DVLA and Data Retention. The notebook highlighted below is among the remaining notebooks scheduled for migration.
-
-As an immediate mitigation, I have removed the hard-coded webhook URL and skipped the specific command responsible for sending Teams alerts. This notebook also feeds the Radar Live monitoring dashboard, so all other processes, including load monitoring and dashboard data updates, will continue to run as normal. Only the Teams alerting functionality has been disabled.
-
-The operational impact is expected to be minimal, as this reconciliation alerting functionality is already planned to be sunset once the replacement monitoring tool is introduced.
-
-We will complete the migration of all remaining Radar Live monitoring notebooks into the standard CI/CD process by the end of next week, ensuring full alignment with the recommended development and deployment practices.
-
-Thanks again for bringing this to our attention.
+Before July, BICoE already had some known source-level data duplication within individual quote payloads, for example duplicate driver or vehicle information within the same quote. These were understood as source-data quality issues and were different from the duplicate message patterns now under investigation.
+From around 20 July, following the introduction of the MQS replay/recovery mechanism in Production, BICoE started to observe a different class of duplication at message-processing level.
+At the same time, the incoming MQS header structure changed and no longer matched the format expected by the BICoE ingestion process. This interrupted normal ingestion. To avoid losing incoming data while the header issue was being corrected, BICoE temporarily diverted the Event Hub stream into a temporary EFST/landing table.
+Once the header format was corrected, BICoE also introduced an ingestion deduplication control between the landing layer and the Bronze/DLT layer to prevent repeated messages from propagating downstream.
+However, during the recovery activity, some data from the temporary landing area had already been reprocessed into the main processing path before the revised deduplication control was fully in place. This created a one-off historical duplicate population, represented by Scenario 4 in this document.
+From the same July period onwards, BICoE also started observing several other replay-related duplicate patterns, including same-day replay, cross-day replay, exact duplicate messages and conflicting message variants such as the same MQSQuoteId + messageType with different quoteStep values.
+The current BICoE ingestion deduplication is able to handle some of these patterns, particularly immediate/same-day and exact duplicate arrivals. However, other patterns can fall outside the current deduplication assumptions and propagate into downstream layers.
