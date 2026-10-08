@@ -2,17 +2,14 @@ Hi Ben / Peter,
 
 Thanks for highlighting this security concern and for sharing the CI/CD guidance.
 
-We already have an ongoing clean-up activity within Radar Live to standardise our monitoring notebooks and bring all monitoring processes under source control through the CI/CD deployment process.
+We already have an ongoing clean-up activity within Radar Live to standardise our monitoring notebooks, bring them under source control, and migrate all monitoring processes into the standard CI/CD deployment process.
 
-So far, we have successfully migrated approximately **60% of the monitoring processes**, including Reconciliation, DVLA and Data Retention. The notebook highlighted below is among the remaining notebooks planned for migration.
+So far, we have successfully migrated approximately 60% of the monitoring processes, including Reconciliation, DVLA and Data Retention. The notebook highlighted below is among the remaining notebooks scheduled for migration.
 
-**As an immediate action, I have removed the hard-coded webhook URL and disabled the specific command responsible for sending Teams alerts.** All other monitoring processes within the notebook will continue to run as normal, including load monitoring and dashboard updates. Only the Teams alerting functionality has been disabled.
+As an immediate mitigation, I have removed the hard-coded webhook URL and skipped the specific command responsible for sending Teams alerts. This notebook also feeds the Radar Live monitoring dashboard, so all other processes, including load monitoring and dashboard data updates, will continue to run as normal. Only the Teams alerting functionality has been disabled.
 
-The operational impact is expected to be minimal, as this reconciliation alerting process is also planned to be sunset once the replacement monitoring tool is introduced.
+The operational impact is expected to be minimal, as this reconciliation alerting functionality is already planned to be sunset once the replacement monitoring tool is introduced.
 
-We are targeting completion of the remaining notebook migrations into the CI/CD process **by the end of next week**, following the recommended development and deployment approach.
+We will complete the migration of all remaining Radar Live monitoring notebooks into the standard CI/CD process by the end of next week, ensuring full alignment with the recommended development and deployment practices.
 
 Thanks again for bringing this to our attention.
-
-Regards,  
-Logesh
