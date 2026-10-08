@@ -1,6 +1,18 @@
-Hi Mark,
-Just to clarify from the BiCoE side, our expectation was always that the Production Count file would continue in .csv format.
-The .txt behaviour was identified in the lower environment after the AZ and Britannia files were merged. We specifically raised this in the group discussion to make sure the same behaviour did not reach Production. The conclusion from that discussion was that the Count file would continue as .csv after the merge.
-We also understood that the merged-file change was planned for the 15 October Production release, following validation in the lower environment. Therefore, seeing a .txt Count file in the Production SFTP before that date was unexpected and is why we raised it.
-Based on Sophie’s explanation, we now understand that this happened as part of the DR activity, where the UK West MoveIT job picked up the matched files.
-There is also a separate reconciliation issue from the DR rollback activity. Two daily files were subsequently loaded into SFTP, whereas the BiCoE reconciliation process expects a single incremental file per day. As a result, only one of those files was processed and the other day was missed from reconciliation.
+Hi Ben / Peter,
+
+Thanks for highlighting this security concern and for sharing the CI/CD guidance.
+
+We already have an ongoing clean-up activity within Radar Live to standardise our monitoring notebooks and bring all monitoring processes under source control through the CI/CD deployment process.
+
+So far, we have successfully migrated approximately **60% of the monitoring processes**, including Reconciliation, DVLA and Data Retention. The notebook highlighted below is among the remaining notebooks planned for migration.
+
+**As an immediate action, I have removed the hard-coded webhook URL and disabled the specific command responsible for sending Teams alerts.** All other monitoring processes within the notebook will continue to run as normal, including load monitoring and dashboard updates. Only the Teams alerting functionality has been disabled.
+
+The operational impact is expected to be minimal, as this reconciliation alerting process is also planned to be sunset once the replacement monitoring tool is introduced.
+
+We are targeting completion of the remaining notebook migrations into the CI/CD process **by the end of next week**, following the recommended development and deployment approach.
+
+Thanks again for bringing this to our attention.
+
+Regards,  
+Logesh
