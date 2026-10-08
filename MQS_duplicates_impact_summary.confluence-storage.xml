@@ -1,0 +1,62 @@
+<p><em>Summary as of 8 Oct 2026, for a non-technical audience.</em></p>
+<ac:structured-macro ac:name="info" ac:schema-version="1"><ac:parameter ac:name="title">Key messages</ac:parameter><ac:rich-text-body>
+<ul>
+<li><strong>Three of the five duplicate scenarios reach Silver and Gold.</strong> One sample quote now appears three times in Gold.</li>
+<li><strong>The DVLA retention pipeline is currently failing because of exact duplicates</strong> (two copies of a quote with the same timestamp). DVLA (Driver and Vehicle Licensing) data is not being removed on schedule, which is a compliance risk.</li>
+<li><strong>Reconciliation is not impacted</strong> by any of the duplicate scenarios.</li>
+</ul>
+</ac:rich-text-body></ac:structured-macro>
+
+<h2>1. How MQS data reaches us</h2>
+<p>BICoE ingests MQS quote data exactly as it is delivered through Event Hub. <strong>Every message, including every repeat copy, is written to the landing table.</strong> Our duplicate check sits between landing and Bronze, and it only removes copies that are <em>identical</em> (matched on the message header columns) and arrive <em>close together</em>. Any other duplicate passes through to Bronze (DLT tables), Silverish, Silver and Gold. From Bronze, the enrichment tables are loaded and the DLT views are built, and Pricing ART reads those DLT views. Reconciliation is a separate pipeline on the landing table with its own dedup.</p>
+<p><ac:image ac:width="900" ac:alt="How MQS data flows into BICoE today"><ri:attachment ri:filename="1_how_data_flows.png"/></ac:image></p>
+
+<h2>2. Five duplicate scenarios: dedup stops only two</h2>
+<table>
+<tbody>
+<tr><th>Scenario</th><th>What happens</th><th>Ongoing?</th><th>Stopped by dedup?</th><th>Furthest layer reached</th><th>DVLA pipeline</th></tr>
+<tr><td><strong>S1</strong></td><td>The same message is resent several times on the same day</td><td>Yes</td><td>Yes</td><td>Landing only</td><td>Not impacted (copies have different timestamps)</td></tr>
+<tr><td><strong>S2</strong></td><td>The same message is resent on a later day</td><td>Yes</td><td>No</td><td><strong>Gold</strong> (confirmed)</td><td>Not impacted (copies have different timestamps)</td></tr>
+<tr><td><strong>S3</strong></td><td>The same quote is sent with conflicting quote-step values (MQS defect; seen again 8&#8211;30 Sep 2026)</td><td>Yes</td><td>No</td><td><strong>Gold</strong> (confirmed)</td><td>Not impacted (records differ)</td></tr>
+<tr><td><strong>S4</strong></td><td>Historical data was loaded twice during the header fix</td><td>No, one-off</td><td>No</td><td><strong>Gold</strong>, including enrichment (confirmed)</td><td><strong>Fails (confirmed)</strong></td></tr>
+<tr><td><strong>S5</strong></td><td>The upstream system resends an exact copy</td><td>Yes</td><td>Yes, when copies arrive close together</td><td>Landing only (in the sample)</td><td><strong>Fails (confirmed)</strong></td></tr>
+</tbody>
+</table>
+<p><ac:image ac:width="900" ac:alt="How far each duplicate scenario travels"><ri:attachment ri:filename="2_how_far_each_scenario_travels.png"/></ac:image></p>
+
+<h2>3. Impact on Silver and Gold</h2>
+<p><strong>Example (S2).</strong> One quote was first sent on 22 Sep 2026 and resent on 23 and 25 Sep. Dedup removed a same-day copy, but the two later resends passed through. The quote now appears <strong>three times in Silver and three times in Gold</strong> (the Gold audit layer), once for each day it arrived. Any report that counts quotes by date counts this quote three times.</p>
+<ul>
+<li><strong>S3</strong> puts conflicting versions of the same quote into Silver and Gold, so it is unclear which one is correct.</li>
+<li><strong>S4</strong> left historical duplicates in Silver, Gold and enrichment for the backfill period.</li>
+<li><strong>Pricing ART</strong> reads the DLT views built on Bronze, so it is expected to show S2, S3 and S4 duplicates (being checked).</li>
+</ul>
+
+<h2>4. The DVLA retention pipeline is failing: a compliance issue</h2>
+<p>The DVLA retention pipeline is a separate safety check: it scans the <strong>landing table</strong> and <strong>Bronze</strong> for unconverted quotes over 60 days old that still hold DVLA data, and removes it. Landing still holds every copy, including the copies that dedup removed before Bronze. Copies of a quote with different timestamps are handled, but when two copies carry <strong>exactly the same timestamp</strong>, <strong>the whole daily run is rejected</strong>, and DVLA data is not removed for <em>any</em> quote in that batch.</p>
+<p><ac:image ac:width="900" ac:alt="Why the DVLA retention pipeline fails"><ri:attachment ri:filename="3_why_dvla_pipeline_fails.png"/></ac:image></p>
+<ul>
+<li><strong>Confirmed</strong> for S4 (historical reload) and S5 (exact upstream resends). S1, S2 and S3 do not affect the pipeline.</li>
+<li>The batch window rolls over 7 days, so one exact duplicate can fail the run several days in a row.</li>
+<li>A quote whose every eligible run fails keeps its DVLA data, and nothing currently reports it.</li>
+</ul>
+
+<h2>5. Good news: reconciliation is not impacted</h2>
+<p>Reconciliation applies its own duplicate handling and is not affected by any of the five scenarios.</p>
+
+<h2>6. What we need from you</h2>
+<table>
+<tbody>
+<tr><th>Ask</th><th>Owner</th><th>Why</th></tr>
+<tr><td>Prioritise restoring the DVLA retention pipeline, including a catch-up of the days it has failed</td><td>Leadership + BICoE</td><td>Compliance</td></tr>
+<tr><td>Explain why messages are resent, including the resends arriving around 02:00 UTC each day</td><td>MQS</td><td>Root cause of S1, S2 and S5; S5 breaks DVLA</td></tr>
+<tr><td>Confirm which quote-step value is correct when versions conflict</td><td>MQS</td><td>Needed before S3 records can be safely cleaned</td></tr>
+<tr><td>Agree what makes &#8220;one quote event&#8221; unique</td><td>MQS + BICoE Architecture</td><td>Basis for any permanent fix</td></tr>
+<tr><td>Size the S2, S3 and S4 duplicates already in Gold</td><td>Glenn / Gold owner</td><td>Plan the Gold clean-up</td></tr>
+<tr><td>Confirm whether Pricing ART views show duplicates</td><td>Pricing ART</td><td>Close the consumer impact</td></tr>
+<tr><td>Confirm which DVLA runs failed and which quotes were in them</td><td>DVLA owner</td><td>Size the compliance gap</td></tr>
+</tbody>
+</table>
+
+<p><em>Labels: <strong>confirmed</strong> = seen in production data or confirmed by the team; <strong>being checked</strong> = from analysis of samples or pipeline code, not yet reproduced.</em></p>
+<p>Detailed analysis, per-scenario evidence and technical diagrams: <a href="https://claude.ai/code/artifact/f0254d9b-799e-4823-b122-c55bd3f3b054">BICoE Duplicate Scenarios &#8212; Problem and Impact Analysis (Technical Review)</a></p>
