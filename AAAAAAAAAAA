@@ -1,24 +1,61 @@
-Group 1 – CDA Readiness and Resilience
-Ingestion, schema compatibility, resource failures, network failures, retries, idempotency and performance.
-Execute mainly before production cutover, in a controlled test environment.
+WITH latest AS (
+    SELECT *
+    FROM (
+        SELECT d.*,
+               ROW_NUMBER() OVER (
+                   PARTITION BY reconciliation_direction,
+                                COALESCE(mqs_mqsQuoteId, csv_mqsQuoteId)
+                   ORDER BY CASE WHEN match_flag = 'Y' THEN 0 ELSE 1 END,
+                            run_ts DESC
+               ) AS rn
+        FROM core.radar_live.recon_mqs_details d
+    ) x
+    WHERE rn = 1
+),
 
+forward AS (
+    SELECT
+        csv_requestDate AS date,
+        COUNT(*) AS total,
+        SUM(CASE WHEN match_flag = 'Y' THEN 1 ELSE 0 END) AS matched
+    FROM latest
+    WHERE reconciliation_direction = 'FORWARD'
+    GROUP BY csv_requestDate
+),
 
+reverse AS (
+    SELECT
+        TO_DATE(mqs_enqueuedTime) AS date,
+        COUNT(*) AS total,
+        SUM(CASE WHEN match_flag = 'Y' THEN 1 ELSE 0 END) AS matched
+    FROM latest
+    WHERE reconciliation_direction = 'REVERSE'
+    GROUP BY TO_DATE(mqs_enqueuedTime)
+),
 
+joined AS (
+    SELECT
+        COALESCE(f.date, r.date) AS date,
+        f.total   AS csv_total,
+        f.matched AS csv_matched,
+        CAST(FLOOR(100.0 * f.matched / f.total * 100) / 100.0 AS DECIMAL(5,2)) AS forward_recon_pct,
+        r.total   AS flow_total,
+        r.matched AS flow_matched,
+        CAST(FLOOR(100.0 * r.matched / r.total * 100) / 100.0 AS DECIMAL(5,2)) AS reverse_recon_pct
+    FROM forward f
+    FULL OUTER JOIN reverse r
+        ON f.date = r.date
+)
 
-Group 2 – CDA Switchover Execution
-ADF deactivation and activation, existing ODS object renaming, new view creation, data reconciliation and downstream Silver validation.
-Execute in the switchover rehearsal and appropriate production cutover checks.
-
-
-
-
-Group 3 – CDC and Data Continuity
-Insert, Update, Hard Delete, same-day transactions, SCD current flags, changes around switchover and subsequent incremental loads.
-Validate during the rehearsal and after switchover.
-
-
-
-
-Group 4 – CDA Rollback
-Stop CDA downstream jobs, restore RR ODS tables/views and original ADF pipelines, restart from the previous watermark, validate catch-up and reconcile Silver.
-Execute as a separate controlled rollback rehearsal.
+SELECT
+    date,
+    csv_total,
+    csv_matched,
+    forward_recon_pct,
+    LAG(forward_recon_pct) OVER (ORDER BY date) AS forward_previousday_recon_pct,
+    flow_total,
+    flow_matched,
+    reverse_recon_pct,
+    LAG(reverse_recon_pct) OVER (ORDER BY date) AS reverse_previousday_recon_pct
+FROM joined
+ORDER BY date;
