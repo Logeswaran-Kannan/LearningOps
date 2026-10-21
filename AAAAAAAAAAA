@@ -1,61 +1,120 @@
-WITH latest AS (
-    SELECT *
-    FROM (
-        SELECT d.*,
-               ROW_NUMBER() OVER (
-                   PARTITION BY reconciliation_direction,
-                                COALESCE(mqs_mqsQuoteId, csv_mqsQuoteId)
-                   ORDER BY CASE WHEN match_flag = 'Y' THEN 0 ELSE 1 END,
-                            run_ts DESC
-               ) AS rn
-        FROM core.radar_live.recon_mqs_details d
-    ) x
-    WHERE rn = 1
-),
 
-forward AS (
-    SELECT
-        csv_requestDate AS date,
-        COUNT(*) AS total,
-        SUM(CASE WHEN match_flag = 'Y' THEN 1 ELSE 0 END) AS matched
-    FROM latest
-    WHERE reconciliation_direction = 'FORWARD'
-    GROUP BY csv_requestDate
-),
+from pyspark.sql import functions as F
+from pyspark.sql import Window
 
-reverse AS (
-    SELECT
-        TO_DATE(mqs_enqueuedTime) AS date,
-        COUNT(*) AS total,
-        SUM(CASE WHEN match_flag = 'Y' THEN 1 ELSE 0 END) AS matched
-    FROM latest
-    WHERE reconciliation_direction = 'REVERSE'
-    GROUP BY TO_DATE(mqs_enqueuedTime)
-),
+spark.conf.set("spark.sql.shuffle.partitions", "200")
 
-joined AS (
-    SELECT
-        COALESCE(f.date, r.date) AS date,
-        f.total   AS csv_total,
-        f.matched AS csv_matched,
-        CAST(FLOOR(100.0 * f.matched / f.total * 100) / 100.0 AS DECIMAL(5,2)) AS forward_recon_pct,
-        r.total   AS flow_total,
-        r.matched AS flow_matched,
-        CAST(FLOOR(100.0 * r.matched / r.total * 100) / 100.0 AS DECIMAL(5,2)) AS reverse_recon_pct
-    FROM forward f
-    FULL OUTER JOIN reverse r
-        ON f.date = r.date
+SOURCE = "core.mqs_athn_mtr.ehubstream"
+START_DATE = "2026-05-05"
+
+# 1. Read required data
+df = (
+    spark.table(SOURCE)
+    .where(F.col("enqueuedTime") >= F.lit(START_DATE))
+    .select(
+        "enqueuedTime",
+        F.to_date("enqueuedTime").alias("event_date"),
+        F.col("headers")["messageType"].alias("messageType"),
+        F.col("headers")["externalID"].alias("externalID"),
+        F.col("headers")["MQSQuoteId"].alias("MQSQuoteId"),
+        F.col("headers")["quoteStep"].alias("quoteStep"),
+        "headers",
+        F.col("payload").cast("string").alias("payload")
+    )
 )
 
-SELECT
-    date,
-    csv_total,
-    csv_matched,
-    forward_recon_pct,
-    LAG(forward_recon_pct) OVER (ORDER BY date) AS forward_previousday_recon_pct,
-    flow_total,
-    flow_matched,
-    reverse_recon_pct,
-    LAG(reverse_recon_pct) OVER (ORDER BY date) AS reverse_previousday_recon_pct
-FROM joined
-ORDER BY date;
+# 2. Hash original duplicate combination
+# Two hashes reduce accidental collision risk.
+headers_json = F.to_json("headers")
+
+df = df.withColumn(
+    "duplicate_key",
+    F.sha2(
+        F.to_json(
+            F.struct(
+                "enqueuedTime",
+                "messageType",
+                "externalID",
+                "MQSQuoteId",
+                "quoteStep",
+                headers_json.alias("headers_json"),
+                "payload"
+            ),
+            {"ignoreNullFields": "false"}
+        ),
+        256
+    )
+).select(
+    "event_date",
+    "duplicate_key",
+    "MQSQuoteId",
+    "messageType",
+    "externalID",
+    "quoteStep"
+)
+
+# 3. Count occurrences per duplicate combination
+combinations = (
+    df.groupBy(
+        "event_date",
+        "duplicate_key"
+    )
+    .agg(
+        F.count("*").alias("occurrences"),
+        F.first("MQSQuoteId", ignorenulls=True).alias("MQSQuoteId"),
+        F.first("messageType", ignorenulls=True).alias("messageType"),
+        F.first("externalID", ignorenulls=True).alias("externalID"),
+        F.first("quoteStep", ignorenulls=True).alias("quoteStep")
+    )
+    .withColumn(
+        "duplicate_records",
+        F.col("occurrences") - 1
+    )
+)
+
+# 4. Daily trend
+daily_trend = (
+    combinations
+    .groupBy("event_date")
+    .agg(
+        F.sum("occurrences").alias("total_records"),
+        F.sum("duplicate_records").alias("duplicate_records"),
+        F.sum(
+            F.when(F.col("occurrences") > 1, 1).otherwise(0)
+        ).alias("duplicate_combinations")
+    )
+    .withColumn(
+        "duplicate_pct",
+        F.round(
+            F.col("duplicate_records") /
+            F.col("total_records") * 100, 3
+        )
+    )
+)
+
+# 5. Overall summary
+summary = daily_trend.agg(
+    F.sum("total_records").alias("total_records"),
+    F.sum("duplicate_records").alias("duplicate_records"),
+    F.sum("duplicate_combinations").alias("duplicate_combinations")
+).withColumn(
+    "duplicate_pct",
+    F.round(
+        F.col("duplicate_records") /
+        F.col("total_records") * 100, 3
+    )
+)
+
+print("OVERALL DUPLICATE SUMMARY")
+display(summary)
+
+print("DAILY DUPLICATE TREND")
+display(daily_trend.orderBy("event_date"))
+
+print("TOP 50 DUPLICATE COMBINATIONS")
+display(
+    combinations
+    .filter(F.col("occurrences") > 1)
+    .orderBy(F.desc("occurrences"))
+    .limit(50)
+)
