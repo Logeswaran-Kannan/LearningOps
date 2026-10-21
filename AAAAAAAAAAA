@@ -123,7 +123,7 @@ ID_COLUMN = "id"
 # first one present on BOTH sides is used as the window column
 WINDOW_COLUMN_CANDIDATES = ["updatetime", "createtime", "eventtimestamp", "azure_load_date"]
 BATCH_CUTOFF_HOUR = 3
-LOOKBACK_DAYS = 7
+LOOKBACK_DAYS = 1
 SESSION_TIMEZONE = "Europe/London"  # so "3 AM" means 3 AM London; None to leave as is
 
 SMALL_TABLE_ROW_THRESHOLD = 1000
@@ -189,6 +189,8 @@ SUMMARY_FIELDS = [
     ("mismatch_count", "LONG"),
     ("missing_in_core_count", "LONG"),
     ("missing_in_core_tst_std001_count", "LONG"),
+    ("outside_window_in_core_count", "LONG"),
+    ("outside_window_in_core_tst_std001_count", "LONG"),
     ("duplicate_id_count", "LONG"),
     ("format_diff_row_count", "LONG"),
     ("match_pct", "DOUBLE"),
@@ -534,7 +536,11 @@ def column_diff(plan, ids):
             .select(
                 F.lit(plan["system"]).alias("source_system"),
                 F.lit(plan["base"]).alias("table_name"),
-                F.col("row_key").cast("string").alias("id"),
+                # display only: 9408581.000000000 -> 9408581 (decimal-keyed ids)
+                F.when(F.col("row_key").cast("string").contains("."),
+                       F.regexp_replace(F.regexp_replace(F.col("row_key").cast("string"), "0+$", ""),
+                                        "\\.$", ""))
+                 .otherwise(F.col("row_key").cast("string")).alias("id"),
                 "column_name",
                 cat_map[F.col("column_name")].alias("compare_category"),
                 ty_s[F.col("column_name")].alias("core_data_type"),
@@ -600,6 +606,28 @@ def blank_row(system, base):
     r = {n: None for n, _ in SUMMARY_FIELDS}
     r["source_system"], r["table_name"] = system, base
     return r
+
+
+def classify_missing(plan, joined, status, side):
+    """Rows missing from `side` inside the scope: are they truly absent there, or
+    present but outside the date window / id watermark? Returns
+    (outside_count, truly_missing_count, sample[(key, present_bool)])."""
+    catalog = CATALOG_SRC if side == "s" else CATALOG_TGT
+    phys, key = plan["phys_" + side], plan["key_" + side]
+    keys = joined.filter(F.col("status") == status).select("row_key")
+    full = (spark.sql(f"SELECT DISTINCT {key} AS row_key FROM {catalog}.{SCHEMA}.{phys} "
+                      f"WHERE {key} IS NOT NULL")
+            .withColumn("present", F.lit(True)))
+    m = keys.join(full, "row_key", "left").cache()
+    try:
+        agg = m.agg(F.count(F.lit(1)).alias("n"),
+                    F.sum(F.when(F.col("present"), 1).otherwise(0)).alias("p")).first()
+        total, outside = int(agg["n"] or 0), int(agg["p"] or 0)
+        sample = [(r["row_key"], bool(r["present"]))
+                  for r in m.limit(DETAIL_MAX_MISSING_IDS_PER_TABLE).collect()]
+    finally:
+        m.unpersist()
+    return outside, total - outside, sample
 
 
 def reconcile_table(key, plan, wm, ws, we):
@@ -697,14 +725,27 @@ def reconcile_table(key, plan, wm, ws, we):
                     lst.sort(key=lambda x: (x[3] != "VALUE", str(x[0])))
                 write_detail(diff)
                 diff.unpersist()
-        if a["miss_s"] + a["miss_t"] > 0:
-            miss = [(r["row_key"], r["status"]) for r in joined
-                    .filter(F.col("status").isin("MISSING_IN_CORE", "MISSING_IN_CORE_TST_STD001"))
-                    .select("row_key", "status").limit(DETAIL_MAX_MISSING_IDS_PER_TABLE).collect()]
-            rows = [(plan["system"], plan["base"], str(k), "<ROW>", "ROW", None, None, None, None,
-                     "MISSING_ROW", "ROW_" + st) for k, st in miss]
-            if rows:
-                write_detail(spark.createDataFrame(rows, DETAIL_ROW_DDL))
+        # missing rows: truly absent vs present-but-outside-window (timing skew)
+        scoped = plan["strategy"] in ("DATE_FILTERED", "ID_WATERMARK")
+        out = {"s": 0, "t": 0}
+        true_miss = {"s": a["miss_s"], "t": a["miss_t"]}
+        miss_rows = []
+        for side, st, lbl in (("s", "MISSING_IN_CORE", "CORE"), ("t", "MISSING_IN_CORE_TST_STD001", "CORE_TST_STD001")):
+            if true_miss[side] <= 0:
+                continue
+            if scoped:
+                out[side], true_miss[side], sample = classify_missing(plan, joined, st, side)
+            else:
+                sample = [(r["row_key"], False) for r in joined.filter(F.col("status") == st)
+                          .select("row_key").limit(DETAIL_MAX_MISSING_IDS_PER_TABLE).collect()]
+            for k, present in sample:
+                miss_rows.append((plan["system"], plan["base"], str(k), "<ROW>", "ROW", None, None, None, None,
+                                  "OUTSIDE_WINDOW" if present else "MISSING_ROW",
+                                  ("ROW_OUTSIDE_WINDOW_IN_" if present else "ROW_MISSING_IN_") + lbl))
+        if miss_rows:
+            write_detail(spark.createDataFrame(miss_rows, DETAIL_ROW_DDL))
+        row["missing_in_core_count"], row["missing_in_core_tst_std001_count"] = true_miss["s"], true_miss["t"]
+        row["outside_window_in_core_count"], row["outside_window_in_core_tst_std001_count"] = out["s"], out["t"]
 
         # ---- watermark ----
         if plan["strategy"] == "ID_WATERMARK" and bigint and a.get("max_key") is not None:
@@ -718,16 +759,18 @@ def reconcile_table(key, plan, wm, ws, we):
         flags = []
         if a["mismatch"]:
             flags.append("DATA_MISMATCH")
-        if a["miss_s"] or a["miss_t"]:
+        if true_miss["s"] or true_miss["t"]:
             flags.append("MISSING_ROWS")
+        if out["s"] or out["t"]:
+            flags.append("WINDOW_SKEW")  # informational - row exists, just outside the window
         if a["dup"]:
             flags.append("DUPLICATE_IDS")
         if plan["only_s"] or plan["only_t"]:
             flags.append("COLUMN_SET_MISMATCH")
         if a["fmt"]:
             flags.append("FORMAT_DIFF")  # informational - not a failure
-        if flags == ["FORMAT_DIFF"]:
-            flags = ["FORMAT_DIFF_ONLY"]
+        if len(flags) == 1 and flags[0] in ("FORMAT_DIFF", "WINDOW_SKEW"):
+            flags = [flags[0] + "_ONLY"]
         row["issue_summary"] = "+".join(flags) if flags else (
             "NO_DATA" if a["count_s"] == 0 and a["count_t"] == 0 else "OK")
 
@@ -742,10 +785,16 @@ def reconcile_table(key, plan, wm, ws, we):
         format_cols = [c for c, (v, f) in sorted(stats.items(), key=lambda kv: (-kv[1][1], kv[0].lower())) if f > 0]
         row["value_mismatch_columns"] = ",".join(value_cols[:25]) or None
         row["format_diff_columns"] = ",".join(format_cols[:25]) or None
-        if a["miss_s"]:
-            notes.append(f"{a['miss_s']} row(s) missing in {LABEL_SRC}")
-        if a["miss_t"]:
-            notes.append(f"{a['miss_t']} row(s) missing in {LABEL_TGT}")
+        if true_miss["s"]:
+            notes.append(f"{true_miss['s']} row(s) truly missing in {LABEL_SRC}")
+        if true_miss["t"]:
+            notes.append(f"{true_miss['t']} row(s) truly missing in {LABEL_TGT}")
+        if out["s"]:
+            notes.append(f"{out['s']} row(s) in the window on {LABEL_TGT} exist in {LABEL_SRC} but outside the window "
+                         f"(timestamp/sync skew, not missing data)")
+        if out["t"]:
+            notes.append(f"{out['t']} row(s) in the window on {LABEL_SRC} exist in {LABEL_TGT} but outside the window "
+                         f"(timestamp/sync skew, not missing data)")
         if a["dup"]:
             notes.append(f"{a['dup']} id(s) duplicated on one/both sides")
         if plan["only_s"]:
