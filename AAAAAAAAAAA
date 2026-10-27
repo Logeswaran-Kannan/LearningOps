@@ -3,7 +3,8 @@
 Silver table reconciliation:  core (read replica)  vs  core_tst_std001 (CDA)
 =============================================================================
 
-INPUTS (notebook widgets, or key=value job arguments)
+INPUTS - set in the "INPUTS (edit here)" block below (TABLE_NAMES, KEY_COLUMNS, ...).
+         main({...}) can also be called with a dict of the same lower-case keys to override them.
   table_names      one or more schema.table, separated by comma / semicolon / new line.
                    Optional per-table key:  schema.table:key1|key2
                      e.g.  silver.customer:customer_id, silver.orders:order_id|line_no, silver.product
@@ -57,6 +58,21 @@ except ImportError:  # pragma: no cover
     ZoneInfo = None
 
 spark = SparkSession.builder.getOrCreate()
+
+# ================================ INPUTS (edit here) ================================
+# Tables: one per line. Optional key per table after ':' (multiple key columns separated by '|')
+TABLE_NAMES = """
+silver.customer:customer_id
+silver.orders:order_id|line_no
+silver.product
+"""
+KEY_COLUMNS = ""              # default key for tables without ':key' (blank = full-record compare only)
+EXCLUDE_COLUMNS = ""          # extra columns to ignore; LOAD_DT and HASH_DIFF are always excluded
+FILTER_COLUMN = "SYS_EFCTV_DT"
+FILTER_START = "DAILY"        # 'yyyy-MM-dd HH:mm:ss' | 'yyyy-MM-dd' | 'DAILY' (yesterday 05:00) | '' (whole data)
+FILTER_END = "DAILY"          # same; end is exclusive.  DAILY -> today 05:00
+SAMPLE_ROWS = 20
+# ====================================================================================
 
 # ================================ CONFIG ================================
 SRC_PREFIX = "core"                        # read replica -> core.<schema>.<table>
@@ -205,16 +221,11 @@ PARAM_DEFAULTS = {"table_names": "", "key_columns": "", "exclude_columns": "",
 
 
 def _params():
-    try:
-        for k, v in PARAM_DEFAULTS.items():
-            dbutils.widgets.text(k, v)  # noqa: F821  (Databricks)
-        return {k: dbutils.widgets.get(k).strip() for k in PARAM_DEFAULTS}  # noqa: F821
-    except NameError:  # spark-submit / job with key=value args
-        import sys
-        args = dict(a.split("=", 1) for a in sys.argv[1:] if "=" in a)
-        if "table_name" in args and "table_names" not in args:
-            args["table_names"] = args["table_name"]
-        return {k: args.get(k, v).strip() for k, v in PARAM_DEFAULTS.items()}
+    """Inputs come from the INPUTS block at the top of the script."""
+    return {"table_names": TABLE_NAMES, "key_columns": KEY_COLUMNS,
+            "exclude_columns": EXCLUDE_COLUMNS, "filter_column": FILTER_COLUMN,
+            "filter_start": FILTER_START, "filter_end": FILTER_END,
+            "sample_rows": str(SAMPLE_ROWS)}
 
 
 def _csv(s):
