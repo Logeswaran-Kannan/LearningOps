@@ -1,1 +1,653 @@
-Hi Nikki, hope you’re having a good break! Here’s the field list for the ehubstream table where the Athena MQS quotes land — attached as a Word doc you can drop straight into the data source contract.
+# Databricks notebook source
+"""
+Silver table reconciliation:  core (read replica)  vs  core_tst_std001 (CDA)
+=============================================================================
+
+INPUT (widgets or key=value job args)
+  table_name       schema.table  (comma-separated list allowed)  e.g. silver.customer,silver.orders
+  key_columns      optional business key(s), comma-separated  -> enables exact per-column mismatch counts
+  exclude_columns  optional columns to ignore (e.g. load_ts, etl_batch_id that differ every refresh)
+  sample_rows      number of sample mismatch records to store (default 20)
+
+WHAT IS CHECKED (built for big daily full-refresh tables: one scan per side, hashes only are cached)
+  1. EXISTENCE  both tables readable
+  2. SCHEMA     missing columns each side, data-type differences, nullability, name-case, column order
+  3. COUNT      row counts
+  4. DATA       full-record comparison of every row on all common columns via SHA-256 row hashes
+                (multiset compare, so duplicates are handled), done twice:
+                  - STRICT     : raw values cast to string
+                  - NORMALISED : trim, blank->NULL, numbers to fixed scale, dates/timestamps to one
+                                 format, booleans to true/false, string<->typed columns parsed
+                rows that match only after normalisation  = FORMAT issues
+                rows that don't match even after it       = DATA issues
+                Explicitly reports "all records matched but one side has extra rows".
+  5. FORMAT     per-column format differences (exact counts with key_columns, sample-based without)
+  6. KEY        (with key_columns) src-only / tgt-only keys, duplicate keys, per-column value mismatches
+  7. PROFILE    per-column NULL and blank-string counts each side (catches blank vs NULL issues)
+
+OUTPUT (Delta tables, appended per run, created if missing)
+  <OUT_SCHEMA>.recon_summary        one row per table per run, overall status + full comments
+  <OUT_SCHEMA>.recon_check_results  one row per check / per column issue with detailed comments
+  <OUT_SCHEMA>.recon_mismatch_samples  sample records (full JSON) that failed to match
+"""
+
+import json
+import time
+import traceback
+import uuid
+from datetime import datetime
+from functools import reduce
+
+from pyspark.sql import SparkSession, functions as F, types as T
+from pyspark.storagelevel import StorageLevel
+
+spark = SparkSession.builder.getOrCreate()
+
+# ================================ CONFIG ================================
+SRC_PREFIX = "core"                        # read replica -> core.<schema>.<table>
+TGT_PREFIX = "core_tst_std001"             # CDA          -> core_tst_std001.<schema>.<table>
+OUT_SCHEMA = "core_tst_std001.testing_sb"  # results location
+TABLE_FORMAT = "DELTA"
+
+NUM_SCALE = 6            # numbers compared rounded to this many decimals after normalisation
+RUN_PROFILE = True       # NULL / blank counts per column (one extra aggregate scan per side)
+# string -> timestamp parse attempts when one side holds dates as strings (first match wins)
+TS_FORMATS = [
+    "yyyy-MM-dd HH:mm:ss.SSSSSS", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss",
+    "yyyy-MM-dd", "dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy", "dd-MM-yyyy", "yyyyMMdd",
+]
+NULL_TOKEN = "<<NULL>>"
+SEP = "\u0001"
+# ========================================================================
+
+SEVERITY = {"PASS": 0, "INFO": 0, "WARN": 1, "FAIL": 2, "ERROR": 3}
+
+
+def _params():
+    defaults = {"table_name": "", "key_columns": "", "exclude_columns": "", "sample_rows": "20"}
+    try:
+        for k, v in defaults.items():
+            dbutils.widgets.text(k, v)  # noqa: F821  (Databricks)
+        return {k: dbutils.widgets.get(k).strip() for k in defaults}  # noqa: F821
+    except NameError:  # spark-submit / job: key=value args
+        import sys
+        args = dict(a.split("=", 1) for a in sys.argv[1:] if "=" in a)
+        return {k: args.get(k, v).strip() for k, v in defaults.items()}
+
+
+def C(name):
+    return F.col(f"`{name}`")
+
+
+def _csv(s):
+    return [x.strip().lower() for x in (s or "").split(",") if x.strip()]
+
+
+# ------------------------------------------------------------ type handling
+def kind(dt):
+    n = dt.typeName()
+    if isinstance(dt, (T.ByteType, T.ShortType, T.IntegerType, T.LongType,
+                       T.FloatType, T.DoubleType, T.DecimalType)):
+        return "num"
+    if n in ("timestamp", "timestamp_ntz"):
+        return "ts"
+    if n == "date":
+        return "date"
+    if n == "boolean":
+        return "bool"
+    if n == "binary":
+        return "bin"
+    if isinstance(dt, (T.ArrayType, T.MapType, T.StructType)):
+        return "complex"
+    return "str"
+
+
+def canonical(k1, k2):
+    """Common type both sides are normalised to before comparing."""
+    if k1 == k2:
+        return k1
+    pair = {k1, k2}
+    if pair == {"date", "ts"}:
+        return "ts"
+    if "str" in pair:
+        other = (pair - {"str"}).pop()
+        if other in ("num", "ts", "date", "bool"):
+            return other
+    return "str"
+
+
+def strict_expr(name, k):
+    col = C(name)
+    if k == "complex":
+        v = F.to_json(col)
+    elif k == "bin":
+        v = F.base64(col)
+    else:
+        v = col.cast("string")
+    return F.coalesce(v, F.lit(NULL_TOKEN))
+
+
+def norm_expr(name, k, canon):
+    q = f"`{name}`"
+    if k == "complex":
+        as_str = F.to_json(C(name))
+    elif k == "bin":
+        as_str = F.base64(C(name))
+    else:
+        as_str = F.trim(C(name).cast("string"))
+    blank_null = F.when(as_str == "", F.lit(None)).otherwise(as_str)
+
+    if canon == "num":
+        if k == "str":
+            d = F.expr(f"try_cast(regexp_replace(trim({q}), ',', '') as decimal(38,{NUM_SCALE}))")
+        else:
+            d = F.expr(f"try_cast({q} as decimal(38,{NUM_SCALE}))")
+        s = F.regexp_replace(F.regexp_replace(d.cast("string"), r"(\.\d*?)0+$", "$1"), r"\.$", "")
+        s = F.when(s == "-0", F.lit("0")).otherwise(s)
+        v = F.coalesce(s, blank_null)          # unparsable strings still compared as text
+    elif canon in ("ts", "date"):
+        fmt = "yyyy-MM-dd HH:mm:ss.SSSSSS" if canon == "ts" else "yyyy-MM-dd"
+        if k in ("ts", "date"):
+            t = C(name).cast("timestamp")
+        else:
+            t = F.coalesce(*[F.expr(f"try_to_timestamp(trim({q}), '{f}')") for f in TS_FORMATS],
+                           F.expr(f"try_cast(trim({q}) as timestamp)"))
+        v = F.coalesce(F.date_format(t, fmt), blank_null)
+    elif canon == "bool":
+        low = F.lower(as_str)
+        v = (F.when(low.isin("true", "1", "y", "yes", "t"), F.lit("true"))
+              .when(low.isin("false", "0", "n", "no", "f"), F.lit("false"))
+              .otherwise(blank_null))
+    else:
+        v = blank_null
+    return F.coalesce(v, F.lit(NULL_TOKEN))
+
+
+def explain_format(sv, tv):
+    """Human-readable guess at why two raw values differ but normalise equal."""
+    if sv is None or tv is None:
+        return "value differs in representation"
+    if NULL_TOKEN in (sv, tv) and (sv.strip() == "" or tv.strip() == ""):
+        return "blank string vs NULL"
+    if sv.strip() == tv.strip():
+        return "leading/trailing whitespace"
+    def is_num(x):
+        try:
+            float(x.replace(",", ""))
+            return True
+        except ValueError:
+            return False
+    if is_num(sv) and is_num(tv):
+        return "numeric precision/scale or formatting (e.g. 10.5 vs 10.50, thousands separator)"
+    if any(ch in sv + tv for ch in "-/:") and any(c.isdigit() for c in sv + tv):
+        return "date/timestamp format or precision"
+    if sv.lower() in ("true", "false", "1", "0", "y", "n", "yes", "no"):
+        return "boolean representation"
+    return "value representation differs (type cast)"
+
+
+# ------------------------------------------------------------ output tables
+def ensure_output_tables():
+    spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {OUT_SCHEMA}.recon_summary (
+      run_id STRING COMMENT 'Unique id of the reconciliation run',
+      run_ts TIMESTAMP COMMENT 'Run start time',
+      table_name STRING COMMENT 'schema.table supplied as input',
+      src_table STRING COMMENT 'Fully-qualified source (read replica) table',
+      tgt_table STRING COMMENT 'Fully-qualified target (CDA) table',
+      key_columns STRING COMMENT 'Business key used for key-level checks (blank = full-record only)',
+      excluded_columns STRING COMMENT 'Columns ignored in comparison',
+      src_count BIGINT, tgt_count BIGINT,
+      count_diff BIGINT COMMENT 'tgt_count - src_count',
+      src_column_count INT, tgt_column_count INT, common_column_count INT,
+      cols_missing_in_tgt STRING, cols_missing_in_src STRING, type_mismatch_cols STRING,
+      exact_matched_rows BIGINT COMMENT 'Rows identical on all common columns (raw values)',
+      matched_rows BIGINT COMMENT 'Rows identical after format normalisation',
+      format_only_rows BIGINT COMMENT 'Rows that match only after normalisation (format issues)',
+      src_only_rows BIGINT COMMENT 'Source rows with no full-record match in target',
+      tgt_only_rows BIGINT COMMENT 'Target rows with no full-record match in source',
+      src_duplicate_rows BIGINT, tgt_duplicate_rows BIGINT,
+      key_matched BIGINT, key_src_only BIGINT, key_tgt_only BIGINT,
+      key_rows_all_cols_match BIGINT,
+      overall_status STRING COMMENT 'PASS | PASS_WITH_WARNINGS | MATCHED_WITH_EXTRA_ROWS_IN_TARGET | MATCHED_WITH_EXTRA_ROWS_IN_SOURCE | FAIL | ERROR',
+      comments STRING COMMENT 'Detailed narrative of all findings',
+      duration_sec DOUBLE
+    ) USING {TABLE_FORMAT} COMMENT 'Silver reconciliation core vs core_tst_std001 - one row per table per run'""")
+
+    spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {OUT_SCHEMA}.recon_check_results (
+      run_id STRING, run_ts TIMESTAMP, table_name STRING, src_table STRING, tgt_table STRING,
+      check_category STRING COMMENT 'EXISTENCE | SCHEMA | COUNT | DATA | FORMAT | KEY | PROFILE',
+      check_name STRING, column_name STRING,
+      status STRING COMMENT 'PASS | WARN | FAIL | ERROR',
+      src_value STRING, tgt_value STRING,
+      diff_count BIGINT COMMENT 'Number of rows/columns affected',
+      comments STRING COMMENT 'Detailed explanation of the finding',
+      sample_src STRING, sample_tgt STRING
+    ) USING {TABLE_FORMAT} COMMENT 'Silver reconciliation - detailed check results'""")
+
+    spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {OUT_SCHEMA}.recon_mismatch_samples (
+      run_id STRING, run_ts TIMESTAMP, table_name STRING,
+      sample_type STRING COMMENT 'SRC_ONLY | TGT_ONLY | FORMAT_DIFF',
+      side STRING COMMENT 'SOURCE | TARGET',
+      pair_id STRING COMMENT 'Links source/target rows of the same FORMAT_DIFF pair',
+      record_json STRING COMMENT 'Full record as JSON'
+    ) USING {TABLE_FORMAT} COMMENT 'Silver reconciliation - sample unmatched records'""")
+
+
+def _append(table, rows):
+    if not rows:
+        return
+    schema = spark.table(f"{OUT_SCHEMA}.{table}").schema
+    data = [tuple(r.get(f.name) for f in schema.fields) for r in rows]
+    spark.createDataFrame(data, schema).write.mode("append").saveAsTable(f"{OUT_SCHEMA}.{table}")
+
+
+# ------------------------------------------------------------ reconciliation
+class Recon:
+    def __init__(self, table, keys, excl, sample_rows, run_id, run_ts):
+        self.table, self.keys, self.excl, self.n = table, keys, excl, sample_rows
+        self.run_id, self.run_ts = run_id, run_ts
+        self.src_fqn = f"{SRC_PREFIX}.{table}" if SRC_PREFIX else table
+        self.tgt_fqn = f"{TGT_PREFIX}.{table}" if TGT_PREFIX else table
+        self.results, self.samples, self.comments = [], [], []
+        self.summary = dict(run_id=run_id, run_ts=run_ts, table_name=table,
+                            src_table=self.src_fqn, tgt_table=self.tgt_fqn,
+                            key_columns=",".join(keys), excluded_columns=",".join(excl))
+        self.special_status = None
+
+    def add(self, category, check, status, comments, column=None, src_value=None,
+            tgt_value=None, diff=None, sample_src=None, sample_tgt=None):
+        self.results.append(dict(
+            run_id=self.run_id, run_ts=self.run_ts, table_name=self.table,
+            src_table=self.src_fqn, tgt_table=self.tgt_fqn, check_category=category,
+            check_name=check, column_name=column, status=status,
+            src_value=None if src_value is None else str(src_value),
+            tgt_value=None if tgt_value is None else str(tgt_value),
+            diff_count=None if diff is None else int(diff), comments=comments,
+            sample_src=None if sample_src is None else str(sample_src)[:4000],
+            sample_tgt=None if sample_tgt is None else str(sample_tgt)[:4000]))
+        if status != "PASS":
+            self.comments.append(f"[{status}] {comments}")
+
+    def add_sample(self, sample_type, side, rec, pair_id=None):
+        self.samples.append(dict(run_id=self.run_id, run_ts=self.run_ts, table_name=self.table,
+                                 sample_type=sample_type, side=side, pair_id=pair_id,
+                                 record_json=rec))
+
+    # -------------------------------------------------- helpers
+    def strict_hash(self, names, kinds):
+        return F.sha2(F.concat_ws(SEP, *[strict_expr(names[c], kinds[c]) for c in self.common]), 256)
+
+    def norm_hash(self, names, kinds):
+        return F.sha2(F.concat_ws(SEP, *[norm_expr(names[c], kinds[c], self.canon[c])
+                                         for c in self.common]), 256)
+
+    def hashed(self, df, names, kinds):
+        cols = [self.strict_hash(names, kinds).alias("_strict_hash"),
+                self.norm_hash(names, kinds).alias("_norm_hash")]
+        cols += [norm_expr(names[k], kinds[k], self.canon[k]).alias(f"_k_{k}") for k in self.keys]
+        return df.select(*cols)
+
+    def fetch(self, df, names, kinds, hash_expr, hashes):
+        """Return {hash: (raw_json, strict_value_map)} for the given row hashes."""
+        if not hashes:
+            return {}
+        raw = F.to_json(F.struct(*[C(x) for x in df.columns]))
+        smap = F.to_json(F.create_map(*[x for c in self.common
+                                        for x in (F.lit(c), strict_expr(names[c], kinds[c]))]))
+        rows = (df.select(hash_expr.alias("_h"), raw.alias("_raw"), smap.alias("_smap"))
+                  .where(F.col("_h").isin(list(hashes))).limit(len(hashes) * 3).collect())
+        out = {}
+        for r in rows:
+            out.setdefault(r["_h"], (r["_raw"], json.loads(r["_smap"])))
+        return out
+
+    @staticmethod
+    def hash_diff(src_h, tgt_h, hcol):
+        s = src_h.groupBy(hcol).agg(F.count(F.lit(1)).alias("s_cnt"))
+        t = tgt_h.groupBy(hcol).agg(F.count(F.lit(1)).alias("t_cnt"))
+        j = s.join(t, hcol, "full_outer").fillna(0, subset=["s_cnt", "t_cnt"])
+        r = j.agg(
+            F.sum(F.least("s_cnt", "t_cnt")).alias("matched"),
+            F.sum(F.greatest(F.col("s_cnt") - F.col("t_cnt"), F.lit(0))).alias("src_only"),
+            F.sum(F.greatest(F.col("t_cnt") - F.col("s_cnt"), F.lit(0))).alias("tgt_only"),
+            F.sum(F.when(F.col("s_cnt") > 1, F.col("s_cnt") - 1).otherwise(0)).alias("src_dups"),
+            F.sum(F.when(F.col("t_cnt") > 1, F.col("t_cnt") - 1).otherwise(0)).alias("tgt_dups"),
+        ).first()
+        return {k: int(v or 0) for k, v in r.asDict().items()}, j
+
+    # -------------------------------------------------- main flow
+    def run(self):
+        t0 = time.time()
+        try:
+            self._run()
+        except Exception as e:  # never lose the run - record the failure
+            self.add("EXISTENCE" if not hasattr(self, "common") else "DATA", "execution",
+                     "ERROR", f"Reconciliation failed: {type(e).__name__}: {str(e)[:1500]}",
+                     sample_src=traceback.format_exc()[-3000:])
+        finally:
+            for df in (getattr(self, "src_h", None), getattr(self, "tgt_h", None)):
+                if df is not None:
+                    df.unpersist()
+        worst = max((SEVERITY.get(r["status"], 0) for r in self.results), default=0)
+        overall = {0: "PASS", 1: "PASS_WITH_WARNINGS", 2: "FAIL", 3: "ERROR"}[worst]
+        if self.special_status and worst <= 1:
+            overall = self.special_status
+        self.summary.update(overall_status=overall,
+                            comments=" | ".join(self.comments) if self.comments
+                            else "All checks passed: schema, counts and full-record data match.",
+                            duration_sec=round(time.time() - t0, 1))
+        _append("recon_summary", [self.summary])
+        _append("recon_check_results", self.results)
+        _append("recon_mismatch_samples", self.samples)
+        return overall
+
+    def _run(self):
+        # ---------- 1. existence
+        dfs = {}
+        for side, fqn in (("source", self.src_fqn), ("target", self.tgt_fqn)):
+            try:
+                dfs[side] = spark.table(fqn)
+            except Exception as e:
+                self.add("EXISTENCE", f"{side}_table_exists", "ERROR",
+                         f"{side.title()} table {fqn} cannot be read: {str(e)[:500]}")
+        if len(dfs) < 2:
+            return
+        src, tgt = dfs["source"], dfs["target"]
+
+        # ---------- 2. schema
+        s_map = {f.name.lower(): f for f in src.schema.fields}
+        t_map = {f.name.lower(): f for f in tgt.schema.fields}
+        miss_tgt = [c for c in s_map if c not in t_map and c not in self.excl]
+        miss_src = [c for c in t_map if c not in s_map and c not in self.excl]
+        self.common = [c for c in s_map if c in t_map and c not in self.excl]
+        s_names = {c: s_map[c].name for c in self.common}
+        t_names = {c: t_map[c].name for c in self.common}
+        s_kinds = {c: kind(s_map[c].dataType) for c in self.common}
+        t_kinds = {c: kind(t_map[c].dataType) for c in self.common}
+        self.canon = {c: canonical(s_kinds[c], t_kinds[c]) for c in self.common}
+
+        for c in miss_tgt:
+            self.add("SCHEMA", "column_missing_in_target", "FAIL",
+                     f"Column '{s_map[c].name}' ({s_map[c].dataType.simpleString()}) exists in source "
+                     f"but is MISSING in target; excluded from data comparison.",
+                     column=s_map[c].name, src_value=s_map[c].dataType.simpleString())
+        for c in miss_src:
+            self.add("SCHEMA", "column_missing_in_source", "FAIL",
+                     f"Column '{t_map[c].name}' ({t_map[c].dataType.simpleString()}) exists in target "
+                     f"but is MISSING in source; excluded from data comparison.",
+                     column=t_map[c].name, tgt_value=t_map[c].dataType.simpleString())
+        type_mm = []
+        for c in self.common:
+            st, tt = s_map[c].dataType.simpleString(), t_map[c].dataType.simpleString()
+            if st != tt:
+                type_mm.append(c)
+                self.add("SCHEMA", "data_type_mismatch", "WARN",
+                         f"Data type differs for '{s_names[c]}': source {st} vs target {tt}. Values are "
+                         f"compared after normalising both to '{self.canon[c]}'; see FORMAT/DATA checks "
+                         f"for value-level impact.", column=s_names[c], src_value=st, tgt_value=tt)
+            if s_map[c].nullable != t_map[c].nullable:
+                self.add("SCHEMA", "nullability_mismatch", "WARN",
+                         f"Nullability differs for '{s_names[c]}': source nullable={s_map[c].nullable}, "
+                         f"target nullable={t_map[c].nullable}.", column=s_names[c],
+                         src_value=s_map[c].nullable, tgt_value=t_map[c].nullable)
+            if s_names[c] != t_names[c]:
+                self.add("SCHEMA", "column_name_case_mismatch", "WARN",
+                         f"Column name case differs: source '{s_names[c]}' vs target '{t_names[c]}'.",
+                         column=s_names[c], src_value=s_names[c], tgt_value=t_names[c])
+        s_order = [c for c in s_map if c in t_map]
+        t_order = [c for c in t_map if c in s_map]
+        if s_order != t_order:
+            self.add("SCHEMA", "column_order", "WARN",
+                     "Common columns are in a different order in source and target "
+                     "(no impact on this comparison, may matter for positional loads).")
+        if not (miss_tgt or miss_src or type_mm):
+            self.add("SCHEMA", "schema_comparison", "PASS",
+                     f"{len(self.common)} common columns with identical names and data types.")
+        self.summary.update(src_column_count=len(s_map), tgt_column_count=len(t_map),
+                            common_column_count=len(self.common),
+                            cols_missing_in_tgt=",".join(s_map[c].name for c in miss_tgt) or None,
+                            cols_missing_in_src=",".join(t_map[c].name for c in miss_src) or None,
+                            type_mismatch_cols=",".join(s_names[c] for c in type_mm) or None)
+        if not self.common:
+            self.add("SCHEMA", "common_columns", "ERROR", "No common columns - data cannot be compared.")
+            return
+        bad_keys = [k for k in self.keys if k not in self.common]
+        if bad_keys:
+            self.add("KEY", "key_columns_valid", "ERROR",
+                     f"Key column(s) {bad_keys} not present in both tables; key-level checks skipped.")
+            self.keys = []
+
+        # ---------- 3. count + hashing (one scan per side; only hashes are cached)
+        self.src_h = self.hashed(src, s_names, s_kinds).persist(StorageLevel.MEMORY_AND_DISK)
+        self.tgt_h = self.hashed(tgt, t_names, t_kinds).persist(StorageLevel.MEMORY_AND_DISK)
+        sc, tc = self.src_h.count(), self.tgt_h.count()
+        self.summary.update(src_count=sc, tgt_count=tc, count_diff=tc - sc)
+
+        # ---------- 4. full-record comparison
+        st, st_j = self.hash_diff(self.src_h, self.tgt_h, "_strict_hash")
+        nm, nm_j = self.hash_diff(self.src_h, self.tgt_h, "_norm_hash")
+        fmt_rows = nm["matched"] - st["matched"]
+        self.summary.update(exact_matched_rows=st["matched"], matched_rows=nm["matched"],
+                            format_only_rows=fmt_rows, src_only_rows=nm["src_only"],
+                            tgt_only_rows=nm["tgt_only"], src_duplicate_rows=nm["src_dups"],
+                            tgt_duplicate_rows=nm["tgt_dups"])
+        ncols = len(self.common)
+
+        if sc == tc:
+            self.add("COUNT", "row_count", "PASS", f"Row counts match ({sc:,}).", src_value=sc, tgt_value=tc, diff=0)
+        else:
+            more, side_more = (tc - sc, "Target") if tc > sc else (sc - tc, "Source")
+            one_sided = (nm["src_only"] == 0) if tc > sc else (nm["tgt_only"] == 0)
+            self.add("COUNT", "row_count", "WARN" if one_sided else "FAIL",
+                     f"{side_more} has {more:,} more rows (source {sc:,} vs target {tc:,})."
+                     + (f" All rows of the smaller side matched; the difference is purely extra rows in {side_more.lower()}."
+                        if one_sided else " Mismatches exist in both directions - see DATA checks."),
+                     src_value=sc, tgt_value=tc, diff=tc - sc)
+
+        if nm["src_only"] == 0 and nm["tgt_only"] == 0:
+            self.add("DATA", "full_record_match", "PASS",
+                     f"All {nm['matched']:,} records match on all {ncols} common columns.",
+                     src_value=sc, tgt_value=tc, diff=0)
+        elif nm["src_only"] == 0:
+            self.special_status = "MATCHED_WITH_EXTRA_ROWS_IN_TARGET"
+            self.add("DATA", "full_record_match", "WARN",
+                     f"All {sc:,} source records are present in target (full-record match on {ncols} "
+                     f"columns) but target has {nm['tgt_only']:,} EXTRA record(s) not in source. "
+                     f"See recon_mismatch_samples (TGT_ONLY).",
+                     src_value=nm["matched"], tgt_value=tc, diff=nm["tgt_only"])
+        elif nm["tgt_only"] == 0:
+            self.special_status = "MATCHED_WITH_EXTRA_ROWS_IN_SOURCE"
+            self.add("DATA", "full_record_match", "WARN",
+                     f"All {tc:,} target records are present in source (full-record match on {ncols} "
+                     f"columns) but source has {nm['src_only']:,} record(s) NOT loaded to target. "
+                     f"See recon_mismatch_samples (SRC_ONLY).",
+                     src_value=sc, tgt_value=nm["matched"], diff=nm["src_only"])
+        else:
+            self.add("DATA", "full_record_match", "FAIL",
+                     f"{nm['matched']:,} records matched; {nm['src_only']:,} source records have no "
+                     f"full-record match in target and {nm['tgt_only']:,} target records have no match "
+                     f"in source (after format normalisation). "
+                     + ("Supply key_columns to see which columns differ." if not self.keys
+                        else "See KEY/DATA column checks for the columns responsible."),
+                     src_value=nm["src_only"], tgt_value=nm["tgt_only"],
+                     diff=nm["src_only"] + nm["tgt_only"])
+        if nm["src_dups"] or nm["tgt_dups"]:
+            self.add("DATA", "duplicate_records", "WARN" if nm["src_dups"] == nm["tgt_dups"] else "FAIL",
+                     f"Exact duplicate records: source {nm['src_dups']:,}, target {nm['tgt_dups']:,}.",
+                     src_value=nm["src_dups"], tgt_value=nm["tgt_dups"],
+                     diff=abs(nm["src_dups"] - nm["tgt_dups"]))
+        if fmt_rows > 0:
+            self.add("FORMAT", "format_only_rows", "WARN",
+                     f"{fmt_rows:,} records match only after normalisation (whitespace, blank vs NULL, "
+                     f"numeric scale, date/timestamp format or type casting). Column detail below.",
+                     diff=fmt_rows)
+
+        # sample unmatched records
+        if nm["src_only"]:
+            hs = [r[0] for r in nm_j.where("s_cnt > t_cnt").select("_norm_hash").limit(self.n).collect()]
+            for h, (raw, _) in self.fetch(src, s_names, s_kinds, self.norm_hash(s_names, s_kinds), hs).items():
+                self.add_sample("SRC_ONLY", "SOURCE", raw)
+        if nm["tgt_only"]:
+            hs = [r[0] for r in nm_j.where("t_cnt > s_cnt").select("_norm_hash").limit(self.n).collect()]
+            for h, (raw, _) in self.fetch(tgt, t_names, t_kinds, self.norm_hash(t_names, t_kinds), hs).items():
+                self.add_sample("TGT_ONLY", "TARGET", raw)
+
+        # format detail without keys: pair rows by normalised hash, diff the columns
+        if fmt_rows > 0 and not self.keys:
+            pairs = (self.src_h.select("_norm_hash", F.col("_strict_hash").alias("s_sh"))
+                     .join(self.tgt_h.select("_norm_hash", F.col("_strict_hash").alias("t_sh")), "_norm_hash")
+                     .where("s_sh <> t_sh").limit(self.n).collect())
+            s_rec = self.fetch(src, s_names, s_kinds, self.strict_hash(s_names, s_kinds), {p["s_sh"] for p in pairs})
+            t_rec = self.fetch(tgt, t_names, t_kinds, self.strict_hash(t_names, t_kinds), {p["t_sh"] for p in pairs})
+            col_hits = {}
+            for p in pairs:
+                if p["s_sh"] not in s_rec or p["t_sh"] not in t_rec:
+                    continue
+                (s_raw, s_vals), (t_raw, t_vals) = s_rec[p["s_sh"]], t_rec[p["t_sh"]]
+                self.add_sample("FORMAT_DIFF", "SOURCE", s_raw, p["_norm_hash"][:16])
+                self.add_sample("FORMAT_DIFF", "TARGET", t_raw, p["_norm_hash"][:16])
+                for c in self.common:
+                    if s_vals.get(c) != t_vals.get(c):
+                        col_hits.setdefault(c, []).append((s_vals.get(c), t_vals.get(c)))
+            for c, ex in col_hits.items():
+                sv, tv = ex[0]
+                self.add("FORMAT", "format_mismatch_sampled", "WARN",
+                         f"Format difference in '{s_names[c]}' ({explain_format(sv, tv)}); seen in "
+                         f"{len(ex)} of {len(pairs)} sampled format-diff rows. Types: source "
+                         f"{s_map[c].dataType.simpleString()}, target {t_map[c].dataType.simpleString()}. "
+                         f"Supply key_columns for exact counts.",
+                         column=s_names[c], diff=len(ex), sample_src=sv, sample_tgt=tv)
+
+        # ---------- 5. key-level, per-column comparison
+        if self.keys:
+            self._keyed(src, tgt, s_names, t_names, s_kinds, t_kinds, s_map, t_map)
+
+        # ---------- 6. profile
+        if RUN_PROFILE:
+            self._profile(src, tgt, s_names, t_names, s_kinds, t_kinds)
+
+    def _keyed(self, src, tgt, s_names, t_names, s_kinds, t_kinds, s_map, t_map):
+        kc = [f"_k_{k}" for k in self.keys]
+        for side, h in (("source", self.src_h), ("target", self.tgt_h)):
+            r = (h.groupBy(*kc).count().where("count > 1")
+                  .agg(F.count(F.lit(1)).alias("k"), F.sum("count").alias("r")).first())
+            if r["k"]:
+                self.add("KEY", f"duplicate_keys_{side}", "FAIL",
+                         f"{side.title()} has {r['k']:,} duplicate key value(s) covering {r['r']:,} rows "
+                         f"on key ({', '.join(self.keys)}); key-level counts below are inflated by the join.",
+                         diff=r["k"])
+
+        nonkey = [c for c in self.common if c not in self.keys]
+        s = src.select(*[norm_expr(s_names[k], s_kinds[k], self.canon[k]).alias(f"_k_{k}") for k in self.keys],
+                       *[e for i, c in enumerate(nonkey) for e in
+                         (strict_expr(s_names[c], s_kinds[c]).alias(f"s{i}"),
+                          norm_expr(s_names[c], s_kinds[c], self.canon[c]).alias(f"sn{i}"))],
+                       F.lit(1).alias("_in_s"))
+        t = tgt.select(*[norm_expr(t_names[k], t_kinds[k], self.canon[k]).alias(f"_k_{k}") for k in self.keys],
+                       *[e for i, c in enumerate(nonkey) for e in
+                         (strict_expr(t_names[c], t_kinds[c]).alias(f"t{i}"),
+                          norm_expr(t_names[c], t_kinds[c], self.canon[c]).alias(f"tn{i}"))],
+                       F.lit(1).alias("_in_t"))
+        j = s.join(t, kc, "full_outer")
+        both = F.col("_in_s").isNotNull() & F.col("_in_t").isNotNull()
+        key_json = F.to_json(F.struct(*[F.col(f"_k_{k}").alias(s_names[k]) for k in self.keys]))
+        one = lambda cond: F.sum(F.when(cond, 1).otherwise(0))
+        aggs = [one(both).alias("matched"),
+                one(F.col("_in_t").isNull()).alias("src_only"),
+                one(F.col("_in_s").isNull()).alias("tgt_only"),
+                F.first(F.when(F.col("_in_t").isNull(), key_json), True).alias("ex_src_only"),
+                F.first(F.when(F.col("_in_s").isNull(), key_json), True).alias("ex_tgt_only")]
+        eqs = [F.col(f"sn{i}").eqNullSafe(F.col(f"tn{i}")) for i in range(len(nonkey))]
+        aggs.append(one(both & reduce(lambda a, b: a & b, eqs, F.lit(True))).alias("all_match"))
+        for i in range(len(nonkey)):
+            d = both & ~eqs[i]
+            f = both & eqs[i] & ~F.col(f"s{i}").eqNullSafe(F.col(f"t{i}"))
+            ex = lambda cond: F.first(F.when(cond, F.to_json(F.struct(
+                key_json.alias("key"), F.col(f"s{i}").alias("src"), F.col(f"t{i}").alias("tgt")))), True)
+            aggs += [one(d).alias(f"d{i}"), one(f).alias(f"f{i}"), ex(d).alias(f"dx{i}"), ex(f).alias(f"fx{i}")]
+        r = j.agg(*aggs).first()
+
+        self.summary.update(key_matched=int(r["matched"] or 0), key_src_only=int(r["src_only"] or 0),
+                            key_tgt_only=int(r["tgt_only"] or 0), key_rows_all_cols_match=int(r["all_match"] or 0))
+        keys_txt = ", ".join(self.keys)
+        if r["src_only"]:
+            self.add("KEY", "keys_missing_in_target", "FAIL",
+                     f"{r['src_only']:,} key(s) on ({keys_txt}) exist in source but not in target.",
+                     diff=r["src_only"], sample_src=r["ex_src_only"])
+        if r["tgt_only"]:
+            self.add("KEY", "keys_missing_in_source", "FAIL" if r["src_only"] else "WARN",
+                     f"{r['tgt_only']:,} key(s) on ({keys_txt}) exist in target but not in source"
+                     + (" (all source keys found - target has extra keys)." if not r["src_only"] else "."),
+                     diff=r["tgt_only"], sample_tgt=r["ex_tgt_only"])
+        if not r["src_only"] and not r["tgt_only"]:
+            self.add("KEY", "key_coverage", "PASS", f"All {r['matched']:,} keys present on both sides.")
+        diff_rows = int(r["matched"] or 0) - int(r["all_match"] or 0)
+        self.add("KEY", "matched_keys_all_columns", "PASS" if diff_rows == 0 else "FAIL",
+                 f"Of {r['matched']:,} matched keys, {r['all_match']:,} have identical values in all "
+                 f"{len(nonkey)} non-key columns (after normalisation); {diff_rows:,} differ.", diff=diff_rows)
+
+        for i, c in enumerate(nonkey):
+            st, tt = s_map[c].dataType.simpleString(), t_map[c].dataType.simpleString()
+            if r[f"d{i}"]:
+                ex = json.loads(r[f"dx{i}"])
+                self.add("DATA", "column_value_mismatch", "FAIL",
+                         f"'{s_names[c]}': {r[f'd{i}']:,} matched-key rows have different values even after "
+                         f"normalisation (types: source {st}, target {tt}). Example key {ex['key']}: "
+                         f"source='{ex['src']}', target='{ex['tgt']}'.",
+                         column=s_names[c], diff=r[f"d{i}"], sample_src=ex["src"], sample_tgt=ex["tgt"])
+            if r[f"f{i}"]:
+                ex = json.loads(r[f"fx{i}"])
+                self.add("FORMAT", "column_format_mismatch", "WARN",
+                         f"'{s_names[c]}': {r[f'f{i}']:,} matched-key rows are equal in value but differ in "
+                         f"format - {explain_format(ex['src'], ex['tgt'])} (types: source {st}, target {tt}). "
+                         f"Example key {ex['key']}: source='{ex['src']}', target='{ex['tgt']}'.",
+                         column=s_names[c], diff=r[f"f{i}"], sample_src=ex["src"], sample_tgt=ex["tgt"])
+
+    def _profile(self, src, tgt, s_names, t_names, s_kinds, t_kinds):
+        def prof(df, names, kinds):
+            ex = [F.count(F.lit(1)).alias("_cnt")]
+            for i, c in enumerate(self.common):
+                ex.append(F.sum(F.when(C(names[c]).isNull(), 1).otherwise(0)).alias(f"n{i}"))
+                ex.append(F.sum(F.when(F.trim(C(names[c]).cast("string")) == "", 1).otherwise(0)).alias(f"b{i}")
+                          if kinds[c] == "str" else F.lit(0).alias(f"b{i}"))
+            return df.agg(*ex).first()
+        ps, pt = prof(src, s_names, s_kinds), prof(tgt, t_names, t_kinds)
+        for i, c in enumerate(self.common):
+            sn, tn, sb, tb = (int(ps[f"n{i}"] or 0), int(pt[f"n{i}"] or 0),
+                              int(ps[f"b{i}"] or 0), int(pt[f"b{i}"] or 0))
+            if sn != tn:
+                hint = (" Likely blank-vs-NULL handling (blank counts differ in the opposite direction)."
+                        if (sn - tn) * (sb - tb) < 0 else "")
+                self.add("PROFILE", "null_count_mismatch", "WARN",
+                         f"'{s_names[c]}': NULL count source {sn:,} vs target {tn:,}.{hint}",
+                         column=s_names[c], src_value=sn, tgt_value=tn, diff=tn - sn)
+            if sb != tb:
+                self.add("PROFILE", "blank_count_mismatch", "WARN",
+                         f"'{s_names[c]}': blank/whitespace-only string count source {sb:,} vs target {tb:,}.",
+                         column=s_names[c], src_value=sb, tgt_value=tb, diff=tb - sb)
+
+
+def main(params=None):
+    p = params or _params()
+    tables = [t.strip() for t in p["table_name"].split(",") if t.strip()]
+    if not tables:
+        raise ValueError("table_name is required, e.g. silver.customer")
+    keys, excl = _csv(p.get("key_columns")), _csv(p.get("exclude_columns"))
+    n = int(p.get("sample_rows") or 20)
+    run_id = str(uuid.uuid4())
+    run_ts = datetime.now()
+    ensure_output_tables()
+    out = {}
+    for t in tables:
+        status = Recon(t, list(keys), excl, n, run_id, run_ts).run()
+        out[t] = status
+        print(f"{t}: {status}")
+    print(f"run_id = {run_id}")
+    return run_id, out
+
+
+if __name__ == "__main__":
+    main()
