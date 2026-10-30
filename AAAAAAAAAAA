@@ -1,7 +1,17 @@
-For the samples shared by Money, the quote request was originally created around 2 PM on 28 Oct, but the expected subsequent message types are still missing in BICoE.
+As part of my Skill Development Goal, I have selected Skill Demonstration as the fulfillment method and completed the mentoring requirements for my mentees, Tarun and Khan.
 
-If those follow-up messages had failed due to a timeout and were written to Blob as expected, we would have expected them to be picked up either during the 7 PM backlog-clearance activity or, at the latest, during the 2 AM replay batch. However, we still do not see those messages.
+However, the third criterion is still showing as Not Fulfilled, even though both mentees have achieved the expected proficiency level.
 
-For the ~1,400 affected Quote IDs, could MQS/Mule please check the samples and confirm where the sequence breaks? In particular, whether the missing messages were actually generated, whether they reached the Blob/replay path, and if they were present in Blob, why they were not picked up by either the 7 PM or 2 AM replay.
+The current status is:
 
-At the moment, the possible explanations seem to be that the missing messages were never generated, never written to Blob, remained in Blob but were not selected by the replay process, or failed again during replay. We need the trace for the shared samples to establish which of these is happening.
+Minimum 10 hours of cumulative mentoring: Fulfilled
+
+Average mentee feedback score of 4.25 out of 5: Fulfilled
+
+At least 50% of mentees achieving the required proficiency: Not Fulfilled, despite both mentees meeting the requirement.
+
+Since all three conditions have been met, could you please investigate why the proficiency status is not reflecting correctly under my Skill Development Goal?
+
+Kindly validate the mentee proficiency records and update the Skill Demonstration fulfillment status accordingly, as this impacts my year end appraisal.
+
+Please let me know if any additional evidence or details are required.
