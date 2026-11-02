@@ -1,17 +1,5 @@
-As part of my Skill Development Goal, I have selected Skill Demonstration as the fulfillment method and completed the mentoring requirements for my mentees, Tarun and Khan.
+Thanks Ash for checking the samples shared and providing the Mule-side confirmation.
 
-However, the third criterion is still showing as Not Fulfilled, even though both mentees have achieved the expected proficiency level.
-
-The current status is:
-
-Minimum 10 hours of cumulative mentoring: Fulfilled
-
-Average mentee feedback score of 4.25 out of 5: Fulfilled
-
-At least 50% of mentees achieving the required proficiency: Not Fulfilled, despite both mentees meeting the requirement.
-
-Since all three conditions have been met, could you please investigate why the proficiency status is not reflecting correctly under my Skill Development Goal?
-
-Kindly validate the mentee proficiency records and update the Skill Demonstration fulfillment status accordingly, as this impacts my year end appraisal.
-
-Please let me know if any additional evidence or details are required.
+From the BICoE perspective, our understanding is:
+1. Cross-day duplicates: For the sample reviewed, Mule confirmed that the message was sent towards Event Hub, but due to the timeout the expected success/deletion status was not captured on the Mule side. As a result, the message remained in the Blob/replay path and was replayed later. On the BICoE side, this can create a cross-day duplicate which may fall outside the current deduplication window and propagate into downstream Gold / DIM Audit Rate Permission data. This scenario therefore needs to be considered as part of the duplicate-handling solution.
+2. Residual orphan records: For the orphan samples reviewed, Mule confirmed that the available Blob data had already been replayed and that there were no additional follow-up messages present in Blob for those Quote IDs. From the BICoE side, this indicates that the remaining orphan cases are not caused by the current Blob replay mechanism. The daily orphan count has reduced significantly, which is positive, but the remaining occurrences now need a separate end-to-end investigation to understand where the missing messages are being lost before they reach Blob/replay.
