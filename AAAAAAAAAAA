@@ -100,8 +100,10 @@ PARALLEL_TABLES = 2          # tables reconciled at the same time (1 = one after
 NUM_BUCKETS = 65536          # hash buckets used to localise differences
 DRILL_MAX_FRACTION = 0.5     # if more buckets than this differ, drill-down runs on the whole table
 CHECK_DUPLICATES = True      # exact duplicate rows + duplicate keys
-DUP_KEY_STATUS = "FAIL"      # status when a key value occurs more than once ("WARN" for history tables)
-RUN_PROFILE = True           # NULL / blank counts per column (only on rows in differing buckets)
+DUP_KEY_STATUS = "FAIL"      # status when duplicate keys DIFFER between sides (same on both sides = WARN)
+AUTO_EXTEND_KEY = True       # key not unique (history / satellite) -> key-level compare on key + FILTER_COLUMN
+RUN_PROFILE = True           # NULL / blank counts per column; only for tables WITHOUT a key
+                             # (with a key the per-column comparison is exact, profile would only add noise)
 
 NUM_SCALE = 6
 TS_FORMATS = [
@@ -898,7 +900,7 @@ class Recon:
             self.guard("KEY", "key_compare", self._keyed)
         elif self.fmt_rows > 0:
             self.guard("FORMAT", "format_detail", self._format_detail_no_key)
-        if RUN_PROFILE:
+        if RUN_PROFILE and not self.keys:
             self.guard("PROFILE", "profile", self._profile)
         return True
 
@@ -984,7 +986,7 @@ class Recon:
             keys_txt = ", ".join(self.keys)
             for side, dk, dkr, ex in (("source", s_dk, s_dkr, s_ex), ("target", t_dk, t_dkr, t_ex)):
                 if dk:
-                    self.add("KEY", f"duplicate_keys_{side}", DUP_KEY_STATUS,
+                    self.add("KEY", f"duplicate_keys_{side}", DUP_KEY_STATUS if s_dk != t_dk else "WARN",
                              f"{side.title()}: {dk:,} key value(s) on ({keys_txt}) occur more than once, covering "
                              f"{dkr:,} rows ({ex:,} of the extra rows are exact full-record copies). Top duplicates "
                              f"in recon_mismatch_samples (DUP_KEY).{hint}",
@@ -993,7 +995,7 @@ class Recon:
             if not s_dk and not t_dk:
                 self.add("KEY", "duplicate_keys", "PASS", f"Key ({keys_txt}) is unique on both sides.")
             elif s_dk != t_dk:
-                self.add("KEY", "duplicate_keys_compare", "FAIL",
+                self.add("KEY", "duplicate_keys_compare", DUP_KEY_STATUS,
                          f"Duplicate key values differ: source {s_dk:,} ({s_dkr:,} rows) vs target {t_dk:,} "
                          f"({t_dkr:,} rows).", src_value=s_dk, tgt_value=t_dk, diff=t_dk - s_dk)
 
@@ -1039,13 +1041,24 @@ class Recon:
 
     # -------------------------------------------------- key-level compare (differing buckets only)
     def _keyed(self):
-        kc = [f"_k{i}" for i in range(len(self.keys))]
-        keys_txt = ", ".join(self.keys)
-        nonkey = [c for c in self.common if c not in self.keys]
+        keys = list(self.keys)
+        has_dups = bool(self.summary.get("src_dup_keys") or self.summary.get("tgt_dup_keys"))
+        fc = self.filter_col
+        extended = AUTO_EXTEND_KEY and has_dups and fc in self.common and fc not in keys
+        if extended:
+            keys.append(fc)
+            self.add("KEY", "key_extended", "INFO",
+                     f"Key ({', '.join(self.keys)}) is not unique (history rows), so the key-level comparison "
+                     f"uses ({', '.join(keys)}): each version is compared with the same version on the other "
+                     f"side. A version present on only one side shows as a missing key, not as column differences.",
+                     note=True)
+        kc = [f"_k{i}" for i in range(len(keys))]
+        keys_txt = ", ".join(keys)
+        nonkey = [c for c in self.common if c not in keys]
 
         def side_df(df, names, kinds, p, flag):
             return df.select(
-                *[norm_expr(names[k], kinds[k], self.canon[k]).alias(f"_k{i}") for i, k in enumerate(self.keys)],
+                *[norm_expr(names[k], kinds[k], self.canon[k]).alias(f"_k{i}") for i, k in enumerate(keys)],
                 *[e for i, c in enumerate(nonkey) for e in
                   (strict_expr(names[c], kinds[c]).alias(f"{p}{i}"),
                    norm_expr(names[c], kinds[c], self.canon[c]).alias(f"{p}n{i}"))],
@@ -1054,7 +1067,7 @@ class Recon:
         j = side_df(self.src_d, self.s_names, self.s_kinds, "s", "_in_s").join(
             side_df(self.tgt_d, self.t_names, self.t_kinds, "t", "_in_t"), kc, "full_outer")
         both = F.col("_in_s").isNotNull() & F.col("_in_t").isNotNull()
-        key_json = F.to_json(F.struct(*[F.col(f"_k{i}").alias(self.s_names[k]) for i, k in enumerate(self.keys)]))
+        key_json = F.to_json(F.struct(*[F.col(f"_k{i}").alias(self.s_names[k]) for i, k in enumerate(keys)]))
 
         def one(cond):
             return F.sum(F.when(cond, 1).otherwise(0))
@@ -1082,7 +1095,7 @@ class Recon:
         self.summary.update(key_matched=matched, key_src_only=src_only, key_tgt_only=tgt_only,
                             key_rows_all_cols_match=all_match)
         dup_note = (" (counts inflated where keys are duplicated - see duplicate_keys checks)"
-                    if (self.summary.get("src_dup_keys") or self.summary.get("tgt_dup_keys")) else "")
+                    if has_dups and not extended else "")
         if src_only:
             self.add("KEY", "keys_missing_in_target", "FAIL",
                      f"{src_only:,} key(s) on ({keys_txt}) exist in source but not in target{dup_note}.",
