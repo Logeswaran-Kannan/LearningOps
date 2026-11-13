@@ -1,9 +1,3 @@
--- compare as text
-SELECT * FROM core.curated_edw.QUOTE_VEH_INS_OBJ_GWPC_BSAT
-WHERE CAST(QUOTE_VEH_INS_OBJ_GWPC_LNK_KEY AS STRING)
-      = '9b54f755ce81add08ec7581b6979d034c43f7008969a1bb14c26df728427eb1d'
-ORDER BY SYS_EFCTV_DT;
+Hi all, I’ve been through the changes. It’s mainly a tidy-up: the common helper functions from the MQS and Interaction notebooks have moved into one shared notebook, and both now load it with %run. The reconciliation logic, outputs and dashboard stay the same. The only small difference is in MQS, where the duplicate removal now happens just after load_csv_source instead of inside it, with the same result. Looks good to me 👍
 
--- or paste the base64 from the sample, with the \r\n removed
-SELECT * FROM core.curated_edw.QUOTE_VEH_INS_OBJ_GWPC_BSAT
-WHERE QUOTE_VEH_INS_OBJ_GWPC_LNK_KEY = unbase64('OWI1NGY3NTVj...ZWIxZA==');
+From yesterday’s call, my understanding is that Ben mentioned a plan to create views on top of this, but that isn’t part of this change yet. Gaurav is working on the EDF changes needed first. Once he’s adjusted the schedule timeline, we can run the old and new versions side by side and compare the results.
