@@ -1,3 +1,12 @@
-Hi all, I’ve been through the changes. It’s mainly a tidy-up: the common helper functions from the MQS and Interaction notebooks have moved into one shared notebook, and both now load it with %run. The reconciliation logic, outputs and dashboard stay the same. The only small difference is in MQS, where the duplicate removal now happens just after load_csv_source instead of inside it, with the same result. Looks good to me 👍
+Hi Phil,  
 
-From yesterday’s call, my understanding is that Ben mentioned a plan to create views on top of this, but that isn’t part of this change yet. Gaurav is working on the EDF changes needed first. Once he’s adjusted the schedule timeline, we can run the old and new versions side by side and compare the results.
+Yes, this is available in the Radar Live – BICoE dashboard.  
+
+Please go to the “MQS & Inter-Orphans” tab and check the “MQS Day Wise Orphans” chart. This shows the daily orphan trend and clearly highlights the incident spikes against the normal baseline.  
+
+For the July incident, the relevant period is around 30 Jul – 3 Aug, where you can see the significant spike following the ingestion issue. You can use that dashboard view as the monitoring evidence alongside the incident/business communication you already have.  
+
+If useful, I can also help point out the exact date/filter to use for the screenshot.  
+
+Thanks,
+Loges
