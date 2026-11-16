@@ -1,12 +1,20 @@
-Hi Phil,  
+Hi Phil,
 
-Yes, this is available in the Radar Live – BICoE dashboard.  
+For the Risk Control evidence, I suggest using INC34965053 as the July/August example.
 
-Please go to the “MQS & Inter-Orphans” tab and check the “MQS Day Wise Orphans” chart. This shows the daily orphan trend and clearly highlights the incident spikes against the normal baseline.  
+The incident followed the 29 July MQS release, where MQS introduced the data-loss mitigation change and precomp-request was added as the 7th BICoE message type. On 30 July, an unexpected MQS header-format change caused a BICoE ingestion issue, so incoming data was temporarily retained while the fix was applied.
 
-For the July incident, the relevant period is around 30 Jul – 3 Aug, where you can see the significant spike following the ingestion issue. You can use that dashboard view as the monitoring evidence alongside the incident/business communication you already have.  
+During the recovery period, on 3 August, incoming MQS volume reportedly increased to around 70m messages compared with a normal maximum of ~5m. BICoE was not able to consume/process the full incoming volume within the normal window, and for the captured population we observed around 1m orphan records, showing a significant deterioration in message completeness.
 
-If useful, I can also help point out the exact date/filter to use for the screenshot.  
+For the monitoring evidence, please check the Radar Live – BICoE dashboard:
+
+MQS & Inter-Orphans → MQS Day Wise Orphans
+
+If you filter around 30 Jul – 3 Aug 2026, the dashboard clearly shows the abnormal orphan spike on 3 Aug compared with the normal baseline.
+
+This should provide the evidence chain you need:
+
+Monitoring detected the issue → INC34965053 raised → business communication issued → impact visible in the BICoE dashboard.
 
 Thanks,
 Loges
