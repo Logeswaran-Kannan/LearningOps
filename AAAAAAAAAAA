@@ -1,20 +1,15 @@
-Hi Phil,
+I’ve gone back through the sequence again, and I think the reconciliation view below gives a much better historical picture of what happened around the incident and should give you the link you were looking for between the monitoring, the incident being raised, and the data impact.
 
-For the Risk Control evidence, I suggest using INC34965053 as the July/August example.
+The source-side release was carried out after business hours on 30 July, during a lower-activity period. When the normal business day started on 31 July, the BICoE monitoring immediately highlighted that the expected MQS load had not landed correctly. That was the trigger for the investigation, and INC34965053 was raised once we confirmed the incoming MQS header format had changed and BICoE ingestion was no longer processing the messages in the expected structure.
 
-The incident followed the 29 July MQS release, where MQS introduced the data-loss mitigation change and precomp-request was added as the 7th BICoE message type. On 30 July, an unexpected MQS header-format change caused a BICoE ingestion issue, so incoming data was temporarily retained while the fix was applied.
+At that point, the incoming traffic was diverted into a temporary/backup landing table so that we could continue retaining the incoming messages while the header issue was being addressed. Once the header handling was corrected, the retained data was then recovered and reprocessed through the normal flow.
 
-During the recovery period, on 3 August, incoming MQS volume reportedly increased to around 70m messages compared with a normal maximum of ~5m. BICoE was not able to consume/process the full incoming volume within the normal window, and for the captured population we observed around 1m orphan records, showing a significant deterioration in message completeness.
+The reason I’m using the reconciliation dashboard below is that the live monitoring dashboards are primarily designed for operational monitoring and retain only a relatively short history. The reconciliation dashboard is snapshot-based, so it captures the daily reconciliation position and keeps that history for a much longer period. That makes it much better for looking back at the original incident timeline.
 
-For the monitoring evidence, please check the Radar Live – BICoE dashboard:
+You can see the difference starting around 30/31 July, which aligns with the release and the issue being identified on the morning of the 31st. The impact then continues through the recovery period. The much larger spike visible on 3 August was a separate volume event during the recovery period and should not be treated as the original trigger for the 31 July incident.
 
-MQS & Inter-Orphans → MQS Day Wise Orphans
+So the sequence the graph helps show is:
 
-If you filter around 30 Jul – 3 Aug 2026, the dashboard clearly shows the abnormal orphan spike on 3 Aug compared with the normal baseline.
+30 Jul after-hours release → 31 Jul monitoring identifies the load issue → INC34965053 raised → traffic diverted to backup landing while the header issue is fixed → recovery/reprocessing follows → separate larger volume spike on 3 Aug.
 
-This should provide the evidence chain you need:
-
-Monitoring detected the issue → INC34965053 raised → business communication issued → impact visible in the BICoE dashboard.
-
-Thanks,
-Loges
+Hopefully this gives the Risk Control tester a clearer historical view of the incident and how the monitoring evidence ties back to the incident and business communication.
