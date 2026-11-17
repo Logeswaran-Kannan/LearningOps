@@ -1,15 +1,15 @@
-I’ve gone back through the sequence again, and I think the reconciliation view below gives a much better historical picture of what happened around the incident and should give you the link you were looking for between the monitoring, the incident being raised, and the data impact.
+I’ve gone back through the sequence again and, for the traceability you’re looking for, I think the MQS Source Reconciliation dashboard gives the clearest historical picture.
 
-The source-side release was carried out after business hours on 30 July, during a lower-activity period. When the normal business day started on 31 July, the BICoE monitoring immediately highlighted that the expected MQS load had not landed correctly. That was the trigger for the investigation, and INC34965053 was raised once we confirmed the incoming MQS header format had changed and BICoE ingestion was no longer processing the messages in the expected structure.
+The live monitoring dashboards are primarily designed for operational monitoring, so they only retain a short history — roughly six days for the orphan view and around three days for the live ingestion views. This keeps those datasets light and responsive because they are refreshed frequently. The reconciliation dashboard works differently: it stores a daily point-in-time snapshot, so we can still look back at what happened around the July incident.
 
-At that point, the incoming traffic was diverted into a temporary/backup landing table so that we could continue retaining the incoming messages while the header issue was being addressed. Once the header handling was corrected, the retained data was then recovered and reprocessed through the normal flow.
+In the reconciliation view below, you can see the differences beginning from 30 July, when the source-side release was deployed late in the day. On the morning of 31 July, the BICoE monitoring showed that the expected ingestion had not taken place, which triggered the investigation and INC34965053 was raised.
 
-The reason I’m using the reconciliation dashboard below is that the live monitoring dashboards are primarily designed for operational monitoring and retain only a relatively short history. The reconciliation dashboard is snapshot-based, so it captures the daily reconciliation position and keeps that history for a much longer period. That makes it much better for looking back at the original incident timeline.
+While the header-format issue was being resolved, we diverted the incoming traffic into the backup landing table so the data could continue to be retained. This is why the reconciliation differences remain visible through the following days. Normal processing back into the main landing flow resumed around 5 August.
 
-You can see the difference starting around 30/31 July, which aligns with the release and the issue being identified on the morning of the 31st. The impact then continues through the recovery period. The much larger spike visible on 3 August was a separate volume event during the recovery period and should not be treated as the original trigger for the 31 July incident.
+One point to be aware of when comparing this graph with the orphan dashboard: the counts are not directly comparable. The reconciliation graph is based on the Quote Request population, whereas the orphan monitoring checks the full expected message sequence across the different MQS message types. So, for example, the 3 August reconciliation count and the roughly 1m orphan count represent different populations and calculation logic. The important thing for this evidence is the matching spike/timing pattern, not the absolute record count.
 
-So the sequence the graph helps show is:
+So the sequence shown by this dashboard is:
 
-30 Jul after-hours release → 31 Jul monitoring identifies the load issue → INC34965053 raised → traffic diverted to backup landing while the header issue is fixed → recovery/reprocessing follows → separate larger volume spike on 3 Aug.
+30 Jul late release → 31 Jul monitoring identifies missing ingestion → incident raised → traffic diverted to backup table → recovery period reflected in the reconciliation differences → normal flow resumed around 5 Aug.
 
-Hopefully this gives the Risk Control tester a clearer historical view of the incident and how the monitoring evidence ties back to the incident and business communication.
+I think this gives the historical link between the monitoring, the incident and the resulting data impact that the tester is looking for.
