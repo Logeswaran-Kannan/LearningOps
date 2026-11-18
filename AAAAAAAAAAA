@@ -1,15 +1,63 @@
-MQS 1.4 – SIRA Drop 1 | BiCoE Testing Update
-
-Data Validation: BiCoE SIT connected to PSU, with 7 days of data consumed. SIRA attributes are available in Quote Request, Precom Request and Rating Request. Happy-path values verified with Sachin. Non-happy-path testing is limited by environment constraints and is not a blocker for BiCoE ingestion scope.
-
-Precom Response: Excluded from Drop 1 SIRA scope, as confirmed by the source team.
-
-Duplicates: Validation is in progress to ensure no duplicate records or multiple payload versions are introduced.
-
-Enrichment: SIRA data is ingested as-is in encrypted format into DLT Enrichment. Negative testing is pending to confirm no SIRA data flows into Pricing Views.
-
-Pipeline & Performance: No ingestion failures or significant processing delays observed. Additional performance testing needs to be confirmed with Sachin.
-
-Scope: BiCoE testing covers ingestion stability and data integrity, not functional validation of SIRA business rules.
-
-Overall: No ingestion issues identified so far. Duplicate checks, negative testing and performance scope confirmation remain pending.
+%sql
+WITH expected AS (
+  SELECT * FROM VALUES
+    -- New Business
+    ('New Business','mqs-quote-request','AddEnrichments'),
+    ('New Business','precomp-request','GetPreComp'),
+    ('New Business','precomp-response','GetPreComp'),
+    ('New Business','rating-request','GetQuote'),
+    ('New Business','rating-response','GetQuote'),
+    ('New Business','quotecache-response','CacheQuote'),
+    ('New Business','core-quote-result','GetQuoteResult'),
+    -- Renewal
+    ('Renewal','mqs-quote-request','AddEnrichments'),
+    ('Renewal','precomp-request','GetPreComp'),
+    ('Renewal','precomp-response','GetPreComp'),
+    ('Renewal','rating-request','GetQuote'),
+    ('Renewal','rating-response','GetQuote'),
+    ('Renewal','quotecache-response','CacheQuote'),
+    ('Renewal','core-quote-result','GetQuoteResult'),
+    -- Requote / MTA
+    ('Requote/MTA','quotecache-request','RetrieveCachedQuote'),
+    ('Requote/MTA','mqs-quote-request','AddEnrichments'),
+    ('Requote/MTA','precomp-request','GetPreComp'),
+    ('Requote/MTA','precomp-response','GetPreComp'),
+    ('Requote/MTA','rating-request','GetQuote'),
+    ('Requote/MTA','rating-response','GetQuote'),
+    ('Requote/MTA','quotecache-response','CacheQuote'),
+    ('Requote/MTA','core-quote-result','GetQuoteResult')
+  AS t(journey, messageType, quoteStep)
+),
+actual AS (
+  SELECT
+    CASE CAST(get_json_object(Payload,'$.control.transactionType') AS INT)
+         WHEN 2  THEN 'New Business'
+         WHEN 8  THEN 'Renewal'
+         WHEN 30 THEN 'Requote/MTA'
+         ELSE concat('Other (', get_json_object(Payload,'$.control.transactionType'), ')')
+    END AS journey,
+    headers['messageType'] AS messageType,
+    headers['quoteStep']   AS quoteStep,
+    COUNT(*) AS msgs,
+    COUNT(DISTINCT headers['MQSQuoteId']) AS quotes
+  FROM core_tst.mqs_athn_mtr.ehubstream
+  WHERE date(enqueuedTime) >= '2026-11-17'
+    AND headers['brand'] = 'AZ' AND headers['product'] = 'Motor'
+    AND headers['messageType'] NOT IN ('quote-cache-id','stop-quote')  -- BICoE checked separately below
+  GROUP BY 1, 2, 3
+)
+SELECT
+  COALESCE(e.journey, a.journey)         AS journey,
+  COALESCE(e.messageType, a.messageType) AS messageType,
+  e.quoteStep AS expected_step,
+  a.quoteStep AS actual_step,
+  a.msgs, a.quotes,
+  CASE WHEN a.messageType IS NULL THEN 'MISSING in data'
+       WHEN e.messageType IS NULL THEN 'NOT in Nikki list'
+       ELSE 'OK' END AS status
+FROM expected e
+FULL OUTER JOIN actual a
+  ON e.journey = a.journey
+ AND e.messageType = a.messageType
+ AND e.quoteStep = a.quoteStep
+ORDER BY journey, status, messageType
