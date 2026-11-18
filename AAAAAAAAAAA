@@ -1,15 +1,1 @@
-I’ve gone back through the sequence again and, for the traceability you’re looking for, I think the MQS Source Reconciliation dashboard gives the clearest historical picture.
-
-The live monitoring dashboards are primarily designed for operational monitoring, so they only retain a short history — roughly six days for the orphan view and around three days for the live ingestion views. This keeps those datasets light and responsive because they are refreshed frequently. The reconciliation dashboard works differently: it stores a daily point-in-time snapshot, so we can still look back at what happened around the July incident.
-
-In the reconciliation view below, you can see the differences beginning from 30 July, when the source-side release was deployed late in the day. On the morning of 31 July, the BICoE monitoring showed that the expected ingestion had not taken place, which triggered the investigation and INC34965053 was raised.
-
-While the header-format issue was being resolved, we diverted the incoming traffic into the backup landing table so the data could continue to be retained. This is why the reconciliation differences remain visible through the following days. Normal processing back into the main landing flow resumed around 5 August.
-
-One point to be aware of when comparing this graph with the orphan dashboard: the counts are not directly comparable. The reconciliation graph is based on the Quote Request population, whereas the orphan monitoring checks the full expected message sequence across the different MQS message types. So, for example, the 3 August reconciliation count and the roughly 1m orphan count represent different populations and calculation logic. The important thing for this evidence is the matching spike/timing pattern, not the absolute record count.
-
-So the sequence shown by this dashboard is:
-
-30 Jul late release → 31 Jul monitoring identifies missing ingestion → incident raised → traffic diverted to backup table → recovery period reflected in the reconciliation differences → normal flow resumed around 5 Aug.
-
-I think this gives the historical link between the monitoring, the incident and the resulting data impact that the tester is looking for.
+No worries at all, Nikki! Happy I could help. Please feel free to reach out if you have any further questions or need anything else. Always happy to help! 😊
