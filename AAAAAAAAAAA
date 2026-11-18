@@ -1,7 +1,6 @@
 %sql
 WITH expected AS (
   SELECT * FROM VALUES
-    -- New Business
     ('New Business','mqs-quote-request','AddEnrichments'),
     ('New Business','precomp-request','GetPreComp'),
     ('New Business','precomp-response','GetPreComp'),
@@ -9,7 +8,6 @@ WITH expected AS (
     ('New Business','rating-response','GetQuote'),
     ('New Business','quotecache-response','CacheQuote'),
     ('New Business','core-quote-result','GetQuoteResult'),
-    -- Renewal
     ('Renewal','mqs-quote-request','AddEnrichments'),
     ('Renewal','precomp-request','GetPreComp'),
     ('Renewal','precomp-response','GetPreComp'),
@@ -17,7 +15,6 @@ WITH expected AS (
     ('Renewal','rating-response','GetQuote'),
     ('Renewal','quotecache-response','CacheQuote'),
     ('Renewal','core-quote-result','GetQuoteResult'),
-    -- Requote / MTA
     ('Requote/MTA','quotecache-request','RetrieveCachedQuote'),
     ('Requote/MTA','mqs-quote-request','AddEnrichments'),
     ('Requote/MTA','precomp-request','GetPreComp'),
@@ -34,30 +31,28 @@ actual AS (
          WHEN 2  THEN 'New Business'
          WHEN 8  THEN 'Renewal'
          WHEN 30 THEN 'Requote/MTA'
-         ELSE concat('Other (', get_json_object(Payload,'$.control.transactionType'), ')')
+         ELSE concat('Other (', coalesce(get_json_object(Payload,'$.control.transactionType'),'null'), ')')
     END AS journey,
     headers['messageType'] AS messageType,
     headers['quoteStep']   AS quoteStep,
-    COUNT(*) AS msgs,
-    COUNT(DISTINCT headers['MQSQuoteId']) AS quotes
+    headers['MQSQuoteId']  AS quoteId
   FROM core_tst.mqs_athn_mtr.ehubstream
   WHERE date(enqueuedTime) >= '2026-11-17'
-    AND headers['brand'] = 'AZ' AND headers['product'] = 'Motor'
-    AND headers['messageType'] NOT IN ('quote-cache-id','stop-quote')  -- BICoE checked separately below
-  GROUP BY 1, 2, 3
+    AND headers['brand'] = 'AZ'
+    AND headers['product'] = 'Motor'
 )
 SELECT
-  COALESCE(e.journey, a.journey)         AS journey,
-  COALESCE(e.messageType, a.messageType) AS messageType,
-  e.quoteStep AS expected_step,
-  a.quoteStep AS actual_step,
-  a.msgs, a.quotes,
-  CASE WHEN a.messageType IS NULL THEN 'MISSING in data'
-       WHEN e.messageType IS NULL THEN 'NOT in Nikki list'
-       ELSE 'OK' END AS status
-FROM expected e
-FULL OUTER JOIN actual a
-  ON e.journey = a.journey
- AND e.messageType = a.messageType
- AND e.quoteStep = a.quoteStep
-ORDER BY journey, status, messageType
+  a.journey,
+  a.messageType,
+  a.quoteStep,
+  COUNT(*)                  AS msg_count,
+  COUNT(DISTINCT a.quoteId) AS quote_count
+FROM actual a
+LEFT ANTI JOIN expected e
+  ON  a.journey     = e.journey
+  AND a.messageType = e.messageType
+  AND a.quoteStep   = e.quoteStep
+WHERE NOT (a.messageType = 'quote-cache-id' AND a.quoteStep = 'CacheQuote')  -- BICoE, expected
+  AND NOT (a.messageType = 'stop-quote')                                       -- BICoE, any step is valid
+GROUP BY 1, 2, 3
+ORDER BY msg_count DESC
