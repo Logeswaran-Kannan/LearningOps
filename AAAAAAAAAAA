@@ -1,14 +1,13 @@
 %sql
 SELECT
-  headers['quoteStep']   AS quoteStep,
+  headers['brand']       AS brand,
+  headers['product']     AS product,
   headers['messageType'] AS messageType,
+  headers['quoteStep']   AS quoteStep,
   COUNT(*)                              AS msg_count,
-  COUNT(DISTINCT headers['MQSQuoteId']) AS quote_count
+  COUNT(DISTINCT headers['MQSQuoteId']) AS quote_count,
+  MIN(enqueuedTime)                     AS first_seen,
+  MAX(enqueuedTime)                     AS last_seen
 FROM core_tst.mqs_athn_mtr.ehubstream
-WHERE date(enqueuedTime) >= '2026-11-17'
-  AND headers['brand'] = 'AZ'
-  AND headers['product'] = 'Motor'
-  AND ( headers['quoteStep'] IN ('GetPreComp', 'AddLRTFactors')
-        OR headers['messageType'] LIKE 'precomp%' )
-GROUP BY 1, 2
-ORDER BY 1, 2
+GROUP BY 1, 2, 3, 4
+ORDER BY brand, product, messageType, quoteStep
