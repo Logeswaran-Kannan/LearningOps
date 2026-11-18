@@ -1,58 +1,29 @@
 %sql
 WITH expected AS (
   SELECT * FROM VALUES
-    ('New Business','mqs-quote-request','AddEnrichments'),
-    ('New Business','precomp-request','GetPreComp'),
-    ('New Business','precomp-response','GetPreComp'),
-    ('New Business','rating-request','GetQuote'),
-    ('New Business','rating-response','GetQuote'),
-    ('New Business','quotecache-response','CacheQuote'),
-    ('New Business','core-quote-result','GetQuoteResult'),
-    ('Renewal','mqs-quote-request','AddEnrichments'),
-    ('Renewal','precomp-request','GetPreComp'),
-    ('Renewal','precomp-response','GetPreComp'),
-    ('Renewal','rating-request','GetQuote'),
-    ('Renewal','rating-response','GetQuote'),
-    ('Renewal','quotecache-response','CacheQuote'),
-    ('Renewal','core-quote-result','GetQuoteResult'),
-    ('Requote/MTA','quotecache-request','RetrieveCachedQuote'),
-    ('Requote/MTA','mqs-quote-request','AddEnrichments'),
-    ('Requote/MTA','precomp-request','GetPreComp'),
-    ('Requote/MTA','precomp-response','GetPreComp'),
-    ('Requote/MTA','rating-request','GetQuote'),
-    ('Requote/MTA','rating-response','GetQuote'),
-    ('Requote/MTA','quotecache-response','CacheQuote'),
-    ('Requote/MTA','core-quote-result','GetQuoteResult')
-  AS t(journey, messageType, quoteStep)
-),
-actual AS (
-  SELECT
-    CASE CAST(get_json_object(Payload,'$.control.transactionType') AS INT)
-         WHEN 2  THEN 'New Business'
-         WHEN 8  THEN 'Renewal'
-         WHEN 30 THEN 'Requote/MTA'
-         ELSE concat('Other (', coalesce(get_json_object(Payload,'$.control.transactionType'),'null'), ')')
-    END AS journey,
-    headers['messageType'] AS messageType,
-    headers['quoteStep']   AS quoteStep,
-    headers['MQSQuoteId']  AS quoteId
-  FROM core_tst.mqs_athn_mtr.ehubstream
-  WHERE date(enqueuedTime) >= '2026-11-17'
-    AND headers['brand'] = 'AZ'
-    AND headers['product'] = 'Motor'
+    ('mqs-quote-request',  'AddEnrichments'),
+    ('precomp-request',    'GetPreComp'),
+    ('precomp-response',   'GetPreComp'),
+    ('rating-request',     'GetQuote'),
+    ('rating-response',    'GetQuote'),
+    ('quotecache-response','CacheQuote'),
+    ('core-quote-result',  'GetQuoteResult'),
+    ('quotecache-request', 'RetrieveCachedQuote'),
+    ('quote-cache-id',     'CacheQuote')
+  AS t(messageType, quoteStep)
 )
 SELECT
-  a.journey,
-  a.messageType,
-  a.quoteStep,
-  COUNT(*)                  AS msg_count,
-  COUNT(DISTINCT a.quoteId) AS quote_count
-FROM actual a
+  headers['messageType'] AS messageType,
+  headers['quoteStep']   AS quoteStep,
+  COUNT(*)                              AS msg_count,
+  COUNT(DISTINCT headers['MQSQuoteId']) AS quote_count
+FROM core_tst.mqs_athn_mtr.ehubstream a
 LEFT ANTI JOIN expected e
-  ON  a.journey     = e.journey
-  AND a.messageType = e.messageType
-  AND a.quoteStep   = e.quoteStep
-WHERE NOT (a.messageType = 'quote-cache-id' AND a.quoteStep = 'CacheQuote')  -- BICoE, expected
-  AND NOT (a.messageType = 'stop-quote')                                       -- BICoE, any step is valid
-GROUP BY 1, 2, 3
+  ON  a.headers['messageType'] = e.messageType
+  AND a.headers['quoteStep']   = e.quoteStep
+WHERE date(enqueuedTime) >= '2026-11-17'
+  AND headers['brand'] = 'AZ'
+  AND headers['product'] = 'Motor'
+  AND headers['messageType'] <> 'stop-quote'   -- any step valid per Nikki
+GROUP BY 1, 2
 ORDER BY msg_count DESC
