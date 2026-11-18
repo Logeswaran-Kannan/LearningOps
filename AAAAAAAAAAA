@@ -1,29 +1,14 @@
 %sql
-WITH expected AS (
-  SELECT * FROM VALUES
-    ('mqs-quote-request',  'AddEnrichments'),
-    ('precomp-request',    'GetPreComp'),
-    ('precomp-response',   'GetPreComp'),
-    ('rating-request',     'GetQuote'),
-    ('rating-response',    'GetQuote'),
-    ('quotecache-response','CacheQuote'),
-    ('core-quote-result',  'GetQuoteResult'),
-    ('quotecache-request', 'RetrieveCachedQuote'),
-    ('quote-cache-id',     'CacheQuote')
-  AS t(messageType, quoteStep)
-)
 SELECT
-  headers['messageType'] AS messageType,
   headers['quoteStep']   AS quoteStep,
+  headers['messageType'] AS messageType,
   COUNT(*)                              AS msg_count,
   COUNT(DISTINCT headers['MQSQuoteId']) AS quote_count
-FROM core_tst.mqs_athn_mtr.ehubstream a
-LEFT ANTI JOIN expected e
-  ON  a.headers['messageType'] = e.messageType
-  AND a.headers['quoteStep']   = e.quoteStep
+FROM core_tst.mqs_athn_mtr.ehubstream
 WHERE date(enqueuedTime) >= '2026-11-17'
   AND headers['brand'] = 'AZ'
   AND headers['product'] = 'Motor'
-  AND headers['messageType'] <> 'stop-quote'   -- any step valid per Nikki
+  AND ( headers['quoteStep'] IN ('GetPreComp', 'AddLRTFactors')
+        OR headers['messageType'] LIKE 'precomp%' )
 GROUP BY 1, 2
-ORDER BY msg_count DESC
+ORDER BY 1, 2
