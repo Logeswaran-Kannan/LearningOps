@@ -1,11 +1,13 @@
-Hi All,
-
-The PR has already been merged and deployed to production by Ben. I’ve reviewed the changes, which mainly involve moving the common helper functions into a **shared notebook**, now used by both the MQS and Interaction reconciliation scripts. **There are no changes to the core reconciliation logic.**
-
-We’ve been monitoring the reconciliation since deployment, and things are looking stable so far. The ADF scheduling issue I highlighted during last Monday’s call has also been resolved over the past few days, and the files are now arriving as per the expected schedule.
-
-From a performance and cost perspective, things remain unchanged:
-- **Runtime:** Around 13 minutes for the full Interaction reconciliation.
-- **Cost:** Approximately £27 per day for the complete row-by-row reconciliation.
-
-If anyone needs any support or clarification around the reconciliation, please feel free to reach out.
+#	Category	Answer starting with C
+1	Dairy Products	Cheddar cheese
+2	Parts of the Body	Calf
+3	Villains / Monsters	Count Dracula
+4	Weekend Activities	Camping
+5	Sports	Cricket
+6	Words Associated With Winter	Cold
+7	Acronyms	CCTV
+8	Things That Can Kill You	Cancer
+9	Internet Lingo	CU (See you)
+10	Items You Take on a Trip	Charger
+11	Reasons to Make a Phone Call	Complaint
+12	Household Chores	Cleaning
