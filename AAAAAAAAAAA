@@ -1,13 +1,23 @@
-#	Category	Answer starting with C
-1	Dairy Products	Cheddar cheese
-2	Parts of the Body	Calf
-3	Villains / Monsters	Count Dracula
-4	Weekend Activities	Camping
-5	Sports	Cricket
-6	Words Associated With Winter	Cold
-7	Acronyms	CCTV
-8	Things That Can Kill You	Cancer
-9	Internet Lingo	CU (See you)
-10	Items You Take on a Trip	Charger
-11	Reasons to Make a Phone Call	Complaint
-12	Household Chores	Cleaning
+Hi Callum,
+
+Thanks for sharing the updated SIRA mappings.
+
+We have reviewed the changes, and below is our understanding from the **BiCoE build perspective**:
+
+- **Quote Request:** No changes to the Quote Request record itself. However, additional SIRA RTQ enrichment details have been introduced. As per the mapping, an additional DLT table is required for SIRA RTQ enrichment. This has not yet been built, as discussed in the daily stand-up, so the SIRA enrichment view will not be available for the **24th November MQS 1.4 release**. Neeta will discuss this with Mark Wesley and communicate the limitation to the business.
+
+- **Precom Request & Rating Request:** We can see a similar set of additional SIRA attributes populated in both message payloads. The Rating Request mapping explicitly mentions these attributes, whereas the Precom Request mapping redirects to another Confluence page where they are not clearly identified. Also, no Silver layer changes are mentioned in the mappings, which aligns with our understanding.
+
+- **Precom Response:** No SIRA changes are included in Drop 1, as confirmed by the source team.
+
+From the **BiCoE build and testing perspective**, we have validated that the additional attributes are being ingested without affecting the existing pipelines or payload integrity. No significant increase in processing time has been observed compared with the current production baseline.
+
+We did identify an issue earlier where additional Quote Request messages were coming through the ingestion flow. This was raised with the source team, who have since applied a fix by aligning the message versions between production and the test environment. We have not observed any further issues related to this following the fix.
+
+Our testing is focused on ingestion stability and data integrity. We are not validating whether the new SIRA attribute values meet the business rules, as that remains with the upstream team.
+
+**Overall, there are no outstanding ingestion-related issues from our side.** The only pending item is the SIRA RTQ enrichment DLT table, along with communication to the business that this will not be available for the 24th November release.
+
+**Gaurav** – Could you please review and confirm if the above aligns with your understanding from the data engineering side, particularly around the DLT changes, ingestion stability and performance?
+
+Thanks,
